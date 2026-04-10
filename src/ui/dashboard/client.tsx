@@ -13,8 +13,9 @@ export function dashboardAssets() {
     const defaultTab = isAdmin ? 'upstream' : 'keys';
     const initTab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : defaultTab;
 
-    // Chart instances stored outside Alpine to avoid reactive proxy wrapping
+    // Chart instances and key name map stored outside Alpine to avoid reactive proxy wrapping
     const _charts = { key: null, model: null };
+    const _keyNameMap = new Map();
 
     const CLAUDE_TIER = { opus: 0, sonnet: 1, haiku: 2 };
 
@@ -86,6 +87,7 @@ export function dashboardAssets() {
       tokenSummary: { requests: 0, input: 0, output: 0 },
       hiddenKeys: new Set(),
       hiddenModels: new Set(),
+      redactKeys: false,
       exportLoading: false,
       importFile: null,
       importData: null,
@@ -700,7 +702,8 @@ export function dashboardAssets() {
             const data = this.tokenData;
             const self = this;
 
-            const keyNameMap = new Map();
+            const keyNameMap = _keyNameMap;
+            keyNameMap.clear();
             const allKeyIds = new Set();
             const allModels = new Set();
             for (const r of data) {
@@ -722,7 +725,7 @@ export function dashboardAssets() {
             const keyDatasets = keyList.map((keyId, i) => {
               const c = palette[i % palette.length];
               return {
-                label: keyNameMap.get(keyId) || keyId.slice(0, 8),
+                label: self.redactKeys ? keyId.slice(0, 8) : (keyNameMap.get(keyId) || keyId.slice(0, 8)),
                 data: bucketKeysArr.map((k) => keyAgg.get(k)?.get(keyId) || 0),
                 borderColor: c,
                 backgroundColor: c + '40',
@@ -834,6 +837,16 @@ export function dashboardAssets() {
 
             this.chartsReady = true;
             this.refreshChartsData();
+          },
+
+          toggleRedactKeys() {
+            this.redactKeys = !this.redactKeys;
+            if (_charts.key) {
+              for (const ds of _charts.key.data.datasets) {
+                ds.label = this.redactKeys ? ds._keyId.slice(0, 8) : (_keyNameMap.get(ds._keyId) || ds._keyId.slice(0, 8));
+              }
+              _charts.key.update('none');
+            }
           },
 
           switchTokenRange(range) {
