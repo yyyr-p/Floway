@@ -17,6 +17,14 @@ export function dashboardAssets() {
     const _charts = { key: null, model: null };
     const _keyNameMap = new Map();
 
+    function destroyCharts() {
+      for (const k of ['key', 'model']) {
+        if (_charts[k]) { _charts[k].stop(); _charts[k].destroy(); _charts[k] = null; }
+      }
+    }
+
+    const pad2 = (n) => String(n).padStart(2, '0');
+
     const CLAUDE_TIER = { opus: 0, sonnet: 1, haiku: 2 };
 
     function claudeTier(id) {
@@ -56,7 +64,6 @@ export function dashboardAssets() {
       tab: initTab,
       meLoaded: false,
       githubAccounts: [],
-      githubConnected: false,
       usageData: null,
       usageError: false,
       usagePercent: 0,
@@ -97,6 +104,8 @@ export function dashboardAssets() {
 
       get baseUrl() { return location.origin; },
 
+      get githubConnected() { return this.githubAccounts.length > 0; },
+
       get activeKey() {
         const sel = this.selectedKeyId && this.keys.find((k) => k.id === this.selectedKeyId);
         if (sel) return sel.key;
@@ -126,9 +135,8 @@ export function dashboardAssets() {
       fullDateTime(dateStr) {
         if (!dateStr) return '';
         const d = new Date(dateStr);
-        const p = (n) => String(n).padStart(2, '0');
-        return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate())
-          + ' ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+        return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate())
+          + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) + ':' + pad2(d.getSeconds());
         },
 
         claudeCodeSnippet() {
@@ -186,12 +194,7 @@ export function dashboardAssets() {
           } else if (this.tab === 'keys') {
             this.loadKeys();
           } else if (this.tab === 'usage') {
-            this.tokenLoading = true;
-            this.fetchTokenData().then(() => {
-              if (this.tab === 'usage') {
-                this.$nextTick().then(() => this.renderTokenCharts());
-              }
-            });
+            this.loadTokenUsage();
           }
 
           setInterval(() => {
@@ -212,17 +215,10 @@ export function dashboardAssets() {
         authHeaders() { return { 'x-api-key': this.authKey }; },
 
         async switchTab(t) {
-          if (t !== 'usage' && _charts.key) {
-            _charts.key.stop();
-            _charts.key.destroy();
-            _charts.key = null;
+          if (t !== 'usage') {
+            destroyCharts();
+            this.chartsReady = false;
           }
-          if (t !== 'usage' && _charts.model) {
-            _charts.model.stop();
-            _charts.model.destroy();
-            _charts.model = null;
-          }
-          if (t !== 'usage') this.chartsReady = false;
           this.tab = t;
           location.hash = '#' + t;
           if (t === 'upstream' && this.isAdmin) {
@@ -243,7 +239,10 @@ export function dashboardAssets() {
         async loadModels() {
           try {
             const resp = await fetch('/api/models', { headers: this.authHeaders() });
-            if (!resp.ok) return;
+            if (!resp.ok) {
+              console.error('loadModels: HTTP', resp.status);
+              return;
+            }
             const { data } = await resp.json();
 
             const claudeFiltered = data
@@ -271,18 +270,19 @@ export function dashboardAssets() {
               this.codexModel = this.codexModels[0] || '';
 
               this.modelsLoaded = true;
-            } catch {}
+            } catch (e) {
+              console.error('loadModels:', e);
+            }
           },
 
           async loadMe() {
             try {
               const resp = await fetch('/auth/me', { headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               const data = await resp.json();
-              this.githubConnected = data.github_connected;
               this.githubAccounts = data.accounts || [];
             } catch (e) {
               console.error('loadMe:', e);
@@ -295,7 +295,7 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/api/copilot-quota', { headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -322,7 +322,7 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/auth/github', { headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               const d = await resp.json();
@@ -350,14 +350,13 @@ export function dashboardAssets() {
                   body: JSON.stringify({ device_code: this.deviceFlow.deviceCode }),
                 });
                 if (resp.status === 401) {
-                  this.kickToLogin();
+                  this.logout();
                   return;
                 }
                 const d = await resp.json();
                 if (d.status === 'complete') {
                   this.cancelDeviceFlow();
                   await this.loadMe();
-                  this.githubConnected = this.githubAccounts.length > 0;
                   await this.loadUsage();
                 } else if (d.status === 'slow_down') {
                   clearInterval(this.deviceFlow.pollTimer);
@@ -387,12 +386,11 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/auth/github/' + userId, { method: 'DELETE', headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
                 await this.loadMe();
-                this.githubConnected = this.githubAccounts.length > 0;
                 if (!this.githubConnected) {
                   this.usageData = null;
                   this.usageError = false;
@@ -416,7 +414,7 @@ export function dashboardAssets() {
                 body: JSON.stringify({ user_id: userId }),
               });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -435,7 +433,7 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/api/keys', { headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -462,7 +460,7 @@ export function dashboardAssets() {
                 body: JSON.stringify({ name }),
               });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -486,7 +484,7 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/api/keys/' + id, { method: 'DELETE', headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -507,7 +505,7 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/api/keys/' + id + '/rotate', { method: 'POST', headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -533,7 +531,7 @@ export function dashboardAssets() {
                 body: JSON.stringify({ name: newName }),
               });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) {
@@ -547,16 +545,7 @@ export function dashboardAssets() {
           },
 
           async copySnippet(text, tag) {
-            try {
-              await navigator.clipboard.writeText(text);
-            } catch {
-              const ta = document.createElement('textarea');
-              ta.value = text;
-              document.body.appendChild(ta);
-              ta.select();
-              document.execCommand('copy');
-              document.body.removeChild(ta);
-            }
+            await navigator.clipboard.writeText(text);
             this.copied = tag;
             setTimeout(() => {
               this.copied = false;
@@ -564,13 +553,11 @@ export function dashboardAssets() {
           },
 
           localHourKey(d) {
-            const p = (n) => String(n).padStart(2, '0');
-            return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()) + 'T' + p(d.getHours());
+            return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate()) + 'T' + pad2(d.getHours());
           },
 
           localDateKey(d) {
-            const p = (n) => String(n).padStart(2, '0');
-            return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+            return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
           },
 
           async fetchTokenData() {
@@ -592,7 +579,7 @@ export function dashboardAssets() {
               const end = new Date(now.getTime() + 3600000).toISOString().slice(0, 13);
               const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end), { headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (resp.ok) this.tokenData = await resp.json();
@@ -810,8 +797,7 @@ export function dashboardAssets() {
               },
             });
 
-            if (_charts.key) { _charts.key.stop(); _charts.key.destroy(); _charts.key = null; }
-            if (_charts.model) { _charts.model.stop(); _charts.model.destroy(); _charts.model = null; }
+            destroyCharts();
 
             _charts.key = new Chart(canvasKey, {
               type: 'line',
@@ -851,8 +837,7 @@ export function dashboardAssets() {
 
           switchTokenRange(range) {
             this.tokenRange = range;
-            if (_charts.key) { _charts.key.stop(); _charts.key.destroy(); _charts.key = null; }
-            if (_charts.model) { _charts.model.stop(); _charts.model.destroy(); _charts.model = null; }
+            destroyCharts();
             this.chartsReady = false;
             this.loadTokenUsage();
           },
@@ -862,7 +847,7 @@ export function dashboardAssets() {
             try {
               const resp = await fetch('/api/export', { headers: this.authHeaders() });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               if (!resp.ok) {
@@ -930,7 +915,7 @@ export function dashboardAssets() {
                 body: JSON.stringify({ mode: this.importMode, data: this.importData }),
               });
               if (resp.status === 401) {
-                this.kickToLogin();
+                this.logout();
                 return;
               }
               const result = await resp.json();
@@ -959,9 +944,6 @@ export function dashboardAssets() {
             window.location.href = '/';
           },
 
-          kickToLogin() {
-            this.logout();
-          },
         };
       }
     </script>

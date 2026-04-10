@@ -13,7 +13,7 @@ export function DashboardPage() {
   return Layout({
     title: "Dashboard",
     children: html`
-      <div class="min-h-screen" x-data="dashboardApp()" x-init="init()">
+      <div class="min-h-screen" x-cloak x-data="dashboardApp()" x-init="init()">
         <div
           class="fixed top-0 left-1/4 w-[500px] h-[300px] bg-accent-cyan/3 rounded-full blur-[100px] pointer-events-none"
         >

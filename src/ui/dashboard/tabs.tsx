@@ -1,5 +1,9 @@
 import { html } from "hono/html";
 
+function spinner(cls: string) {
+  return html`<svg class="animate-spin ${cls}" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3" fill="none" opacity="0.25"/><path fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" opacity="0.75"/></svg>`;
+}
+
 function codeBlock(
   lang: string,
   ref: string,
@@ -135,22 +139,7 @@ export function renderUpstreamTab() {
             >
               <span x-show="!deviceFlow.loading">Connect GitHub</span>
               <span x-show="deviceFlow.loading" class="flex items-center gap-2">
-                <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="3"
-                    fill="none"
-                    opacity="0.25"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    opacity="0.75"
-                  />
-                </svg>
+                ${spinner("h-4 w-4")}
                 Connecting…
               </span>
             </button>
@@ -197,22 +186,7 @@ export function renderUpstreamTab() {
               <div
                 class="flex items-center justify-center gap-2 text-sm text-gray-500"
               >
-                <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="3"
-                    fill="none"
-                    opacity="0.25"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    opacity="0.75"
-                  />
-                </svg>
+                ${spinner("h-4 w-4")}
                 Waiting for authorization...
               </div>
 
@@ -380,22 +354,7 @@ export function renderUpstreamTab() {
                     x-show="deviceFlow.loading"
                     class="flex items-center gap-1.5"
                   >
-                    <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                      <circle
-                        cx="12"
-                        cy="12"
-                        r="10"
-                        stroke="currentColor"
-                        stroke-width="3"
-                        fill="none"
-                        opacity="0.25"
-                      />
-                      <path
-                        fill="currentColor"
-                        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                        opacity="0.75"
-                      />
-                    </svg>
+                    ${spinner("h-3 w-3")}
                     Adding…
                   </span>
                 </button>
@@ -545,22 +504,7 @@ export function renderKeysTab() {
             >
               <span x-show="!keyCreating">+ Create</span>
               <span x-show="keyCreating" class="flex items-center gap-1.5">
-                <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24">
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="3"
-                    fill="none"
-                    opacity="0.25"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    opacity="0.75"
-                  />
-                </svg>
+                ${spinner("h-3 w-3")}
                 Creating…
               </span>
             </button>
@@ -903,25 +847,7 @@ export function renderUsageTab() {
               </svg>
             </button>
             <template x-if="tokenLoading">
-              <svg
-                class="animate-spin h-3.5 w-3.5 text-gray-500"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="3"
-                  fill="none"
-                  opacity="0.25"
-                />
-                <path
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  opacity="0.75"
-                />
-              </svg>
+              ${spinner("h-3.5 w-3.5 text-gray-500")}
             </template>
           </div>
           <div class="flex items-center gap-1 bg-surface-800 rounded-lg p-0.5">
@@ -953,25 +879,7 @@ export function renderUsageTab() {
           <template x-if="tokenLoading && !chartsReady">
             <div class="absolute inset-0 flex items-center justify-center">
               <div class="flex flex-col items-center gap-3">
-                <svg
-                  class="animate-spin h-6 w-6 text-accent-cyan/60"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="3"
-                    fill="none"
-                    opacity="0.25"
-                  />
-                  <path
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                    opacity="0.75"
-                  />
-                </svg>
+                ${spinner("h-6 w-6 text-accent-cyan/60")}
                 <span class="text-xs text-gray-500">Loading usage data…</span>
               </div>
             </div>
@@ -984,6 +892,14 @@ export function renderUsageTab() {
             class="text-xs font-medium text-gray-500 uppercase tracking-widest mb-4 block"
           >By Model</span>
           <div style="height: 320px; position: relative;">
+            <template x-if="tokenLoading && !chartsReady">
+              <div class="absolute inset-0 flex items-center justify-center">
+                <div class="flex flex-col items-center gap-3">
+                  ${spinner("h-6 w-6 text-accent-cyan/60")}
+                  <span class="text-xs text-gray-500">Loading usage data…</span>
+                </div>
+              </div>
+            </template>
             <canvas id="tokenChartByModel"></canvas>
           </div>
         </div>
@@ -1071,22 +987,7 @@ export function renderSettingsTab() {
               Export JSON
             </span>
             <span x-show="exportLoading" class="flex items-center gap-2">
-              <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                <circle
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  stroke-width="3"
-                  fill="none"
-                  opacity="0.25"
-                />
-                <path
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                  opacity="0.75"
-                />
-              </svg>
+              ${spinner("h-4 w-4")}
               Exporting...
             </span>
           </button>
@@ -1247,22 +1148,7 @@ export function renderSettingsTab() {
                   ></span>
                 </span>
                 <span x-show="importLoading" class="flex items-center gap-2">
-                  <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="10"
-                      stroke="currentColor"
-                      stroke-width="3"
-                      fill="none"
-                      opacity="0.25"
-                    />
-                    <path
-                      fill="currentColor"
-                      d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
-                      opacity="0.75"
-                    />
-                  </svg>
+                  ${spinner("h-4 w-4")}
                   Importing...
                 </span>
               </button>
