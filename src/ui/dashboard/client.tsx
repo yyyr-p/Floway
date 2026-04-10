@@ -577,7 +577,8 @@ export function dashboardAssets() {
               const now = new Date();
               const rangeStart = new Date(now);
               if (this.tokenRange === 'today') {
-                rangeStart.setHours(0, 0, 0, 0);
+                rangeStart.setTime(now.getTime() - 23 * 3600000);
+                rangeStart.setMinutes(0, 0, 0);
               } else if (this.tokenRange === '7d') {
                 rangeStart.setDate(rangeStart.getDate() - 6);
                 rangeStart.setHours(0, 0, 0, 0);
@@ -611,9 +612,11 @@ export function dashboardAssets() {
             const bucketMap = new Map();
             const now = new Date();
             if (this.tokenRange === 'today') {
-              for (let h = 0; h < 24; h++) {
-                const d = new Date(now);
-                d.setHours(h, 0, 0, 0);
+              const cur = new Date(now);
+              cur.setMinutes(0, 0, 0);
+              for (let i = 23; i >= 0; i--) {
+                const d = new Date(cur.getTime() - i * 3600000);
+                const h = d.getHours();
                 bucketMap.set(this.localHourKey(d), String(h).padStart(2, '0') + ':00 \\u2013 ' + String((h + 1) % 24).padStart(2, '0') + ':00');
               }
             } else {

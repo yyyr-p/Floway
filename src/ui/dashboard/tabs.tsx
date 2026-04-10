@@ -916,7 +916,7 @@ export function renderUsageTab() {
               class="px-3 py-1.5 rounded-md text-xs font-medium transition-all"
               :class="tokenRange === 'today' ? 'bg-surface-600 text-white' : 'text-gray-500 hover:text-gray-300'"
             >
-              Today
+              Last Day
             </button>
             <button
               @click="switchTokenRange('7d')"
