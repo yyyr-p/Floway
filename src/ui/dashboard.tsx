@@ -25,7 +25,7 @@ export function DashboardPage() {
 
         ${renderDashboardHeader()}
 
-        <main class="max-w-6xl mx-auto px-6 py-8">
+        <main class="max-w-6xl mx-auto px-6 pt-5 pb-8">
           ${renderUpstreamTab()} ${renderKeysTab()} ${renderUsageTab()} ${renderSettingsTab()}
         </main>
       </div>

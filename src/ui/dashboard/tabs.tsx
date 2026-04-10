@@ -47,7 +47,7 @@ export function renderDashboardHeader() {
     <header
       class="border-b border-white/5 bg-surface-900/80 backdrop-blur-md sticky top-0 z-50"
     >
-      <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="max-w-6xl mx-auto px-6 py-3 flex flex-wrap items-center gap-x-5 gap-y-3">
         <div class="flex items-center gap-3">
           <div
             class="w-8 h-8 rounded-lg bg-surface-700 glow-border flex items-center justify-center"
@@ -67,10 +67,7 @@ export function renderDashboardHeader() {
           <span class="font-semibold text-white text-sm tracking-tight"
           >Copilot Gateway</span>
         </div>
-        <button @click="logout()" class="btn-ghost text-xs">Logout</button>
-      </div>
 
-      <div class="max-w-6xl mx-auto px-6 pb-3">
         <nav class="flex gap-1 bg-surface-800 rounded-lg p-0.5 w-fit">
           <template x-if="isAdmin">
             <button
@@ -105,6 +102,8 @@ export function renderDashboardHeader() {
             </button>
           </template>
         </nav>
+
+        <button @click="logout()" class="btn-ghost text-xs ml-auto">Logout</button>
       </div>
     </header>
   `;
