@@ -720,7 +720,7 @@ export function dashboardAssets() {
                 pointRadius: 2,
                 pointHoverRadius: 5,
                 tension: 0.3,
-                fill: true,
+                fill: 'stack',
                 _keyId: keyId,
               };
             });
@@ -736,7 +736,7 @@ export function dashboardAssets() {
                 pointRadius: 2,
                 pointHoverRadius: 5,
                 tension: 0.3,
-                fill: true,
+                fill: 'stack',
                 _model: model,
               };
             });
