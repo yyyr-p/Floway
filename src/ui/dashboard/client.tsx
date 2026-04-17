@@ -9,7 +9,7 @@ export function dashboardAssets() {
     <script>
     function dashboardApp() {
     const isAdmin = localStorage.getItem('isAdmin') === '1';
-    const TABS = isAdmin ? ['upstream', 'keys', 'usage', 'settings'] : ['keys', 'usage'];
+    const TABS = isAdmin ? ['upstream', 'keys', 'usage', 'models', 'settings'] : ['keys', 'usage', 'models'];
     const defaultTab = isAdmin ? 'upstream' : 'keys';
     const initTab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : defaultTab;
 
@@ -135,10 +135,42 @@ export function dashboardAssets() {
       importMode: 'merge',
       importLoading: false,
       importPreview: { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 },
+      // Models tab — chat playground
+      allModels: [],
+      modelsSearch: '',
+      chatModelId: '',
+      chatMessages: [],     // {role, text, imageUrl?}
+      chatInput: '',
+      chatImageUrl: '',
+      chatShowImage: false,
+      chatSending: false,
+      chatStreamText: '',
+      _chatAbort: null,
 
       get baseUrl() { return location.origin; },
 
       get githubConnected() { return this.githubAccounts.length > 0; },
+
+      get chatModelInfo() {
+        return this.allModels.find(m => m.id === this.chatModelId) || null;
+      },
+
+      get chatModelCaps() {
+        const s = this.chatModelInfo?.capabilities?.supports;
+        if (!s) return [];
+        const caps = [];
+        if (s.vision) caps.push('vision');
+        if (s.tool_calls) caps.push('tools');
+        if (s.streaming) caps.push('streaming');
+        if (s.adaptive_thinking) caps.push('thinking');
+        return caps;
+      },
+
+      get filteredChatModels() {
+        if (!this.modelsSearch.trim()) return this.allModels;
+        const q = this.modelsSearch.toLowerCase();
+        return this.allModels.filter(m => m.id.toLowerCase().includes(q));
+      },
 
       get activeKey() {
         const sel = this.selectedKeyId && this.keys.find((k) => k.id === this.selectedKeyId);
@@ -272,6 +304,8 @@ export function dashboardAssets() {
             }
           } else if (t === 'keys') {
             await this.loadKeys();
+          } else if (t === 'models') {
+            if (this.allModels.length === 0) await this.loadAllModels();
           }
         },
 
@@ -283,6 +317,11 @@ export function dashboardAssets() {
               return;
             }
             const { data } = await resp.json();
+
+            this.allModels = data.sort((a, b) => a.id.localeCompare(b.id));
+            if (!this.chatModelId && this.allModels.length > 0) {
+              this.chatModelId = this.allModels[0].id;
+            }
 
             const claudeFiltered = data
               .filter((m) => m.id.startsWith('claude-') && m.supported_endpoints?.includes('/v1/messages'));
@@ -1008,6 +1047,134 @@ export function dashboardAssets() {
               alert('Import failed');
             } finally {
               this.importLoading = false;
+            }
+          },
+
+          // ---- Models tab ----
+
+          async loadAllModels() {
+            if (this.allModels.length === 0) await this.loadModels();
+          },
+
+          selectChatModel(id) {
+            this.chatModelId = id;
+            if (this._chatAbort) {
+              this._chatAbort.abort();
+              this._chatAbort = null;
+              this.chatSending = false;
+            }
+          },
+
+          clearChat() {
+            if (this._chatAbort) {
+              this._chatAbort.abort();
+              this._chatAbort = null;
+            }
+            this.chatMessages = [];
+            this.chatSending = false;
+            this.chatStreamText = '';
+          },
+
+          buildChatApiMessages() {
+            return this.chatMessages.map(m => {
+              if (m.role === 'assistant') return { role: 'assistant', content: m.text };
+              if (m.imageUrl) {
+                return {
+                  role: 'user',
+                  content: [
+                    { type: 'image_url', image_url: { url: m.imageUrl } },
+                    { type: 'text', text: m.text },
+                  ],
+                };
+              }
+              return { role: 'user', content: m.text };
+            });
+          },
+
+          scrollChat() {
+            this.$nextTick(() => {
+              const el = this.$refs.chatScroll;
+              if (el) el.scrollTop = el.scrollHeight;
+            });
+          },
+
+          async sendChatMessage() {
+            const text = this.chatInput.trim();
+            const img = this.chatImageUrl.trim();
+            if (!text && !img) return;
+            if (!this.chatModelId) return;
+
+            this.chatMessages.push({ role: 'user', text: text || '(image)', imageUrl: img || null });
+            this.chatInput = '';
+            this.chatImageUrl = '';
+            this.chatShowImage = false;
+            this.chatSending = true;
+            this.chatStreamText = '';
+
+            const controller = new AbortController();
+            this._chatAbort = controller;
+
+            try {
+              const resp = await fetch('/v1/chat/completions', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'x-api-key': this.authKey, 'x-models-playground': '1' },
+                body: JSON.stringify({
+                  model: this.chatModelId,
+                  messages: this.buildChatApiMessages(),
+                  stream: true,
+                }),
+                signal: controller.signal,
+              });
+
+              if (!resp.ok) {
+                const errText = await resp.text();
+                this.chatMessages.push({ role: 'assistant', text: '[Error ' + resp.status + '] ' + errText });
+                this.chatSending = false;
+                this._chatAbort = null;
+                this.scrollChat();
+                return;
+              }
+
+              const reader = resp.body.getReader();
+              const decoder = new TextDecoder();
+              let buf = '';
+              let assistantText = '';
+              const idx = this.chatMessages.length;
+              this.chatMessages.push({ role: 'assistant', text: '' });
+
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buf += decoder.decode(value, { stream: true });
+                const lines = buf.split('\\n');
+                buf = lines.pop();
+                for (const line of lines) {
+                  if (!line.startsWith('data: ')) continue;
+                  const payload = line.slice(6);
+                  if (payload === '[DONE]') continue;
+                  try {
+                    const chunk = JSON.parse(payload);
+                    const delta = chunk.choices?.[0]?.delta?.content;
+                    if (delta) {
+                      assistantText += delta;
+                      this.chatMessages[idx].text = assistantText;
+                    }
+                  } catch {}
+                }
+                this.scrollChat();
+              }
+
+              if (!assistantText) {
+                this.chatMessages[idx].text = '(empty response)';
+              }
+            } catch (e) {
+              if (e.name !== 'AbortError') {
+                this.chatMessages.push({ role: 'assistant', text: '[Error] ' + e.message });
+              }
+            } finally {
+              this.chatSending = false;
+              this._chatAbort = null;
+              this.scrollChat();
             }
           },
 

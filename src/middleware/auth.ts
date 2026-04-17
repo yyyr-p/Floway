@@ -8,6 +8,14 @@ const AUTH_VALIDATE_PATHS = new Set(["/auth/login"]);
 // ADMIN_KEY is only allowed on dashboard/management paths
 const DASHBOARD_PREFIXES = ["/api/", "/auth/"];
 
+// Paths the dashboard Models playground may call with ADMIN_KEY + X-Models-Playground header.
+const PLAYGROUND_PATHS = new Set([
+  "/v1/chat/completions",
+  "/v1/messages",
+  "/v1/responses",
+  "/v1/models",
+]);
+
 export const authMiddleware = async (c: Context, next: Next) => {
   const path = c.req.path;
 
@@ -23,6 +31,8 @@ export const authMiddleware = async (c: Context, next: Next) => {
     c.set("authKey", key);
     c.set("isAdmin", true);
     if (DASHBOARD_PREFIXES.some((p) => path.startsWith(p))) return next();
+    // Dashboard Models playground escape hatch
+    if (c.req.header("x-models-playground") === "1" && PLAYGROUND_PATHS.has(path)) return next();
     return c.json({ error: "This key is for dashboard only. Create an API key for API access." }, 403);
   }
 

@@ -144,7 +144,7 @@ export function Layout({
     }
 
     /* Input styling */
-    input[type="text"], input[type="password"] {
+    input[type="text"], input[type="password"], textarea {
       background: rgba(255, 255, 255, 0.04);
       border: 1px solid rgba(255, 255, 255, 0.1);
       border-radius: 10px;
@@ -156,7 +156,7 @@ export function Layout({
       outline: none;
       width: 100%;
     }
-    input:focus {
+    input:focus, textarea:focus {
       border-color: rgba(0, 229, 255, 0.5);
       box-shadow: 0 0 0 3px rgba(0, 229, 255, 0.1);
     }

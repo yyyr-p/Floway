@@ -115,6 +115,13 @@ export function renderDashboardHeader() {
           >
             Usage
           </button>
+          <button
+            @click="switchTab('models')"
+            class="px-4 py-2 rounded-md text-sm font-medium transition-all"
+            :class="tab === 'models' ? 'bg-surface-600 text-white' : 'text-gray-500 hover:text-gray-300'"
+          >
+            Models
+          </button>
           <template x-if="isAdmin">
             <button
               @click="switchTab('settings')"
@@ -1234,5 +1241,141 @@ export function renderSettingsTab() {
         </div>
       </div>
     </template>
+  `;
+}
+
+export function renderModelsTab() {
+  return html`
+    <div
+      x-show="tab === 'models'"
+      x-transition:enter="transition ease-out duration-200"
+      x-transition:enter-start="opacity-0"
+      x-transition:enter-end="opacity-100"
+    >
+      <div class="glass-card glow-border animate-in" style="height: calc(100vh - 140px); display: flex; overflow: hidden;">
+        <!-- Left: Model list -->
+        <div class="w-72 border-r border-white/[0.06] flex flex-col shrink-0">
+          <div class="p-3 border-b border-white/[0.06]">
+            <input type="text" x-model="modelsSearch" placeholder="Filter models\u2026"
+              style="padding:8px 12px; font-size:12px; border-radius:8px;" />
+          </div>
+          <div class="flex-1 overflow-y-auto">
+            <template x-for="m in filteredChatModels" :key="m.id">
+              <button
+                @click="selectChatModel(m.id)"
+                class="w-full text-left px-4 py-2.5 border-b border-white/[0.03] transition-colors text-xs font-mono truncate"
+                :class="chatModelId === m.id
+                  ? 'bg-accent-cyanGlow text-accent-cyan border-l-2 border-l-accent-cyan'
+                  : 'text-gray-400 hover:bg-white/[0.03] hover:text-gray-200 border-l-2 border-l-transparent'"
+                x-text="m.id"
+              ></button>
+            </template>
+            <div x-show="filteredChatModels.length === 0" class="p-4 text-center text-gray-600 text-xs">
+              No models found
+            </div>
+          </div>
+        </div>
+
+        <!-- Right: Info + Chat -->
+        <div class="flex-1 flex flex-col min-w-0">
+          <!-- Model info bar -->
+          <div x-show="chatModelInfo" class="shrink-0 p-4 border-b border-white/[0.06]">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <h3 class="text-sm font-semibold text-white font-mono" x-text="chatModelInfo?.id"></h3>
+                <p class="text-[11px] text-gray-500 mt-0.5">
+                  <span x-text="chatModelInfo?.capabilities?.family" class="text-accent-cyan"></span>
+                  <span class="mx-1 text-gray-700">/</span>
+                  <span x-text="chatModelInfo?.capabilities?.type"></span>
+                </p>
+              </div>
+              <button @click="clearChat()" class="btn-ghost text-[11px] flex items-center gap-1" :disabled="chatMessages.length === 0">
+                <svg class="w-3 h-3" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+                Clear
+              </button>
+            </div>
+            <div class="flex flex-wrap gap-1.5 mt-2">
+              <template x-if="chatModelInfo?.capabilities?.limits?.max_prompt_tokens">
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-600 text-gray-400">
+                  prompt: <span x-text="Math.round(chatModelInfo.capabilities.limits.max_prompt_tokens/1000)+'K'"></span>
+                </span>
+              </template>
+              <template x-if="chatModelInfo?.capabilities?.limits?.max_output_tokens">
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-600 text-gray-400">
+                  output: <span x-text="Math.round(chatModelInfo.capabilities.limits.max_output_tokens/1000)+'K'"></span>
+                </span>
+              </template>
+              <template x-for="cap in chatModelCaps" :key="cap">
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-accent-cyanGlow text-accent-cyanDim" x-text="cap"></span>
+              </template>
+              <template x-for="ep in (chatModelInfo?.supported_endpoints || [])" :key="ep">
+                <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-700 text-gray-500" x-text="ep"></span>
+              </template>
+            </div>
+          </div>
+
+          <div x-show="!chatModelInfo" class="flex-1 flex items-center justify-center text-gray-600 text-sm">
+            Select a model to begin
+          </div>
+
+          <!-- Chat messages -->
+          <div x-show="chatModelInfo" class="flex-1 overflow-y-auto p-4 space-y-3" x-ref="chatScroll">
+            <div x-show="chatMessages.length === 0 && !chatSending" class="flex items-center justify-center h-full text-gray-600 text-xs">
+              Send a message to start chatting
+            </div>
+            <template x-for="(msg, i) in chatMessages" :key="i">
+              <div class="flex" :class="msg.role === 'user' ? 'justify-end' : 'justify-start'">
+                <div class="max-w-[75%] rounded-2xl px-4 py-2.5 text-sm break-words"
+                  :class="msg.role === 'user'
+                    ? 'bg-accent-cyan/10 text-gray-200 rounded-br-md'
+                    : 'bg-surface-600 text-gray-300 rounded-bl-md'"
+                ><template x-if="msg.imageUrl"><img :src="msg.imageUrl" class="max-w-full max-h-48 rounded-lg mb-2" /></template><span x-text="msg.text" style="white-space: pre-wrap;"></span></div>
+              </div>
+            </template>
+            <div x-show="chatSending && (chatMessages.length === 0 || chatMessages[chatMessages.length-1].role === 'user')" class="flex justify-start">
+              <div class="bg-surface-600 rounded-2xl rounded-bl-md px-4 py-2.5">
+                <span class="inline-flex gap-1">
+                  <span class="w-1.5 h-1.5 bg-accent-cyan rounded-full animate-bounce" style="animation-delay:0s"></span>
+                  <span class="w-1.5 h-1.5 bg-accent-cyan rounded-full animate-bounce" style="animation-delay:0.15s"></span>
+                  <span class="w-1.5 h-1.5 bg-accent-cyan rounded-full animate-bounce" style="animation-delay:0.3s"></span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Input -->
+          <div x-show="chatModelInfo" class="shrink-0 p-3 border-t border-white/[0.06]">
+            <div class="flex items-center gap-2 mb-2" x-show="chatShowImage">
+              <input type="text" x-model="chatImageUrl" placeholder="Image URL (optional)"
+                style="padding:6px 10px; font-size:11px; border-radius:8px;" />
+              <button @click="chatShowImage = false; chatImageUrl = ''" class="text-gray-600 hover:text-gray-400 text-[11px]">cancel</button>
+            </div>
+            <div class="flex gap-2">
+              <button @click="chatShowImage = !chatShowImage"
+                class="shrink-0 p-2 rounded-lg bg-surface-600 text-gray-500 hover:text-accent-cyan transition-colors" title="Attach image URL">
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/></svg>
+              </button>
+              <textarea
+                x-model="chatInput"
+                @keydown.enter="if (!$event.shiftKey) { $event.preventDefault(); sendChatMessage(); }"
+                placeholder="Type a message\u2026 (Shift+Enter for newline)"
+                rows="2"
+                style="font-size:13px; padding:10px 14px; min-height:42px; max-height:200px;"
+                :disabled="chatSending"
+              ></textarea>
+              <button
+                @click="sendChatMessage()"
+                :disabled="chatSending || (!chatInput.trim() && !chatImageUrl.trim())"
+                class="btn-primary shrink-0 flex items-center gap-1"
+                style="padding:8px 16px; border-radius:10px; font-size:13px;"
+              >
+                <svg class="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+                <span x-text="chatSending ? '\u2026' : 'Send'"></span>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
   `;
 }

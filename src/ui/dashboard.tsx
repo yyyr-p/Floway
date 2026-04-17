@@ -3,6 +3,7 @@ import { dashboardAssets } from "./dashboard/client.tsx";
 import {
   renderDashboardHeader,
   renderKeysTab,
+  renderModelsTab,
   renderSettingsTab,
   renderUpstreamTab,
   renderUsageTab,
@@ -26,7 +27,7 @@ export function DashboardPage() {
         ${renderDashboardHeader()}
 
         <main class="max-w-6xl mx-auto px-6 pt-5 pb-8">
-          ${renderUpstreamTab()} ${renderKeysTab()} ${renderUsageTab()} ${renderSettingsTab()}
+          ${renderUpstreamTab()} ${renderKeysTab()} ${renderUsageTab()} ${renderModelsTab()} ${renderSettingsTab()}
         </main>
       </div>
 
