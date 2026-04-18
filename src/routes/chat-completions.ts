@@ -9,6 +9,7 @@ import {
 } from "../lib/copilot-probes.ts";
 import { getGithubCredentials } from "../lib/github.ts";
 import { findModel } from "../lib/models-cache.ts";
+import { normalizeModelName } from "../lib/model-name.ts";
 import { parseSSEStream } from "../lib/sse.ts";
 import {
   isSSEResponse,
@@ -145,6 +146,7 @@ function fixStream(
 export const chatCompletions = async (c: Context) => {
   try {
     const body = await c.req.json<ChatCompletionsPayload>();
+    if (typeof body.model === "string") body.model = normalizeModelName(body.model);
     c.set("model", body.model ?? "unknown");
     const { token: githubToken, accountType } = await getGithubCredentials();
 

@@ -61,6 +61,14 @@ export function dashboardAssets() {
 
     const CLAUDE_TIER = { opus: 0, sonnet: 1, haiku: 2 };
 
+    // Display form for Claude model IDs: turn "claude-opus-4.7" into "claude-opus-4-7"
+    // to match Anthropic's canonical dashed versioning. The backend normalizes
+    // it back on entry.
+    function substituteModelName(id) {
+      if (!id || !id.startsWith('claude-')) return id;
+      return id.replace(/(\\d)\\.(\\d)/g, '$1-$2');
+    }
+
     function claudeTier(id) {
       for (const t in CLAUDE_TIER) {
         if (id.includes(t)) return CLAUDE_TIER[t];
@@ -316,7 +324,8 @@ export function dashboardAssets() {
               console.error('loadModels: HTTP', resp.status);
               return;
             }
-            const { data } = await resp.json();
+            const { data: rawData } = await resp.json();
+            const data = rawData.map((m) => ({ ...m, id: substituteModelName(m.id) }));
 
             this.allModels = data.sort((a, b) => a.id.localeCompare(b.id));
             if (!this.chatModelId && this.allModels.length > 0) {

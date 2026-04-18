@@ -2,6 +2,7 @@ import type { Context } from "hono";
 import { copilotFetch, type CopilotFetchOptions } from "../lib/copilot.ts";
 import { getGithubCredentials } from "../lib/github.ts";
 import { modelSupportsEndpoint } from "../lib/models-cache.ts";
+import { normalizeModelName } from "../lib/model-name.ts";
 import type { ResponsesPayload } from "../lib/responses-types.ts";
 import type { AnthropicResponse } from "../lib/anthropic-types.ts";
 import {
@@ -118,6 +119,7 @@ function fixStreamIds(
 export const responses = async (c: Context) => {
   try {
     const payload = await c.req.json<ResponsesPayload>();
+    if (typeof payload.model === "string") payload.model = normalizeModelName(payload.model);
     c.set("model", payload.model ?? "unknown");
     const { token: githubToken, accountType } = await getGithubCredentials();
     const model = payload.model;

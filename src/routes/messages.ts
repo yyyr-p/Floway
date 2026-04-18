@@ -6,6 +6,7 @@ import {
 } from "../lib/copilot-probes.ts";
 import { getGithubCredentials } from "../lib/github.ts";
 import { modelSupportsEndpoint } from "../lib/models-cache.ts";
+import { normalizeModelName } from "../lib/model-name.ts";
 import { getAnthropicRequestedReasoningEffort } from "../lib/reasoning.ts";
 import type {
   AnthropicMessagesPayload,
@@ -152,6 +153,7 @@ function contextWindowErrorResponse(c: Context) {
 export const messages = async (c: Context) => {
   try {
     const payload = await c.req.json<AnthropicMessagesPayload>();
+    if (typeof payload.model === "string") payload.model = normalizeModelName(payload.model);
     c.set("model", payload.model ?? "unknown");
 
     const { token: githubToken, accountType } = await getGithubCredentials();
