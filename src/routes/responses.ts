@@ -22,9 +22,9 @@ import {
 } from "../lib/sse-reassemble.ts";
 import {
   apiErrorResponse,
-  copilotApiErrorResponse,
   getErrorMessage,
   noUpstreamBodyApiErrorResponse,
+  proxyJsonResponse,
 } from "./proxy-utils.ts";
 
 function hasVision(payload: ResponsesPayload): boolean {
@@ -177,12 +177,7 @@ async function handleDirectResponses(
   );
 
   if (!resp.ok) {
-    const text = await resp.text();
-    return copilotApiErrorResponse(
-      c,
-      resp.status as 400 | 401 | 403 | 404 | 429 | 500 | 502 | 503,
-      text,
-    );
+    return proxyJsonResponse(resp);
   }
 
   if (!wantsStream) {
@@ -229,12 +224,7 @@ async function handleViaMessages(
   );
 
   if (!resp.ok) {
-    const text = await resp.text();
-    return copilotApiErrorResponse(
-      c,
-      resp.status as 400 | 401 | 403 | 404 | 429 | 500 | 502 | 503,
-      text,
-    );
+    return proxyJsonResponse(resp);
   }
 
   if (!wantsStream) {
