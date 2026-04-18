@@ -325,7 +325,10 @@ export function dashboardAssets() {
               return;
             }
             const { data: rawData } = await resp.json();
-            const data = rawData.map((m) => ({ ...m, id: substituteModelName(m.id) }));
+            const seen = new Set();
+            const data = rawData
+              .map((m) => ({ ...m, id: substituteModelName(m.id) }))
+              .filter((m) => !seen.has(m.id) && seen.add(m.id));
 
             this.allModels = data.sort((a, b) => a.id.localeCompare(b.id));
             if (!this.chatModelId && this.allModels.length > 0) {
