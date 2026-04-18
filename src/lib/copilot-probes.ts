@@ -97,7 +97,7 @@ async function assertChatCompletionsBaseline(
   );
 }
 
-export async function probeResponsesReasoningEfforts(
+async function probeResponsesReasoningEfforts(
   model: string,
   githubToken: string,
   accountType: string,

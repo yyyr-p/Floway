@@ -13,10 +13,6 @@ export function setAnthropicTokenizerForTest(
   anthropicTokenizer = tokenizer;
 }
 
-export function setGptTokenizerForTest(tokenizer: TokenCountFn | null): void {
-  gptTokenizer = tokenizer;
-}
-
 export function resetTokenizersForTest(): void {
   anthropicTokenizer = null;
   gptTokenizer = null;

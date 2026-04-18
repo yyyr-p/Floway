@@ -4,7 +4,7 @@
 import { copilotFetch } from "./copilot.ts";
 import { getRepo } from "../repo/mod.ts";
 
-export interface ModelInfo {
+interface ModelInfo {
   id: string;
   name: string;
   version: string;
@@ -27,7 +27,7 @@ export interface ModelInfo {
   supported_endpoints?: string[];
 }
 
-export interface ModelsResponse {
+interface ModelsResponse {
   object: string;
   data: ModelInfo[];
 }

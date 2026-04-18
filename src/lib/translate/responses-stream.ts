@@ -4,7 +4,7 @@ import type { ResponseOutputReasoning, ResponsesResult, ResponseStreamEvent } fr
 import { translateResponsesToAnthropic } from "./responses.ts";
 import { checkWhitespaceOverflow } from "./utils.ts";
 
-export interface ResponsesStreamState {
+interface ResponsesStreamState {
   messageStartSent: boolean;
   messageCompleted: boolean;
   nextBlockIndex: number;

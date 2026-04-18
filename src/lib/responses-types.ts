@@ -57,7 +57,7 @@ export interface ResponseInputReasoning {
   encrypted_content: string;
 }
 
-export interface ResponseFunctionToolCallItem {
+interface ResponseFunctionToolCallItem {
   type: "function_call";
   call_id: string;
   name: string;
@@ -65,7 +65,7 @@ export interface ResponseFunctionToolCallItem {
   status: "completed" | "in_progress" | "incomplete";
 }
 
-export interface ResponseFunctionCallOutputItem {
+interface ResponseFunctionCallOutputItem {
   type: "function_call_output";
   call_id: string;
   output: string;
@@ -121,12 +121,12 @@ export type ResponseOutputContentBlock =
   | ResponseOutputText
   | ResponseOutputRefusal;
 
-export interface ResponseOutputText {
+interface ResponseOutputText {
   type: "output_text";
   text: string;
 }
 
-export interface ResponseOutputRefusal {
+interface ResponseOutputRefusal {
   type: "refusal";
   refusal: string;
 }

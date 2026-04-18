@@ -178,11 +178,11 @@ export interface AnthropicMessageDeltaEvent {
   };
 }
 
-export interface AnthropicMessageStopEvent {
+interface AnthropicMessageStopEvent {
   type: "message_stop";
 }
 
-export interface AnthropicPingEvent {
+interface AnthropicPingEvent {
   type: "ping";
 }
 

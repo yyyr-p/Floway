@@ -22,7 +22,7 @@ type OutputBlockInfo =
   | { type: "text"; outputIndex: number; itemId: string; contentIndex: number; blockText: string }
   | { type: "tool_use"; outputIndex: number; itemId: string; toolCallId: string; toolName: string; toolArguments: string };
 
-export interface AnthropicToResponsesStreamState {
+interface AnthropicToResponsesStreamState {
   responseId: string;
   model: string;
   responseCreated: boolean;

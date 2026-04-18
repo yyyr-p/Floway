@@ -5,7 +5,7 @@ interface ProbeCacheEntry<T> {
   value: T;
 }
 
-export interface ProbeRequest<T> {
+interface ProbeRequest<T> {
   key: string;
   version: string;
   ttlMs: number;

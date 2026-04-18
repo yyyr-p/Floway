@@ -25,7 +25,7 @@ const ALLOWED_IMAGE_TYPES = new Set([
   "image/webp",
 ]);
 
-export interface RemoteImageData {
+interface RemoteImageData {
   mediaType: string | null;
   data: Uint8Array;
 }

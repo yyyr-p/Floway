@@ -14,14 +14,14 @@ interface SetupOptions {
 type FetchInput = Parameters<typeof fetch>[0];
 type FetchInit = Parameters<typeof fetch>[1];
 
-export interface AppTestContext {
+interface AppTestContext {
   repo: InMemoryRepo;
   adminKey: string;
   apiKey: ApiKey;
   githubAccount: GitHubAccount;
 }
 
-export interface SSEChunk {
+interface SSEChunk {
   event?: string;
   data: string | Record<string, unknown>;
 }

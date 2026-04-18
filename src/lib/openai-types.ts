@@ -52,12 +52,12 @@ export interface ToolCall {
 
 export type ContentPart = TextPart | ImagePart;
 
-export interface TextPart {
+interface TextPart {
   type: "text";
   text: string;
 }
 
-export interface ImagePart {
+interface ImagePart {
   type: "image_url";
   image_url: { url: string; detail?: "low" | "high" | "auto" };
 }
@@ -105,7 +105,7 @@ export interface ChoiceNonStreaming {
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter";
 }
 
-export interface ChoiceStreaming {
+interface ChoiceStreaming {
   index: number;
   delta: Delta;
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter" | null;

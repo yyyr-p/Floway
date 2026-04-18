@@ -298,7 +298,7 @@ function mapFinishReason(
 
 // ── Streaming: Responses stream → Chat Completions chunks ──
 
-export interface ResponsesToChatStreamState {
+interface ResponsesToChatStreamState {
   messageId: string;
   model: string;
   created: number;

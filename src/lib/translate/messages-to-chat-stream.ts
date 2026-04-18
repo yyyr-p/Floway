@@ -6,7 +6,7 @@ import type {
 } from "../anthropic-types.ts";
 import type { ChatCompletionChunk, Delta } from "../openai-types.ts";
 
-export interface ChatStreamState {
+interface ChatStreamState {
   messageId: string;
   model: string;
   created: number;
