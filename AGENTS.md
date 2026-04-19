@@ -515,6 +515,20 @@ separate choices instead of merging them into one. For Claude models
 strings, collect `tool_calls` into one array, take the last `finish_reason`. For
 streaming, all choice indices are remapped to 0.
 
+### 12. Expired connection-bound item IDs in Responses API
+
+**File**: `src/routes/responses.ts`
+
+Copilot encodes session/connection info into Responses API item IDs as base64
+tokens (often 400+ characters). These IDs are bound to a specific upstream
+connection and expire over time. When a client sends back expired IDs in
+`input[].id`, the API rejects with "input item ID does not belong to this
+connection". We detect this error, identify all base64-decodable IDs in the
+input, mark them as "spotted invalid" in the cache (1h TTL via `CacheRepo`),
+replace them with short client-generated IDs (`rs_`/`msg_`/`fc_` + random),
+and retry. Subsequent requests proactively replace any previously spotted IDs
+before sending.
+
 ## Reference Projects
 
 - [caozhiyuan/copilot-api](https://github.com/caozhiyuan/copilot-api) — A
