@@ -64,18 +64,28 @@ async function replaceSpottedIds(payload: ResponsesPayload): Promise<boolean> {
 
   const cache = getRepo().cache;
   // deno-lint-ignore no-explicit-any
-  const results = await Promise.all(itemsWithId.map((it: any) =>
-    cache.get(`${SPOTTED_ID_PREFIX}${it.id}`)
+  const originalIds = itemsWithId.map((it: any) => it.id as string);
+  const results = await Promise.all(originalIds.map((id) =>
+    cache.get(`${SPOTTED_ID_PREFIX}${id}`)
   ));
 
   let replaced = false;
+  const toRefresh: string[] = [];
   for (let i = 0; i < itemsWithId.length; i++) {
     if (results[i] !== null) {
       // deno-lint-ignore no-explicit-any
       const it = itemsWithId[i] as any;
       it.id = generateReplacementId(it.type ?? "message");
       replaced = true;
+      toRefresh.push(originalIds[i]);
     }
+  }
+  // Refresh TTL on hit: as long as the client keeps referencing a spotted ID
+  // in its conversation history, keep remembering it. Otherwise the entry
+  // expires after 1h and we pay another upstream 400 + retry cycle on the
+  // very next request that still references it.
+  if (toRefresh.length > 0) {
+    await markIdsAsInvalid(toRefresh);
   }
   return replaced;
 }

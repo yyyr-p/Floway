@@ -553,6 +553,11 @@ D1 schema migrations are in `migrations/`. Configuration is in `wrangler.jsonc`.
 - **Deploy before commit**: All code changes must be deployed first
   (`wrangler deploy`), confirmed working by the user, and only then
   committed. Never commit undeployed code.
+- **Deploy proactively after any change**: After modifying code, run
+  `wrangler deploy` immediately — do not ask the user first, and do it
+  before prompting the user for any next action (testing, committing,
+  reviewing, etc.). The user wants to validate against a live deployment,
+  so undeployed changes are useless to them.
 - **Commit convention**: Follow
   [Conventional Commits](https://www.conventionalcommits.org/) (e.g. `feat:`,
   `fix:`, `refactor:`, `chore:`). Keep messages concise.
