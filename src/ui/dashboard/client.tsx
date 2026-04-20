@@ -175,9 +175,15 @@ export function dashboardAssets() {
       },
 
       get filteredChatModels() {
-        if (!this.modelsSearch.trim()) return this.allModels;
-        const q = this.modelsSearch.toLowerCase();
-        return this.allModels.filter(m => m.id.toLowerCase().includes(q));
+        let models = this.allModels.filter(m => m.capabilities?.type !== 'embeddings');
+        if (this.modelsSearch.trim()) {
+          const q = this.modelsSearch.toLowerCase();
+          models = models.filter(m => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q));
+        }
+        const enabled = models.filter(m => m.model_picker_enabled);
+        const legacy = models.filter(m => !m.model_picker_enabled);
+        if (enabled.length && legacy.length) return [...enabled, { _divider: true }, ...legacy];
+        return [...enabled, ...legacy];
       },
 
       get activeKey() {
@@ -332,9 +338,10 @@ export function dashboardAssets() {
               .map((m) => ({ ...m, id: substituteModelName(m.id) }))
               .filter((m) => !seen.has(m.id) && seen.add(m.id));
 
-            this.allModels = data.sort((a, b) => a.id.localeCompare(b.id));
-            if (!this.chatModelId && this.allModels.length > 0) {
-              this.chatModelId = this.allModels[0].id;
+            this.allModels = data;
+            if (!this.chatModelId) {
+              const first = this.filteredChatModels.find(m => !m._divider);
+              if (first) this.chatModelId = first.id;
             }
 
             const claudeFiltered = data
