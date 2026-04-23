@@ -1,12 +1,12 @@
 import { Hono } from "hono";
 import { logger } from "hono/logger";
 import { cors } from "hono/cors";
-import { chatCompletions } from "./routes/chat-completions.ts";
+import { serveChatCompletions } from "./data-plane/sources/chat-completions/serve.ts";
 import { models } from "./routes/models.ts";
-import { messages } from "./routes/messages.ts";
+import { serveMessages } from "./data-plane/sources/messages/serve.ts";
 import { embeddings } from "./routes/embeddings.ts";
 import { copilotQuota } from "./routes/copilot-quota.ts";
-import { responses } from "./routes/responses.ts";
+import { serveResponses } from "./data-plane/sources/responses/serve.ts";
 import { countTokens } from "./routes/count-tokens.ts";
 import {
   authLogin,
@@ -69,14 +69,16 @@ adminApi.get("/export", exportData);
 adminApi.post("/import", importData);
 app.route("/api", adminApi);
 
-app.post("/v1/chat/completions", chatCompletions);
-app.post("/chat/completions", chatCompletions);
+app.post("/v1/chat/completions", serveChatCompletions);
+app.post("/chat/completions", serveChatCompletions);
 app.get("/v1/models", models);
 app.get("/models", models);
 app.post("/v1/embeddings", embeddings);
 app.post("/embeddings", embeddings);
-app.post("/v1/responses", responses);
-app.post("/responses", responses);
+app.post("/v1/responses", serveResponses);
+app.post("/responses", serveResponses);
 
-app.post("/v1/messages", messages);
+app.post("/v1/messages", serveMessages);
+app.post("/messages", serveMessages);
 app.post("/v1/messages/count_tokens", countTokens);
+app.post("/messages/count_tokens", countTokens);

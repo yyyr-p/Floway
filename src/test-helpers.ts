@@ -2,7 +2,7 @@ import { app } from "./app.ts";
 import { clearCopilotTokenCache } from "./lib/copilot.ts";
 import { initEnv } from "./lib/env.ts";
 import { InMemoryRepo } from "./repo/memory.ts";
-import { initRepo } from "./repo/mod.ts";
+import { initRepo } from "./repo/index.ts";
 import type { ApiKey, GitHubAccount } from "./repo/types.ts";
 
 interface SetupOptions {

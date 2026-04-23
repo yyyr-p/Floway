@@ -1,5 +1,5 @@
 import { initEnv } from "./src/lib/env.ts";
-import { initRepo } from "./src/repo/mod.ts";
+import { initRepo } from "./src/repo/index.ts";
 import { DenoKvRepo } from "./src/repo/deno.ts";
 import { app } from "./src/app.ts";
 

@@ -8,6 +8,27 @@ import {
   withMockedFetch,
 } from "../test-helpers.ts";
 
+Deno.test("/v1/chat/completions malformed JSON returns structured internal debug error", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const response = await requestApp("/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey.key,
+    },
+    body: "{",
+  });
+
+  assertEquals(response.status, 502);
+
+  const body = await response.json();
+  assertEquals(body.error.type, "internal_error");
+  assertEquals(body.error.name, "SyntaxError");
+  assertEquals(body.error.source_api, "chat-completions");
+  assertExists(body.error.stack);
+});
+
 Deno.test("/v1/chat/completions with thinking_budget prefers responses on dual-endpoint models", async () => {
   const { apiKey } = await setupAppTest();
 

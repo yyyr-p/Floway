@@ -1,4 +1,4 @@
-import { getRepo } from "../repo/mod.ts";
+import { getRepo } from "../repo/index.ts";
 
 function currentHour(): string {
   return new Date().toISOString().slice(0, 13); // "2026-03-09T15"

@@ -1,6 +1,6 @@
 import type { ExecutionContext } from "hono";
 import { initEnv } from "./src/lib/env.ts";
-import { initRepo } from "./src/repo/mod.ts";
+import { initRepo } from "./src/repo/index.ts";
 import { type D1Database, D1Repo } from "./src/repo/d1.ts";
 import { app } from "./src/app.ts";
 

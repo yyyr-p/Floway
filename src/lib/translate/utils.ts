@@ -1,3 +1,14 @@
+/**
+ * Degenerate Copilot tool-call streams have been observed to emit nothing but
+ * line breaks / tabs until `max_tokens`, which keeps the client hanging while
+ * never producing valid JSON arguments.
+ *
+ * The same guard exists in `caozhiyuan/copilot-api`:
+ * - https://github.com/caozhiyuan/copilot-api/commit/4c0d775e1dc6b8648c7ad5f21fb783fc3246facf
+ * - https://github.com/caozhiyuan/copilot-api/commit/3cdc32c0811469da9eebec5ca3892caf068df542
+ * We keep the shared threshold here because both OpenAI->Anthropic and
+ * Responses->Anthropic stream translators need the same cutoff.
+ */
 const MAX_CONSECUTIVE_WHITESPACE = 20;
 
 export function checkWhitespaceOverflow(text: string, currentCount: number): { count: number; exceeded: boolean } {
@@ -21,24 +32,5 @@ export function safeJsonParse(s: string): Record<string, unknown> {
       : { raw_arguments: s };
   } catch {
     return { raw_arguments: s };
-  }
-}
-
-import type { AnthropicMessagesPayload, AnthropicThinkingBlock } from "../anthropic-types.ts";
-
-/**
- * Filter invalid thinking blocks for native Messages API.
- * Invalid: empty thinking, "Thinking..." placeholder.
- */
-export function filterThinkingBlocks(payload: AnthropicMessagesPayload): void {
-  for (const msg of payload.messages) {
-    if (msg.role === "assistant" && Array.isArray(msg.content)) {
-      msg.content = msg.content.filter((block) => {
-        if (block.type !== "thinking") return true;
-        const tb = block as AnthropicThinkingBlock;
-        if (!tb.thinking || tb.thinking === "Thinking...") return false;
-        return true;
-      });
-    }
   }
 }

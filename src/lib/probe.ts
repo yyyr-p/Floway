@@ -1,4 +1,4 @@
-import { getRepo } from "../repo/mod.ts";
+import { getRepo } from "../repo/index.ts";
 
 interface ProbeCacheEntry<T> {
   probedAt: number;

@@ -175,17 +175,26 @@ class MemoryUsageRepo implements UsageRepo {
 }
 
 class MemoryCacheRepo implements CacheRepo {
-  private store = new Map<string, string>();
+  private store = new Map<string, { value: string; expiresAt?: number }>();
 
   get(key: string): Promise<string | null> {
-    return Promise.resolve(this.store.get(key) ?? null);
+    const entry = this.store.get(key);
+    if (!entry) return Promise.resolve(null);
+
+    if (entry.expiresAt && entry.expiresAt <= Date.now()) {
+      this.store.delete(key);
+      return Promise.resolve(null);
+    }
+
+    return Promise.resolve(entry.value);
   }
 
   set(key: string, value: string, ttlMs?: number): Promise<void> {
-    this.store.set(key, value);
-    if (ttlMs) {
-      setTimeout(() => this.store.delete(key), ttlMs);
-    }
+    this.store.set(
+      key,
+      ttlMs ? { value, expiresAt: Date.now() + ttlMs } : { value },
+    );
+
     return Promise.resolve();
   }
 

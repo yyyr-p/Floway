@@ -150,6 +150,9 @@ function handleToolCallsDelta(
         info.consecutiveWhitespace = ws.count;
 
         if (ws.exceeded) {
+          // Abort degenerate whitespace-only argument streams here instead of
+          // letting the client hang until `max_tokens`. Background + refs live
+          // on `checkWhitespaceOverflow()` in `src/lib/translate/utils.ts`.
           console.warn("Infinite whitespace detected in tool call arguments, aborting stream");
           state.aborted = true;
           closeCurrentBlock(state, events);

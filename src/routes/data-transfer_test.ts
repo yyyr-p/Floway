@@ -1,6 +1,6 @@
 import { assertEquals } from "@std/assert";
 import { Hono } from "hono";
-import { initRepo } from "../repo/mod.ts";
+import { initRepo } from "../repo/index.ts";
 import { InMemoryRepo } from "../repo/memory.ts";
 import { exportData, importData } from "./data-transfer.ts";
 import type { ApiKey, GitHubAccount, UsageRecord } from "../repo/types.ts";

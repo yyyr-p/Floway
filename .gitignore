@@ -1,3 +1,5 @@
 .claude/
 .wrangler/
 node_modules/
+docs/superpowers
+.superpowers

@@ -2,7 +2,7 @@
 // Used to determine which API path to use (chat/completions, messages, responses)
 
 import { copilotFetch } from "./copilot.ts";
-import { getRepo } from "../repo/mod.ts";
+import { getRepo } from "../repo/index.ts";
 
 interface ModelInfo {
   id: string;

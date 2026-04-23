@@ -1,4 +1,4 @@
-import { getRepo } from "../repo/mod.ts";
+import { getRepo } from "../repo/index.ts";
 
 const COPILOT_BASE_URLS: Record<string, string> = {
   individual: "https://api.githubcopilot.com",

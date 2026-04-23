@@ -1,6 +1,7 @@
 import {
   assertEquals,
   assertExists,
+  assertFalse,
   assertStringIncludes,
 } from "@std/assert";
 import {
@@ -90,6 +91,212 @@ Deno.test("/v1/responses direct mode converts apply_patch and fixes mismatched s
   assertEquals(tool.type, "function");
   assertEquals(tool.name, "apply_patch");
   assertEquals((tool.parameters as Record<string, unknown>).type, "object");
+});
+
+Deno.test("/v1/responses direct mode synthesizes full Responses SSE when upstream falls back to JSON", async () => {
+  const { apiKey } = await setupAppTest();
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({ token: "copilot-access-token", expires_at: 4102444800, refresh_in: 3600 });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "gpt-direct-responses-json", supported_endpoints: ["/responses"] },
+      ]));
+    }
+    if (url.pathname === "/responses") {
+      return jsonResponse({
+        id: "resp_json",
+        object: "response",
+        model: "gpt-direct-responses-json",
+        status: "completed",
+        output_text: "Hello",
+        output: [{
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: "Hello" }],
+        }],
+        usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-direct-responses-json",
+        input: [{ type: "message", role: "user", content: "Hi" }],
+        instructions: null,
+        temperature: 1,
+        top_p: null,
+        max_output_tokens: 32,
+        tools: null,
+        tool_choice: "auto",
+        metadata: null,
+        stream: true,
+        store: false,
+        parallel_tool_calls: true,
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    assertEquals(response.headers.get("content-type"), "text/event-stream");
+
+    const events = parseSSEText(await response.text());
+
+    assertEquals(events.map((event) => event.event), [
+      "response.created",
+      "response.in_progress",
+      "response.output_item.added",
+      "response.content_part.added",
+      "response.output_text.delta",
+      "response.output_text.done",
+      "response.content_part.done",
+      "response.output_item.done",
+      "response.completed",
+    ]);
+
+    const created = JSON.parse(events[0].data) as Record<string, unknown>;
+    const inProgress = JSON.parse(events[1].data) as Record<string, unknown>;
+    const delta = JSON.parse(events[4].data) as Record<string, unknown>;
+    const completed = JSON.parse(events[8].data) as Record<string, unknown>;
+
+    assertEquals(created.sequence_number, 0);
+    assertEquals(
+      (created.response as Record<string, unknown>).status,
+      "in_progress",
+    );
+    assertEquals((created.response as Record<string, unknown>).output, []);
+    assertEquals(
+      (created.response as Record<string, unknown>).output_text,
+      "",
+    );
+    assertFalse("error" in (created.response as Record<string, unknown>));
+    assertFalse(
+      "incomplete_details" in (created.response as Record<string, unknown>),
+    );
+    assertEquals((inProgress.response as Record<string, unknown>).output, []);
+    assertEquals(
+      (inProgress.response as Record<string, unknown>).output_text,
+      "",
+    );
+    assertEquals(delta.sequence_number, 4);
+    assertEquals(delta.delta, "Hello");
+    assertEquals((completed.response as Record<string, unknown>).status, "completed");
+    assertEquals(
+      (completed.response as Record<string, unknown>).output_text,
+      "Hello",
+    );
+  });
+});
+
+Deno.test("/v1/responses direct mode retries connection-bound input item IDs once with a rewritten ID", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const requests: Record<string, unknown>[] = [];
+  const originalId = btoa("0123456789abcdefghij");
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({ token: "copilot-access-token", expires_at: 4102444800, refresh_in: 3600 });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "gpt-direct-responses-retry", supported_endpoints: ["/responses"] },
+      ]));
+    }
+    if (url.pathname === "/responses") {
+      requests.push(JSON.parse(await request.text()));
+
+      return requests.length === 1
+        ? jsonResponse({ error: { message: "input item ID does not belong to this connection" } }, 400)
+        : jsonResponse({
+          id: "resp_retry",
+          object: "response",
+          model: "gpt-direct-responses-retry",
+          status: "completed",
+          output_text: "ok",
+          output: [{
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "ok" }],
+          }],
+          usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+        });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-direct-responses-retry",
+        input: [{ type: "message", id: originalId, role: "user", content: "Hi" }],
+        instructions: null,
+        temperature: 1,
+        top_p: null,
+        max_output_tokens: 32,
+        tools: null,
+        tool_choice: "auto",
+        metadata: null,
+        stream: false,
+        store: false,
+        parallel_tool_calls: true,
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    assertEquals((await response.json()).id, "resp_retry");
+  });
+
+  assertEquals(requests.length, 2);
+
+  const firstInput = requests[0].input as Array<Record<string, unknown>>;
+  const secondInput = requests[1].input as Array<Record<string, unknown>>;
+
+  assertEquals(firstInput[0].id, originalId);
+  assertStringIncludes(secondInput[0].id as string, "msg_");
+});
+
+Deno.test("/v1/responses malformed JSON returns structured internal debug error", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const response = await requestApp("/v1/responses", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey.key,
+    },
+    body: "{",
+  });
+
+  assertEquals(response.status, 502);
+
+  const body = await response.json();
+  assertEquals(body.error.type, "internal_error");
+  assertEquals(body.error.name, "SyntaxError");
+  assertEquals(body.error.source_api, "responses");
+  assertExists(body.error.stack);
 });
 
 Deno.test("/v1/responses via messages translates Anthropic SSE into Responses SSE", async () => {

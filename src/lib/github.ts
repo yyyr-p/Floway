@@ -1,4 +1,4 @@
-import { getRepo } from "../repo/mod.ts";
+import { getRepo } from "../repo/index.ts";
 
 export interface GitHubUser {
   login: string;

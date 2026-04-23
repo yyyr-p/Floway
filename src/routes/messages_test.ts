@@ -10,6 +10,183 @@ import {
   withMockedFetch,
 } from "../test-helpers.ts";
 
+Deno.test("/v1/messages malformed JSON returns structured internal debug error", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const response = await requestApp("/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey.key,
+    },
+    body: "{",
+  });
+
+  assertEquals(response.status, 502);
+
+  const body = await response.json();
+  assertEquals(body.type, "error");
+  assertEquals(body.error.type, "internal_error");
+  assertEquals(body.error.name, "SyntaxError");
+  assertEquals(body.error.source_api, "messages");
+  assertExists(body.error.stack);
+});
+
+Deno.test("/v1/messages rewrites upstream context-window errors to Anthropic compact form", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const upstreamError = {
+    error: {
+      message: "Request body is too large for model context window",
+      type: "invalid_request_error",
+    },
+  };
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      return jsonResponse(upstreamError, 400);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 400);
+    const body = await response.json();
+    assertEquals(body, {
+      type: "error",
+      error: {
+        type: "invalid_request_error",
+        message:
+          "prompt is too long: your prompt is too long. Please reduce the number of messages or use a model with a larger context window.",
+      },
+    });
+  });
+});
+
+Deno.test("/messages uses the same data-plane handler as /v1/messages", async () => {
+  const { apiKey } = await setupAppTest();
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      return sseResponse([
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_alias",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-native",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 10, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        stream: false,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.id, "msg_alias");
+    assertEquals(body.content[0].text, "ok");
+  });
+});
+
 Deno.test("/v1/messages uses native endpoint and applies native request workarounds", async () => {
   const { apiKey, githubAccount } = await setupAppTest();
 
@@ -696,6 +873,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
   const { apiKey } = await setupAppTest();
 
   let upstreamBody: Record<string, unknown> | undefined;
+  let responsesRequests = 0;
 
   const responsesResult: ResponsesResult = {
     id: "resp_123",
@@ -743,6 +921,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
       ]));
     }
     if (url.pathname === "/responses") {
+      responsesRequests += 1;
       upstreamBody = JSON.parse(await request.text());
       return sseResponse([
         {
@@ -790,6 +969,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
 
   assertExists(upstreamBody);
   assertEquals(upstreamBody!.stream, true);
+  assertEquals(responsesRequests, 1);
   assertEquals(upstreamBody!.instructions, "system instructions");
   assertEquals(upstreamBody!.temperature, 1);
   assertEquals(upstreamBody!.max_output_tokens, 12800);

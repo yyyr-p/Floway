@@ -1,7 +1,7 @@
 // Data transfer routes — export/import all database data as JSON
 
 import type { Context } from "hono";
-import { getRepo } from "../repo/mod.ts";
+import { getRepo } from "../repo/index.ts";
 import type { ApiKey, GitHubAccount, UsageRecord } from "../repo/types.ts";
 
 interface ExportPayload {
