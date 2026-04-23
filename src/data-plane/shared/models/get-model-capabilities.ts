@@ -4,6 +4,9 @@ interface ModelCapabilitiesModel {
   id: string;
   supported_endpoints?: string[];
   capabilities?: {
+    limits?: {
+      max_output_tokens?: number;
+    };
     supports?: {
       adaptive_thinking?: boolean;
     };
@@ -12,6 +15,7 @@ interface ModelCapabilitiesModel {
 
 export interface ModelCapabilities {
   model?: ModelCapabilitiesModel;
+  maxOutputTokens?: number;
   supportsMessages: boolean;
   supportsResponses: boolean;
   supportsChatCompletions: boolean;
@@ -28,6 +32,7 @@ export const getModelCapabilities = async (
 
   return {
     model,
+    maxOutputTokens: model?.capabilities?.limits?.max_output_tokens,
     supportsMessages: supportedEndpoints.includes("/v1/messages"),
     supportsResponses: supportedEndpoints.includes("/responses"),
     supportsChatCompletions: supportedEndpoints.includes("/chat/completions"),

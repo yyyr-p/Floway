@@ -4,6 +4,7 @@ import type {
   AnthropicImageBlock,
   AnthropicMessage,
   AnthropicMessagesPayload,
+  AnthropicMessagesTargetPayload,
   AnthropicResponse,
   AnthropicTextBlock,
   AnthropicTool,
@@ -57,7 +58,9 @@ export function translateAnthropicToResponses(
     instructions: translateSystemPrompt(payload.system),
     temperature: 1, // reasoning models use temperature 1
     top_p: payload.top_p ?? null,
-    max_output_tokens: Math.max(payload.max_tokens, 12800),
+    // Keep pairwise translation literal. Copilot-specific minimum-token fixes,
+    // if needed, belong to the chosen `/responses` target.
+    max_output_tokens: payload.max_tokens,
     tools: translateTools(payload.tools),
     tool_choice: translateToolChoice(payload.tool_choice),
     metadata: payload.metadata ? { ...payload.metadata } : null,
@@ -338,7 +341,7 @@ function mapResponsesStopReason(
 
 export function translateResponsesToAnthropicPayload(
   payload: ResponsesPayload,
-): AnthropicMessagesPayload {
+): AnthropicMessagesTargetPayload {
   const { messages, systemParts } = responsesInputToAnthropicMessages(
     payload.input,
   );
@@ -352,7 +355,12 @@ export function translateResponsesToAnthropicPayload(
   return {
     model: payload.model,
     messages,
-    max_tokens: payload.max_output_tokens ?? 8192,
+    // Anthropic requires `max_tokens`, but source APIs may omit their token cap.
+    // Leave that mismatch to the Messages target adapter instead of inventing a
+    // translation-level default here.
+    ...(payload.max_output_tokens != null
+      ? { max_tokens: payload.max_output_tokens }
+      : {}),
     system: allSystemParts.length > 0 ? allSystemParts.join("\n\n") : undefined,
     temperature: payload.temperature ?? undefined,
     top_p: payload.top_p ?? undefined,
@@ -425,7 +433,9 @@ function responsesInputToAnthropicMessages(
         appendToAssistant(messages, {
           type: "thinking",
           thinking: thinkingText,
-          signature: (item.encrypted_content ?? "") + "@" + item.id,
+          ...(item.encrypted_content
+            ? { signature: item.encrypted_content }
+            : {}),
         });
         break;
       }

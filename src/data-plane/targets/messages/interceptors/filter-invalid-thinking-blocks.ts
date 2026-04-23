@@ -1,8 +1,6 @@
-import type {
-  AnthropicMessagesPayload,
-  AnthropicResponse,
-} from "../../../../lib/anthropic-types.ts";
+import type { AnthropicResponse } from "../../../../lib/anthropic-types.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
+import type { EmitToMessagesInput } from "../emit.ts";
 
 /**
  * Native Copilot `/v1/messages` rejects GPT-origin placeholder / empty
@@ -14,7 +12,7 @@ import type { TargetInterceptor } from "../../run-interceptors.ts";
  * - https://github.com/caozhiyuan/copilot-api/pull/72
  */
 export const withInvalidThinkingBlocksFiltered: TargetInterceptor<
-  { payload: AnthropicMessagesPayload },
+  EmitToMessagesInput,
   AnthropicResponse
 > = async (ctx, run) => {
   for (const message of ctx.payload.messages) {

@@ -1,6 +1,6 @@
 import { copilotFetch } from "../../../lib/copilot.ts";
 import type {
-  AnthropicMessagesPayload,
+  AnthropicMessagesTargetPayload,
   AnthropicResponse,
 } from "../../../lib/anthropic-types.ts";
 import { isSSEResponse } from "../../../lib/sse-reassemble.ts";
@@ -17,7 +17,7 @@ import type { EmitInput, EmitResult } from "../emit-types.ts";
 import { messagesTargetInterceptors } from "./interceptors/index.ts";
 
 export interface EmitToMessagesInput
-  extends EmitInput<AnthropicMessagesPayload> {
+  extends EmitInput<AnthropicMessagesTargetPayload> {
   rawBeta?: string;
 }
 

@@ -26,7 +26,11 @@ Deno.test("/v1/responses direct mode converts apply_patch and fixes mismatched s
       return jsonResponse(["1.110.1"]);
     }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "copilot-access-token", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
@@ -41,7 +45,12 @@ Deno.test("/v1/responses direct mode converts apply_patch and fixes mismatched s
           data: {
             type: "response.output_item.added",
             output_index: 0,
-            item: { id: "item_orig", type: "message", role: "assistant", content: [{ type: "output_text", text: "" }] },
+            item: {
+              id: "item_orig",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "" }],
+            },
           },
         },
         {
@@ -49,7 +58,12 @@ Deno.test("/v1/responses direct mode converts apply_patch and fixes mismatched s
           data: {
             type: "response.output_item.done",
             output_index: 0,
-            item: { id: "item_wrong", type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] },
+            item: {
+              id: "item_wrong",
+              type: "message",
+              role: "assistant",
+              content: [{ type: "output_text", text: "done" }],
+            },
           },
         },
       ]);
@@ -103,11 +117,18 @@ Deno.test("/v1/responses direct mode synthesizes full Responses SSE when upstrea
       return jsonResponse(["1.110.1"]);
     }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "copilot-access-token", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
-        { id: "gpt-direct-responses-json", supported_endpoints: ["/responses"] },
+        {
+          id: "gpt-direct-responses-json",
+          supported_endpoints: ["/responses"],
+        },
       ]));
     }
     if (url.pathname === "/responses") {
@@ -193,7 +214,10 @@ Deno.test("/v1/responses direct mode synthesizes full Responses SSE when upstrea
     );
     assertEquals(delta.sequence_number, 4);
     assertEquals(delta.delta, "Hello");
-    assertEquals((completed.response as Record<string, unknown>).status, "completed");
+    assertEquals(
+      (completed.response as Record<string, unknown>).status,
+      "completed",
+    );
     assertEquals(
       (completed.response as Record<string, unknown>).output_text,
       "Hello",
@@ -214,18 +238,29 @@ Deno.test("/v1/responses direct mode retries connection-bound input item IDs onc
       return jsonResponse(["1.110.1"]);
     }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "copilot-access-token", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
-        { id: "gpt-direct-responses-retry", supported_endpoints: ["/responses"] },
+        {
+          id: "gpt-direct-responses-retry",
+          supported_endpoints: ["/responses"],
+        },
       ]));
     }
     if (url.pathname === "/responses") {
       requests.push(JSON.parse(await request.text()));
 
       return requests.length === 1
-        ? jsonResponse({ error: { message: "input item ID does not belong to this connection" } }, 400)
+        ? jsonResponse({
+          error: {
+            message: "input item ID does not belong to this connection",
+          },
+        }, 400)
         : jsonResponse({
           id: "resp_retry",
           object: "response",
@@ -251,7 +286,12 @@ Deno.test("/v1/responses direct mode retries connection-bound input item IDs onc
       },
       body: JSON.stringify({
         model: "gpt-direct-responses-retry",
-        input: [{ type: "message", id: originalId, role: "user", content: "Hi" }],
+        input: [{
+          type: "message",
+          id: originalId,
+          role: "user",
+          content: "Hi",
+        }],
         instructions: null,
         temperature: 1,
         top_p: null,
@@ -299,6 +339,125 @@ Deno.test("/v1/responses malformed JSON returns structured internal debug error"
   assertExists(body.error.stack);
 });
 
+Deno.test("/v1/responses via messages fills missing max_tokens from model limits", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse({
+        object: "list",
+        data: [{
+          id: "claude-via-messages-limit",
+          name: "claude-via-messages-limit",
+          version: "1",
+          object: "model",
+          supported_endpoints: ["/v1/messages"],
+          capabilities: {
+            family: "test",
+            type: "chat",
+            limits: { max_output_tokens: 4096 },
+            supports: {},
+          },
+        }],
+      });
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      return sseResponse([
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_limit",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-via-messages-limit",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-via-messages-limit",
+        input: [{ type: "message", role: "user", content: "Hi" }],
+        instructions: null,
+        temperature: 1,
+        top_p: null,
+        max_output_tokens: null,
+        tools: null,
+        tool_choice: "auto",
+        metadata: null,
+        stream: false,
+        store: false,
+        parallel_tool_calls: true,
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    assertEquals((await response.json()).status, "completed");
+  });
+
+  assertExists(upstreamBody);
+  assertEquals(upstreamBody!.max_tokens, 4096);
+});
+
 Deno.test("/v1/responses via messages translates Anthropic SSE into Responses SSE", async () => {
   const { apiKey } = await setupAppTest();
 
@@ -311,7 +470,11 @@ Deno.test("/v1/responses via messages translates Anthropic SSE into Responses SS
       return jsonResponse(["1.110.1"]);
     }
     if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({ token: "copilot-access-token", expires_at: 4102444800, refresh_in: 3600 });
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
     }
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
@@ -339,13 +502,24 @@ Deno.test("/v1/responses via messages translates Anthropic SSE into Responses SS
         },
         {
           event: "content_block_start",
-          data: { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
         },
         {
           event: "content_block_delta",
-          data: { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello" } },
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "Hello" },
+          },
         },
-        { event: "content_block_stop", data: { type: "content_block_stop", index: 0 } },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
         {
           event: "message_delta",
           data: {
@@ -372,7 +546,7 @@ Deno.test("/v1/responses via messages translates Anthropic SSE into Responses SS
         instructions: null,
         temperature: 1,
         top_p: null,
-        max_output_tokens: 32,
+        max_output_tokens: null,
         tools: [{ type: "custom", name: "apply_patch" }],
         tool_choice: "auto",
         metadata: null,
@@ -393,15 +567,31 @@ Deno.test("/v1/responses via messages translates Anthropic SSE into Responses SS
 
     const first = JSON.parse(events[0].data) as Record<string, unknown>;
     const delta = JSON.parse(events[4].data) as Record<string, unknown>;
-    const completed = JSON.parse(events[events.length - 1].data) as Record<string, unknown>;
+    const completed = JSON.parse(events[events.length - 1].data) as Record<
+      string,
+      unknown
+    >;
 
     assertEquals(first.sequence_number, 0);
     assertEquals(delta.sequence_number, 4);
-    assertEquals((completed.response as Record<string, unknown>).status, "completed");
-    assertEquals((((completed.response as Record<string, unknown>).usage as Record<string, unknown>).output_tokens), 9);
+    assertEquals(
+      (completed.response as Record<string, unknown>).status,
+      "completed",
+    );
+    assertEquals(
+      ((completed.response as Record<string, unknown>).usage as Record<
+        string,
+        unknown
+      >).output_tokens,
+      9,
+    );
   });
 
   assertExists(upstreamBody);
-  assertEquals((upstreamBody!.tools as Array<Record<string, unknown>>)[0].name, "apply_patch");
+  assertEquals(
+    (upstreamBody!.tools as Array<Record<string, unknown>>)[0].name,
+    "apply_patch",
+  );
+  assertEquals(upstreamBody!.max_tokens, 8192);
   assertEquals(upstreamBody!.stream, true);
 });

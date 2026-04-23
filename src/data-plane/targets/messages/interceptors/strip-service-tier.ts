@@ -1,8 +1,6 @@
-import type {
-  AnthropicMessagesPayload,
-  AnthropicResponse,
-} from "../../../../lib/anthropic-types.ts";
+import type { AnthropicResponse } from "../../../../lib/anthropic-types.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
+import type { EmitToMessagesInput } from "../emit.ts";
 
 /**
  * `service_tier` is part of Anthropic Messages, but Copilot does not expose
@@ -16,7 +14,7 @@ import type { TargetInterceptor } from "../../run-interceptors.ts";
  * - https://docs.anthropic.com/en/api/messages
  */
 export const withServiceTierStripped: TargetInterceptor<
-  { payload: AnthropicMessagesPayload },
+  EmitToMessagesInput,
   AnthropicResponse
 > = async (ctx, run) => {
   const { service_tier: _, ...payload } = ctx.payload;

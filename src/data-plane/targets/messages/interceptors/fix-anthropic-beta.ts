@@ -1,9 +1,6 @@
-import type { CopilotFetchOptions } from "../../../../lib/copilot.ts";
-import type {
-  AnthropicMessagesPayload,
-  AnthropicResponse,
-} from "../../../../lib/anthropic-types.ts";
+import type { AnthropicResponse } from "../../../../lib/anthropic-types.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
+import type { EmitToMessagesInput } from "../emit.ts";
 
 /**
  * Copilot's Anthropic-compatible `/v1/messages` endpoint does not accept the
@@ -44,11 +41,7 @@ const filterAnthropicBeta = (
 };
 
 export const withAnthropicBetaFixed: TargetInterceptor<
-  {
-    payload: AnthropicMessagesPayload;
-    rawBeta?: string;
-    fetchOptions?: CopilotFetchOptions;
-  },
+  EmitToMessagesInput,
   AnthropicResponse
 > = async (ctx, run) => {
   const isAdaptiveThinking = ctx.payload.thinking?.type === "adaptive";

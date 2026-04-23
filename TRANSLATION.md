@@ -204,6 +204,9 @@ Responses SSE events are translated directly to Chat Completions chunks:
 Cross-format translation is inherently lossy. The following limitations are
 known and accepted trade-offs.
 
+Token-cap adjustments that only exist to satisfy a chosen upstream endpoint are
+kept in target-side interceptors, not pairwise translators.
+
 ### Messages ↔ Responses
 
 **Request parameters lost or approximated (Messages → Responses):**
@@ -216,7 +219,6 @@ known and accepted trade-offs.
 | `stop_sequences` | Dropped — no Responses API counterpart                                      |
 | `top_k`          | Dropped — no Responses API counterpart                                      |
 | `service_tier`   | Dropped — no Responses API counterpart                                      |
-| `max_tokens`     | Floored to 12,800 (`Math.max`); original value lost if lower                |
 
 **Reasoning round-trip:**
 
@@ -250,8 +252,6 @@ known and accepted trade-offs.
   subsequent ones are lost.
 - Image blocks in assistant messages are silently dropped (Chat Completions does
   not support assistant-side images).
-- Adjacent `tool_result` + `text` blocks are merged into a single `tool_result`
-  to reduce Copilot premium request credit consumption.
 
 **Response translation (Chat Completions → Messages):**
 

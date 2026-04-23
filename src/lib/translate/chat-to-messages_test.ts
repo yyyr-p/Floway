@@ -1,4 +1,4 @@
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import {
   type RemoteImageLoader,
   translateChatToMessages,
@@ -6,7 +6,7 @@ import {
 import type { ChatCompletionsPayload } from "../openai-types.ts";
 import type {
   AnthropicAssistantContentBlock,
-  AnthropicMessagesPayload,
+  AnthropicMessagesTargetPayload,
   AnthropicRedactedThinkingBlock,
   AnthropicTextBlock,
   AnthropicThinkingBlock,
@@ -26,7 +26,7 @@ function mkPayload(
 }
 
 function assistantBlocks(
-  result: AnthropicMessagesPayload,
+  result: AnthropicMessagesTargetPayload,
   msgIndex = 0,
 ): AnthropicAssistantContentBlock[] {
   const msg = result.messages[msgIndex];
@@ -35,7 +35,7 @@ function assistantBlocks(
 }
 
 function userBlocks(
-  result: AnthropicMessagesPayload,
+  result: AnthropicMessagesTargetPayload,
   msgIndex = 0,
 ): AnthropicUserContentBlock[] {
   const msg = result.messages[msgIndex];
@@ -269,24 +269,27 @@ Deno.test("tool + user merged: tool_results + text in same user msg", async () =
   assertEquals((blocks[1] as AnthropicTextBlock).text, "thanks");
 });
 
-Deno.test("tool message without tool_call_id uses empty string", async () => {
-  const result = await translateChatToMessages(mkPayload({
-    messages: [
-      { role: "user", content: "Hi" },
-      {
-        role: "assistant",
-        content: null,
-        tool_calls: [{
-          id: "tc1",
-          type: "function",
-          function: { name: "f", arguments: "{}" },
-        }],
-      },
-      { role: "tool", content: "result" },
-    ],
-  }));
-  const blocks = result.messages[2].content as AnthropicUserContentBlock[];
-  assertEquals((blocks[0] as AnthropicToolResultBlock).tool_use_id, "");
+Deno.test("tool message without tool_call_id is rejected", async () => {
+  await assertRejects(
+    () =>
+      translateChatToMessages(mkPayload({
+        messages: [
+          { role: "user", content: "Hi" },
+          {
+            role: "assistant",
+            content: null,
+            tool_calls: [{
+              id: "tc1",
+              type: "function",
+              function: { name: "f", arguments: "{}" },
+            }],
+          },
+          { role: "tool", content: "result" },
+        ],
+      })),
+    Error,
+    "tool_call_id",
+  );
 });
 
 // ── Assistant content block ordering ──
@@ -600,11 +603,11 @@ Deno.test("content with only non-parseable image → empty text fallback", async
 
 // ── Field mapping ──
 
-Deno.test("max_tokens defaults to 8192 when not provided", async () => {
+Deno.test("max_tokens is left undefined when not provided", async () => {
   const result = await translateChatToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
   }));
-  assertEquals(result.max_tokens, 8192);
+  assertEquals(result.max_tokens, undefined);
 });
 
 Deno.test("max_tokens passed through when provided", async () => {

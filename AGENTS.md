@@ -294,6 +294,40 @@ the result. Do not claim success from inspection alone.
   in-process caches with a cross-datacenter backing store and document
   invalidation.
 
+## Research Baseline
+
+When investigating gateway behavior, protocol translation choices, fallback
+values, or upstream quirks, compare existing implementations before inventing a
+new policy.
+
+Start with repositories closest to the boundary you are touching.
+
+Copilot gateway implementations:
+
+- `https://github.com/ericc-ch/copilot-api`
+- `https://github.com/caozhiyuan/copilot-api`
+- `https://github.com/StarryKira/copilot2api-go`
+- `https://github.com/messense/copilot-api-proxy`
+
+General LLM gateway implementations:
+
+- `https://github.com/BerriAI/litellm`
+- `https://github.com/QuantumNous/new-api`
+- `https://github.com/songquanpeng/one-api`
+
+Research rules:
+
+- Prefer the project closest to the same upstream and protocol boundary first.
+- For Copilot-specific quirks, start with Copilot gateway repos before general
+  LLM gateways.
+- For generic provider adapter behavior, schema translation, or fallback value
+  choices, compare at least one Copilot gateway and one general LLM gateway.
+- When citing another project's implementation in code comments, use permalink
+  URLs.
+- Do not cargo-cult a behavior from one project in isolation; note whether the
+  behavior is ecosystem-common, project-specific policy, or a workaround for a
+  known upstream bug.
+
 ## Code Style
 
 These rules apply project-wide, not only to the data plane.

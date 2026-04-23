@@ -89,9 +89,13 @@ export function translateChatToResponses(
     }
 
     if (msg.role === "tool") {
+      if (!msg.tool_call_id) {
+        throw new Error("tool message requires tool_call_id for Responses translation");
+      }
+
       input.push({
         type: "function_call_output",
-        call_id: msg.tool_call_id ?? "",
+        call_id: msg.tool_call_id,
         output: typeof msg.content === "string"
           ? msg.content
           : JSON.stringify(msg.content),

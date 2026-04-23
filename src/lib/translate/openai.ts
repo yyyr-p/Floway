@@ -66,8 +66,6 @@ export const mapOpenAIUsage = (
 export function translateToOpenAI(
   payload: AnthropicMessagesPayload,
 ): ChatCompletionsPayload {
-  mergeToolResultBlocks(payload);
-
   return {
     model: payload.model,
     messages: translateMessages(payload.messages, payload.system),
@@ -81,36 +79,6 @@ export function translateToOpenAI(
     tools: translateTools(payload.tools),
     tool_choice: translateToolChoice(payload.tool_choice),
   };
-}
-
-/**
- * Merge adjacent text blocks into tool_result blocks in user messages.
- * Reduces premium request consumption caused by skill invocations, edit hooks, etc.
- */
-function mergeToolResultBlocks(payload: AnthropicMessagesPayload): void {
-  for (const msg of payload.messages) {
-    if (msg.role !== "user" || !Array.isArray(msg.content)) continue;
-
-    const toolResults: AnthropicToolResultBlock[] = [];
-    const textBlocks: AnthropicTextBlock[] = [];
-    let valid = true;
-
-    for (const block of msg.content) {
-      if (block.type === "tool_result") toolResults.push(block);
-      else if (block.type === "text") textBlocks.push(block);
-      else {
-        valid = false;
-        break;
-      }
-    }
-
-    if (!valid || toolResults.length === 0 || textBlocks.length === 0) continue;
-
-    const lastTR = toolResults[toolResults.length - 1];
-    const appendedTexts = textBlocks.map((tb) => tb.text).join("\n\n");
-    lastTR.content = `${lastTR.content ?? ""}\n\n${appendedTexts}`;
-    msg.content = toolResults;
-  }
 }
 
 function translateMessages(

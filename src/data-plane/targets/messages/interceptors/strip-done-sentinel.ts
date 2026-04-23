@@ -1,6 +1,6 @@
-import type { AnthropicMessagesPayload } from "../../../../lib/anthropic-types.ts";
 import type { AnthropicResponse } from "../../../../lib/anthropic-types.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
+import type { EmitToMessagesInput } from "../emit.ts";
 
 /**
  * Anthropic SSE streams do not terminate with OpenAI-style `data: [DONE]`, but
@@ -11,7 +11,7 @@ import type { TargetInterceptor } from "../../run-interceptors.ts";
  * - https://github.com/caozhiyuan/copilot-api/commit/665bfe5f1fd2f8b875fa502449ff3d0fcbd85fa5
  */
 export const withDoneSentinelStripped: TargetInterceptor<
-  { payload: AnthropicMessagesPayload },
+  EmitToMessagesInput,
   AnthropicResponse
 > = async (_ctx, run) => {
   const result = await run();

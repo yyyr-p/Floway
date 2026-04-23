@@ -1,4 +1,4 @@
-import { assertEquals, assertFalse } from "@std/assert";
+import { assertEquals, assertFalse, assertThrows } from "@std/assert";
 import { translateChatToResponses } from "./chat-to-responses.ts";
 import {
   translateAnthropicToResponses,
@@ -66,6 +66,16 @@ Deno.test("translateAnthropicToResponses preserves output_config.effort max at t
   assertEquals(result.reasoning, { effort: "max", summary: "detailed" });
 });
 
+Deno.test("translateAnthropicToResponses preserves max_tokens at the translation boundary", () => {
+  const result = translateAnthropicToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assertEquals(result.max_output_tokens, 256);
+});
+
 Deno.test("translateAnthropicToResponses maps thinking.disabled to reasoning.effort none", () => {
   const result = translateAnthropicToResponses({
     model: "gpt-test",
@@ -128,6 +138,70 @@ Deno.test("translateResponsesToAnthropicPayload maps reasoning.effort directly t
 
   assertEquals(result.output_config, { effort: "minimal" });
   assertFalse("thinking" in result);
+});
+
+Deno.test("translateResponsesToAnthropicPayload leaves max_tokens undefined when the source omitted max_output_tokens", () => {
+  const result = translateResponsesToAnthropicPayload({
+    model: "claude-test",
+    input: [{ type: "message", role: "user", content: "hi" }],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: null,
+    tools: null,
+    tool_choice: "auto",
+    metadata: null,
+    stream: null,
+    store: false,
+    parallel_tool_calls: true,
+  });
+
+  assertEquals(result.max_tokens, undefined);
+});
+
+Deno.test("translateResponsesToAnthropicPayload preserves reasoning.encrypted_content without encoding the reasoning id", () => {
+  const result = translateResponsesToAnthropicPayload({
+    model: "claude-test",
+    input: [{
+      type: "reasoning",
+      id: "rs_42",
+      summary: [{ type: "summary_text", text: "trace" }],
+      encrypted_content: "enc_abc",
+    }],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: 256,
+    tools: null,
+    tool_choice: "auto",
+    metadata: null,
+    stream: null,
+    store: false,
+    parallel_tool_calls: true,
+  });
+
+  const assistant = result.messages[0];
+  if (assistant.role !== "assistant" || !Array.isArray(assistant.content)) {
+    throw new Error("expected assistant message with content blocks");
+  }
+
+  assertEquals(assistant.content[0], {
+    type: "thinking",
+    thinking: "trace",
+    signature: "enc_abc",
+  });
+});
+
+Deno.test("translateChatToResponses rejects tool messages without tool_call_id", () => {
+  assertThrows(
+    () =>
+      translateChatToResponses({
+        model: "gpt-test",
+        messages: [{ role: "tool", content: "result" }],
+      }),
+    Error,
+    "tool_call_id",
+  );
 });
 
 Deno.test("getAnthropicRequestedReasoningEffort prefers output_config.effort over thinking.disabled", () => {

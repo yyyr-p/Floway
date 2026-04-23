@@ -5,6 +5,7 @@ import type {
   AnthropicImageBlock,
   AnthropicMessage,
   AnthropicMessagesPayload,
+  AnthropicMessagesTargetPayload,
   AnthropicRedactedThinkingBlock,
   AnthropicThinkingBlock,
   AnthropicToolResultBlock,
@@ -41,7 +42,7 @@ interface TranslateChatToMessagesOptions {
 export async function translateChatToMessages(
   payload: ChatCompletionsPayload,
   options: TranslateChatToMessagesOptions = {},
-): Promise<AnthropicMessagesPayload> {
+): Promise<AnthropicMessagesTargetPayload> {
   const systemParts: string[] = [];
   const nonSystemMessages: Message[] = [];
 
@@ -66,10 +67,13 @@ export async function translateChatToMessages(
     options.loadRemoteImage ?? fetchRemoteImage,
   );
 
-  const result: AnthropicMessagesPayload = {
+  const result: AnthropicMessagesTargetPayload = {
     model: payload.model,
     messages: anthropicMessages,
-    max_tokens: payload.max_tokens ?? 8192,
+    // Anthropic requires `max_tokens`, but Chat Completions can omit it.
+    // Keep translation literal and let the Messages target adapter decide
+    // whether a fallback is necessary for the chosen upstream path.
+    ...(payload.max_tokens != null ? { max_tokens: payload.max_tokens } : {}),
   };
 
   if (systemParts.length > 0) {
@@ -117,9 +121,15 @@ async function buildMessages(
         result.push({ role: "assistant", content: buildAssistantBlocks(msg) });
         break;
       case "tool":
+        if (!msg.tool_call_id) {
+          throw new Error(
+            "tool message requires tool_call_id for Messages translation",
+          );
+        }
+
         appendToolResult(result, {
           type: "tool_result",
-          tool_use_id: msg.tool_call_id ?? "",
+          tool_use_id: msg.tool_call_id,
           content: typeof msg.content === "string" ? msg.content : "",
         });
         break;
