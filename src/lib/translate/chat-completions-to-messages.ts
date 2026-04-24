@@ -50,11 +50,15 @@ const buildMessagesThinkingBlock = (
     return {
       type: "thinking",
       thinking: reasoningText,
-      ...(reasoningOpaque ? { signature: reasoningOpaque } : {}),
+      ...(reasoningOpaque !== undefined && reasoningOpaque !== null
+        ? { signature: reasoningOpaque }
+        : {}),
     };
   }
 
-  return reasoningOpaque ? { type: "redacted_thinking", data: reasoningOpaque } : null;
+  return reasoningOpaque !== undefined && reasoningOpaque !== null
+    ? { type: "redacted_thinking", data: reasoningOpaque }
+    : null;
 };
 
 const buildAssistantBlocks = (
@@ -400,11 +404,13 @@ const getThinkingBlocks = (
     return [{
       type: "thinking",
       thinking: reasoningText,
-      signature: reasoningOpaque ?? "",
+      ...(reasoningOpaque !== undefined && reasoningOpaque !== null
+        ? { signature: reasoningOpaque }
+        : {}),
     }];
   }
 
-  return reasoningOpaque
+  return reasoningOpaque !== undefined && reasoningOpaque !== null
     ? [{
       type: "thinking",
       thinking: MESSAGES_THINKING_PLACEHOLDER,

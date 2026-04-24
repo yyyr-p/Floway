@@ -104,7 +104,9 @@ const handleReasoningDelta = (
     });
   }
 
-  if (!delta.reasoning_opaque) return;
+  if (delta.reasoning_opaque === undefined || delta.reasoning_opaque === null) {
+    return;
+  }
 
   if (state.thinkingBlockOpen) {
     events.push({

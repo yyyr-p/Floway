@@ -227,19 +227,21 @@ export const messagesResponseToSSEFrames = (
         );
       }
 
-      frames.push(
-        sseFrame(
-          JSON.stringify({
-            type: "content_block_delta",
-            index,
-            delta: {
-              type: "signature_delta",
-              signature: block.signature || "",
-            },
-          }),
-          "content_block_delta",
-        ),
-      );
+      if (Object.hasOwn(block, "signature")) {
+        frames.push(
+          sseFrame(
+            JSON.stringify({
+              type: "content_block_delta",
+              index,
+              delta: {
+                type: "signature_delta",
+                signature: block.signature,
+              },
+            }),
+            "content_block_delta",
+          ),
+        );
+      }
       frames.push(
         sseFrame(
           JSON.stringify({ type: "content_block_stop", index }),

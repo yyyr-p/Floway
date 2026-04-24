@@ -244,15 +244,21 @@ const handleOutputItemDone = (
     });
   }
 
-  events.push({
-    type: "content_block_delta",
-    index: blockIndex,
-    delta: {
-      type: "signature_delta",
-      signature: event.item.encrypted_content ?? "",
-    },
-  });
-  state.blockHasDelta.add(blockIndex);
+  const encryptedContent = event.item.encrypted_content;
+  if (
+    Object.hasOwn(event.item, "encrypted_content") &&
+    encryptedContent !== undefined
+  ) {
+    events.push({
+      type: "content_block_delta",
+      index: blockIndex,
+      delta: {
+        type: "signature_delta",
+        signature: encryptedContent,
+      },
+    });
+    state.blockHasDelta.add(blockIndex);
+  }
   return events;
 };
 

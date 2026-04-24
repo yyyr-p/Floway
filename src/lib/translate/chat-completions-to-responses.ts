@@ -117,7 +117,10 @@ export const translateChatCompletionsToResponses = (
     }
 
     if (message.role === "assistant") {
-      if (message.reasoning_opaque) {
+      if (
+        message.reasoning_opaque !== undefined &&
+        message.reasoning_opaque !== null
+      ) {
         input.push({
           type: "reasoning",
           id: makeResponsesReasoningId(input.length),
@@ -224,14 +227,19 @@ export const translateChatCompletionToResponsesResult = (
   const reasoningText = choice.message.reasoning_text;
   const reasoningOpaque = choice.message.reasoning_opaque;
 
-  if (reasoningText || reasoningOpaque) {
+  if (
+    reasoningText !== undefined && reasoningText !== null ||
+    reasoningOpaque !== undefined && reasoningOpaque !== null
+  ) {
     output.push({
       type: "reasoning",
       id: makeResponsesReasoningId(output.length),
       summary: reasoningText
         ? [{ type: "summary_text", text: reasoningText }]
         : [],
-      ...(reasoningOpaque ? { encrypted_content: reasoningOpaque } : {}),
+      ...(reasoningOpaque !== undefined && reasoningOpaque !== null
+        ? { encrypted_content: reasoningOpaque }
+        : {}),
     } satisfies ResponseOutputReasoning);
   }
 
@@ -272,6 +280,7 @@ interface PendingReasoningItem {
   itemId: string;
   text: string;
   signature: string;
+  hasSignature: boolean;
 }
 
 interface PendingTextItem {
@@ -379,7 +388,7 @@ const closeReasoning = (
     summary: reasoning.text
       ? [{ type: "summary_text", text: reasoning.text }]
       : [],
-    ...(reasoning.signature
+    ...(reasoning.hasSignature
       ? { encrypted_content: reasoning.signature }
       : {}),
   };
@@ -504,7 +513,13 @@ const ensureReasoning = (
 
   const outputIndex = state.outputIndex++;
   const itemId = makeResponsesReasoningId(outputIndex);
-  state.openReasoning = { outputIndex, itemId, text: "", signature: "" };
+  state.openReasoning = {
+    outputIndex,
+    itemId,
+    text: "",
+    signature: "",
+    hasSignature: false,
+  };
 
   return seq(state, [
     {
@@ -630,11 +645,20 @@ export const translateChatCompletionsChunkToResponsesEvents = (
   }
 
   for (const choice of chunk.choices) {
-    if (choice.delta.reasoning_text || choice.delta.reasoning_opaque) {
+    if (
+      choice.delta.reasoning_text !== undefined &&
+        choice.delta.reasoning_text !== null ||
+      choice.delta.reasoning_opaque !== undefined &&
+        choice.delta.reasoning_opaque !== null
+    ) {
       events.push(...closeText(state));
       events.push(...ensureReasoning(state));
 
-      if (choice.delta.reasoning_text && state.openReasoning) {
+      if (
+        choice.delta.reasoning_text !== undefined &&
+        choice.delta.reasoning_text !== null &&
+        state.openReasoning
+      ) {
         state.openReasoning.text += choice.delta.reasoning_text;
         events.push(...seq(state, [{
           type: "response.reasoning_summary_text.delta",
@@ -645,8 +669,13 @@ export const translateChatCompletionsChunkToResponsesEvents = (
         }]));
       }
 
-      if (choice.delta.reasoning_opaque && state.openReasoning) {
+      if (
+        choice.delta.reasoning_opaque !== undefined &&
+        choice.delta.reasoning_opaque !== null &&
+        state.openReasoning
+      ) {
         state.openReasoning.signature += choice.delta.reasoning_opaque;
+        state.openReasoning.hasSignature = true;
       }
     }
 

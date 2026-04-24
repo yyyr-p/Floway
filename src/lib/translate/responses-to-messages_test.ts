@@ -94,3 +94,67 @@ Deno.test("translateResponsesToMessages preserves reasoning.encrypted_content wi
     signature: "enc_abc",
   });
 });
+
+Deno.test("translateResponsesToMessages omits thinking.signature when reasoning.encrypted_content is absent", () => {
+  const result = translateResponsesToMessages({
+    model: "claude-test",
+    input: [{
+      type: "reasoning",
+      id: "rs_42",
+      summary: [{ type: "summary_text", text: "trace" }],
+    }],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: 256,
+    tools: null,
+    tool_choice: "auto",
+    metadata: null,
+    stream: null,
+    store: false,
+    parallel_tool_calls: true,
+  });
+
+  const assistant = result.messages[0];
+  if (assistant.role !== "assistant" || !Array.isArray(assistant.content)) {
+    throw new Error("expected assistant message with content blocks");
+  }
+
+  assertEquals(assistant.content[0], {
+    type: "thinking",
+    thinking: "trace",
+  });
+});
+
+Deno.test("translateResponsesToMessages preserves empty-string reasoning.encrypted_content", () => {
+  const result = translateResponsesToMessages({
+    model: "claude-test",
+    input: [{
+      type: "reasoning",
+      id: "rs_42",
+      summary: [{ type: "summary_text", text: "trace" }],
+      encrypted_content: "",
+    }],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: 256,
+    tools: null,
+    tool_choice: "auto",
+    metadata: null,
+    stream: null,
+    store: false,
+    parallel_tool_calls: true,
+  });
+
+  const assistant = result.messages[0];
+  if (assistant.role !== "assistant" || !Array.isArray(assistant.content)) {
+    throw new Error("expected assistant message with content blocks");
+  }
+
+  assertEquals(assistant.content[0], {
+    type: "thinking",
+    thinking: "trace",
+    signature: "",
+  });
+});

@@ -25,6 +25,7 @@ type OutputBlockInfo =
     itemId: string;
     thinkingText: string;
     signature: string;
+    hasSignature: boolean;
   }
   | {
     type: "text";
@@ -135,7 +136,7 @@ const handleContentBlockStart = (
       type: "reasoning",
       id: itemId,
       summary: [],
-      encrypted_content: undefined,
+      hasSignature: false,
     };
 
     return withSequenceNumbers(state, [
@@ -252,6 +253,7 @@ const handleContentBlockDelta = (
       delta: event.delta.partial_json,
     }]);
   }
+    info.hasSignature = true;
 
   return [];
 };
@@ -274,7 +276,7 @@ const handleContentBlockStop = (
       type: "reasoning",
       id: info.itemId,
       summary: summaryText ? [{ type: "summary_text", text: summaryText }] : [],
-      encrypted_content: info.signature || undefined,
+      ...(info.hasSignature ? { encrypted_content: info.signature } : {}),
     };
 
     state.completedItems.push(item);

@@ -55,7 +55,9 @@ const mapOutputToMessagesContent = (
         content.push({
           type: "thinking",
           thinking,
-          signature: item.encrypted_content ?? "",
+          ...(Object.hasOwn(item, "encrypted_content")
+            ? { signature: item.encrypted_content }
+            : {}),
         });
         break;
       }
@@ -241,7 +243,7 @@ const translateResponsesInput = (
           type: "thinking",
           thinking: item.summary?.map((part) => part.text).join("") ||
             MESSAGES_THINKING_PLACEHOLDER,
-          ...(item.encrypted_content
+          ...(Object.hasOwn(item, "encrypted_content")
             ? { signature: item.encrypted_content }
             : {}),
         });

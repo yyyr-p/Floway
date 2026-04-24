@@ -90,9 +90,12 @@ const appendAssistantReasoning = (
   next.reasoning_text = typeof next.reasoning_text === "string"
     ? next.reasoning_text + reasoningText
     : reasoningText;
-  next.reasoning_opaque = typeof next.reasoning_opaque === "string"
-    ? next.reasoning_opaque + item.encrypted_content
-    : item.encrypted_content;
+
+  if (Object.hasOwn(item, "encrypted_content")) {
+    next.reasoning_opaque = typeof next.reasoning_opaque === "string"
+      ? next.reasoning_opaque + item.encrypted_content
+      : item.encrypted_content;
+  }
 
   return next;
 };
@@ -264,7 +267,7 @@ export const translateResponsesToChatCompletion = (
         : text;
     }
 
-    if (item.encrypted_content) {
+    if (Object.hasOwn(item, "encrypted_content")) {
       reasoningOpaque = typeof reasoningOpaque === "string"
         ? reasoningOpaque + item.encrypted_content
         : item.encrypted_content;
@@ -372,7 +375,7 @@ export const translateResponsesEventToChatCompletionsChunks = (
     case "response.output_item.done": {
       const { item } =
         event as Extract<ResponseStreamEvent, { type: "response.output_item.done" }>;
-      return item.type === "reasoning" && item.encrypted_content
+      return item.type === "reasoning" && Object.hasOwn(item, "encrypted_content")
         ? [makeChunk(state, { reasoning_opaque: item.encrypted_content })]
         : [];
     }

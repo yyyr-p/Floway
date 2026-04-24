@@ -132,7 +132,8 @@ type WebSearchToolResultBlockAccumulator = {
 type ThinkingBlockAccumulator = {
   type: "thinking";
   thinking: string;
-  signature?: string;
+  signature: string;
+  hasSignature: boolean;
 };
 
 type RedactedThinkingBlockAccumulator = {
@@ -244,6 +245,7 @@ export async function reassembleMessagesSSE(
           type: "thinking",
           thinking: (cb.thinking as string) ?? "",
           signature: "",
+          hasSignature: false,
         };
       } else if (cbType === "redacted_thinking") {
         blocks[idx] = { type: "redacted_thinking", data: cb.data as string };
@@ -273,8 +275,8 @@ export async function reassembleMessagesSSE(
       } else if (
         deltaType === "signature_delta" && block.type === "thinking"
       ) {
-        block.signature = (block.signature ?? "") +
-          ((delta.signature as string) ?? "");
+        block.signature += (delta.signature as string) ?? "";
+        block.hasSignature = true;
       }
       continue;
     }
@@ -370,7 +372,7 @@ export async function reassembleMessagesSSE(
         content.push({
           type: "thinking",
           thinking: block.thinking,
-          signature: block.signature,
+          ...(block.hasSignature ? { signature: block.signature } : {}),
         });
         break;
       case "redacted_thinking":
@@ -404,6 +406,7 @@ export async function reassembleChatCompletionsSSE(
   let content = "";
   let reasoningText = "";
   let reasoningOpaque = "";
+  let hasReasoningOpaque = false;
   let finishReason: ChoiceNonStreaming["finish_reason"] = "stop";
   let lastUsage: ChatCompletionResponse["usage"] | undefined;
 
@@ -449,6 +452,7 @@ export async function reassembleChatCompletionsSSE(
       }
       if (typeof delta.reasoning_opaque === "string") {
         reasoningOpaque += delta.reasoning_opaque;
+        hasReasoningOpaque = true;
       }
 
       if (Array.isArray(delta.tool_calls)) {
@@ -499,7 +503,7 @@ export async function reassembleChatCompletionsSSE(
     content: content || null,
     ...(toolCalls.length > 0 && { tool_calls: toolCalls }),
     ...(reasoningText && { reasoning_text: reasoningText }),
-    ...(reasoningOpaque && { reasoning_opaque: reasoningOpaque }),
+    ...(hasReasoningOpaque ? { reasoning_opaque: reasoningOpaque } : {}),
   };
 
   const result: ChatCompletionResponse = {
