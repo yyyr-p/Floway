@@ -14,23 +14,8 @@ export function apiErrorResponse(
   return c.json({ error: { message, type: "api_error" } }, status);
 }
 
-export function anthropicApiErrorResponse(
-  c: Context,
-  message: string,
-  status: ProxyErrorStatus = 502,
-): Response {
-  return c.json(
-    { type: "error", error: { type: "api_error", message } },
-    status,
-  );
-}
-
 export function noUpstreamBodyApiErrorResponse(c: Context): Response {
   return apiErrorResponse(c, "No response body from upstream", 502);
-}
-
-export function noUpstreamBodyAnthropicErrorResponse(c: Context): Response {
-  return anthropicApiErrorResponse(c, "No response body from upstream", 502);
 }
 
 export function proxyJsonResponse(resp: Response): Response {
