@@ -5,7 +5,7 @@ import {
   reassembleResponsesSSE,
 } from "./sse-reassemble.ts";
 import type { AnthropicResponse } from "./anthropic-types.ts";
-import type { ChatCompletionResponse } from "./openai-types.ts";
+import type { ChatCompletionResponse } from "./chat-completions-types.ts";
 import type { ResponsesResult } from "./responses-types.ts";
 
 function makeSSEBody(chunks: Array<{ event?: string; data: unknown }>): ReadableStream<Uint8Array> {

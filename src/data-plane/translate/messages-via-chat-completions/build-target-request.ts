@@ -1,5 +1,5 @@
-import type { AnthropicMessagesPayload } from "../../../lib/anthropic-types.ts";
-import { translateToOpenAI } from "../../../lib/translate/openai.ts";
+import type { MessagesPayload } from "../../../lib/messages-types.ts";
+import { translateMessagesToChatCompletions } from "../../../lib/translate/messages-to-chat-completions.ts";
 
-export const buildTargetRequest = (payload: AnthropicMessagesPayload) =>
-  translateToOpenAI(payload);
+export const buildTargetRequest = (payload: MessagesPayload) =>
+  translateMessagesToChatCompletions(payload);

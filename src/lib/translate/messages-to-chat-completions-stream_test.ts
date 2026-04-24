@@ -1,19 +1,19 @@
 import { assertEquals } from "@std/assert";
 import {
-  createChatStreamState,
-  translateAnthropicEventToChatChunks,
-} from "./messages-to-chat-stream.ts";
-import type { AnthropicStreamEventData } from "../anthropic-types.ts";
-import type { ChatCompletionChunk, Delta } from "../openai-types.ts";
+  createMessagesToChatCompletionsStreamState,
+  translateMessagesEventToChatCompletionsChunks,
+} from "./messages-to-chat-completions-stream.ts";
+import type { MessagesStreamEventData } from "../messages-types.ts";
+import type { ChatCompletionChunk, Delta } from "../chat-completions-types.ts";
 
 // ── Helpers ──
 
-function process(events: AnthropicStreamEventData[]): (ChatCompletionChunk[] | "DONE")[] {
-  const state = createChatStreamState();
-  return events.map((e) => translateAnthropicEventToChatChunks(e, state));
+function process(events: MessagesStreamEventData[]): (ChatCompletionChunk[] | "DONE")[] {
+  const state = createMessagesToChatCompletionsStreamState();
+  return events.map((e) => translateMessagesEventToChatCompletionsChunks(e, state));
 }
 
-function processFlat(events: AnthropicStreamEventData[]): ChatCompletionChunk[] {
+function processFlat(events: MessagesStreamEventData[]): ChatCompletionChunk[] {
   const results = process(events);
   const chunks: ChatCompletionChunk[] = [];
   for (const r of results) {
@@ -23,11 +23,11 @@ function processFlat(events: AnthropicStreamEventData[]): ChatCompletionChunk[] 
   return chunks;
 }
 
-function deltas(events: AnthropicStreamEventData[]): Delta[] {
+function deltas(events: MessagesStreamEventData[]): Delta[] {
   return processFlat(events).map((c) => c.choices[0].delta);
 }
 
-const MSG_START: AnthropicStreamEventData = {
+const MSG_START: MessagesStreamEventData = {
   type: "message_start",
   message: {
     id: "msg_test",
@@ -41,14 +41,13 @@ const MSG_START: AnthropicStreamEventData = {
   },
 };
 
-// ── createChatStreamState ──
+// ── createMessagesToChatCompletionsStreamState ──
 
 Deno.test("initial state has correct defaults", () => {
-  const state = createChatStreamState();
+  const state = createMessagesToChatCompletionsStreamState();
   assertEquals(state.messageId, "");
   assertEquals(state.model, "");
   assertEquals(state.toolCallIndex, -1);
-  assertEquals(state.currentBlockType, "");
   assertEquals(state.inputTokens, 0);
   assertEquals(state.cacheReadInputTokens, 0);
   assertEquals(typeof state.created, "number");
@@ -57,8 +56,8 @@ Deno.test("initial state has correct defaults", () => {
 // ── message_start ──
 
 Deno.test("message_start → chunk with role:assistant", () => {
-  const state = createChatStreamState();
-  const result = translateAnthropicEventToChatChunks(MSG_START, state);
+  const state = createMessagesToChatCompletionsStreamState();
+  const result = translateMessagesEventToChatCompletionsChunks(MSG_START, state);
   assertEquals(result !== "DONE", true);
   const chunks = result as ChatCompletionChunk[];
   assertEquals(chunks.length, 1);
@@ -69,8 +68,8 @@ Deno.test("message_start → chunk with role:assistant", () => {
 });
 
 Deno.test("message_start sets state including usage", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
   assertEquals(state.messageId, "msg_test");
   assertEquals(state.model, "claude-sonnet-4-20250514");
   assertEquals(state.inputTokens, 10);
@@ -78,15 +77,15 @@ Deno.test("message_start sets state including usage", () => {
 });
 
 Deno.test("message_start captures cache_read_input_tokens", () => {
-  const state = createChatStreamState();
+  const state = createMessagesToChatCompletionsStreamState();
   const msgStart = MSG_START as { type: "message_start"; message: Record<string, unknown> };
-  translateAnthropicEventToChatChunks({
+  translateMessagesEventToChatCompletionsChunks({
     type: "message_start",
     message: {
       ...msgStart.message,
       usage: { input_tokens: 80, output_tokens: 0, cache_read_input_tokens: 20 },
     },
-  } as AnthropicStreamEventData, state);
+  } as MessagesStreamEventData, state);
   assertEquals(state.inputTokens, 80);
   assertEquals(state.cacheReadInputTokens, 20);
 });
@@ -94,9 +93,9 @@ Deno.test("message_start captures cache_read_input_tokens", () => {
 // ── content_block_start: text ──
 
 Deno.test("text content_block_start → no output", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 0,
     content_block: { type: "text", text: "" },
@@ -107,9 +106,9 @@ Deno.test("text content_block_start → no output", () => {
 // ── content_block_start: thinking ──
 
 Deno.test("thinking content_block_start → no output", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 0,
     content_block: { type: "thinking", thinking: "" },
@@ -120,9 +119,9 @@ Deno.test("thinking content_block_start → no output", () => {
 // ── content_block_start: redacted_thinking ──
 
 Deno.test("redacted_thinking content_block_start → reasoning_opaque chunk", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 0,
     content_block: { type: "redacted_thinking", data: "opaque_xyz" },
@@ -135,9 +134,9 @@ Deno.test("redacted_thinking content_block_start → reasoning_opaque chunk", ()
 // ── content_block_start: tool_use ──
 
 Deno.test("tool_use content_block_start → tool_calls init chunk", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 0,
     content_block: { type: "tool_use", id: "tu_1", name: "search", input: {} },
@@ -154,16 +153,16 @@ Deno.test("tool_use content_block_start → tool_calls init chunk", () => {
 });
 
 Deno.test("multiple tool_use blocks increment index", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
 
-  translateAnthropicEventToChatChunks({
+  translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 0,
     content_block: { type: "tool_use", id: "tu_1", name: "f1", input: {} },
   }, state);
 
-  const result = translateAnthropicEventToChatChunks({
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 1,
     content_block: { type: "tool_use", id: "tu_2", name: "f2", input: {} },
@@ -239,29 +238,27 @@ Deno.test("input_json_delta → tool_calls arguments delta", () => {
 // ── content_block_stop ──
 
 Deno.test("content_block_stop → no output, resets block type", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  translateMessagesEventToChatCompletionsChunks({
     type: "content_block_start",
     index: 0,
     content_block: { type: "text", text: "" },
   }, state);
-  assertEquals(state.currentBlockType, "text");
 
-  const result = translateAnthropicEventToChatChunks({
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "content_block_stop",
     index: 0,
   }, state);
   assertEquals(result, []);
-  assertEquals(state.currentBlockType, "");
 });
 
 // ── message_delta ──
 
 Deno.test("message_delta with end_turn → finish_reason stop + usage with input_tokens", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state); // input_tokens: 10
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state); // input_tokens: 10
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "end_turn" },
     usage: { output_tokens: 50 },
@@ -276,9 +273,9 @@ Deno.test("message_delta with end_turn → finish_reason stop + usage with input
 });
 
 Deno.test("message_delta with tool_use → finish_reason tool_calls", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "tool_use" },
   }, state);
@@ -286,9 +283,9 @@ Deno.test("message_delta with tool_use → finish_reason tool_calls", () => {
 });
 
 Deno.test("message_delta with max_tokens → finish_reason length", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "max_tokens" },
   }, state);
@@ -296,9 +293,9 @@ Deno.test("message_delta with max_tokens → finish_reason length", () => {
 });
 
 Deno.test("message_delta with stop_sequence → finish_reason stop", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "stop_sequence" },
   }, state);
@@ -306,9 +303,9 @@ Deno.test("message_delta with stop_sequence → finish_reason stop", () => {
 });
 
 Deno.test("message_delta with pause_turn → finish_reason stop", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "pause_turn" },
   }, state);
@@ -316,9 +313,9 @@ Deno.test("message_delta with pause_turn → finish_reason stop", () => {
 });
 
 Deno.test("message_delta with refusal → finish_reason stop", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "refusal" },
   }, state);
@@ -326,9 +323,9 @@ Deno.test("message_delta with refusal → finish_reason stop", () => {
 });
 
 Deno.test("message_delta without usage → no usage on chunk", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "end_turn" },
   }, state);
@@ -336,17 +333,17 @@ Deno.test("message_delta without usage → no usage on chunk", () => {
 });
 
 Deno.test("message_delta usage includes cache_read_input_tokens from message_start", () => {
-  const state = createChatStreamState();
+  const state = createMessagesToChatCompletionsStreamState();
   // message_start with cache
-  translateAnthropicEventToChatChunks({
+  translateMessagesEventToChatCompletionsChunks({
     type: "message_start",
     message: {
       ...(MSG_START as { type: "message_start"; message: Record<string, unknown> }).message,
       usage: { input_tokens: 80, output_tokens: 0, cache_read_input_tokens: 20 },
     },
-  } as AnthropicStreamEventData, state);
+  } as MessagesStreamEventData, state);
 
-  const result = translateAnthropicEventToChatChunks({
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "end_turn" },
     usage: { output_tokens: 50 },
@@ -361,23 +358,23 @@ Deno.test("message_delta usage includes cache_read_input_tokens from message_sta
 // ── message_stop ──
 
 Deno.test("message_stop → DONE", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks(MSG_START, state);
-  const result = translateAnthropicEventToChatChunks({ type: "message_stop" }, state);
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks(MSG_START, state);
+  const result = translateMessagesEventToChatCompletionsChunks({ type: "message_stop" }, state);
   assertEquals(result, "DONE");
 });
 
 // ── ping / error ──
 
 Deno.test("ping → no output", () => {
-  const state = createChatStreamState();
-  const result = translateAnthropicEventToChatChunks({ type: "ping" }, state);
+  const state = createMessagesToChatCompletionsStreamState();
+  const result = translateMessagesEventToChatCompletionsChunks({ type: "ping" }, state);
   assertEquals(result, []);
 });
 
 Deno.test("error → no output", () => {
-  const state = createChatStreamState();
-  const result = translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "error",
     error: { type: "overloaded_error", message: "Overloaded" },
   }, state);
@@ -541,28 +538,28 @@ Deno.test("empty text_delta produces chunk with empty content", () => {
 // ── cache_creation_input_tokens ──
 
 Deno.test("message_start captures cache_creation_input_tokens", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks({
     type: "message_start",
     message: {
       ...(MSG_START as { type: "message_start"; message: Record<string, unknown> }).message,
       usage: { input_tokens: 80, output_tokens: 0, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 },
     },
-  } as AnthropicStreamEventData, state);
+  } as MessagesStreamEventData, state);
   assertEquals(state.cacheCreationInputTokens, 30);
 });
 
 Deno.test("message_delta usage includes cache_creation_input_tokens in prompt_tokens", () => {
-  const state = createChatStreamState();
-  translateAnthropicEventToChatChunks({
+  const state = createMessagesToChatCompletionsStreamState();
+  translateMessagesEventToChatCompletionsChunks({
     type: "message_start",
     message: {
       ...(MSG_START as { type: "message_start"; message: Record<string, unknown> }).message,
       usage: { input_tokens: 80, output_tokens: 0, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 },
     },
-  } as AnthropicStreamEventData, state);
+  } as MessagesStreamEventData, state);
 
-  const result = translateAnthropicEventToChatChunks({
+  const result = translateMessagesEventToChatCompletionsChunks({
     type: "message_delta",
     delta: { stop_reason: "end_turn" },
     usage: { output_tokens: 50 },

@@ -1,11 +1,11 @@
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "../../../../lib/openai-types.ts";
+} from "../../../../lib/chat-completions-types.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
 
 /**
- * OpenAI chat streaming only includes the final usage-only chunk when
+ * Chat Completions streaming only includes the final usage-only chunk when
  * `stream_options.include_usage` is enabled. We force that on here because
  * the gateway's source responders and usage tracking rely on those usage
  * frames for both streaming passthrough and non-stream reassembly.

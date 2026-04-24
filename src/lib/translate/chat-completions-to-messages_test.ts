@@ -1,19 +1,19 @@
 import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import {
   type RemoteImageLoader,
-  translateChatToMessages,
-} from "./chat-to-messages.ts";
-import type { ChatCompletionsPayload } from "../openai-types.ts";
+  translateChatCompletionsToMessages,
+} from "./chat-completions-to-messages.ts";
+import type { ChatCompletionsPayload } from "../chat-completions-types.ts";
 import type {
-  AnthropicAssistantContentBlock,
-  AnthropicMessagesTargetPayload,
-  AnthropicRedactedThinkingBlock,
-  AnthropicTextBlock,
-  AnthropicThinkingBlock,
-  AnthropicToolResultBlock,
-  AnthropicToolUseBlock,
-  AnthropicUserContentBlock,
-} from "../anthropic-types.ts";
+  MessagesAssistantContentBlock,
+  MessagesTargetPayload,
+  MessagesRedactedThinkingBlock,
+  MessagesTextBlock,
+  MessagesThinkingBlock,
+  MessagesToolResultBlock,
+  MessagesToolUseBlock,
+  MessagesUserContentBlock,
+} from "../messages-types.ts";
 
 // ── Helpers ──
 
@@ -26,22 +26,22 @@ function mkPayload(
 }
 
 function assistantBlocks(
-  result: AnthropicMessagesTargetPayload,
+  result: MessagesTargetPayload,
   msgIndex = 0,
-): AnthropicAssistantContentBlock[] {
+): MessagesAssistantContentBlock[] {
   const msg = result.messages[msgIndex];
   assertEquals(msg.role, "assistant");
-  return msg.content as AnthropicAssistantContentBlock[];
+  return msg.content as MessagesAssistantContentBlock[];
 }
 
 function userBlocks(
-  result: AnthropicMessagesTargetPayload,
+  result: MessagesTargetPayload,
   msgIndex = 0,
-): AnthropicUserContentBlock[] {
+): MessagesUserContentBlock[] {
   const msg = result.messages[msgIndex];
   assertEquals(msg.role, "user");
   return Array.isArray(msg.content)
-    ? msg.content as AnthropicUserContentBlock[]
+    ? msg.content as MessagesUserContentBlock[]
     : [{ type: "text", text: msg.content as string }];
 }
 
@@ -54,7 +54,7 @@ function stubRemoteImageLoader(
 // ── System / Developer messages ──
 
 Deno.test("system message extracted to system field", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "system", content: "You are helpful." },
       { role: "user", content: "Hi" },
@@ -66,7 +66,7 @@ Deno.test("system message extracted to system field", async () => {
 });
 
 Deno.test("developer message treated same as system", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "developer", content: "Dev instructions" },
       { role: "user", content: "Hi" },
@@ -76,7 +76,7 @@ Deno.test("developer message treated same as system", async () => {
 });
 
 Deno.test("multiple system messages joined with double newline", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "system", content: "First" },
       { role: "developer", content: "Second" },
@@ -87,7 +87,7 @@ Deno.test("multiple system messages joined with double newline", async () => {
 });
 
 Deno.test("empty system content is skipped", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "system", content: "" },
       { role: "user", content: "Hi" },
@@ -97,7 +97,7 @@ Deno.test("empty system content is skipped", async () => {
 });
 
 Deno.test("system with ContentPart array extracts text parts", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       {
         role: "system",
@@ -112,7 +112,7 @@ Deno.test("system with ContentPart array extracts text parts", async () => {
 // ── Basic message mapping ──
 
 Deno.test("simple user message → string content", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hello" }],
   }));
   assertEquals(result.messages.length, 1);
@@ -121,7 +121,7 @@ Deno.test("simple user message → string content", async () => {
 });
 
 Deno.test("simple assistant message → text block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       { role: "assistant", content: "Hello!" },
@@ -130,11 +130,11 @@ Deno.test("simple assistant message → text block", async () => {
   const blocks = assistantBlocks(result, 1);
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].type, "text");
-  assertEquals((blocks[0] as AnthropicTextBlock).text, "Hello!");
+  assertEquals((blocks[0] as MessagesTextBlock).text, "Hello!");
 });
 
 Deno.test("assistant with null content → empty text block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       { role: "assistant", content: null },
@@ -143,22 +143,22 @@ Deno.test("assistant with null content → empty text block", async () => {
   const blocks = assistantBlocks(result, 1);
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].type, "text");
-  assertEquals((blocks[0] as AnthropicTextBlock).text, "");
+  assertEquals((blocks[0] as MessagesTextBlock).text, "");
 });
 
 Deno.test("user with null content → empty text block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: null }],
   }));
   const blocks = userBlocks(result, 0);
   assertEquals(blocks.length, 1);
-  assertEquals((blocks[0] as AnthropicTextBlock).text, "");
+  assertEquals((blocks[0] as MessagesTextBlock).text, "");
 });
 
 // ── User/user merge ──
 
 Deno.test("consecutive user messages merged", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "First" },
       { role: "user", content: "Second" },
@@ -168,12 +168,12 @@ Deno.test("consecutive user messages merged", async () => {
   assertEquals(result.messages[0].role, "user");
   const blocks = userBlocks(result, 0);
   assertEquals(blocks.length, 2);
-  assertEquals((blocks[0] as AnthropicTextBlock).text, "First");
-  assertEquals((blocks[1] as AnthropicTextBlock).text, "Second");
+  assertEquals((blocks[0] as MessagesTextBlock).text, "First");
+  assertEquals((blocks[1] as MessagesTextBlock).text, "Second");
 });
 
 Deno.test("three consecutive users all merged into one", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "A" },
       { role: "user", content: "B" },
@@ -188,7 +188,7 @@ Deno.test("three consecutive users all merged into one", async () => {
 // ── Tool messages ──
 
 Deno.test("tool message creates user with tool_result block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -205,15 +205,15 @@ Deno.test("tool message creates user with tool_result block", async () => {
   }));
   assertEquals(result.messages.length, 3);
   assertEquals(result.messages[2].role, "user");
-  const blocks = result.messages[2].content as AnthropicUserContentBlock[];
+  const blocks = result.messages[2].content as MessagesUserContentBlock[];
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].type, "tool_result");
-  assertEquals((blocks[0] as AnthropicToolResultBlock).tool_use_id, "tc1");
-  assertEquals((blocks[0] as AnthropicToolResultBlock).content, "result");
+  assertEquals((blocks[0] as MessagesToolResultBlock).tool_use_id, "tc1");
+  assertEquals((blocks[0] as MessagesToolResultBlock).content, "result");
 });
 
 Deno.test("multiple tool messages after assistant merged into one user", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -238,14 +238,14 @@ Deno.test("multiple tool messages after assistant merged into one user", async (
   }));
   assertEquals(result.messages.length, 3);
   assertEquals(result.messages[2].role, "user");
-  const blocks = result.messages[2].content as AnthropicUserContentBlock[];
+  const blocks = result.messages[2].content as MessagesUserContentBlock[];
   assertEquals(blocks.length, 2);
-  assertEquals((blocks[0] as AnthropicToolResultBlock).tool_use_id, "tc1");
-  assertEquals((blocks[1] as AnthropicToolResultBlock).tool_use_id, "tc2");
+  assertEquals((blocks[0] as MessagesToolResultBlock).tool_use_id, "tc1");
+  assertEquals((blocks[1] as MessagesToolResultBlock).tool_use_id, "tc2");
 });
 
 Deno.test("tool + user merged: tool_results + text in same user msg", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -262,17 +262,17 @@ Deno.test("tool + user merged: tool_results + text in same user msg", async () =
     ],
   }));
   assertEquals(result.messages.length, 3);
-  const blocks = result.messages[2].content as AnthropicUserContentBlock[];
+  const blocks = result.messages[2].content as MessagesUserContentBlock[];
   assertEquals(blocks.length, 2);
   assertEquals(blocks[0].type, "tool_result");
   assertEquals(blocks[1].type, "text");
-  assertEquals((blocks[1] as AnthropicTextBlock).text, "thanks");
+  assertEquals((blocks[1] as MessagesTextBlock).text, "thanks");
 });
 
 Deno.test("tool message without tool_call_id is rejected", async () => {
   await assertRejects(
     () =>
-      translateChatToMessages(mkPayload({
+      translateChatCompletionsToMessages(mkPayload({
         messages: [
           { role: "user", content: "Hi" },
           {
@@ -295,7 +295,7 @@ Deno.test("tool message without tool_call_id is rejected", async () => {
 // ── Assistant content block ordering ──
 
 Deno.test("assistant blocks ordered: thinking → text → tool_use", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -319,7 +319,7 @@ Deno.test("assistant blocks ordered: thinking → text → tool_use", async () =
 });
 
 Deno.test("assistant with only tool_calls, no content", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -336,12 +336,12 @@ Deno.test("assistant with only tool_calls, no content", async () => {
   const blocks = assistantBlocks(result, 1);
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].type, "tool_use");
-  assertEquals((blocks[0] as AnthropicToolUseBlock).name, "f");
-  assertEquals((blocks[0] as AnthropicToolUseBlock).input, { a: 1 });
+  assertEquals((blocks[0] as MessagesToolUseBlock).name, "f");
+  assertEquals((blocks[0] as MessagesToolUseBlock).input, { a: 1 });
 });
 
 Deno.test("assistant with multiple tool_calls", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -366,12 +366,12 @@ Deno.test("assistant with multiple tool_calls", async () => {
   assertEquals(blocks.length, 2);
   assertEquals(blocks[0].type, "tool_use");
   assertEquals(blocks[1].type, "tool_use");
-  assertEquals((blocks[0] as AnthropicToolUseBlock).id, "tc1");
-  assertEquals((blocks[1] as AnthropicToolUseBlock).id, "tc2");
+  assertEquals((blocks[0] as MessagesToolUseBlock).id, "tc1");
+  assertEquals((blocks[1] as MessagesToolUseBlock).id, "tc2");
 });
 
 Deno.test("assistant tool_calls with invalid JSON arguments → raw_arguments fallback", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -386,7 +386,7 @@ Deno.test("assistant tool_calls with invalid JSON arguments → raw_arguments fa
     ],
   }));
   const blocks = assistantBlocks(result, 1);
-  assertEquals((blocks[0] as AnthropicToolUseBlock).input, {
+  assertEquals((blocks[0] as MessagesToolUseBlock).input, {
     raw_arguments: "not json",
   });
 });
@@ -394,7 +394,7 @@ Deno.test("assistant tool_calls with invalid JSON arguments → raw_arguments fa
 // ── Thinking / Redacted thinking ──
 
 Deno.test("reasoning_text + reasoning_opaque → thinking block with signature", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -406,41 +406,41 @@ Deno.test("reasoning_text + reasoning_opaque → thinking block with signature",
     ],
   }));
   const blocks = assistantBlocks(result, 1);
-  const thinking = blocks[0] as AnthropicThinkingBlock;
+  const thinking = blocks[0] as MessagesThinkingBlock;
   assertEquals(thinking.type, "thinking");
   assertEquals(thinking.thinking, "My thoughts");
   assertEquals(thinking.signature, "sig");
 });
 
 Deno.test("reasoning_text only → thinking block without signature", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       { role: "assistant", content: "resp", reasoning_text: "My thoughts" },
     ],
   }));
   const blocks = assistantBlocks(result, 1);
-  const thinking = blocks[0] as AnthropicThinkingBlock;
+  const thinking = blocks[0] as MessagesThinkingBlock;
   assertEquals(thinking.type, "thinking");
   assertEquals(thinking.thinking, "My thoughts");
   assertEquals(thinking.signature, undefined);
 });
 
 Deno.test("reasoning_opaque only → redacted_thinking block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       { role: "assistant", content: "resp", reasoning_opaque: "opaque_data" },
     ],
   }));
   const blocks = assistantBlocks(result, 1);
-  const redacted = blocks[0] as AnthropicRedactedThinkingBlock;
+  const redacted = blocks[0] as MessagesRedactedThinkingBlock;
   assertEquals(redacted.type, "redacted_thinking");
   assertEquals(redacted.data, "opaque_data");
 });
 
 Deno.test("no reasoning fields → no thinking block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       { role: "assistant", content: "resp" },
@@ -452,7 +452,7 @@ Deno.test("no reasoning fields → no thinking block", async () => {
 });
 
 Deno.test("null reasoning fields → no thinking block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Hi" },
       {
@@ -471,7 +471,7 @@ Deno.test("null reasoning fields → no thinking block", async () => {
 // ── Image handling ──
 
 Deno.test("image_url with data URL → base64 image block", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{
       role: "user",
       content: [
@@ -497,7 +497,7 @@ Deno.test("image_url with data URL → base64 image block", async () => {
 });
 
 Deno.test("image_url with remote image loader → base64 image block", async () => {
-  const result = await translateChatToMessages(
+  const result = await translateChatCompletionsToMessages(
     mkPayload({
       messages: [{
         role: "user",
@@ -531,7 +531,7 @@ Deno.test("image_url with remote image loader → base64 image block", async () 
 });
 
 Deno.test("image_url with remote image loader failure → gracefully skipped", async () => {
-  const result = await translateChatToMessages(
+  const result = await translateChatCompletionsToMessages(
     mkPayload({
       messages: [{
         role: "user",
@@ -554,7 +554,7 @@ Deno.test("image_url with remote image loader failure → gracefully skipped", a
 });
 
 Deno.test("image with jpeg media type", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{
       role: "user",
       content: [
@@ -572,7 +572,7 @@ Deno.test("image with jpeg media type", async () => {
 });
 
 Deno.test("data URL with unsupported media type → skipped", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{
       role: "user",
       content: [
@@ -583,11 +583,11 @@ Deno.test("data URL with unsupported media type → skipped", async () => {
   const blocks = userBlocks(result, 0);
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].type, "text");
-  assertEquals((blocks[0] as AnthropicTextBlock).text, "");
+  assertEquals((blocks[0] as MessagesTextBlock).text, "");
 });
 
 Deno.test("content with only non-parseable image → empty text fallback", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{
       role: "user",
       content: [
@@ -598,20 +598,20 @@ Deno.test("content with only non-parseable image → empty text fallback", async
   const blocks = userBlocks(result, 0);
   assertEquals(blocks.length, 1);
   assertEquals(blocks[0].type, "text");
-  assertEquals((blocks[0] as AnthropicTextBlock).text, "");
+  assertEquals((blocks[0] as MessagesTextBlock).text, "");
 });
 
 // ── Field mapping ──
 
 Deno.test("max_tokens is left undefined when not provided", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
   }));
   assertEquals(result.max_tokens, undefined);
 });
 
 Deno.test("max_tokens passed through when provided", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     max_tokens: 1024,
   }));
@@ -619,7 +619,7 @@ Deno.test("max_tokens passed through when provided", async () => {
 });
 
 Deno.test("temperature mapped", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     temperature: 0.7,
   }));
@@ -627,7 +627,7 @@ Deno.test("temperature mapped", async () => {
 });
 
 Deno.test("temperature 0 is mapped (not treated as falsy)", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     temperature: 0,
   }));
@@ -635,7 +635,7 @@ Deno.test("temperature 0 is mapped (not treated as falsy)", async () => {
 });
 
 Deno.test("top_p mapped", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     top_p: 0.9,
   }));
@@ -643,7 +643,7 @@ Deno.test("top_p mapped", async () => {
 });
 
 Deno.test("null temperature/top_p not included", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     temperature: null,
     top_p: null,
@@ -653,7 +653,7 @@ Deno.test("null temperature/top_p not included", async () => {
 });
 
 Deno.test("stop string → stop_sequences array", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     stop: "END",
   }));
@@ -661,7 +661,7 @@ Deno.test("stop string → stop_sequences array", async () => {
 });
 
 Deno.test("stop array → stop_sequences array", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     stop: ["END", "STOP"],
   }));
@@ -669,7 +669,7 @@ Deno.test("stop array → stop_sequences array", async () => {
 });
 
 Deno.test("stream flag passed through", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     stream: true,
   }));
@@ -677,7 +677,7 @@ Deno.test("stream flag passed through", async () => {
 });
 
 Deno.test("stream false → not set", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     stream: false,
   }));
@@ -687,7 +687,7 @@ Deno.test("stream false → not set", async () => {
 // ── Tool choice mapping ──
 
 Deno.test("tool_choice auto → { type: auto }", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tools: [{ type: "function", function: { name: "f", parameters: {} } }],
     tool_choice: "auto",
@@ -696,7 +696,7 @@ Deno.test("tool_choice auto → { type: auto }", async () => {
 });
 
 Deno.test("tool_choice none → { type: none }", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tool_choice: "none",
   }));
@@ -704,7 +704,7 @@ Deno.test("tool_choice none → { type: none }", async () => {
 });
 
 Deno.test("tool_choice required → { type: any }", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tools: [{ type: "function", function: { name: "f", parameters: {} } }],
     tool_choice: "required",
@@ -713,7 +713,7 @@ Deno.test("tool_choice required → { type: any }", async () => {
 });
 
 Deno.test("tool_choice specific function → { type: tool, name }", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tools: [{
       type: "function",
@@ -725,7 +725,7 @@ Deno.test("tool_choice specific function → { type: tool, name }", async () => 
 });
 
 Deno.test("null tool_choice → not set", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tool_choice: null,
   }));
@@ -735,7 +735,7 @@ Deno.test("null tool_choice → not set", async () => {
 // ── Tools mapping ──
 
 Deno.test("tools translated correctly", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tools: [{
       type: "function",
@@ -760,7 +760,7 @@ Deno.test("tools translated correctly", async () => {
 });
 
 Deno.test("empty tools array → not set", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [{ role: "user", content: "Hi" }],
     tools: [],
   }));
@@ -770,7 +770,7 @@ Deno.test("empty tools array → not set", async () => {
 // ── Model passthrough ──
 
 Deno.test("model name passed through", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     model: "claude-opus-4",
     messages: [{ role: "user", content: "Hi" }],
   }));
@@ -780,7 +780,7 @@ Deno.test("model name passed through", async () => {
 // ── Complex multi-turn conversations ──
 
 Deno.test("full tool use round-trip conversation", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "system", content: "You are helpful." },
       { role: "user", content: "What is the weather?" },
@@ -803,12 +803,12 @@ Deno.test("full tool use round-trip conversation", async () => {
   assertEquals(result.messages[1].role, "assistant");
   assertEquals(result.messages[2].role, "user");
   assertEquals(result.messages[3].role, "assistant");
-  const trBlocks = result.messages[2].content as AnthropicUserContentBlock[];
+  const trBlocks = result.messages[2].content as MessagesUserContentBlock[];
   assertEquals(trBlocks[0].type, "tool_result");
 });
 
 Deno.test("interleaved thinking round-trip", async () => {
-  const result = await translateChatToMessages(mkPayload({
+  const result = await translateChatCompletionsToMessages(mkPayload({
     messages: [
       { role: "user", content: "Solve this." },
       {

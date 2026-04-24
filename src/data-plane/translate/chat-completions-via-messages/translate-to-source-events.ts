@@ -1,13 +1,13 @@
 import type {
-  AnthropicResponse,
-  AnthropicStreamEventData,
-} from "../../../lib/anthropic-types.ts";
-import type { ChatCompletionResponse } from "../../../lib/openai-types.ts";
-import { translateMessagesToChatCompletion } from "../../../lib/translate/messages-to-chat.ts";
+  MessagesResponse,
+  MessagesStreamEventData,
+} from "../../../lib/messages-types.ts";
+import type { ChatCompletionResponse } from "../../../lib/chat-completions-types.ts";
+import { translateMessagesToChatCompletionsResponse } from "../../../lib/translate/messages-to-chat-completions.ts";
 import {
-  createChatStreamState,
-  translateAnthropicEventToChatChunks,
-} from "../../../lib/translate/messages-to-chat-stream.ts";
+  createMessagesToChatCompletionsStreamState,
+  translateMessagesEventToChatCompletionsChunks,
+} from "../../../lib/translate/messages-to-chat-completions-stream.ts";
 import {
   jsonFrame,
   sseFrame,
@@ -15,28 +15,31 @@ import {
 } from "../../shared/stream/types.ts";
 
 export const translateToSourceEvents = async function* (
-  frames: AsyncIterable<StreamFrame<AnthropicResponse>>,
+  frames: AsyncIterable<StreamFrame<MessagesResponse>>,
 ): AsyncGenerator<StreamFrame<ChatCompletionResponse>> {
-  const state = createChatStreamState();
+  const state = createMessagesToChatCompletionsStreamState();
 
   for await (const frame of frames) {
     if (frame.type === "json") {
-      yield jsonFrame(translateMessagesToChatCompletion(frame.data));
+      yield jsonFrame(translateMessagesToChatCompletionsResponse(frame.data));
       continue;
     }
 
     const data = frame.data.trim();
     if (!data || data === "[DONE]") continue;
 
-    let event: AnthropicStreamEventData;
+    let event: MessagesStreamEventData;
 
     try {
-      event = JSON.parse(data) as AnthropicStreamEventData;
+      event = JSON.parse(data) as MessagesStreamEventData;
     } catch {
       continue;
     }
 
-    const translated = translateAnthropicEventToChatChunks(event, state);
+    const translated = translateMessagesEventToChatCompletionsChunks(
+      event,
+      state,
+    );
 
     if (translated === "DONE") {
       yield sseFrame("[DONE]");

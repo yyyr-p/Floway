@@ -1,4 +1,4 @@
-import type { ChatCompletionResponse } from "../../../../lib/openai-types.ts";
+import type { ChatCompletionResponse } from "../../../../lib/chat-completions-types.ts";
 import { reassembleChatCompletionsSSE } from "../../../../lib/sse-reassemble.ts";
 import {
   collectSSE,

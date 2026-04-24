@@ -1,13 +1,13 @@
-import type { ChatCompletionResponse } from "../../../lib/openai-types.ts";
+import type { ChatCompletionResponse } from "../../../lib/chat-completions-types.ts";
 import type {
   ResponsesResult,
   ResponseStreamEvent,
 } from "../../../lib/responses-types.ts";
 import {
-  createResponsesToChatStreamState,
-  translateResponsesEventToChatChunks,
+  createResponsesToChatCompletionsStreamState,
+  translateResponsesEventToChatCompletionsChunks,
   translateResponsesToChatCompletion,
-} from "../../../lib/translate/chat-to-responses.ts";
+} from "../../../lib/translate/responses-to-chat-completions.ts";
 import {
   jsonFrame,
   sseFrame,
@@ -17,7 +17,7 @@ import {
 export const translateToSourceEvents = async function* (
   frames: AsyncIterable<StreamFrame<ResponsesResult>>,
 ): AsyncGenerator<StreamFrame<ChatCompletionResponse>> {
-  const state = createResponsesToChatStreamState();
+  const state = createResponsesToChatCompletionsStreamState();
   let sawStructuredOutput = false;
   let streamingCommitted = false;
   const pendingFrames: Array<ReturnType<typeof sseFrame>> = [];
@@ -79,7 +79,10 @@ export const translateToSourceEvents = async function* (
       continue;
     }
 
-    const translated = translateResponsesEventToChatChunks(event, state);
+    const translated = translateResponsesEventToChatCompletionsChunks(
+      event,
+      state,
+    );
 
     if (translated === "DONE") {
       const doneFrame = sseFrame("[DONE]");

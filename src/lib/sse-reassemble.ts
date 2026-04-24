@@ -14,7 +14,7 @@ import type {
   ChatCompletionResponse,
   ChoiceNonStreaming,
   ToolCall,
-} from "./openai-types.ts";
+} from "./chat-completions-types.ts";
 import type { ResponsesResult } from "./responses-types.ts";
 
 /** Check if an upstream response is SSE (vs plain JSON fallback). */

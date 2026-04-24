@@ -1,7 +1,7 @@
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "../../../../lib/openai-types.ts";
+} from "../../../../lib/chat-completions-types.ts";
 import { jsonFrame } from "../../../shared/stream/types.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
 
@@ -10,9 +10,9 @@ type ChatResponse = Record<string, unknown>;
 
 /**
  * Copilot's Claude `/chat/completions` adapter has been observed to split one
- * logical Anthropic answer across multiple OpenAI choices. That breaks clients
- * expecting one assistant choice whose text, tool calls, and finish reason stay
- * together.
+ * logical Messages-style answer across multiple Chat Completions choices.
+ * That breaks clients expecting one assistant choice whose text, tool calls,
+ * and finish reason stay together.
  *
  * For successful JSON responses we merge those split choices back into one; for
  * streaming responses we normalize every choice index to `0` so the client sees

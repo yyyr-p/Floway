@@ -1,4 +1,4 @@
-import type { ChatCompletionsPayload } from "../../../../lib/openai-types.ts";
+import type { ChatCompletionsPayload } from "../../../../lib/chat-completions-types.ts";
 import { normalizeModelName } from "../../../../lib/model-name.ts";
 
 export const normalizeChatRequest = (

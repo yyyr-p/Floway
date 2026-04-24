@@ -1,8 +1,8 @@
 import { assertEquals } from "@std/assert";
-import { translateToOpenAI } from "./openai.ts";
+import { translateMessagesToChatCompletions } from "./messages-to-chat-completions.ts";
 
-Deno.test("translateToOpenAI keeps tool_result and user text as separate chat messages", () => {
-  const result = translateToOpenAI({
+Deno.test("translateMessagesToChatCompletions keeps tool_result and user text as separate chat messages", () => {
+  const result = translateMessagesToChatCompletions({
     model: "gpt-test",
     max_tokens: 256,
     messages: [{

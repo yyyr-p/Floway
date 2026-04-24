@@ -1,5 +1,5 @@
-import type { ChatCompletionsPayload } from "../../../lib/openai-types.ts";
-import { translateChatToResponses } from "../../../lib/translate/chat-to-responses.ts";
+import type { ChatCompletionsPayload } from "../../../lib/chat-completions-types.ts";
+import { translateChatCompletionsToResponses } from "../../../lib/translate/chat-completions-to-responses.ts";
 
 export const buildTargetRequest = (payload: ChatCompletionsPayload) =>
-  translateChatToResponses(payload);
+  translateChatCompletionsToResponses(payload);

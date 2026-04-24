@@ -1,13 +1,15 @@
 import type {
-  AnthropicResponse,
-  AnthropicStreamState,
-} from "../../../lib/anthropic-types.ts";
+  MessagesResponse,
+} from "../../../lib/messages-types.ts";
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
-} from "../../../lib/openai-types.ts";
-import { translateChunkToAnthropicEvents } from "../../../lib/translate/openai-stream.ts";
-import { translateToAnthropic } from "../../../lib/translate/openai.ts";
+} from "../../../lib/chat-completions-types.ts";
+import {
+  createChatCompletionsToMessagesStreamState,
+  translateChatCompletionsChunkToMessagesEvents,
+} from "../../../lib/translate/chat-completions-to-messages-stream.ts";
+import { translateChatCompletionsToMessagesResponse } from "../../../lib/translate/chat-completions-to-messages.ts";
 import {
   jsonFrame,
   sseFrame,
@@ -16,17 +18,12 @@ import {
 
 export const translateToSourceEvents = async function* (
   frames: AsyncIterable<StreamFrame<ChatCompletionResponse>>,
-): AsyncGenerator<StreamFrame<AnthropicResponse>> {
-  const state: AnthropicStreamState = {
-    messageStartSent: false,
-    contentBlockIndex: 0,
-    contentBlockOpen: false,
-    toolCalls: {},
-  };
+): AsyncGenerator<StreamFrame<MessagesResponse>> {
+  const state = createChatCompletionsToMessagesStreamState();
 
   for await (const frame of frames) {
     if (frame.type === "json") {
-      yield jsonFrame(translateToAnthropic(frame.data));
+      yield jsonFrame(translateChatCompletionsToMessagesResponse(frame.data));
       continue;
     }
 
@@ -41,7 +38,10 @@ export const translateToSourceEvents = async function* (
       continue;
     }
 
-    for (const event of translateChunkToAnthropicEvents(chunk, state)) {
+    for (const event of translateChatCompletionsChunkToMessagesEvents(
+      chunk,
+      state,
+    )) {
       yield sseFrame(JSON.stringify(event), event.type);
     }
   }

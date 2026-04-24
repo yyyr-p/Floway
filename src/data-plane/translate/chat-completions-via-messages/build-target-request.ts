@@ -1,12 +1,12 @@
-import type { ChatCompletionsPayload } from "../../../lib/openai-types.ts";
+import type { ChatCompletionsPayload } from "../../../lib/chat-completions-types.ts";
 import {
   fetchRemoteImage,
-  translateChatToMessages,
-} from "../../../lib/translate/chat-to-messages.ts";
+  translateChatCompletionsToMessages,
+} from "../../../lib/translate/chat-completions-to-messages.ts";
 
 export const buildTargetRequest = async (
   payload: ChatCompletionsPayload,
 ) =>
-  await translateChatToMessages(payload, {
+  await translateChatCompletionsToMessages(payload, {
     loadRemoteImage: fetchRemoteImage,
   });

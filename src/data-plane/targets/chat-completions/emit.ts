@@ -2,7 +2,7 @@ import { copilotFetch } from "../../../lib/copilot.ts";
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "../../../lib/openai-types.ts";
+} from "../../../lib/chat-completions-types.ts";
 import { isSSEResponse } from "../../../lib/sse-reassemble.ts";
 import { readUpstreamError } from "../../shared/errors/upstream-error.ts";
 import {

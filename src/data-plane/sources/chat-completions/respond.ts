@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { InternalDebugError } from "../../shared/errors/internal-debug-error.ts";
-import type { ChatCompletionResponse } from "../../../lib/openai-types.ts";
+import type { ChatCompletionResponse } from "../../../lib/chat-completions-types.ts";
 import {
   collectChatEventsToCompletion,
   expandChatFrames,

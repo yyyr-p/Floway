@@ -2,7 +2,7 @@ import type { Context } from "hono";
 import type {
   ChatCompletionResponse,
   ChatCompletionsPayload,
-} from "../../../lib/openai-types.ts";
+} from "../../../lib/chat-completions-types.ts";
 import { getGithubCredentials } from "../../../lib/github.ts";
 import { normalizeChatRequest } from "./normalize/request.ts";
 import { planChatRequest } from "./plan.ts";

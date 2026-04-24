@@ -1,4 +1,4 @@
-import type { ChatCompletionsPayload } from "../../../lib/openai-types.ts";
+import type { ChatCompletionsPayload } from "../../../lib/chat-completions-types.ts";
 import { getModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
 import type { ChatPlan } from "../../shared/types/plan.ts";
 
