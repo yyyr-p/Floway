@@ -189,6 +189,20 @@ Deno.test("thinking takes priority over redacted_thinking", () => {
   assertEquals(result.choices[0].message.reasoning_opaque, "sig1");
 });
 
+Deno.test("multiple thinking blocks → joined reasoning_text and first thinking signature", () => {
+  const result = translateMessagesToChatCompletionsResponse(mkResponse({
+    content: [
+      { type: "thinking", thinking: "first", signature: "sig1" },
+      { type: "text", text: "middle" },
+      { type: "thinking", thinking: "second", signature: "sig2" },
+    ],
+  }));
+
+  assertEquals(result.choices[0].message.reasoning_text, "first\n\nsecond");
+  assertEquals(result.choices[0].message.reasoning_opaque, "sig1");
+  assertEquals(result.choices[0].message.content, "middle");
+});
+
 Deno.test("no thinking blocks → no reasoning fields", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [{ type: "text", text: "answer" }],

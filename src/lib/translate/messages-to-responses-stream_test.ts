@@ -120,3 +120,70 @@ Deno.test("handles no cache fields (backward compat)", () => {
   assertEquals(result.usage!.total_tokens, 150);
   assertEquals(result.usage!.input_tokens_details, undefined);
 });
+
+Deno.test("preserves redacted_thinking as opaque-only reasoning in stream translation", () => {
+  const state = createMessagesToResponsesStreamState(
+    "resp_test",
+    "claude-sonnet-4-20250514",
+  );
+
+  translateMessagesEventToResponsesEvents({
+    type: "message_start",
+    message: {
+      id: "msg_test",
+      type: "message",
+      role: "assistant",
+      content: [],
+      model: "claude-sonnet-4-20250514",
+      stop_reason: null,
+      stop_sequence: null,
+      usage: {
+        input_tokens: 10,
+        output_tokens: 0,
+      },
+    },
+  } as MessagesStreamEventData, state);
+
+  translateMessagesEventToResponsesEvents(
+    {
+      type: "content_block_start",
+      index: 0,
+      content_block: { type: "redacted_thinking", data: "opaque_only" },
+    } as MessagesStreamEventData,
+    state,
+  );
+  translateMessagesEventToResponsesEvents(
+    { type: "content_block_stop", index: 0 } as MessagesStreamEventData,
+    state,
+  );
+  translateMessagesEventToResponsesEvents(
+    {
+      type: "message_delta",
+      delta: { stop_reason: "end_turn" },
+      usage: { output_tokens: 3 },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const stopEvents = translateMessagesEventToResponsesEvents(
+    { type: "message_stop" } as MessagesStreamEventData,
+    state,
+  );
+
+  const completed = stopEvents.find((e) => e.type === "response.completed");
+  if (!completed || completed.type !== "response.completed") {
+    throw new Error("Expected response.completed event");
+  }
+
+  const response = (completed as {
+    type: "response.completed";
+    response: ResponsesResult;
+  }).response;
+
+  assertEquals(response.output[0], {
+    type: "reasoning",
+    id: "rs_0",
+    summary: [],
+    encrypted_content: "opaque_only",
+  });
+});

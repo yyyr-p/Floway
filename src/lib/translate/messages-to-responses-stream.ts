@@ -28,6 +28,12 @@ type OutputBlockInfo =
     hasSignature: boolean;
   }
   | {
+    type: "redacted_thinking";
+    outputIndex: number;
+    itemId: string;
+    signature: string;
+  }
+  | {
     type: "text";
     outputIndex: number;
     itemId: string;
@@ -130,13 +136,13 @@ const handleContentBlockStart = (
       itemId,
       thinkingText: "",
       signature: "",
+      hasSignature: false,
     });
 
     const item: ResponseOutputReasoning = {
       type: "reasoning",
       id: itemId,
       summary: [],
-      hasSignature: false,
     };
 
     return withSequenceNumbers(state, [
@@ -148,6 +154,26 @@ const handleContentBlockStart = (
         summary_index: 0,
         part: { type: "summary_text", text: "" },
       },
+    ]);
+  }
+
+  if (event.content_block.type === "redacted_thinking") {
+    const itemId = makeResponsesReasoningId(outputIndex);
+    state.blockMap.set(event.index, {
+      type: "redacted_thinking",
+      outputIndex,
+      itemId,
+      signature: event.content_block.data,
+    });
+
+    const item: ResponseOutputReasoning = {
+      type: "reasoning",
+      id: itemId,
+      summary: [],
+    };
+
+    return withSequenceNumbers(state, [
+      { type: "response.output_item.added", output_index: outputIndex, item },
     ]);
   }
 
@@ -227,6 +253,7 @@ const handleContentBlockDelta = (
 
   if (event.delta.type === "signature_delta" && info.type === "thinking") {
     info.signature += event.delta.signature;
+    info.hasSignature = true;
     return [];
   }
 
@@ -253,7 +280,6 @@ const handleContentBlockDelta = (
       delta: event.delta.partial_json,
     }]);
   }
-    info.hasSignature = true;
 
   return [];
 };
@@ -304,6 +330,23 @@ const handleContentBlockStop = (
         item,
       },
     ]);
+  }
+
+  if (info.type === "redacted_thinking") {
+    const item: ResponseOutputReasoning = {
+      type: "reasoning",
+      id: info.itemId,
+      summary: [],
+      encrypted_content: info.signature,
+    };
+
+    state.completedItems.push(item);
+
+    return withSequenceNumbers(state, [{
+      type: "response.output_item.done",
+      output_index: info.outputIndex,
+      item,
+    }]);
   }
 
   if (info.type === "text") {
