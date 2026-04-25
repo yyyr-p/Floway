@@ -115,6 +115,8 @@ const appendAssistantReasoning = (
   const next = ensureAssistant(assistant);
   const reasoningText = item.summary.map((part) => part.text).join("");
   const reasoningItem = toChatReasoningItem(item);
+  // Preserve item-level reasoning instead of compressing all Responses reasoning
+  // into legacy scalar Chat fields.
   next.message.reasoning_items = [
     ...(next.message.reasoning_items ?? []),
     reasoningItem,
@@ -191,6 +193,8 @@ const buildChatResponseFormat = (
 ): ChatCompletionsPayload["response_format"] | undefined => {
   if (text === undefined) return undefined;
   if (text === null) return null;
+  // `text: {}` means no explicit format. Keep it omitted instead of converting
+  // absence into an explicit Chat `response_format: null`.
   if (!Object.hasOwn(text, "format")) return undefined;
   if (text.format === undefined) return undefined;
   return text.format;
@@ -253,6 +257,8 @@ export const translateResponsesToChatCompletions = (
     flushAssistant();
   }
 
+  // Same-purpose OpenAI fields pass through directly here, while broader
+  // Responses-only state such as `previous_response_id` remains native-only.
   return {
     model: payload.model,
     messages,
@@ -320,6 +326,8 @@ export const translateResponsesToChatCompletion = (
   let reasoningOpaque: string | undefined;
   let hasScalarReasoning = false;
 
+  // Preserve every reasoning item, and expose only the first scalar group through
+  // legacy `reasoning_text` / `reasoning_opaque` fields.
   for (const item of response.output) {
     if (item.type === "message") {
       for (const block of item.content) {
@@ -462,6 +470,9 @@ const shouldProjectScalarReasoning = (
   outputIndex: number,
   state: ResponsesToChatCompletionsStreamState,
 ): boolean => {
+  // Chat scalar reasoning is a compatibility projection, not an ordered
+  // reasoning IR; once the first Responses reasoning output is chosen, later
+  // reasoning outputs only travel through `reasoning_items[]`.
   state.firstScalarReasoningOutputIndex ??= outputIndex;
   return state.firstScalarReasoningOutputIndex === outputIndex;
 };

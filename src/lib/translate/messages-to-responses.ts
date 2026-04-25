@@ -112,6 +112,9 @@ const translateUserMessage = (
 
   for (const block of message.content) {
     if (block.type === "tool_result") {
+      // Responses can represent alternating user content and tool outputs, so
+      // preserve Messages block chronology instead of moving all tool results to
+      // the front of the turn.
       flushPendingContent(pendingContent, input, "user");
       input.push({
         type: "function_call_output",
@@ -207,6 +210,8 @@ const translateSystemPrompt = (
   if (typeof system === "string") return system;
   if (!system) return null;
 
+  // Messages system blocks are prompt boundaries. Keep paragraph separation on
+  // OpenAI fallbacks instead of collapsing headings or lists with spaces.
   const text = system.map((block) => block.text).join("\n\n");
   return text.length > 0 ? text : null;
 };
@@ -220,6 +225,8 @@ const translateTools = (
     type: "function",
     name: tool.name,
     parameters: tool.input_schema,
+    // Responses tools default stricter than Anthropic/Chat-style function tools,
+    // so omitted source strictness is made explicit as false.
     strict: tool.strict ?? false,
     ...(tool.description ? { description: tool.description } : {}),
   }));
@@ -265,6 +272,9 @@ export const translateMessagesToResponses = (
   const clientTools = getClientTools(payload.tools);
   const instructions = translateSystemPrompt(payload.system);
 
+  // Keep fallback semantics strict: do not synthesize `temperature: 1`,
+  // `store: false`, `parallel_tool_calls: true`, or `reasoning.summary` when the
+  // Messages source did not express those knobs.
   return {
     model: payload.model,
     input: payload.messages.length === 0
@@ -282,6 +292,9 @@ export const translateMessagesToResponses = (
     tool_choice: translateToolChoice(payload.tool_choice, clientTools),
     ...(payload.metadata ? { metadata: { ...payload.metadata } } : {}),
     ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
+    // Preserve opaque reasoning across translated multi-turn requests without
+    // turning on Responses summaries when the Messages source did not ask for
+    // readable reasoning output.
     ...(reasoning
       ? { reasoning, include: ["reasoning.encrypted_content"] }
       : {}),
@@ -294,6 +307,9 @@ export const translateMessagesToResponsesResult = (
   const output: ResponseOutputItem[] = [];
   let outputText = "";
 
+  // Responses `output[]` can express ordered mixed reasoning/text/tool items, so
+  // the non-stream result follows source block order instead of merging all text
+  // into one trailing assistant message.
   for (const block of response.content) {
     switch (block.type) {
       case "thinking": {

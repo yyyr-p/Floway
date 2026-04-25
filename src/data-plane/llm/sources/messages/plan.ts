@@ -35,6 +35,8 @@ export const planMessagesRequest = async (
     initiator: getInitiator(payload),
   };
 
+  // Messages-origin routing prefers native Messages, then Responses, and only
+  // uses Chat Completions as the last fallback.
   if (capabilities.supportsMessages) {
     return {
       source: "messages",

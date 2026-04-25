@@ -251,6 +251,8 @@ export const translateChatCompletionsToMessages = async (
     options.loadRemoteImage ?? fetchRemoteImage,
   );
 
+  // Leave OpenAI `user` and generic metadata out of the Messages fallback instead
+  // of treating them as a backchannel for Anthropic `metadata.user_id`.
   return {
     model: payload.model,
     messages,

@@ -164,6 +164,8 @@ Do not introduce a canonical internal IR for requests.
 - Response handling is event-first.
 - Non-stream client responses should be assembled from source-shaped event
   streams whenever practical.
+- See `TRANSLATION.md` for per-path field mapping, known losses, and boundary
+  rules.
 
 ### Contract Stability
 

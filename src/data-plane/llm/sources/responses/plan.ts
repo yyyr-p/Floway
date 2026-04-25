@@ -38,6 +38,8 @@ export const planResponsesRequest = async (
     initiator: getInitiator(payload),
   };
 
+  // The broader Responses -> Messages -> Chat fallback surface is product
+  // behavior here, not an accidental route-order default.
   if (capabilities.supportsResponses) {
     return {
       source: "responses",

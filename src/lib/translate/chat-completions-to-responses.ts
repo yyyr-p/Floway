@@ -77,6 +77,8 @@ const translateChatTools = (tools?: Tool[] | null): ResponseTool[] | null =>
       type: "function",
       name: tool.function.name,
       parameters: tool.function.parameters,
+      // Chat function tools are non-strict by default while Responses function
+      // tools default strict; make omission explicit to preserve Chat semantics.
       strict: tool.function.strict ?? false,
       ...(tool.function.description
         ? { description: tool.function.description }
@@ -170,8 +172,8 @@ export const translateChatCompletionsToResponses = (
 
   for (const message of payload.messages) {
     // Only the initial Chat `system` prefix maps cleanly to Responses
-    // `instructions`. Responses input can carry later `system` and `developer`
-    // roles, so keep them in order instead of widening instruction scope.
+    // `instructions`; later `system` and `developer` turns are
+    // chronology-bearing input items.
     if (hoistSystemPrefix && message.role === "system") {
       const text = extractTextContent(message.content);
       if (text) instructions.push(text);
@@ -283,6 +285,9 @@ export const translateChatCompletionsToResponses = (
       ? { tools: translateChatTools(payload.tools) }
       : {}),
     tool_choice: translateChatToolChoice(payload.tool_choice),
+    // Same-purpose OpenAI fields are normal Chat/Responses adapter surface;
+    // provider-specific policy filtering belongs at the target boundary, not in
+    // pairwise translation.
     ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {}),
     ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
     // Preserve Chat's omitted `store` as omitted instead of synthesizing
@@ -308,6 +313,9 @@ export const translateChatCompletionsToResponses = (
     ...(payload.service_tier !== undefined
       ? { service_tier: payload.service_tier }
       : {}),
+    // Chat exposes opaque reasoning as scalar `reasoning_opaque`; ask Responses
+    // for encrypted content so translated multi-turn Chat clients can round-trip
+    // it without inventing a gateway-private state store.
     include: ["reasoning.encrypted_content"],
   };
 };
@@ -906,7 +914,7 @@ export const translateChatCompletionsChunkToResponsesEvents = (
 
       if (hadPendingScalarReasoning) {
         // Chat stream composition can emit legacy scalar reasoning first and a
-        // richer LiteLLM-style `reasoning_items[]` carrier later. Responses SSE
+        // richer item-level `reasoning_items[]` carrier later. Responses SSE
         // items are not retractable, so scalar reasoning remains buffered until
         // either a carrier replaces it or finalization commits it.
         state.pendingScalarReasoning = null;

@@ -38,6 +38,8 @@ export const serveChatCompletions = async (
     const payload = await c.req.json<ChatCompletionsPayload>();
     normalizeChatRequest(payload);
     c.set("model", payload.model || "unknown");
+    // Target interceptors may force upstream usage for gateway accounting, but
+    // Chat SSE exposes usage only when the caller requested `include_usage`.
     const includeUsageChunk = payload.stream_options?.include_usage === true;
     const apiKeyId = c.get("apiKeyId") as string | undefined;
 

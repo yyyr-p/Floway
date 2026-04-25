@@ -366,6 +366,9 @@ export const translateResponsesToMessages = async (
   ): part is string => Boolean(part)).join("\n\n");
   const effort = payload.reasoning?.effort;
 
+  // Responses `metadata` is intentionally omitted on the Messages path instead
+  // of being coerced into Anthropic `metadata.user_id`, prompt-cache, or safety
+  // semantics.
   return {
     model: payload.model,
     messages,

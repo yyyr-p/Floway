@@ -21,6 +21,8 @@ export const planChatRequest = async (
   const wantsStream = payload.stream === true;
   const fetchOptions = { vision: hasVision(payload) };
 
+  // Chat-origin routing intentionally prefers Messages when the model supports
+  // it, because that path preserves more Anthropic structure than native Chat.
   if (capabilities.supportsMessages) {
     return {
       source: "chat-completions",
@@ -48,6 +50,8 @@ export const planChatRequest = async (
     };
   }
 
+  // Capability misses keep the legacy model-name heuristic so old callers still
+  // get the same Claude -> Messages and non-Claude -> Chat routing behavior.
   return payload.model.startsWith("claude")
     ? {
       source: "chat-completions",

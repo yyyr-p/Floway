@@ -211,6 +211,8 @@ const translateMessagesUser = (message: MessagesUserMessage): Message[] => {
       continue;
     }
 
+    // Preserving source chronology matters more than keeping one Chat message,
+    // so interleaved user content and tool results become alternating messages.
     flushPendingUserBlocks();
     messages.push({
       role: "tool",
@@ -274,6 +276,8 @@ const translateMessagesInput = (
   messages: MessagesMessage[],
   system: string | MessagesTextBlock[] | undefined,
 ): Message[] => {
+  // Messages system blocks are prompt boundaries; keep them as separated
+  // paragraphs when falling back to Chat Completions.
   const systemMessages: Message[] = system
     ? [{
       role: "system",
@@ -296,6 +300,8 @@ const translateMessagesInput = (
 const translateMessagesTools = (
   tools?: MessagesClientTool[],
 ): Tool[] | undefined =>
+  // Do not hide target-side function-name constraints by renaming tools here;
+  // the Messages source contract has no reverse mapping surface for that.
   tools?.map((tool) => ({
     type: "function",
     function: {
