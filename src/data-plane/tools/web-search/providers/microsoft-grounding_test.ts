@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { FakeTime } from "jsr:@std/testing@^1/time";
+import { FakeTime } from "@std/testing/time";
 import { jsonResponse, withMockedFetch } from "../../../../test-helpers.ts";
 import { createMicrosoftGroundingWebSearchProvider } from "./microsoft-grounding.ts";
 

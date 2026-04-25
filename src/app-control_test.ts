@@ -28,7 +28,7 @@ Deno.test("admin key is limited to control plane routes", async () => {
 Deno.test("admin key can access playground-approved data plane routes with x-models-playground", async () => {
   const { adminKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
