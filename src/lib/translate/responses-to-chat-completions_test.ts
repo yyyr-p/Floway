@@ -1,5 +1,10 @@
 import { assertEquals } from "@std/assert";
-import { translateResponsesToChatCompletions } from "./responses-to-chat-completions.ts";
+import {
+  createResponsesToChatCompletionsStreamState,
+  translateResponsesEventToChatCompletionsChunks,
+  translateResponsesToChatCompletion,
+  translateResponsesToChatCompletions,
+} from "./responses-to-chat-completions.ts";
 
 Deno.test("translateResponsesToChatCompletions merges adjacent assistant reasoning text and tool calls", () => {
   const result = translateResponsesToChatCompletions({
@@ -36,15 +41,30 @@ Deno.test("translateResponsesToChatCompletions merges adjacent assistant reasoni
     max_output_tokens: 256,
     tools: null,
     tool_choice: "auto",
-    metadata: { user_id: "user_123" },
+    metadata: { trace_id: "trace_123" },
     stream: false,
     store: false,
     parallel_tool_calls: true,
+    text: {
+      format: { type: "json_schema", json_schema: { name: "shape" } },
+    },
+    prompt_cache_key: "cache-key",
+    safety_identifier: "safe-id",
+    reasoning: { effort: "medium" },
   });
 
   assertEquals(result.model, "gpt-test");
-  assertEquals(result.user, "user_123");
   assertEquals(result.max_tokens, 256);
+  assertEquals(result.metadata, { trace_id: "trace_123" });
+  assertEquals(result.store, false);
+  assertEquals(result.parallel_tool_calls, true);
+  assertEquals(result.response_format, {
+    type: "json_schema",
+    json_schema: { name: "shape" },
+  });
+  assertEquals(result.prompt_cache_key, "cache-key");
+  assertEquals(result.safety_identifier, "safe-id");
+  assertEquals(result.reasoning_effort, "medium");
   assertEquals(result.messages, [
     { role: "system", content: "system prompt" },
     { role: "user", content: "Hi" },
@@ -53,6 +73,12 @@ Deno.test("translateResponsesToChatCompletions merges adjacent assistant reasoni
       content: "Hello",
       reasoning_text: "trace",
       reasoning_opaque: "enc_1",
+      reasoning_items: [{
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "trace" }],
+        encrypted_content: "enc_1",
+      }],
       tool_calls: [{
         id: "call_1",
         type: "function",
@@ -66,6 +92,967 @@ Deno.test("translateResponsesToChatCompletions merges adjacent assistant reasoni
       role: "tool",
       tool_call_id: "call_1",
       content: "42",
+    },
+  ]);
+});
+
+Deno.test("translateResponsesToChatCompletions preserves all reasoning items and projects only the first scalar group", () => {
+  const result = translateResponsesToChatCompletions({
+    model: "gpt-test",
+    input: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "first" }],
+        encrypted_content: "enc_1",
+      },
+      {
+        type: "reasoning",
+        id: "rs_2",
+        summary: [{ type: "summary_text", text: "second" }],
+        encrypted_content: "enc_2",
+      },
+    ],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: null,
+    tools: null,
+    tool_choice: "auto",
+    metadata: null,
+    stream: null,
+    store: null,
+    parallel_tool_calls: null,
+  });
+
+  assertEquals(result.messages, [{
+    role: "assistant",
+    content: null,
+    reasoning_text: "first",
+    reasoning_opaque: "enc_1",
+    reasoning_items: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "first" }],
+        encrypted_content: "enc_1",
+      },
+      {
+        type: "reasoning",
+        id: "rs_2",
+        summary: [{ type: "summary_text", text: "second" }],
+        encrypted_content: "enc_2",
+      },
+    ],
+  }]);
+});
+
+Deno.test("translateResponsesToChatCompletion preserves all reasoning items and projects only the first scalar group", () => {
+  const result = translateResponsesToChatCompletion({
+    id: "resp_123",
+    object: "response",
+    model: "gpt-test",
+    output: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "first" }],
+        encrypted_content: "enc_1",
+      },
+      {
+        type: "reasoning",
+        id: "rs_2",
+        summary: [{ type: "summary_text", text: "second" }],
+        encrypted_content: "enc_2",
+      },
+    ],
+    output_text: "",
+    status: "completed",
+    usage: {
+      input_tokens: 1,
+      output_tokens: 1,
+      total_tokens: 2,
+    },
+  });
+
+  assertEquals(result.choices[0].message.reasoning_text, "first");
+  assertEquals(result.choices[0].message.reasoning_opaque, "enc_1");
+  assertEquals(result.choices[0].message.reasoning_items, [
+    {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [{ type: "summary_text", text: "first" }],
+      encrypted_content: "enc_1",
+    },
+    {
+      type: "reasoning",
+      id: "rs_2",
+      summary: [{ type: "summary_text", text: "second" }],
+      encrypted_content: "enc_2",
+    },
+  ]);
+});
+
+Deno.test("translateResponsesToChatCompletion does not fill missing scalar opaque from a later item", () => {
+  const result = translateResponsesToChatCompletion({
+    id: "resp_123",
+    object: "response",
+    model: "gpt-test",
+    output: [
+      {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "visible first" }],
+      },
+      {
+        type: "reasoning",
+        id: "rs_2",
+        summary: [],
+        encrypted_content: "enc_2",
+      },
+    ],
+    output_text: "",
+    status: "completed",
+  });
+
+  assertEquals(result.choices[0].message.reasoning_text, "visible first");
+  assertEquals(result.choices[0].message.reasoning_opaque, undefined);
+  assertEquals(result.choices[0].message.reasoning_items, [
+    {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [{ type: "summary_text", text: "visible first" }],
+    },
+    {
+      type: "reasoning",
+      id: "rs_2",
+      summary: [],
+      encrypted_content: "enc_2",
+    },
+  ]);
+});
+
+Deno.test("translateResponsesToChatCompletions preserves explicit null prompt cache and safety fields", () => {
+  const result = translateResponsesToChatCompletions({
+    model: "gpt-test",
+    input: "hello",
+    prompt_cache_key: null,
+    safety_identifier: null,
+  });
+
+  assertEquals("prompt_cache_key" in result, true);
+  assertEquals(result.prompt_cache_key, null);
+  assertEquals("safety_identifier" in result, true);
+  assertEquals(result.safety_identifier, null);
+});
+
+Deno.test("translateResponsesToChatCompletions omits response_format when Responses text.format is absent", () => {
+  const result = translateResponsesToChatCompletions({
+    model: "gpt-test",
+    input: "Hi",
+    text: {},
+  });
+
+  assertEquals("response_format" in result, false);
+});
+
+Deno.test("translateResponsesToChatCompletions preserves explicit null text format", () => {
+  const result = translateResponsesToChatCompletions({
+    model: "gpt-test",
+    input: "Hi",
+    text: null,
+  });
+
+  assertEquals(result.response_format, null);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks emits a completed opaque reasoning item before completion", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  const created = translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_single_opaque",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  if (created === "DONE") {
+    throw new Error("unexpected DONE on response.created");
+  }
+  assertEquals(created.length, 1);
+  assertEquals(created[0].choices[0].delta.role, "assistant");
+
+  const during = translateResponsesEventToChatCompletionsChunks({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      encrypted_content: "enc_1",
+    },
+  }, state);
+  if (during === "DONE") {
+    throw new Error("unexpected DONE on response.output_item.done");
+  }
+  assertEquals(during.length, 2);
+  assertEquals(during[0].choices[0].delta.reasoning_opaque, "enc_1");
+  assertEquals(during[0].choices[0].finish_reason, null);
+  assertEquals(during[1].choices[0].delta.reasoning_items, [{
+    type: "reasoning",
+    id: "rs_1",
+    summary: [],
+    encrypted_content: "enc_1",
+  }]);
+
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_single_opaque",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+      usage: {
+        input_tokens: 1,
+        output_tokens: 2,
+        total_tokens: 3,
+      },
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(completed.length, 2);
+  assertEquals(completed[0].choices[0].delta, {});
+  assertEquals(completed[0].choices[0].finish_reason, "stop");
+  assertEquals(completed[0].usage, undefined);
+  assertEquals(completed[1].choices, []);
+  assertEquals(completed[1].usage, {
+    prompt_tokens: 1,
+    completion_tokens: 2,
+    total_tokens: 3,
+  });
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks does not fill scalar opaque from a later stream item", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_stream_no_cross_pair",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.reasoning_summary_text.delta",
+      item_id: "rs_1",
+      output_index: 0,
+      summary_index: 0,
+      delta: "first",
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "first" }],
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 1,
+      item: {
+        type: "reasoning",
+        id: "rs_2",
+        summary: [],
+        encrypted_content: "enc_2",
+      },
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_stream_no_cross_pair",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(
+    [...chunks, ...completed].some((chunk) =>
+      chunk.choices[0]?.delta.reasoning_opaque === "enc_2"
+    ),
+    false,
+  );
+  assertEquals(completed[0].usage, undefined);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks emits reasoning_items for every completed reasoning item", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_multi_opaque",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+
+  const firstReasoning = translateResponsesEventToChatCompletionsChunks({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      encrypted_content: "enc_1",
+    },
+  }, state);
+  if (firstReasoning === "DONE") {
+    throw new Error("unexpected DONE on first response.output_item.done");
+  }
+  const secondReasoning = translateResponsesEventToChatCompletionsChunks({
+    type: "response.output_item.done",
+    output_index: 1,
+    item: {
+      type: "reasoning",
+      id: "rs_2",
+      summary: [],
+      encrypted_content: "enc_2",
+    },
+  }, state);
+  if (secondReasoning === "DONE") {
+    throw new Error("unexpected DONE on second response.output_item.done");
+  }
+
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_multi_opaque",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+      usage: {
+        input_tokens: 1,
+        output_tokens: 2,
+        total_tokens: 3,
+      },
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(firstReasoning[0].choices[0].delta.reasoning_opaque, "enc_1");
+  assertEquals(firstReasoning[1].choices[0].delta.reasoning_items, [
+    {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [],
+      encrypted_content: "enc_1",
+    },
+  ]);
+  assertEquals(secondReasoning[0].choices[0].delta.reasoning_items, [
+    {
+      type: "reasoning",
+      id: "rs_2",
+      summary: [],
+      encrypted_content: "enc_2",
+    },
+  ]);
+  assertEquals(completed.length, 2);
+  assertEquals(completed[0].choices[0].finish_reason, "stop");
+  assertEquals(completed[0].usage, undefined);
+  assertEquals(completed[1].choices, []);
+  assertEquals(completed[1].usage, {
+    prompt_tokens: 1,
+    completion_tokens: 2,
+    total_tokens: 3,
+  });
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks projects done-only summary text into scalar reasoning_text", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_done_only_summary",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.reasoning_summary_text.done",
+    item_id: "rs_1",
+    output_index: 0,
+    summary_index: 0,
+    text: "done trace",
+  }, state);
+  const reasoning = translateResponsesEventToChatCompletionsChunks({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [{ type: "summary_text", text: "done trace" }],
+    },
+  }, state);
+  if (reasoning === "DONE") {
+    throw new Error("unexpected DONE on response.output_item.done");
+  }
+
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_done_only_summary",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(reasoning[0].choices[0].delta.reasoning_text, "done trace");
+  assertEquals(reasoning[1].choices[0].delta.reasoning_items, [{
+    type: "reasoning",
+    id: "rs_1",
+    summary: [{ type: "summary_text", text: "done trace" }],
+  }]);
+  assertEquals(completed[0].choices[0].finish_reason, "stop");
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks projects output_item.done summary into scalar reasoning_text", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_output_done_summary",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  const reasoning = translateResponsesEventToChatCompletionsChunks({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [{ type: "summary_text", text: "output trace" }],
+    },
+  }, state);
+  if (reasoning === "DONE") {
+    throw new Error("unexpected DONE on response.output_item.done");
+  }
+
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_output_done_summary",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(reasoning[0].choices[0].delta.reasoning_text, "output trace");
+  assertEquals(reasoning[1].choices[0].delta.reasoning_items, [{
+    type: "reasoning",
+    id: "rs_1",
+    summary: [{ type: "summary_text", text: "output trace" }],
+  }]);
+  assertEquals(completed[0].choices[0].finish_reason, "stop");
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks emits stream usage as a usage-only chunk", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_usage_only",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_usage_only",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+      usage: {
+        input_tokens: 12,
+        output_tokens: 4,
+        total_tokens: 16,
+        input_tokens_details: { cached_tokens: 3 },
+      },
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(completed.length, 2);
+  assertEquals(completed[0].choices[0].finish_reason, "stop");
+  assertEquals(completed[0].usage, undefined);
+  assertEquals(completed[1].choices, []);
+  assertEquals(completed[1].usage, {
+    prompt_tokens: 12,
+    completion_tokens: 4,
+    total_tokens: 16,
+    prompt_tokens_details: { cached_tokens: 3 },
+  });
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks preserves reasoning before text when opaque data arrives late", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.created",
+      response: {
+        id: "resp_late_opaque_order",
+        object: "response",
+        model: "gpt-test",
+        status: "in_progress",
+        output: [],
+        output_text: "",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "reasoning", id: "rs_0", summary: [] },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_text.delta",
+      item_id: "msg_1",
+      output_index: 1,
+      content_index: 0,
+      delta: "answer",
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_0",
+        summary: [],
+        encrypted_content: "opaque_sig",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.completed",
+      response: {
+        id: "resp_late_opaque_order",
+        object: "response",
+        model: "gpt-test",
+        status: "completed",
+        output: [
+          {
+            type: "reasoning",
+            id: "rs_0",
+            summary: [],
+            encrypted_content: "opaque_sig",
+          },
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "answer" }],
+          },
+        ],
+        output_text: "answer",
+      },
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  assertEquals(chunks.map((chunk) => chunk.choices[0]?.delta), [
+    { role: "assistant" },
+    { reasoning_opaque: "opaque_sig" },
+    {
+      reasoning_items: [{
+        type: "reasoning",
+        id: "rs_0",
+        summary: [],
+        encrypted_content: "opaque_sig",
+      }],
+    },
+    { content: "answer" },
+    {},
+  ]);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks preserves reasoning before later text after reasoning is done", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.created",
+      response: {
+        id: "resp_done_before_text",
+        object: "response",
+        model: "gpt-test",
+        status: "in_progress",
+        output: [],
+        output_text: "",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "reasoning", id: "rs_0", summary: [] },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_0",
+        summary: [],
+        encrypted_content: "opaque_sig",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_text.delta",
+      item_id: "msg_1",
+      output_index: 1,
+      content_index: 0,
+      delta: "answer",
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.completed",
+      response: {
+        id: "resp_done_before_text",
+        object: "response",
+        model: "gpt-test",
+        status: "completed",
+        output: [
+          {
+            type: "reasoning",
+            id: "rs_0",
+            summary: [],
+            encrypted_content: "opaque_sig",
+          },
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "answer" }],
+          },
+        ],
+        output_text: "answer",
+      },
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  assertEquals(chunks.map((chunk) => chunk.choices[0]?.delta), [
+    { role: "assistant" },
+    { reasoning_opaque: "opaque_sig" },
+    {
+      reasoning_items: [{
+        type: "reasoning",
+        id: "rs_0",
+        summary: [],
+        encrypted_content: "opaque_sig",
+      }],
+    },
+    { content: "answer" },
+    {},
+  ]);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks emits output_text.done when no delta arrived", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.created",
+      response: {
+        id: "resp_done_text",
+        object: "response",
+        model: "gpt-test",
+        status: "in_progress",
+        output: [],
+        output_text: "",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_text.done",
+      item_id: "msg_0",
+      output_index: 0,
+      content_index: 0,
+      text: "answer",
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  assertEquals(chunks.map((chunk) => chunk.choices[0]?.delta), [
+    { role: "assistant" },
+    { content: "answer" },
+  ]);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks emits function_call_arguments.done when no delta arrived", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.created",
+      response: {
+        id: "resp_done_args",
+        object: "response",
+        model: "gpt-test",
+        status: "in_progress",
+        output: [],
+        output_text: "",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: {
+        type: "function_call",
+        call_id: "call_0",
+        name: "lookup",
+        arguments: "",
+        status: "in_progress",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.function_call_arguments.done",
+      item_id: "fc_0",
+      output_index: 0,
+      arguments: '{"q":1}',
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  assertEquals(chunks.map((chunk) => chunk.choices[0]?.delta), [
+    { role: "assistant" },
+    {
+      tool_calls: [{
+        index: 0,
+        id: "call_0",
+        type: "function",
+        function: { name: "lookup", arguments: "" },
+      }],
+    },
+    {
+      tool_calls: [{
+        index: 0,
+        function: { arguments: '{"q":1}' },
+      }],
+    },
+  ]);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks emits all done-only reasoning summary parts", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.created",
+      response: {
+        id: "resp_done_reasoning_parts",
+        object: "response",
+        model: "gpt-test",
+        status: "in_progress",
+        output: [],
+        output_text: "",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "reasoning", id: "rs_0", summary: [] },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.reasoning_summary_text.done",
+      item_id: "rs_0",
+      output_index: 0,
+      summary_index: 0,
+      text: "first",
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.reasoning_summary_text.done",
+      item_id: "rs_0",
+      output_index: 0,
+      summary_index: 1,
+      text: "second",
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_0",
+        summary: [
+          { type: "summary_text", text: "first" },
+          { type: "summary_text", text: "second" },
+        ],
+      },
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  assertEquals(
+    chunks
+      .map((chunk) => chunk.choices[0]?.delta.reasoning_text)
+      .filter((text) => text !== undefined),
+    ["first", "second"],
+  );
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks flushes pending done-only reasoning summary at completion", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.created",
+    response: {
+      id: "resp_terminal_reasoning_done",
+      object: "response",
+      model: "gpt-test",
+      status: "in_progress",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  translateResponsesEventToChatCompletionsChunks({
+    type: "response.reasoning_summary_text.done",
+    item_id: "rs_0",
+    output_index: 0,
+    summary_index: 0,
+    text: "terminal trace",
+  }, state);
+  const completed = translateResponsesEventToChatCompletionsChunks({
+    type: "response.completed",
+    response: {
+      id: "resp_terminal_reasoning_done",
+      object: "response",
+      model: "gpt-test",
+      status: "completed",
+      output: [],
+      output_text: "",
+    },
+  }, state);
+  if (completed === "DONE") {
+    throw new Error("unexpected DONE on response.completed");
+  }
+
+  assertEquals(completed.map((chunk) => chunk.choices[0]?.delta), [
+    { reasoning_text: "terminal trace" },
+    {},
+  ]);
+});
+
+Deno.test("translateResponsesEventToChatCompletionsChunks keeps first scalar reasoning by output order", () => {
+  const state = createResponsesToChatCompletionsStreamState();
+  const chunks = [
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.created",
+      response: {
+        id: "resp_reasoning_order",
+        object: "response",
+        model: "gpt-test",
+        status: "in_progress",
+        output: [],
+        output_text: "",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.added",
+      output_index: 0,
+      item: { type: "reasoning", id: "rs_0", summary: [] },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.added",
+      output_index: 1,
+      item: { type: "reasoning", id: "rs_1", summary: [] },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 1,
+      item: {
+        type: "reasoning",
+        id: "rs_1",
+        summary: [{ type: "summary_text", text: "second" }],
+        encrypted_content: "enc_second",
+      },
+    }, state),
+    translateResponsesEventToChatCompletionsChunks({
+      type: "response.output_item.done",
+      output_index: 0,
+      item: {
+        type: "reasoning",
+        id: "rs_0",
+        summary: [{ type: "summary_text", text: "first" }],
+        encrypted_content: "enc_first",
+      },
+    }, state),
+  ].flatMap((result) => result === "DONE" ? [] : result);
+
+  assertEquals(chunks.map((chunk) => chunk.choices[0]?.delta), [
+    { role: "assistant" },
+    { reasoning_text: "first" },
+    { reasoning_opaque: "enc_first" },
+    {
+      reasoning_items: [
+        {
+          type: "reasoning",
+          id: "rs_0",
+          summary: [{ type: "summary_text", text: "first" }],
+          encrypted_content: "enc_first",
+        },
+        {
+          type: "reasoning",
+          id: "rs_1",
+          summary: [{ type: "summary_text", text: "second" }],
+          encrypted_content: "enc_second",
+        },
+      ],
     },
   ]);
 });

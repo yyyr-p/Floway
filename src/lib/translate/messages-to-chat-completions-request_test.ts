@@ -110,24 +110,86 @@ Deno.test("translateMessagesToChatCompletions flattens text-block tool_result co
   ]);
 });
 
-Deno.test("translateMessagesToChatCompletions keeps the first thinking signature when folding multiple thinking blocks", () => {
+Deno.test("translateMessagesToChatCompletions preserves mixed user/tool_result chronology", () => {
+  const result = translateMessagesToChatCompletions({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: "First question." },
+        { type: "tool_result", tool_use_id: "toolu_1", content: "first" },
+        { type: "text", text: "Follow-up." },
+        { type: "tool_result", tool_use_id: "toolu_2", content: "second" },
+      ],
+    }],
+  });
+
+  assertEquals(result.messages, [
+    { role: "user", content: "First question." },
+    { role: "tool", tool_call_id: "toolu_1", content: "first" },
+    { role: "user", content: "Follow-up." },
+    { role: "tool", tool_call_id: "toolu_2", content: "second" },
+  ]);
+});
+
+Deno.test("translateMessagesToChatCompletions preserves redacted_thinking as reasoning_opaque", () => {
+  const result = translateMessagesToChatCompletions({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "assistant",
+      content: [{ type: "redacted_thinking", data: "opaque_sig" }],
+    }],
+  });
+
+  assertEquals(result.messages, [{
+    role: "assistant",
+    content: null,
+    reasoning_text: null,
+    reasoning_opaque: "opaque_sig",
+  }]);
+});
+
+Deno.test("translateMessagesToChatCompletions projects only the first scalar reasoning group", () => {
   const result = translateMessagesToChatCompletions({
     model: "gpt-test",
     max_tokens: 256,
     messages: [{
       role: "assistant",
       content: [
-        { type: "thinking", thinking: "first", signature: "sig1" },
-        { type: "text", text: "middle" },
-        { type: "thinking", thinking: "second", signature: "sig2" },
+        { type: "thinking", thinking: "first", signature: "sig_1" },
+        { type: "thinking", thinking: "second", signature: "sig_2" },
+        { type: "text", text: "answer" },
       ],
     }],
   });
 
-  assertEquals(result.messages, [{
+  assertEquals(result.messages[0], {
     role: "assistant",
-    content: "middle",
-    reasoning_text: "first\n\nsecond",
-    reasoning_opaque: "sig1",
-  }]);
+    content: "answer",
+    reasoning_text: "first",
+    reasoning_opaque: "sig_1",
+  });
+});
+
+Deno.test("translateMessagesToChatCompletions does not pair readable thinking with later redacted opaque data", () => {
+  const result = translateMessagesToChatCompletions({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "assistant",
+      content: [
+        { type: "thinking", thinking: "first" },
+        { type: "redacted_thinking", data: "opaque_later" },
+      ],
+    }],
+  });
+
+  assertEquals(result.messages[0], {
+    role: "assistant",
+    content: null,
+    reasoning_text: "first",
+    reasoning_opaque: null,
+  });
 });

@@ -110,6 +110,8 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
         gotInputFromStart = consumeUsageLine(buffer, usage, gotInputFromStart);
       }
 
+      applyHiddenChatStreamUsage(c, usage);
+
       if (usage.input > 0 || usage.output > 0) {
         const p1 = recordUsage(
           keyId,
@@ -155,6 +157,15 @@ interface StreamUsageInfo extends UsageInfo {
   fromStart: boolean;
 }
 
+interface HiddenChatStreamUsageCapture {
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    prompt_tokens_details?: { cached_tokens: number };
+  };
+}
+
 type JsonObject = Record<string, unknown>;
 
 function asObject(value: unknown): JsonObject | null {
@@ -172,6 +183,20 @@ function addUsage(total: UsageInfo, next: UsageInfo): void {
   total.output += next.output;
   total.cacheRead += next.cacheRead;
   total.cacheCreation += next.cacheCreation;
+}
+
+function applyHiddenChatStreamUsage(c: Context, usage: UsageInfo): void {
+  const capture = c.get("chatCompletionsHiddenUsageCapture") as
+    | HiddenChatStreamUsageCapture
+    | undefined;
+  const hiddenUsage = capture?.usage;
+  if (!hiddenUsage) return;
+  if (usage.input > 0 || usage.output > 0) return;
+
+  usage.input = hiddenUsage.prompt_tokens;
+  usage.output = hiddenUsage.completion_tokens;
+  usage.cacheRead = hiddenUsage.prompt_tokens_details?.cached_tokens ?? 0;
+  usage.cacheCreation = 0;
 }
 
 function consumeUsageLine(
@@ -264,7 +289,10 @@ function extractUsageFromStreamEvent(
     return { input, output, cacheRead, cacheCreation, fromStart: false };
   }
 
-  if (payload.type === "response.completed") {
+  if (
+    payload.type === "response.completed" ||
+    payload.type === "response.incomplete"
+  ) {
     const response = asObject(payload.response);
     const usage = asObject(response?.usage);
     if (!usage) return null;

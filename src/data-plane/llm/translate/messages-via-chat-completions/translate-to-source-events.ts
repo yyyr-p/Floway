@@ -5,6 +5,7 @@ import type {
 } from "../../../../lib/chat-completions-types.ts";
 import {
   createChatCompletionsToMessagesStreamState,
+  flushChatCompletionsToMessagesEvents,
   translateChatCompletionsChunkToMessagesEvents,
 } from "../../../../lib/translate/chat-completions-to-messages-stream.ts";
 import { translateChatCompletionsToMessagesResponse } from "../../../../lib/translate/chat-completions-to-messages.ts";
@@ -44,5 +45,9 @@ export const translateToSourceEvents = async function* (
     ) {
       yield sseFrame(JSON.stringify(event), event.type);
     }
+  }
+
+  for (const event of flushChatCompletionsToMessagesEvents(state)) {
+    yield sseFrame(JSON.stringify(event), event.type);
   }
 };

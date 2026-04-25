@@ -3,9 +3,18 @@ import {
   type MessagesStreamEventData,
 } from "../messages-types.ts";
 import type {
+  ResponseOutputItem,
   ResponsesResult,
   ResponseStreamEvent,
 } from "../responses-types.ts";
+import {
+  createResponsesOutputOrderState,
+  hasResponsePartForOutput,
+  recordResponseOutputOrderEvent,
+  responsePartKey,
+  type ResponsesOutputOrderState,
+  shouldDeferForEarlierResponseOutput,
+} from "./responses-stream-order.ts";
 import { translateResponsesToMessagesResponse } from "./responses-to-messages.ts";
 import { checkWhitespaceOverflow } from "./utils.ts";
 
@@ -77,6 +86,10 @@ interface ResponsesToMessagesStreamState {
   blockIndexByKey: Map<string, number>;
   openBlocks: Set<number>;
   blockHasDelta: Set<number>;
+  emittedReasoningSummaryKeys: Set<string>;
+  emittedTextContentKeys: Set<string>;
+  emittedFunctionArgumentOutputIndexes: Set<number>;
+  outputOrder: ResponsesOutputOrderState;
   functionCallState: Map<number, {
     blockIndex: number;
     toolCallId: string;
@@ -87,7 +100,15 @@ interface ResponsesToMessagesStreamState {
 
 type ContentBlockInit =
   | { type: "text"; text: "" }
-  | { type: "thinking"; thinking: "" };
+  | { type: "thinking"; thinking: "" }
+  | { type: "redacted_thinking"; data: string };
+
+const shouldDeferForEarlierOutput = (
+  event: ResponseStreamEvent,
+  state: ResponsesToMessagesStreamState,
+): boolean => shouldDeferForEarlierResponseOutput(event, state.outputOrder);
+
+const trackMessagesOutputItem = (_item: ResponseOutputItem): boolean => true;
 
 const openBlock = (
   state: ResponsesToMessagesStreamState,
@@ -137,6 +158,19 @@ const openThinkingBlock = (
     state,
     `${outputIndex}:0`,
     { type: "thinking", thinking: "" },
+    events,
+  );
+
+const openRedactedThinkingBlock = (
+  state: ResponsesToMessagesStreamState,
+  outputIndex: number,
+  signature: string,
+  events: MessagesStreamEventData[],
+): number =>
+  openBlock(
+    state,
+    `${outputIndex}:0`,
+    { type: "redacted_thinking", data: signature },
     events,
   );
 
@@ -190,6 +224,10 @@ const handleOutputItemAdded = (
   event: ResponseOutputItemAddedEvent,
   state: ResponsesToMessagesStreamState,
 ): MessagesStreamEventData[] => {
+  if (event.item.type === "reasoning") {
+    return [];
+  }
+
   if (event.item.type !== "function_call") return [];
 
   const blockIndex = state.nextBlockIndex++;
@@ -219,6 +257,7 @@ const handleOutputItemAdded = (
       delta: { type: "input_json_delta", partial_json: event.item.arguments },
     });
     state.blockHasDelta.add(blockIndex);
+    state.emittedFunctionArgumentOutputIndexes.add(event.output_index);
   }
 
   return events;
@@ -228,12 +267,50 @@ const handleOutputItemDone = (
   event: ResponseOutputItemDoneEvent,
   state: ResponsesToMessagesStreamState,
 ): MessagesStreamEventData[] => {
-  if (event.item.type !== "reasoning") return [];
+  if (event.item.type !== "reasoning") return flushDeferredEvents(state);
+
+  if (
+    event.item.summary.length === 0 &&
+    Object.hasOwn(event.item, "encrypted_content") &&
+    !hasResponsePartForOutput(
+      state.emittedReasoningSummaryKeys,
+      event.output_index,
+    )
+  ) {
+    const events: MessagesStreamEventData[] = [];
+    openRedactedThinkingBlock(
+      state,
+      event.output_index,
+      event.item.encrypted_content ?? "",
+      events,
+    );
+    return [...events, ...flushDeferredEvents(state)];
+  }
 
   const events: MessagesStreamEventData[] = [];
   const blockIndex = openThinkingBlock(state, event.output_index, events);
+  let emittedDelta = false;
 
-  if (event.item.summary.length === 0) {
+  for (const [summaryIndex, part] of event.item.summary.entries()) {
+    const key = responsePartKey(event.output_index, summaryIndex);
+    if (!part.text || state.emittedReasoningSummaryKeys.has(key)) continue;
+
+    events.push({
+      type: "content_block_delta",
+      index: blockIndex,
+      delta: { type: "thinking_delta", thinking: part.text },
+    });
+    emittedDelta = true;
+    state.emittedReasoningSummaryKeys.add(key);
+  }
+
+  if (
+    event.item.summary.length === 0 &&
+    !hasResponsePartForOutput(
+      state.emittedReasoningSummaryKeys,
+      event.output_index,
+    )
+  ) {
     events.push({
       type: "content_block_delta",
       index: blockIndex,
@@ -242,6 +319,10 @@ const handleOutputItemDone = (
         thinking: MESSAGES_THINKING_PLACEHOLDER,
       },
     });
+    emittedDelta = true;
+    state.emittedReasoningSummaryKeys.add(
+      responsePartKey(event.output_index, 0),
+    );
   }
 
   const encryptedContent = event.item.encrypted_content;
@@ -257,9 +338,11 @@ const handleOutputItemDone = (
         signature: encryptedContent,
       },
     });
-    state.blockHasDelta.add(blockIndex);
+    emittedDelta = true;
   }
-  return events;
+
+  if (emittedDelta) state.blockHasDelta.add(blockIndex);
+  return [...events, ...flushDeferredEvents(state)];
 };
 
 const handleThinkingDelta = (
@@ -274,6 +357,9 @@ const handleThinkingDelta = (
     delta: { type: "thinking_delta", thinking: event.delta },
   });
   state.blockHasDelta.add(blockIndex);
+  state.emittedReasoningSummaryKeys.add(
+    responsePartKey(event.output_index, event.summary_index),
+  );
   return events;
 };
 
@@ -283,13 +369,16 @@ const handleThinkingDone = (
 ): MessagesStreamEventData[] => {
   const events: MessagesStreamEventData[] = [];
   const blockIndex = openThinkingBlock(state, event.output_index, events);
+  const key = responsePartKey(event.output_index, event.summary_index);
 
-  if (event.text && !state.blockHasDelta.has(blockIndex)) {
+  if (event.text && !state.emittedReasoningSummaryKeys.has(key)) {
     events.push({
       type: "content_block_delta",
       index: blockIndex,
       delta: { type: "thinking_delta", thinking: event.text },
     });
+    state.blockHasDelta.add(blockIndex);
+    state.emittedReasoningSummaryKeys.add(key);
   }
 
   return events;
@@ -314,6 +403,9 @@ const handleTextDelta = (
     delta: { type: "text_delta", text: event.delta },
   });
   state.blockHasDelta.add(blockIndex);
+  state.emittedTextContentKeys.add(
+    responsePartKey(event.output_index, event.content_index),
+  );
   return events;
 };
 
@@ -329,12 +421,15 @@ const handleTextDone = (
     events,
   );
 
-  if (event.text && !state.blockHasDelta.has(blockIndex)) {
+  const key = responsePartKey(event.output_index, event.content_index);
+  if (event.text && !state.emittedTextContentKeys.has(key)) {
     events.push({
       type: "content_block_delta",
       index: blockIndex,
       delta: { type: "text_delta", text: event.text },
     });
+    state.blockHasDelta.add(blockIndex);
+    state.emittedTextContentKeys.add(key);
   }
 
   return events;
@@ -373,6 +468,7 @@ const handleFunctionArgumentsDelta = (
   }
 
   state.blockHasDelta.add(functionCallState.blockIndex);
+  state.emittedFunctionArgumentOutputIndexes.add(event.output_index);
 
   return [{
     type: "content_block_delta",
@@ -391,10 +487,14 @@ const handleFunctionArgumentsDone = (
   state.functionCallState.delete(event.output_index);
 
   if (
-    !event.arguments || state.blockHasDelta.has(functionCallState.blockIndex)
+    !event.arguments ||
+    state.emittedFunctionArgumentOutputIndexes.has(event.output_index)
   ) {
     return [];
   }
+
+  state.blockHasDelta.add(functionCallState.blockIndex);
+  state.emittedFunctionArgumentOutputIndexes.add(event.output_index);
 
   return [{
     type: "content_block_delta",
@@ -470,14 +570,57 @@ export const createResponsesToMessagesStreamState =
     blockIndexByKey: new Map(),
     openBlocks: new Set(),
     blockHasDelta: new Set(),
+    emittedReasoningSummaryKeys: new Set(),
+    emittedTextContentKeys: new Set(),
+    emittedFunctionArgumentOutputIndexes: new Set(),
+    outputOrder: createResponsesOutputOrderState(),
     functionCallState: new Map(),
   });
+
+const flushDeferredEvents = (
+  state: ResponsesToMessagesStreamState,
+): MessagesStreamEventData[] => {
+  const events: MessagesStreamEventData[] = [];
+
+  while (state.outputOrder.deferredEvents.length > 0) {
+    const ready: ResponseStreamEvent[] = [];
+    const stillDeferred: ResponseStreamEvent[] = [];
+
+    for (const event of state.outputOrder.deferredEvents) {
+      if (shouldDeferForEarlierOutput(event, state)) {
+        stillDeferred.push(event);
+      } else {
+        ready.push(event);
+      }
+    }
+
+    if (ready.length === 0) break;
+    state.outputOrder.deferredEvents = stillDeferred;
+
+    for (const event of ready) {
+      events.push(
+        ...translateResponsesStreamEventToMessagesEvents(event, state),
+      );
+    }
+  }
+
+  return events;
+};
 
 export const translateResponsesStreamEventToMessagesEvents = (
   event: ResponseStreamEvent,
   state: ResponsesToMessagesStreamState,
 ): MessagesStreamEventData[] => {
   if (state.messageCompleted) return [];
+  if (shouldDeferForEarlierOutput(event, state)) {
+    state.outputOrder.deferredEvents.push(event);
+    return [];
+  }
+  recordResponseOutputOrderEvent(
+    event,
+    state.outputOrder,
+    trackMessagesOutputItem,
+  );
 
   switch (event.type) {
     case "response.created":

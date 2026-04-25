@@ -70,7 +70,7 @@ export const serveResponses = async (
     }
 
     if (plan.target === "messages") {
-      const messagesPayload = buildMessagesTargetRequest(payload);
+      const messagesPayload = await buildMessagesTargetRequest(payload);
       const result = await emitToMessages({
         sourceApi: "responses",
         payload: messagesPayload,

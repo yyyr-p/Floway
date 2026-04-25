@@ -17,6 +17,7 @@ import type {
 } from "./messages-types.ts";
 import type {
   ChatCompletionResponse,
+  ChatReasoningItem,
   ChoiceNonStreaming,
   ToolCall,
 } from "./chat-completions-types.ts";
@@ -306,6 +307,9 @@ export async function reassembleMessagesSSE(
       }
       if (event.usage) {
         const u = event.usage as Record<string, unknown>;
+        if (u.input_tokens != null) {
+          usage.input_tokens = u.input_tokens as number;
+        }
         if (u.output_tokens != null) {
           usage.output_tokens = u.output_tokens as number;
         }
@@ -407,6 +411,7 @@ export async function reassembleChatCompletionsSSE(
   let reasoningText = "";
   let reasoningOpaque = "";
   let hasReasoningOpaque = false;
+  const reasoningItems: ChatReasoningItem[] = [];
   let finishReason: ChoiceNonStreaming["finish_reason"] = "stop";
   let lastUsage: ChatCompletionResponse["usage"] | undefined;
 
@@ -453,6 +458,9 @@ export async function reassembleChatCompletionsSSE(
       if (typeof delta.reasoning_opaque === "string") {
         reasoningOpaque += delta.reasoning_opaque;
         hasReasoningOpaque = true;
+      }
+      if (Array.isArray(delta.reasoning_items)) {
+        reasoningItems.push(...delta.reasoning_items as ChatReasoningItem[]);
       }
 
       if (Array.isArray(delta.tool_calls)) {
@@ -506,6 +514,7 @@ export async function reassembleChatCompletionsSSE(
     ...(toolCalls.length > 0 && { tool_calls: toolCalls }),
     ...(reasoningText && { reasoning_text: reasoningText }),
     ...(hasReasoningOpaque ? { reasoning_opaque: reasoningOpaque } : {}),
+    ...(reasoningItems.length > 0 && { reasoning_items: reasoningItems }),
   };
 
   const result: ChatCompletionResponse = {

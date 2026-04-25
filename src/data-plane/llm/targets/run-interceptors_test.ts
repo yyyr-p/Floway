@@ -41,10 +41,10 @@ Deno.test("runTargetInterceptors lets one interceptor patch request before run a
   const result = await runTargetInterceptors(
     ctx,
     [interceptor],
-    async () =>
-      eventResult((async function* () {
+    () =>
+      Promise.resolve(eventResult((async function* () {
         yield jsonFrame(ctx.payload.value);
-      })()),
+      })())),
   );
 
   assertEquals(result.type, "events");
@@ -70,19 +70,21 @@ Deno.test("runTargetInterceptors lets one interceptor inspect an upstream error,
     return await run();
   };
 
-  const result = await runTargetInterceptors(ctx, [interceptor], async () => {
+  const result = await runTargetInterceptors(ctx, [interceptor], () => {
     attempts += 1;
 
-    return attempts === 1
-      ? {
-        type: "upstream-error" as const,
-        status: 400,
-        headers: new Headers(),
-        body: new TextEncoder().encode('{"error":{"message":"broken"}}'),
-      }
-      : eventResult((async function* () {
-        yield jsonFrame(ctx.payload.value);
-      })());
+    return Promise.resolve(
+      attempts === 1
+        ? {
+          type: "upstream-error" as const,
+          status: 400,
+          headers: new Headers(),
+          body: new TextEncoder().encode('{"error":{"message":"broken"}}'),
+        }
+        : eventResult((async function* () {
+          yield jsonFrame(ctx.payload.value);
+        })()),
+    );
   });
 
   assertEquals(attempts, 2);

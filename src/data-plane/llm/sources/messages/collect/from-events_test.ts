@@ -1,178 +1,98 @@
-import { assertEquals } from "@std/assert";
-import type { MessagesResponse } from "../../../../../lib/messages-types.ts";
-import { collectSSE } from "../../../shared/stream/collect-sse.ts";
-import { jsonFrame } from "../../../shared/stream/types.ts";
+import { assertEquals, assertFalse } from "@std/assert";
 import {
   collectMessagesEventsToResponse,
-  expandMessagesFrames,
+  messagesResponseToSSEFrames,
 } from "./from-events.ts";
+import { sseFrame } from "../../../shared/stream/types.ts";
 
-Deno.test("collectMessagesEventsToResponse round-trips native web search JSON frames", async () => {
-  const response: MessagesResponse = {
-    id: "msg_roundtrip",
+Deno.test("messagesResponseToSSEFrames omits signature deltas for text-only thinking blocks", () => {
+  const frames = messagesResponseToSSEFrames({
+    id: "msg_text_only_thinking",
     type: "message",
     role: "assistant",
-    model: "claude-test",
-    stop_reason: "pause_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: 1,
-      output_tokens: 2,
-      server_tool_use: { web_search_requests: 1 },
-    },
-    content: [
-      {
-        type: "server_tool_use",
-        id: "srvtoolu_1",
-        name: "web_search",
-        input: { query: "latest React documentation" },
-      },
-      {
-        type: "web_search_tool_result",
-        tool_use_id: "srvtoolu_1",
-        content: [{
-          type: "web_search_result",
-          url: "https://react.dev",
-          title: "React",
-          encrypted_content: "cgws1.eyJjb250ZW50IjpbXX0",
-        }],
-      },
-      {
-        type: "text",
-        text: "Use the docs.",
-        citations: [{
-          type: "web_search_result_location",
-          url: "https://react.dev",
-          title: "React",
-          encrypted_index:
-            "cgws1.eyJzZWFyY2hfcmVzdWx0X2luZGV4IjowLCJzdGFydF9ibG9ja19pbmRleCI6MCwiZW5kX2Jsb2NrX2luZGV4IjowfQ",
-          cited_text: "Official React docs",
-        }],
-      },
-    ],
-  };
-
-  const collected = await collectMessagesEventsToResponse((async function* () {
-    yield jsonFrame(response);
-  })());
-
-  assertEquals(collected, response);
-});
-
-Deno.test("collectMessagesEventsToResponse preserves citations when text is empty", async () => {
-  const response: MessagesResponse = {
-    id: "msg_empty_text_citations",
-    type: "message",
-    role: "assistant",
+    content: [{ type: "thinking", thinking: "trace" }],
     model: "claude-test",
     stop_reason: "end_turn",
     stop_sequence: null,
-    usage: {
-      input_tokens: 1,
-      output_tokens: 1,
-    },
-    content: [{
-      type: "text",
-      text: "",
-      citations: [{
-        type: "web_search_result_location",
-        url: "https://react.dev",
-        title: "React",
-        encrypted_index: "cgws1.empty",
-        cited_text: "Official React docs",
-      }],
+    usage: { input_tokens: 1, output_tokens: 2 },
+  });
+
+  const payloads = frames.map((frame) =>
+    frame.data === "[DONE]" ? frame.data : JSON.parse(frame.data)
+  );
+
+  assertFalse(payloads.some((payload) =>
+    typeof payload === "object" &&
+    payload.type === "content_block_delta" &&
+    payload.delta.type === "signature_delta"
+  ));
+  assertEquals(
+    payloads.filter((payload) =>
+      typeof payload === "object" &&
+      payload.type === "content_block_delta" &&
+      payload.delta.type === "thinking_delta"
+    ),
+    [{
+      type: "content_block_delta",
+      index: 0,
+      delta: { type: "thinking_delta", thinking: "trace" },
     }],
-  };
-
-  const collected = await collectMessagesEventsToResponse((async function* () {
-    yield jsonFrame(response);
-  })());
-
-  assertEquals(collected, response);
+  );
 });
 
-Deno.test("expandMessagesFrames emits native-like citations_delta frames", async () => {
-  const response: MessagesResponse = {
-    id: "msg_emit_citations",
-    type: "message",
-    role: "assistant",
-    model: "claude-test",
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: {
-      input_tokens: 1,
-      output_tokens: 1,
-    },
-    content: [{
-      type: "text",
-      text: "Use the docs.",
-      citations: [
-        {
-          type: "search_result_location",
-          url: "https://react.dev/learn",
-          title: "Quick Start - React",
-          search_result_index: 1,
-          start_block_index: 0,
-          end_block_index: 1,
-          cited_text: "Quick Start citation",
+Deno.test("collectMessagesEventsToResponse preserves final message_delta input_tokens", async () => {
+  async function* frames() {
+    yield sseFrame(
+      JSON.stringify({
+        type: "message_start",
+        message: {
+          id: "msg_late_usage",
+          type: "message",
+          role: "assistant",
+          content: [],
+          model: "claude-test",
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 0, output_tokens: 0 },
         },
-        {
-          type: "web_search_result_location",
-          url: "https://react.dev",
-          title: "React",
-          encrypted_index: "cgws1.synthetic",
-          cited_text: "Native-looking citation",
-        },
-      ],
-    }],
-  };
+      }),
+      "message_start",
+    );
+    yield sseFrame(
+      JSON.stringify({
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "text", text: "" },
+      }),
+      "content_block_start",
+    );
+    yield sseFrame(
+      JSON.stringify({
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "text_delta", text: "answer" },
+      }),
+      "content_block_delta",
+    );
+    yield sseFrame(
+      JSON.stringify({ type: "content_block_stop", index: 0 }),
+      "content_block_stop",
+    );
+    yield sseFrame(
+      JSON.stringify({
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { input_tokens: 12, output_tokens: 4 },
+      }),
+      "message_delta",
+    );
+    yield sseFrame(
+      JSON.stringify({ type: "message_stop" }),
+      "message_stop",
+    );
+  }
 
-  const frames = await collectSSE(expandMessagesFrames((async function* () {
-    yield jsonFrame(response);
-  })()));
+  const response = await collectMessagesEventsToResponse(frames());
 
-  assertEquals(frames[1]?.event, "content_block_start");
-  assertEquals(JSON.parse(frames[1]!.data), {
-    type: "content_block_start",
-    index: 0,
-    content_block: { type: "text", text: "", citations: [] },
-  });
-  assertEquals(JSON.parse(frames[2]!.data), {
-    type: "content_block_delta",
-    index: 0,
-    delta: {
-      type: "citations_delta",
-      citation: {
-        type: "search_result_location",
-        source: "https://react.dev/learn",
-        title: "Quick Start - React",
-        search_result_index: 1,
-        start_block_index: 0,
-        end_block_index: 1,
-        cited_text: "Quick Start citation",
-      },
-    },
-  });
-  assertEquals(JSON.parse(frames[3]!.data), {
-    type: "content_block_delta",
-    index: 0,
-    delta: {
-      type: "citations_delta",
-      citation: {
-        type: "web_search_result_location",
-        url: "https://react.dev",
-        title: "React",
-        encrypted_index: "cgws1.synthetic",
-        cited_text: "Native-looking citation",
-      },
-    },
-  });
-  assertEquals(JSON.parse(frames[4]!.data), {
-    type: "content_block_delta",
-    index: 0,
-    delta: {
-      type: "text_delta",
-      text: "Use the docs.",
-    },
-  });
+  assertEquals(response.usage, { input_tokens: 12, output_tokens: 4 });
 });

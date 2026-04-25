@@ -381,7 +381,7 @@ Deno.test("/v1/messages rewrites upstream context-window errors to Messages comp
 Deno.test("/messages uses the same data-plane handler as /v1/messages", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -1257,7 +1257,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
   assertEquals(upstreamBody!.stream, true);
   assertEquals(responsesRequests, 1);
   assertEquals(upstreamBody!.instructions, "system instructions");
-  assertEquals(upstreamBody!.temperature, 1);
+  assertFalse("temperature" in upstreamBody!);
   assertEquals(upstreamBody!.max_output_tokens, 12800);
   assertFalse("reasoning" in upstreamBody!);
   assertFalse("include" in upstreamBody!);
@@ -1914,7 +1914,7 @@ Deno.test("/v1/messages returns internal debug error when native web search is d
     },
   });
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -2137,7 +2137,7 @@ Deno.test("/v1/messages passes through foreign native-looking history and preser
 Deno.test("/v1/messages rejects duplicate native web search tools before upstream fetch", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -2191,7 +2191,7 @@ Deno.test("/v1/messages rejects duplicate native web search tools before upstrea
 Deno.test("/v1/messages rejects native web search tools whose name is not web_search", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -2244,7 +2244,7 @@ Deno.test("/v1/messages rejects native web search tools whose name is not web_se
 Deno.test("/v1/messages rejects native web search tool name collisions before upstream fetch", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {

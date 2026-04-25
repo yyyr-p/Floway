@@ -9,6 +9,14 @@ export interface ChatCompletionsPayload {
   temperature?: number | null;
   top_p?: number | null;
   user?: string | null;
+  metadata?: Record<string, unknown> | null;
+  store?: boolean | null;
+  parallel_tool_calls?: boolean | null;
+  response_format?: Record<string, unknown> | null;
+  reasoning_effort?: string | null;
+  prompt_cache_key?: string | null;
+  safety_identifier?: string | null;
+  service_tier?: string | null;
   tools?: Tool[] | null;
   tool_choice?:
     | "none"
@@ -40,6 +48,14 @@ export interface Message {
   reasoning_text?: string | null;
   /** Opaque reasoning token/signature for round-tripping */
   reasoning_opaque?: string | null;
+  reasoning_items?: ChatReasoningItem[] | null;
+}
+
+export interface ChatReasoningItem {
+  type: "reasoning";
+  id?: string;
+  summary?: { type: "summary_text"; text: string }[];
+  encrypted_content?: string;
 }
 
 export interface ToolCall {
@@ -99,6 +115,7 @@ export interface ChoiceNonStreaming {
     tool_calls?: ToolCall[];
     reasoning_text?: string | null;
     reasoning_opaque?: string | null;
+    reasoning_items?: ChatReasoningItem[] | null;
   };
   finish_reason: "stop" | "length" | "tool_calls" | "content_filter";
 }
@@ -122,4 +139,5 @@ export interface Delta {
   reasoning_text?: string | null;
   /** Opaque reasoning token/signature delta */
   reasoning_opaque?: string | null;
+  reasoning_items?: ChatReasoningItem[] | null;
 }

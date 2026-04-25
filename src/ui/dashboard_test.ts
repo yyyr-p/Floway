@@ -6,6 +6,32 @@ import {
 } from "@std/assert";
 import { DashboardPage } from "./dashboard.tsx";
 
+type ChartDataset = {
+  _keyId?: string;
+  _model?: string;
+  label?: string;
+  borderColor?: string;
+  backgroundColor?: string;
+  fill?: string | boolean;
+  spanGaps?: boolean;
+  data: unknown[];
+};
+
+type ChartOptions = {
+  scales: {
+    y: {
+      title: { text?: string };
+      stacked?: boolean;
+      suggestedMax?: number;
+    };
+  };
+};
+
+type ChartConfig = {
+  data: { datasets: ChartDataset[] };
+  options: ChartOptions;
+};
+
 function extractDashboardScript() {
   const html = DashboardPage().toString();
   const scripts = html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/g);
@@ -16,15 +42,15 @@ function extractDashboardScript() {
 }
 
 function createDashboardHarness() {
-  const charts: any[] = [];
+  const charts: FakeChart[] = [];
   class FakeChart {
     canvas: unknown;
-    data: any;
-    options: any;
+    data: ChartConfig["data"];
+    options: ChartConfig["options"];
     visibility = new Map<number, boolean>();
     lastUpdateMode: string | null = null;
 
-    constructor(canvas: unknown, config: any) {
+    constructor(canvas: unknown, config: ChartConfig) {
       this.canvas = canvas;
       this.data = config.data;
       this.options = config.options;
@@ -310,12 +336,14 @@ Deno.test("dashboardApp keeps known usage key colors on selected slots when earl
   app.renderTokenCharts();
 
   const keyChart = charts[0];
-  const menci = keyChart.data.datasets.find((ds: any) =>
+  const menci = keyChart.data.datasets.find((ds: ChartDataset) =>
     ds._keyId === "4969165b-3412-436c-87d9-3fd4770164b5"
   );
-  const ceerRep = keyChart.data.datasets.find((ds: any) =>
+  const ceerRep = keyChart.data.datasets.find((ds: ChartDataset) =>
     ds._keyId === "3f2fe5b9-2991-4bb8-bc04-2852f58150ca"
   );
+  assert(menci);
+  assert(ceerRep);
   assertEquals(menci.borderColor, "#00e676");
   assertEquals(menci.backgroundColor, "#00e67640");
   assertEquals(ceerRep.borderColor, "#64ffda");
@@ -347,7 +375,10 @@ Deno.test("dashboardApp assigns new usage keys to reordered future color slots b
 
   const keyChart = charts[0];
   const colorsByKey = new Map(
-    keyChart.data.datasets.map((ds: any) => [ds._keyId, ds.borderColor]),
+    keyChart.data.datasets.map((ds: ChartDataset) => [
+      ds._keyId,
+      ds.borderColor,
+    ]),
   );
   assertEquals(colorsByKey.get("new-key-1"), "#ff6e40");
   assertEquals(colorsByKey.get("new-key-2"), "#40c4ff");
@@ -487,6 +518,7 @@ Deno.test("dashboardApp reapplies known model-id color slots when model metadata
     await app.loadModels();
 
     const modelChart = charts.at(-1);
+    assert(modelChart);
     assertEquals(modelChart.data.datasets[0]._model, "model-b");
     assertEquals(modelChart.data.datasets[0].borderColor, "#00e676");
   } finally {
@@ -524,7 +556,7 @@ Deno.test("DashboardPage import preview includes search usage records", () => {
     "searchUsage: Array.isArray(json.data.searchUsage) ? json.data.searchUsage.length : 0",
   );
   assertStringIncludes(html, "Search Usage Records");
-  assertStringIncludes(html, "x-text=\"importPreview.searchUsage\"");
+  assertStringIncludes(html, 'x-text="importPreview.searchUsage"');
   assertStringIncludes(
     html,
     "result.imported.searchUsage + ' search usage records'",

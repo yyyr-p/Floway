@@ -11,6 +11,10 @@ import { upstreamErrorToResponse } from "../../shared/errors/upstream-error.ts";
 import { proxySSE } from "../../shared/stream/proxy-sse.ts";
 import { runSourceInterceptors } from "../run-interceptors.ts";
 
+interface HiddenChatStreamUsageCapture {
+  usage?: ChatCompletionResponse["usage"];
+}
+
 const internalChatErrorResponse = (
   status: number,
   error: InternalDebugError,
@@ -31,6 +35,7 @@ export const respondChatCompletions = async (
   c: Context,
   initialResult: StreamExecuteResult<ChatCompletionResponse>,
   wantsStream: boolean,
+  includeUsageChunk: boolean,
 ): Promise<Response> => {
   const result = await runSourceInterceptors(
     initialResult,
@@ -42,7 +47,20 @@ export const respondChatCompletions = async (
     return internalChatErrorResponse(result.status, result.error);
   }
 
-  return wantsStream
-    ? proxySSE(c, expandChatFrames(result.events))
-    : Response.json(await collectChatEventsToCompletion(result.events));
+  if (!wantsStream) {
+    return Response.json(await collectChatEventsToCompletion(result.events));
+  }
+
+  const hiddenUsageCapture: HiddenChatStreamUsageCapture = {};
+  c.set("chatCompletionsHiddenUsageCapture", hiddenUsageCapture);
+
+  return proxySSE(
+    c,
+    expandChatFrames(result.events, {
+      includeUsageChunk,
+      onUsageChunk: (usage) => {
+        hiddenUsageCapture.usage = usage;
+      },
+    }),
+  );
 };

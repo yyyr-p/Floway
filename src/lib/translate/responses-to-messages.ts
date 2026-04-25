@@ -2,7 +2,6 @@ import {
   MESSAGES_THINKING_PLACEHOLDER,
   type MessagesAssistantContentBlock,
   type MessagesAssistantMessage,
-  type MessagesImageBlock,
   type MessagesMessage,
   type MessagesPayload,
   type MessagesResponse,
@@ -24,13 +23,25 @@ import type {
   ResponseTool,
   ResponseToolChoice,
 } from "../responses-types.ts";
+import {
+  fetchRemoteImage,
+  type RemoteImageLoader,
+  resolveImageUrlToMessagesImage,
+} from "./remote-images.ts";
 import { safeJsonParse } from "./utils.ts";
+
+interface TranslateResponsesToMessagesOptions {
+  loadRemoteImage?: RemoteImageLoader;
+}
 
 const combineMessageTextContent = (
   content: ResponseOutputContentBlock[] | undefined,
 ): string => {
   if (!Array.isArray(content)) return "";
 
+  // Compromise: our local Messages/Chat shapes have no dedicated refusal block,
+  // so keep Responses refusal text visible rather than inventing extra
+  // translated semantics at this boundary.
   return content.map((block) => {
     if (block.type === "output_text") return block.text;
     if (block.type === "refusal") return block.refusal;
@@ -46,15 +57,31 @@ const mapOutputToMessagesContent = (
   for (const item of output) {
     switch (item.type) {
       case "reasoning": {
+        // Keep `encrypted_content` as raw Anthropic opaque data. Another
+        // Copilot gateway packs `encrypted_content@id` into `signature` to keep
+        // Responses IDs cache-stable, but that mutates the Anthropic signature
+        // surface; this gateway accepts possible Responses cache misses instead.
+        // References:
+        // - https://github.com/caozhiyuan/copilot-api/issues/63
+        // - https://github.com/caozhiyuan/copilot-api/issues/73
         const thinking = item.summary?.length
           ? item.summary.map((part) => part.text).join("").trim()
-          : MESSAGES_THINKING_PLACEHOLDER;
+          : "";
 
-        if (thinking.length === 0) break;
+        if (!thinking && Object.hasOwn(item, "encrypted_content")) {
+          content.push({
+            type: "redacted_thinking",
+            data: item.encrypted_content ?? "",
+          });
+          break;
+        }
+
+        const finalThinking = thinking || MESSAGES_THINKING_PLACEHOLDER;
+        if (finalThinking.length === 0) break;
 
         content.push({
           type: "thinking",
-          thinking,
+          thinking: finalThinking,
           ...(Object.hasOwn(item, "encrypted_content")
             ? { signature: item.encrypted_content }
             : {}),
@@ -107,14 +134,18 @@ const extractSystemText = (
   if (typeof message.content === "string") return message.content;
   if (!Array.isArray(message.content)) return "";
 
+  // Assumption: OpenAI text parts are transport fragments of one message, not
+  // paragraph-level blocks. Keep the existing no-separator join until we have
+  // stronger evidence that Responses text parts carry harder boundaries.
   return message.content.map((block) => "text" in block ? block.text : "").join(
     "",
   );
 };
 
-const translateUserMessage = (
+const translateUserMessage = async (
   message: ResponseInputMessage,
-): MessagesUserMessage => {
+  loadRemoteImage: RemoteImageLoader,
+): Promise<MessagesUserMessage> => {
   if (typeof message.content === "string") {
     return { role: "user", content: message.content };
   }
@@ -129,20 +160,11 @@ const translateUserMessage = (
 
     if (block.type !== "input_image") continue;
 
-    const match = (block as ResponseInputImage).image_url.match(
-      /^data:(image\/[^;]+);base64,(.+)$/,
+    const image = await resolveImageUrlToMessagesImage(
+      (block as ResponseInputImage).image_url,
+      loadRemoteImage,
     );
-
-    if (!match) continue;
-
-    content.push({
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: match[1] as MessagesImageBlock["source"]["media_type"],
-        data: match[2],
-      },
-    });
+    if (image) content.push(image);
   }
 
   return { role: "user", content: content.length > 0 ? content : "" };
@@ -194,9 +216,10 @@ const appendUserBlock = (
   messages.push({ role: "user", content: [block] });
 };
 
-const translateResponsesInput = (
+const translateResponsesInput = async (
   input: string | ResponseInputItem[],
-): { messages: MessagesMessage[]; systemParts: string[] } => {
+  loadRemoteImage: RemoteImageLoader,
+): Promise<{ messages: MessagesMessage[]; systemParts: string[] }> => {
   if (typeof input === "string") {
     return {
       messages: [{ role: "user", content: input }],
@@ -218,7 +241,7 @@ const translateResponsesInput = (
 
         messages.push(
           item.role === "user"
-            ? translateUserMessage(item)
+            ? await translateUserMessage(item, loadRemoteImage)
             : translateAssistantMessage(item),
         );
         break;
@@ -239,14 +262,23 @@ const translateResponsesInput = (
         });
         break;
       case "reasoning":
-        appendAssistantBlock(messages, {
-          type: "thinking",
-          thinking: item.summary?.map((part) => part.text).join("") ||
-            MESSAGES_THINKING_PLACEHOLDER,
-          ...(Object.hasOwn(item, "encrypted_content")
-            ? { signature: item.encrypted_content }
-            : {}),
-        });
+        appendAssistantBlock(
+          messages,
+          item.summary.length === 0 &&
+            Object.hasOwn(item, "encrypted_content")
+            ? {
+              type: "redacted_thinking",
+              data: item.encrypted_content ?? "",
+            }
+            : {
+              type: "thinking",
+              thinking: item.summary?.map((part) => part.text).join("") ||
+                MESSAGES_THINKING_PLACEHOLDER,
+              ...(Object.hasOwn(item, "encrypted_content")
+                ? { signature: item.encrypted_content }
+                : {}),
+            },
+        );
         break;
     }
   }
@@ -255,7 +287,7 @@ const translateResponsesInput = (
 };
 
 const translateTools = (
-  tools: ResponseTool[] | null,
+  tools?: ResponseTool[] | null,
 ): MessagesTool[] | undefined => {
   if (!tools || tools.length === 0) return undefined;
 
@@ -321,10 +353,14 @@ export const translateResponsesToMessagesResponse = (
   };
 };
 
-export const translateResponsesToMessages = (
+export const translateResponsesToMessages = async (
   payload: ResponsesPayload,
-): MessagesTargetPayload => {
-  const { messages, systemParts } = translateResponsesInput(payload.input);
+  options: TranslateResponsesToMessagesOptions = {},
+): Promise<MessagesTargetPayload> => {
+  const { messages, systemParts } = await translateResponsesInput(
+    payload.input,
+    options.loadRemoteImage ?? fetchRemoteImage,
+  );
   const system = [payload.instructions, ...systemParts].filter((
     part,
   ): part is string => Boolean(part)).join("\n\n");
@@ -344,9 +380,6 @@ export const translateResponsesToMessages = (
     ...(payload.stream != null ? { stream: payload.stream } : {}),
     tools: translateTools(payload.tools),
     tool_choice: translateToolChoice(payload.tool_choice),
-    metadata: payload.metadata
-      ? { ...payload.metadata } as { user_id?: string }
-      : undefined,
     ...(effort === "none"
       ? { thinking: { type: "disabled" as const } }
       : effort

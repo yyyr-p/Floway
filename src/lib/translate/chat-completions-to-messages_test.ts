@@ -6,8 +6,9 @@ import {
 import type { ChatCompletionsPayload } from "../chat-completions-types.ts";
 import type {
   MessagesAssistantContentBlock,
-  MessagesTargetPayload,
+  MessagesClientTool,
   MessagesRedactedThinkingBlock,
+  MessagesTargetPayload,
   MessagesTextBlock,
   MessagesThinkingBlock,
   MessagesToolResultBlock,
@@ -761,6 +762,54 @@ Deno.test("tools translated correctly", async () => {
     type: "object",
     properties: { city: { type: "string" } },
   });
+});
+
+Deno.test("tools preserve explicit strict values", async () => {
+  const result = await translateChatCompletionsToMessages(mkPayload({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [
+      {
+        type: "function",
+        function: {
+          name: "strict_tool",
+          parameters: { type: "object" },
+          strict: true,
+        },
+      },
+      {
+        type: "function",
+        function: {
+          name: "non_strict_tool",
+          parameters: { type: "object" },
+          strict: false,
+        },
+      },
+    ],
+  }));
+
+  assertEquals(
+    (result.tools as MessagesClientTool[] | undefined)?.map((tool) =>
+      tool.strict
+    ),
+    [true, false],
+  );
+});
+
+Deno.test("tools omit strict when Chat omitted strict", async () => {
+  const result = await translateChatCompletionsToMessages(mkPayload({
+    messages: [{ role: "user", content: "Hi" }],
+    tools: [{
+      type: "function",
+      function: {
+        name: "default_tool",
+        parameters: { type: "object" },
+      },
+    }],
+  }));
+
+  const tool = result.tools?.[0] as MessagesClientTool | undefined;
+  assertEquals(tool?.strict, undefined);
+  assertEquals("strict" in result.tools![0], false);
 });
 
 Deno.test("empty tools array → not set", async () => {

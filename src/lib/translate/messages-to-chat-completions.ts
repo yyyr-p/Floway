@@ -12,19 +12,21 @@ import type {
   MessagesClientTool,
   MessagesMessage,
   MessagesPayload,
-  MessagesRedactedThinkingBlock,
   MessagesResponse,
   MessagesServerToolUseBlock,
   MessagesTextBlock,
   MessagesToolResultBlock,
-  MessagesWebSearchToolResultBlock,
   MessagesToolUseBlock,
   MessagesUserContentBlock,
   MessagesUserMessage,
+  MessagesWebSearchToolResultBlock,
 } from "../messages-types.ts";
 
 const toChatCompletionsContent = (
-  content: string | MessagesUserContentBlock[] | MessagesAssistantContentBlock[],
+  content:
+    | string
+    | MessagesUserContentBlock[]
+    | MessagesAssistantContentBlock[],
 ): string | ContentPart[] | null => {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return null;
@@ -92,20 +94,47 @@ const toChatCompletionsStructuredToolOutput = (
 type PendingAssistantMessage = {
   textParts: string[];
   toolCalls: ToolCall[];
-  reasoningTextParts: string[];
-  reasoningOpaque: string;
-  hasReasoningOpaque: boolean;
-  hasThinkingReasoningOpaque: boolean;
+  scalarReasoning: {
+    reasoningText: string | null;
+    reasoningOpaque: string | null;
+    hasReasoningOpaque: boolean;
+  } | null;
 };
 
 const createPendingAssistantMessage = (): PendingAssistantMessage => ({
   textParts: [],
   toolCalls: [],
-  reasoningTextParts: [],
-  reasoningOpaque: "",
-  hasReasoningOpaque: false,
-  hasThinkingReasoningOpaque: false,
+  scalarReasoning: null,
 });
+
+const recordPendingScalarReasoning = (
+  pending: PendingAssistantMessage,
+  block: MessagesAssistantContentBlock,
+): void => {
+  if (pending.scalarReasoning) return;
+
+  // Chat scalar reasoning cannot represent ordered interleaved Messages
+  // thinking blocks. Project only the first source-order group so readable text
+  // is never paired with an opaque signature from a later block.
+  if (block.type === "thinking") {
+    pending.scalarReasoning = {
+      reasoningText: block.thinking || null,
+      reasoningOpaque: Object.hasOwn(block, "signature")
+        ? block.signature ?? null
+        : null,
+      hasReasoningOpaque: Object.hasOwn(block, "signature"),
+    };
+    return;
+  }
+
+  if (block.type === "redacted_thinking") {
+    pending.scalarReasoning = {
+      reasoningText: null,
+      reasoningOpaque: block.data,
+      hasReasoningOpaque: true,
+    };
+  }
+};
 
 const flushPendingAssistantMessage = (
   messages: Message[],
@@ -113,7 +142,7 @@ const flushPendingAssistantMessage = (
 ): void => {
   if (
     pending.textParts.length === 0 && pending.toolCalls.length === 0 &&
-    pending.reasoningTextParts.length === 0 && !pending.hasReasoningOpaque
+    !pending.scalarReasoning
   ) {
     return;
   }
@@ -121,21 +150,24 @@ const flushPendingAssistantMessage = (
   messages.push({
     role: "assistant",
     content: pending.textParts.join("\n\n") || null,
-    ...(pending.toolCalls.length > 0 ? { tool_calls: [...pending.toolCalls] } : {}),
-    ...(pending.reasoningTextParts.length > 0
-      ? { reasoning_text: pending.reasoningTextParts.join("\n\n") }
+    ...(pending.toolCalls.length > 0
+      ? { tool_calls: [...pending.toolCalls] }
       : {}),
-    ...(pending.hasReasoningOpaque
-      ? { reasoning_opaque: pending.reasoningOpaque }
+    ...(pending.scalarReasoning
+      ? { reasoning_text: pending.scalarReasoning.reasoningText }
+      : {}),
+    ...(pending.scalarReasoning
+      ? {
+        reasoning_opaque: pending.scalarReasoning.hasReasoningOpaque
+          ? pending.scalarReasoning.reasoningOpaque
+          : null,
+      }
       : {}),
   });
 
   pending.textParts.length = 0;
   pending.toolCalls.length = 0;
-  pending.reasoningTextParts.length = 0;
-  pending.reasoningOpaque = "";
-  pending.hasReasoningOpaque = false;
-  pending.hasThinkingReasoningOpaque = false;
+  pending.scalarReasoning = null;
 };
 
 const getClientTools = (
@@ -151,29 +183,43 @@ const getClientTools = (
 
 const translateMessagesUser = (message: MessagesUserMessage): Message[] => {
   if (!Array.isArray(message.content)) {
-    return [{ role: "user", content: toChatCompletionsContent(message.content) }];
+    return [{
+      role: "user",
+      content: toChatCompletionsContent(message.content),
+    }];
   }
 
   const messages: Message[] = [];
-  const toolResults = message.content.filter((block): block is MessagesToolResultBlock =>
-    block.type === "tool_result"
-  );
-  const otherBlocks = message.content.filter((block) => block.type !== "tool_result");
+  const pendingUserBlocks: Exclude<
+    MessagesUserContentBlock,
+    MessagesToolResultBlock
+  >[] = [];
 
-  for (const toolResult of toolResults) {
-    messages.push({
-      role: "tool",
-      tool_call_id: toolResult.tool_use_id,
-      content: toChatCompletionsToolResultContent(toolResult.content),
-    });
-  }
-
-  if (otherBlocks.length > 0) {
+  const flushPendingUserBlocks = () => {
+    if (pendingUserBlocks.length === 0) return;
     messages.push({
       role: "user",
-      content: toChatCompletionsContent(otherBlocks),
+      content: toChatCompletionsContent(pendingUserBlocks),
+    });
+
+    pendingUserBlocks.length = 0;
+  };
+
+  for (const block of message.content) {
+    if (block.type !== "tool_result") {
+      pendingUserBlocks.push(block);
+      continue;
+    }
+
+    flushPendingUserBlocks();
+    messages.push({
+      role: "tool",
+      tool_call_id: block.tool_use_id,
+      content: toChatCompletionsToolResultContent(block.content),
     });
   }
+
+  flushPendingUserBlocks();
 
   return messages;
 };
@@ -198,23 +244,12 @@ const translateMessagesAssistant = (
     }
 
     if (block.type === "thinking") {
-      pending.reasoningTextParts.push(block.thinking);
-      if (
-        Object.hasOwn(block, "signature") &&
-        !pending.hasThinkingReasoningOpaque
-      ) {
-        pending.reasoningOpaque = block.signature as string;
-        pending.hasReasoningOpaque = true;
-        pending.hasThinkingReasoningOpaque = true;
-      }
+      recordPendingScalarReasoning(pending, block);
       continue;
     }
 
     if (block.type === "redacted_thinking") {
-      if (pending.reasoningTextParts.length === 0 && !pending.hasReasoningOpaque) {
-        pending.reasoningOpaque = (block as MessagesRedactedThinkingBlock).data;
-        pending.hasReasoningOpaque = true;
-      }
+      recordPendingScalarReasoning(pending, block);
       continue;
     }
 
@@ -309,7 +344,6 @@ export const translateMessagesToChatCompletions = (
     ...(payload.stream ? { stream_options: { include_usage: true } } : {}),
     temperature: payload.temperature,
     top_p: payload.top_p,
-    user: payload.metadata?.user_id,
     tools: translateMessagesTools(clientTools),
     tool_choice: translateMessagesToolChoice(payload.tool_choice, clientTools),
   };
@@ -338,11 +372,11 @@ export const translateMessagesToChatCompletionsResponse = (
 ): ChatCompletionResponse => {
   const textParts: string[] = [];
   const toolCalls: ToolCall[] = [];
-  const preservedUnsupportedHistory: MessagesAssistantContentBlock[] = [];
-  const reasoningTextParts: string[] = [];
-  let reasoningOpaque: string | undefined;
-  let hasReasoningOpaque = false;
-  let hasThinkingReasoningOpaque = false;
+  let scalarReasoning: {
+    reasoningText: string | null;
+    reasoningOpaque: string | null;
+    hasReasoningOpaque: boolean;
+  } | null = null;
 
   for (const block of response.content) {
     switch (block.type) {
@@ -360,39 +394,28 @@ export const translateMessagesToChatCompletionsResponse = (
         });
         break;
       case "thinking":
-        reasoningTextParts.push(block.thinking);
-        if (
-          Object.hasOwn(block, "signature") &&
-          !hasThinkingReasoningOpaque
-        ) {
-          reasoningOpaque = block.signature as string;
-          hasReasoningOpaque = true;
-          hasThinkingReasoningOpaque = true;
-        }
+        scalarReasoning ??= {
+          reasoningText: block.thinking || null,
+          reasoningOpaque: Object.hasOwn(block, "signature")
+            ? block.signature ?? null
+            : null,
+          hasReasoningOpaque: Object.hasOwn(block, "signature"),
+        };
         break;
       case "redacted_thinking":
-        if (reasoningTextParts.length === 0 && !hasReasoningOpaque) {
-          reasoningOpaque = (block as MessagesRedactedThinkingBlock).data;
-          hasReasoningOpaque = true;
-        }
+        scalarReasoning ??= {
+          reasoningText: null,
+          reasoningOpaque: block.data,
+          hasReasoningOpaque: true,
+        };
         break;
       case "server_tool_use":
       case "web_search_tool_result":
-        preservedUnsupportedHistory.push(block);
         break;
     }
   }
 
-  if (preservedUnsupportedHistory.length > 0) {
-    textParts.push(JSON.stringify(preservedUnsupportedHistory));
-  }
-
-  const reasoningText = reasoningTextParts.length > 0
-    ? reasoningTextParts.join("\n\n")
-    : undefined;
-
-  const promptTokens =
-    response.usage.input_tokens +
+  const promptTokens = response.usage.input_tokens +
     (response.usage.cache_read_input_tokens ?? 0) +
     (response.usage.cache_creation_input_tokens ?? 0);
   const completionTokens = response.usage.output_tokens;
@@ -408,8 +431,12 @@ export const translateMessagesToChatCompletionsResponse = (
         role: "assistant",
         content: textParts.join("") || null,
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        ...(reasoningText ? { reasoning_text: reasoningText } : {}),
-        ...(hasReasoningOpaque ? { reasoning_opaque: reasoningOpaque } : {}),
+        ...(scalarReasoning?.reasoningText
+          ? { reasoning_text: scalarReasoning.reasoningText }
+          : {}),
+        ...(scalarReasoning?.hasReasoningOpaque
+          ? { reasoning_opaque: scalarReasoning.reasoningOpaque }
+          : {}),
       },
       finish_reason: mapMessagesStopReasonToChatCompletionsFinishReason(
         response.stop_reason,

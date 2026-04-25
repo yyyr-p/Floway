@@ -1,11 +1,9 @@
 import {
   MESSAGES_THINKING_PLACEHOLDER,
-  type MessagesAssistantContentBlock,
   type MessagesAssistantMessage,
   type MessagesClientTool,
   type MessagesMessage,
   type MessagesPayload,
-  type MessagesRedactedThinkingBlock,
   type MessagesResponse,
   type MessagesServerToolUseBlock,
   type MessagesTextBlock,
@@ -180,7 +178,7 @@ const translateAssistantMessage = (
         type: "reasoning",
         id: makeResponsesReasoningId(input.length),
         summary: [],
-        encrypted_content: (block as MessagesRedactedThinkingBlock).data,
+        encrypted_content: block.data,
       });
       continue;
     }
@@ -209,7 +207,7 @@ const translateSystemPrompt = (
   if (typeof system === "string") return system;
   if (!system) return null;
 
-  const text = system.map((block) => block.text).join(" ");
+  const text = system.map((block) => block.text).join("\n\n");
   return text.length > 0 ? text : null;
 };
 
@@ -263,26 +261,27 @@ export const translateMessagesToResponses = (
   // Responses upstream may reject it. Translation stays pairwise and leaves
   // target-side validation to the selected upstream endpoint.
   const effort = getMessagesRequestedReasoningEffort(payload);
-  const reasoning = effort
-    ? { effort, summary: "detailed" as const }
-    : undefined;
+  const reasoning = effort ? { effort } : undefined;
   const clientTools = getClientTools(payload.tools);
+  const instructions = translateSystemPrompt(payload.system);
 
   return {
     model: payload.model,
     input: payload.messages.length === 0
       ? []
       : translateMessagesInput(payload.messages),
-    instructions: translateSystemPrompt(payload.system),
-    temperature: 1,
-    top_p: payload.top_p ?? null,
+    ...(instructions !== null ? { instructions } : {}),
+    ...(payload.temperature !== undefined
+      ? { temperature: payload.temperature }
+      : {}),
+    ...(payload.top_p !== undefined ? { top_p: payload.top_p } : {}),
     max_output_tokens: payload.max_tokens,
-    tools: translateTools(clientTools),
+    ...(payload.tools !== undefined
+      ? { tools: translateTools(clientTools) }
+      : {}),
     tool_choice: translateToolChoice(payload.tool_choice, clientTools),
-    metadata: payload.metadata ? { ...payload.metadata } : null,
-    stream: payload.stream ?? null,
-    store: false,
-    parallel_tool_calls: true,
+    ...(payload.metadata ? { metadata: { ...payload.metadata } } : {}),
+    ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
     ...(reasoning
       ? { reasoning, include: ["reasoning.encrypted_content"] }
       : {}),
@@ -293,8 +292,7 @@ export const translateMessagesToResponsesResult = (
   response: MessagesResponse,
 ): ResponsesResult => {
   const output: ResponseOutputItem[] = [];
-  const textParts: string[] = [];
-  const preservedUnsupportedHistory: MessagesAssistantContentBlock[] = [];
+  let outputText = "";
 
   for (const block of response.content) {
     switch (block.type) {
@@ -320,11 +318,16 @@ export const translateMessagesToResponsesResult = (
           type: "reasoning",
           id: makeResponsesReasoningId(output.length),
           summary: [],
-          encrypted_content: (block as MessagesRedactedThinkingBlock).data,
+          encrypted_content: block.data,
         } as ResponseOutputReasoning);
         break;
       case "text":
-        textParts.push(block.text);
+        outputText += block.text;
+        output.push({
+          type: "message",
+          role: "assistant",
+          content: [{ type: "output_text", text: block.text }],
+        } as ResponseOutputMessage);
         break;
       case "tool_use":
         output.push({
@@ -337,24 +340,8 @@ export const translateMessagesToResponsesResult = (
         break;
       case "server_tool_use":
       case "web_search_tool_result":
-        preservedUnsupportedHistory.push(block);
         break;
     }
-  }
-
-  const outputText = [
-    preservedUnsupportedHistory.length > 0
-      ? JSON.stringify(preservedUnsupportedHistory)
-      : "",
-    textParts.join(""),
-  ].filter((part) => part.length > 0).join("\n\n");
-
-  if (outputText.length > 0) {
-    output.push({
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text: outputText }],
-    } as ResponseOutputMessage);
   }
 
   const inputTokens = response.usage.input_tokens +

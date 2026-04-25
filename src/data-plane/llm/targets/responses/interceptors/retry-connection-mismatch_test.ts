@@ -35,16 +35,16 @@ Deno.test("withConnectionMismatchRetried does not retry unrelated upstream error
 
   let attempts = 0;
 
-  const result = await withConnectionMismatchRetried({ payload }, async () => {
+  const result = await withConnectionMismatchRetried({ payload }, () => {
     attempts += 1;
-    return {
+    return Promise.resolve({
       type: "upstream-error" as const,
       status: 400,
       headers: new Headers(),
       body: new TextEncoder().encode(
         JSON.stringify({ error: { message: "different upstream problem" } }),
       ),
-    };
+    });
   });
 
   assertEquals(attempts, 1);
@@ -85,12 +85,12 @@ Deno.test("withConnectionMismatchRetried rewrites already-spotted ids before the
   let attempts = 0;
   let seenId = "";
 
-  const result = await withConnectionMismatchRetried({ payload }, async () => {
+  const result = await withConnectionMismatchRetried({ payload }, () => {
     attempts += 1;
     seenId = (payload.input as unknown as Array<Record<string, unknown>>)[0]
       .id as string;
 
-    return eventResult((async function* () {
+    return Promise.resolve(eventResult((async function* () {
       yield jsonFrame(
         {
           id: "resp_ok",
@@ -102,7 +102,7 @@ Deno.test("withConnectionMismatchRetried rewrites already-spotted ids before the
           usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
         } satisfies ResponsesResult,
       );
-    })());
+    })()));
   });
 
   assertEquals(attempts, 1);

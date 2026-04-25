@@ -26,10 +26,34 @@ const makeChunk = (
   }],
 });
 
+interface ExpandChatFramesOptions {
+  includeUsageChunk?: boolean;
+  onUsageChunk?: (usage: NonNullable<ChatCompletionResponse["usage"]>) => void;
+}
+
+const readUsageOnlyChatChunk = (
+  data: string,
+): NonNullable<ChatCompletionResponse["usage"]> | null => {
+  const trimmed = data.trim();
+  if (!trimmed || trimmed === "[DONE]") return null;
+
+  try {
+    const chunk = JSON.parse(trimmed) as Record<string, unknown>;
+    return Array.isArray(chunk.choices) && chunk.choices.length === 0 &&
+        chunk.usage !== undefined
+      ? chunk.usage as NonNullable<ChatCompletionResponse["usage"]>
+      : null;
+  } catch {
+    return null;
+  }
+};
+
 export const chatCompletionToSSEFrames = (
   response: ChatCompletionResponse,
+  options: ExpandChatFramesOptions = {},
 ): SseFrame[] => {
   const choice = response.choices[0];
+  const includeUsageChunk = options.includeUsageChunk ?? true;
   const frames: SseFrame[] = [
     sseFrame(JSON.stringify(makeChunk(response, { role: "assistant" }))),
   ];
@@ -52,6 +76,14 @@ export const chatCompletionToSSEFrames = (
     frames.push(
       sseFrame(JSON.stringify(makeChunk(response, {
         reasoning_opaque: choice.message.reasoning_opaque,
+      }))),
+    );
+  }
+
+  if (choice?.message.reasoning_items?.length) {
+    frames.push(
+      sseFrame(JSON.stringify(makeChunk(response, {
+        reasoning_items: choice.message.reasoning_items,
       }))),
     );
   }
@@ -86,6 +118,10 @@ export const chatCompletionToSSEFrames = (
   );
 
   if (response.usage) {
+    options.onUsageChunk?.(response.usage);
+  }
+
+  if (includeUsageChunk && response.usage) {
     frames.push(
       sseFrame(JSON.stringify({
         id: response.id,
@@ -104,14 +140,20 @@ export const chatCompletionToSSEFrames = (
 
 export const expandChatFrames = async function* (
   frames: AsyncIterable<StreamFrame<ChatCompletionResponse>>,
+  options: ExpandChatFramesOptions = {},
 ): AsyncGenerator<SseFrame> {
+  const includeUsageChunk = options.includeUsageChunk ?? true;
+
   for await (const frame of frames) {
     if (frame.type === "sse") {
+      const usage = readUsageOnlyChatChunk(frame.data);
+      if (usage) options.onUsageChunk?.(usage);
+      if (!includeUsageChunk && usage) continue;
       yield frame;
       continue;
     }
 
-    yield* chatCompletionToSSEFrames(frame.data);
+    yield* chatCompletionToSSEFrames(frame.data, options);
   }
 };
 

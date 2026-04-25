@@ -18,7 +18,7 @@ Deno.test("/v1/messages/count_tokens proxies to Copilot upstream", async () => {
   const { apiKey } = await setupAppTest();
   let capturedPath = "";
 
-  await withMockedFetch(async (req) => {
+  await withMockedFetch((req) => {
     const url = new URL(req.url);
     if (url.hostname === "api.github.com") return copilotTokenResponse();
     if (url.hostname === "update.code.visualstudio.com") {
@@ -50,7 +50,7 @@ Deno.test("/messages/count_tokens aliases /v1/messages/count_tokens", async () =
   const { apiKey } = await setupAppTest();
   let capturedPath = "";
 
-  await withMockedFetch(async (req) => {
+  await withMockedFetch((req) => {
     const url = new URL(req.url);
     if (url.hostname === "api.github.com") return copilotTokenResponse();
     if (url.hostname === "update.code.visualstudio.com") {

@@ -63,6 +63,7 @@ interface MessagesToResponsesStreamState {
   outputTokens: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
+  stopReason?: MessagesMessageDeltaEvent["delta"]["stop_reason"];
 }
 
 const withSequenceNumbers = (
@@ -89,6 +90,9 @@ const buildResult = (
     output: state.completedItems,
     output_text: state.accumulatedText,
     status,
+    ...(status === "incomplete"
+      ? { incomplete_details: { reason: "max_output_tokens" as const } }
+      : {}),
     usage: {
       input_tokens: inputTokens,
       output_tokens: state.outputTokens,
@@ -407,6 +411,10 @@ const handleMessageDelta = (
   event: MessagesMessageDeltaEvent,
   state: MessagesToResponsesStreamState,
 ): ResponseStreamEvent[] => {
+  if (event.delta.stop_reason !== undefined) {
+    state.stopReason = event.delta.stop_reason;
+  }
+
   if (event.usage?.output_tokens != null) {
     state.outputTokens = event.usage.output_tokens;
   }
@@ -419,11 +427,16 @@ const handleMessageStop = (
 ): ResponseStreamEvent[] => {
   if (state.completed) return [];
   state.completed = true;
+  const status: ResponsesResult["status"] = state.stopReason === "max_tokens"
+    ? "incomplete"
+    : "completed";
+  const response = buildResult(state, status);
 
-  return withSequenceNumbers(state, [{
-    type: "response.completed",
-    response: buildResult(state, "completed"),
-  }]);
+  return withSequenceNumbers(state, [
+    status === "incomplete"
+      ? { type: "response.incomplete", response }
+      : { type: "response.completed", response },
+  ]);
 };
 
 const handleError = (
@@ -456,6 +469,7 @@ export const createMessagesToResponsesStreamState = (
   outputTokens: 0,
   cacheReadInputTokens: undefined,
   cacheCreationInputTokens: undefined,
+  stopReason: undefined,
 });
 
 export const translateMessagesEventToResponsesEvents = (

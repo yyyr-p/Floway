@@ -83,6 +83,7 @@ Deno.test("/v1/responses direct mode converts apply_patch and fixes mismatched s
         instructions: null,
         temperature: 1,
         top_p: null,
+        service_tier: "auto",
         max_output_tokens: 32,
         tools: [{ type: "custom", name: "apply_patch" }],
         tool_choice: "auto",
@@ -105,12 +106,13 @@ Deno.test("/v1/responses direct mode converts apply_patch and fixes mismatched s
   assertEquals(tool.type, "function");
   assertEquals(tool.name, "apply_patch");
   assertEquals((tool.parameters as Record<string, unknown>).type, "object");
+  assertFalse("service_tier" in upstreamBody!);
 });
 
 Deno.test("/v1/responses direct mode synthesizes full Responses SSE when upstream falls back to JSON", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -434,7 +436,7 @@ Deno.test("/v1/responses falls back to chat completions for chat-only models", a
 Deno.test("/v1/responses streams chat completions as Responses SSE for chat-only models", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {

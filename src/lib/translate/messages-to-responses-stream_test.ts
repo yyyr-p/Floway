@@ -1,10 +1,23 @@
-import { assertEquals } from "@std/assert";
+import { assertEquals, assertFalse } from "@std/assert";
 import {
   createMessagesToResponsesStreamState,
   translateMessagesEventToResponsesEvents,
 } from "./messages-to-responses-stream.ts";
 import type { MessagesStreamEventData } from "../messages-types.ts";
-import type { ResponsesResult } from "../responses-types.ts";
+import type {
+  ResponsesResult,
+  ResponseStreamEvent,
+} from "../responses-types.ts";
+
+type ResponseOutputItemAddedEvent = Extract<
+  ResponseStreamEvent,
+  { type: "response.output_item.added" }
+>;
+
+type ResponseOutputItemDoneEvent = Extract<
+  ResponseStreamEvent,
+  { type: "response.output_item.done" }
+>;
 
 // ── Helpers ──
 
@@ -121,69 +134,131 @@ Deno.test("handles no cache fields (backward compat)", () => {
   assertEquals(result.usage!.input_tokens_details, undefined);
 });
 
-Deno.test("preserves redacted_thinking as opaque-only reasoning in stream translation", () => {
+Deno.test("redacted_thinking stream block becomes opaque Responses reasoning", () => {
   const state = createMessagesToResponsesStreamState(
     "resp_test",
-    "claude-sonnet-4-20250514",
+    "claude-test",
+  );
+
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "redacted_thinking", data: "opaque_sig" },
+  } as MessagesStreamEventData, state);
+
+  translateMessagesEventToResponsesEvents(
+    { type: "content_block_stop", index: 0 } as MessagesStreamEventData,
+    state,
+  );
+
+  assertEquals(state.completedItems, [{
+    type: "reasoning",
+    id: "rs_0",
+    summary: [],
+    encrypted_content: "opaque_sig",
+  }]);
+});
+
+Deno.test("thinking stream block start omits undefined encrypted_content", () => {
+  const state = createMessagesToResponsesStreamState(
+    "resp_test",
+    "claude-test",
+  );
+
+  const events = translateMessagesEventToResponsesEvents({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking", thinking: "" },
+  } as MessagesStreamEventData, state);
+
+  const added = events.find((event) =>
+    event.type === "response.output_item.added"
+  ) as ResponseOutputItemAddedEvent | undefined;
+  if (!added || added.type !== "response.output_item.added") {
+    throw new Error("expected response.output_item.added event");
+  }
+  if (added.item.type !== "reasoning") {
+    throw new Error("expected reasoning item");
+  }
+
+  assertFalse("encrypted_content" in added.item);
+});
+
+Deno.test("thinking stream block stop omits undefined encrypted_content", () => {
+  const state = createMessagesToResponsesStreamState(
+    "resp_test",
+    "claude-test",
+  );
+
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking", thinking: "" },
+  } as MessagesStreamEventData, state);
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: "trace" },
+  } as MessagesStreamEventData, state);
+  const events = translateMessagesEventToResponsesEvents(
+    { type: "content_block_stop", index: 0 } as MessagesStreamEventData,
+    state,
+  );
+
+  const done = events.find((event) =>
+    event.type === "response.output_item.done"
+  ) as ResponseOutputItemDoneEvent | undefined;
+  if (!done || done.type !== "response.output_item.done") {
+    throw new Error("expected response.output_item.done event");
+  }
+  if (done.item.type !== "reasoning") {
+    throw new Error("expected reasoning item");
+  }
+
+  assertFalse("encrypted_content" in done.item);
+});
+
+Deno.test("max_tokens stream stop becomes response.incomplete", () => {
+  const state = createMessagesToResponsesStreamState(
+    "resp_max_tokens",
+    "claude-test",
   );
 
   translateMessagesEventToResponsesEvents({
     type: "message_start",
     message: {
-      id: "msg_test",
+      id: "msg_max_tokens",
       type: "message",
       role: "assistant",
       content: [],
-      model: "claude-sonnet-4-20250514",
+      model: "claude-test",
       stop_reason: null,
       stop_sequence: null,
-      usage: {
-        input_tokens: 10,
-        output_tokens: 0,
-      },
+      usage: { input_tokens: 3, output_tokens: 0 },
     },
   } as MessagesStreamEventData, state);
+  translateMessagesEventToResponsesEvents({
+    type: "message_delta",
+    delta: { stop_reason: "max_tokens" },
+    usage: { output_tokens: 7 },
+  } as MessagesStreamEventData, state);
 
-  translateMessagesEventToResponsesEvents(
-    {
-      type: "content_block_start",
-      index: 0,
-      content_block: { type: "redacted_thinking", data: "opaque_only" },
-    } as MessagesStreamEventData,
-    state,
-  );
-  translateMessagesEventToResponsesEvents(
-    { type: "content_block_stop", index: 0 } as MessagesStreamEventData,
-    state,
-  );
-  translateMessagesEventToResponsesEvents(
-    {
-      type: "message_delta",
-      delta: { stop_reason: "end_turn" },
-      usage: { output_tokens: 3 },
-    } as MessagesStreamEventData,
-    state,
-  );
-
-  const stopEvents = translateMessagesEventToResponsesEvents(
+  const events = translateMessagesEventToResponsesEvents(
     { type: "message_stop" } as MessagesStreamEventData,
     state,
   );
 
-  const completed = stopEvents.find((e) => e.type === "response.completed");
-  if (!completed || completed.type !== "response.completed") {
-    throw new Error("Expected response.completed event");
+  assertEquals(events.map((event) => event.type), ["response.incomplete"]);
+  const incomplete = events[0] as Extract<
+    ResponseStreamEvent,
+    { type: "response.incomplete" }
+  >;
+  if (incomplete.type !== "response.incomplete") {
+    throw new Error("expected response.incomplete");
   }
-
-  const response = (completed as {
-    type: "response.completed";
-    response: ResponsesResult;
-  }).response;
-
-  assertEquals(response.output[0], {
-    type: "reasoning",
-    id: "rs_0",
-    summary: [],
-    encrypted_content: "opaque_only",
+  assertEquals(incomplete.response.status, "incomplete");
+  assertEquals(incomplete.response.incomplete_details, {
+    reason: "max_output_tokens",
   });
+  assertEquals(incomplete.response.usage?.output_tokens, 7);
 });

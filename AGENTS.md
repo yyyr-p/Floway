@@ -262,12 +262,16 @@ Current placement:
   - strip unsupported `service_tier`
 - `src/data-plane/llm/targets/messages/interceptors/strip-done-sentinel.ts`
   - strip stray `[DONE]` sentinels
+- `src/data-plane/llm/targets/responses/interceptors/strip-service-tier.ts`
+  - strip unsupported `service_tier`
 - `src/data-plane/llm/targets/responses/interceptors/retry-connection-mismatch.ts`
   - detect expired connection-bound input IDs
   - deterministically rewrite IDs
   - retry once
 - `src/data-plane/llm/targets/responses/interceptors/synchronize-output-item-ids.ts`
   - synchronize mismatched stream item IDs
+- `src/data-plane/llm/targets/chat-completions/interceptors/strip-service-tier.ts`
+  - strip unsupported `service_tier`
 - `src/data-plane/llm/targets/chat-completions/interceptors/include-usage-stream-options.ts`
   - ensure streaming usage options needed by native chat handling
 - `src/data-plane/llm/targets/chat-completions/interceptors/fix-claude-choice-shape.ts`

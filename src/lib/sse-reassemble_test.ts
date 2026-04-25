@@ -369,6 +369,60 @@ Deno.test("reassembleMessagesSSE reassembles thinking blocks", async () => {
   assertEquals(result.content[1].type, "text");
 });
 
+Deno.test("reassembleMessagesSSE omits signature for text-only thinking blocks", async () => {
+  const body = makeSSEBody([
+    {
+      event: "message_start",
+      data: {
+        type: "message_start",
+        message: {
+          id: "msg_text_only_thinking",
+          type: "message",
+          role: "assistant",
+          content: [],
+          model: "claude-test",
+          stop_reason: null,
+          stop_sequence: null,
+          usage: { input_tokens: 5, output_tokens: 0 },
+        },
+      },
+    },
+    {
+      event: "content_block_start",
+      data: {
+        type: "content_block_start",
+        index: 0,
+        content_block: { type: "thinking", thinking: "" },
+      },
+    },
+    {
+      event: "content_block_delta",
+      data: {
+        type: "content_block_delta",
+        index: 0,
+        delta: { type: "thinking_delta", thinking: "trace" },
+      },
+    },
+    {
+      event: "content_block_stop",
+      data: { type: "content_block_stop", index: 0 },
+    },
+    {
+      event: "message_delta",
+      data: {
+        type: "message_delta",
+        delta: { stop_reason: "end_turn", stop_sequence: null },
+        usage: { output_tokens: 4 },
+      },
+    },
+    { event: "message_stop", data: { type: "message_stop" } },
+  ]);
+
+  const result = await reassembleMessagesSSE(body);
+
+  assertEquals(result.content[0], { type: "thinking", thinking: "trace" });
+});
+
 Deno.test("reassembleMessagesSSE throws on error event", async () => {
   const body = makeSSEBody([
     {
@@ -824,6 +878,84 @@ Deno.test("reassembleChatCompletionsSSE reassembles reasoning fields", async () 
 
   assertEquals(result.choices[0].message.reasoning_text, "think");
   assertEquals(result.choices[0].message.reasoning_opaque, "enc");
+  assertEquals(result.choices[0].message.content, "reply");
+});
+
+Deno.test("reassembleChatCompletionsSSE appends reasoning_items deltas in order", async () => {
+  const body = makeSSEBody([
+    {
+      data: {
+        id: "cmpl_reasoning_items",
+        object: "chat.completion.chunk",
+        created: 3001,
+        model: "gpt-test",
+        choices: [{
+          index: 0,
+          delta: {
+            role: "assistant",
+            reasoning_items: [{
+              type: "reasoning",
+              id: "rs_1",
+              summary: [{ type: "summary_text", text: "first" }],
+              encrypted_content: "enc_1",
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+    },
+    {
+      data: {
+        id: "cmpl_reasoning_items",
+        object: "chat.completion.chunk",
+        created: 3001,
+        model: "gpt-test",
+        choices: [{
+          index: 0,
+          delta: {
+            reasoning_items: [{
+              type: "reasoning",
+              id: "rs_2",
+              summary: [],
+              encrypted_content: "enc_2",
+            }],
+          },
+          finish_reason: null,
+        }],
+      },
+    },
+    {
+      data: {
+        id: "cmpl_reasoning_items",
+        object: "chat.completion.chunk",
+        created: 3001,
+        model: "gpt-test",
+        choices: [{
+          index: 0,
+          delta: { content: "reply" },
+          finish_reason: "stop",
+        }],
+      },
+    },
+    { data: "[DONE]" },
+  ]);
+
+  const result = await reassembleChatCompletionsSSE(body);
+
+  assertEquals(result.choices[0].message.reasoning_items, [
+    {
+      type: "reasoning",
+      id: "rs_1",
+      summary: [{ type: "summary_text", text: "first" }],
+      encrypted_content: "enc_1",
+    },
+    {
+      type: "reasoning",
+      id: "rs_2",
+      summary: [],
+      encrypted_content: "enc_2",
+    },
+  ]);
   assertEquals(result.choices[0].message.content, "reply");
 });
 

@@ -6,10 +6,7 @@ import type {
   Tool,
 } from "../chat-completions-types.ts";
 import {
-  MESSAGES_THINKING_PLACEHOLDER,
   type MessagesAssistantContentBlock,
-  type MessagesAssistantMessage,
-  type MessagesImageBlock,
   type MessagesMessage,
   type MessagesPayload,
   type MessagesRedactedThinkingBlock,
@@ -20,23 +17,15 @@ import {
   type MessagesToolResultBlock,
   type MessagesToolUseBlock,
   type MessagesUserContentBlock,
-  type MessagesUserMessage,
 } from "../messages-types.ts";
+import {
+  fetchRemoteImage,
+  type RemoteImageLoader,
+  resolveImageUrlToMessagesImage,
+} from "./remote-images.ts";
 import { safeJsonParse } from "./utils.ts";
 
-const ALLOWED_IMAGE_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-]);
-
-interface RemoteImageData {
-  mediaType: string | null;
-  data: Uint8Array;
-}
-
-export type RemoteImageLoader = (url: string) => Promise<RemoteImageData | null>;
+export type { RemoteImageLoader } from "./remote-images.ts";
 
 interface TranslateChatCompletionsToMessagesOptions {
   loadRemoteImage?: RemoteImageLoader;
@@ -129,83 +118,6 @@ const appendToolResult = (
   messages.push({ role: "user", content: [toolResult] });
 };
 
-const parseDataUrl = (
-  url: string,
-): { mediaType: string; data: string } | null => {
-  const match = url.match(/^data:([^;]+);base64,(.+)$/);
-  return match ? { mediaType: match[1], data: match[2] } : null;
-};
-
-const inferMediaTypeFromUrl = (url: string): string | null => {
-  try {
-    const path = new URL(url).pathname.toLowerCase();
-    if (path.endsWith(".jpg") || path.endsWith(".jpeg")) return "image/jpeg";
-    if (path.endsWith(".png")) return "image/png";
-    if (path.endsWith(".gif")) return "image/gif";
-    if (path.endsWith(".webp")) return "image/webp";
-  } catch {
-    return null;
-  }
-
-  return null;
-};
-
-const uint8ArrayToBase64 = (bytes: Uint8Array): string => {
-  let binary = "";
-
-  for (let index = 0; index < bytes.length; index++) {
-    binary += String.fromCharCode(bytes[index]);
-  }
-
-  return btoa(binary);
-};
-
-const resolveRemoteImage = async (
-  url: string,
-  loadRemoteImage: RemoteImageLoader,
-): Promise<MessagesImageBlock | null> => {
-  const image = await loadRemoteImage(url);
-  if (!image) return null;
-
-  let mediaType = image.mediaType?.split(";")[0].trim() ?? "";
-  if (!ALLOWED_IMAGE_TYPES.has(mediaType)) {
-    mediaType = inferMediaTypeFromUrl(url) ?? "";
-  }
-  if (!ALLOWED_IMAGE_TYPES.has(mediaType)) return null;
-
-  return {
-    type: "image",
-    source: {
-      type: "base64",
-      media_type: mediaType as MessagesImageBlock["source"]["media_type"],
-      data: uint8ArrayToBase64(image.data),
-    },
-  };
-};
-
-const resolveImage = async (
-  url: string,
-  loadRemoteImage: RemoteImageLoader,
-): Promise<MessagesImageBlock | null> => {
-  const dataUrl = parseDataUrl(url);
-
-  if (dataUrl) {
-    if (!ALLOWED_IMAGE_TYPES.has(dataUrl.mediaType)) return null;
-
-    return {
-      type: "image",
-      source: {
-        type: "base64",
-        media_type: dataUrl.mediaType as MessagesImageBlock["source"]["media_type"],
-        data: dataUrl.data,
-      },
-    };
-  }
-
-  if (!url.startsWith("http://") && !url.startsWith("https://")) return null;
-  return await resolveRemoteImage(url, loadRemoteImage);
-};
-
 const convertUserContent = async (
   message: Message,
   loadRemoteImage: RemoteImageLoader,
@@ -220,10 +132,12 @@ const convertUserContent = async (
 
   const resolved = await Promise.all(message.content.map((part) => {
     if (part.type === "text") {
-      return Promise.resolve({ type: "text", text: part.text } as MessagesUserContentBlock);
+      return Promise.resolve(
+        { type: "text", text: part.text } as MessagesUserContentBlock,
+      );
     }
 
-    return resolveImage(part.image_url.url, loadRemoteImage);
+    return resolveImageUrlToMessagesImage(part.image_url.url, loadRemoteImage);
   }));
 
   const blocks = resolved.filter((block): block is MessagesUserContentBlock =>
@@ -242,14 +156,22 @@ const buildMessagesInput = async (
   for (const message of messages) {
     switch (message.role) {
       case "user":
-        appendUserContent(result, await convertUserContent(message, loadRemoteImage));
+        appendUserContent(
+          result,
+          await convertUserContent(message, loadRemoteImage),
+        );
         break;
       case "assistant":
-        result.push({ role: "assistant", content: buildAssistantBlocks(message) });
+        result.push({
+          role: "assistant",
+          content: buildAssistantBlocks(message),
+        });
         break;
       case "tool":
         if (!message.tool_call_id) {
-          throw new Error("tool message requires tool_call_id for Messages translation");
+          throw new Error(
+            "tool message requires tool_call_id for Messages translation",
+          );
         }
 
         appendToolResult(result, {
@@ -271,6 +193,9 @@ const translateChatCompletionsTools = (
     name: tool.function.name,
     description: tool.function.description,
     input_schema: tool.function.parameters,
+    ...(tool.function.strict !== undefined
+      ? { strict: tool.function.strict }
+      : {}),
   }));
 
 const translateChatCompletionsToolChoice = (
@@ -334,7 +259,9 @@ export const translateChatCompletionsToMessages = async (
     // chosen upstream path needs a fallback.
     ...(payload.max_tokens != null ? { max_tokens: payload.max_tokens } : {}),
     ...(systemParts.length > 0 ? { system: systemParts.join("\n\n") } : {}),
-    ...(payload.temperature != null ? { temperature: payload.temperature } : {}),
+    ...(payload.temperature != null
+      ? { temperature: payload.temperature }
+      : {}),
     ...(payload.top_p != null ? { top_p: payload.top_p } : {}),
     ...(payload.stop != null
       ? {
@@ -344,7 +271,9 @@ export const translateChatCompletionsToMessages = async (
       }
       : {}),
     ...(payload.stream ? { stream: payload.stream } : {}),
-    ...(payload.tools?.length ? { tools: translateChatCompletionsTools(payload.tools) } : {}),
+    ...(payload.tools?.length
+      ? { tools: translateChatCompletionsTools(payload.tools) }
+      : {}),
     ...(payload.tool_choice != null
       ? { tool_choice: translateChatCompletionsToolChoice(payload.tool_choice) }
       : {}),
@@ -399,7 +328,7 @@ export const mapChatCompletionsUsageToMessagesUsage = (
 const getThinkingBlocks = (
   reasoningText: string | null | undefined,
   reasoningOpaque: string | null | undefined,
-): MessagesThinkingBlock[] => {
+): Array<MessagesThinkingBlock | MessagesRedactedThinkingBlock> => {
   if (reasoningText) {
     return [{
       type: "thinking",
@@ -412,9 +341,8 @@ const getThinkingBlocks = (
 
   return reasoningOpaque !== undefined && reasoningOpaque !== null
     ? [{
-      type: "thinking",
-      thinking: MESSAGES_THINKING_PLACEHOLDER,
-      signature: reasoningOpaque,
+      type: "redacted_thinking",
+      data: reasoningOpaque,
     }]
     : [];
 };
@@ -422,7 +350,9 @@ const getThinkingBlocks = (
 export const translateChatCompletionsToMessagesResponse = (
   response: ChatCompletionResponse,
 ): MessagesResponse => {
-  const thinkingBlocks: MessagesThinkingBlock[] = [];
+  const thinkingBlocks: Array<
+    MessagesThinkingBlock | MessagesRedactedThinkingBlock
+  > = [];
   const textBlocks: MessagesTextBlock[] = [];
   const toolUseBlocks: MessagesToolUseBlock[] = [];
   let stopReason = response.choices[0]?.finish_reason ?? null;
@@ -463,20 +393,4 @@ export const translateChatCompletionsToMessagesResponse = (
     stop_sequence: null,
     usage: mapChatCompletionsUsageToMessagesUsage(response.usage),
   };
-};
-
-export const fetchRemoteImage = async (
-  url: string,
-): Promise<RemoteImageData | null> => {
-  try {
-    const response = await fetch(url, { signal: AbortSignal.timeout(30_000) });
-    if (!response.ok) return null;
-
-    return {
-      mediaType: response.headers.get("content-type"),
-      data: new Uint8Array(await response.arrayBuffer()),
-    };
-  } catch {
-    return null;
-  }
 };

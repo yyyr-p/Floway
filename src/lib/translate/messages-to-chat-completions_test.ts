@@ -1,10 +1,15 @@
 import { assertEquals, assertExists } from "@std/assert";
 import { translateMessagesToChatCompletionsResponse } from "./messages-to-chat-completions.ts";
-import type { MessagesResponse, MessagesAssistantContentBlock } from "../messages-types.ts";
+import type {
+  MessagesAssistantContentBlock,
+  MessagesResponse,
+} from "../messages-types.ts";
 
 // ── Helpers ──
 
-function mkResponse(overrides: Partial<MessagesResponse> = {}): MessagesResponse {
+function mkResponse(
+  overrides: Partial<MessagesResponse> = {},
+): MessagesResponse {
   return {
     id: "msg_test123",
     type: "message",
@@ -69,7 +74,9 @@ Deno.test("empty text block → empty string content", () => {
 });
 
 Deno.test("empty content array → content null", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ content: [] }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ content: [] }),
+  );
   assertEquals(result.choices[0].message.content, null);
 });
 
@@ -78,7 +85,12 @@ Deno.test("empty content array → content null", () => {
 Deno.test("tool_use blocks → tool_calls", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [
-      { type: "tool_use", id: "tu_1", name: "get_weather", input: { city: "Tokyo" } },
+      {
+        type: "tool_use",
+        id: "tu_1",
+        name: "get_weather",
+        input: { city: "Tokyo" },
+      },
     ],
     stop_reason: "tool_use",
   }));
@@ -125,12 +137,18 @@ Deno.test("no tool_use → tool_calls not set", () => {
 });
 
 Deno.test("tool_use with complex nested input serialized correctly", () => {
-  const input = { filters: [{ key: "status", values: ["active", "pending"] }], limit: 10 };
+  const input = {
+    filters: [{ key: "status", values: ["active", "pending"] }],
+    limit: 10,
+  };
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [{ type: "tool_use", id: "tu_1", name: "query", input }],
     stop_reason: "tool_use",
   }));
-  assertEquals(result.choices[0].message.tool_calls![0].function.arguments, JSON.stringify(input));
+  assertEquals(
+    result.choices[0].message.tool_calls![0].function.arguments,
+    JSON.stringify(input),
+  );
 });
 
 Deno.test("tool_use with empty input → empty object JSON", () => {
@@ -138,7 +156,10 @@ Deno.test("tool_use with empty input → empty object JSON", () => {
     content: [{ type: "tool_use", id: "tu_1", name: "noop", input: {} }],
     stop_reason: "tool_use",
   }));
-  assertEquals(result.choices[0].message.tool_calls![0].function.arguments, "{}");
+  assertEquals(
+    result.choices[0].message.tool_calls![0].function.arguments,
+    "{}",
+  );
 });
 
 // ── Thinking ──
@@ -169,7 +190,10 @@ Deno.test("thinking block without signature → only reasoning_text", () => {
 Deno.test("redacted_thinking block → only reasoning_opaque", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [
-      { type: "redacted_thinking", data: "opaque_data_xyz" } as MessagesAssistantContentBlock,
+      {
+        type: "redacted_thinking",
+        data: "opaque_data_xyz",
+      } as MessagesAssistantContentBlock,
       { type: "text", text: "answer" },
     ],
   }));
@@ -181,7 +205,10 @@ Deno.test("thinking takes priority over redacted_thinking", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [
       { type: "thinking", thinking: "My thoughts", signature: "sig1" },
-      { type: "redacted_thinking", data: "should_be_ignored" } as MessagesAssistantContentBlock,
+      {
+        type: "redacted_thinking",
+        data: "should_be_ignored",
+      } as MessagesAssistantContentBlock,
       { type: "text", text: "answer" },
     ],
   }));
@@ -189,7 +216,7 @@ Deno.test("thinking takes priority over redacted_thinking", () => {
   assertEquals(result.choices[0].message.reasoning_opaque, "sig1");
 });
 
-Deno.test("multiple thinking blocks → joined reasoning_text and first thinking signature", () => {
+Deno.test("interleaved multiple thinking blocks project only the first scalar reasoning group", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [
       { type: "thinking", thinking: "first", signature: "sig1" },
@@ -198,7 +225,7 @@ Deno.test("multiple thinking blocks → joined reasoning_text and first thinking
     ],
   }));
 
-  assertEquals(result.choices[0].message.reasoning_text, "first\n\nsecond");
+  assertEquals(result.choices[0].message.reasoning_text, "first");
   assertEquals(result.choices[0].message.reasoning_opaque, "sig1");
   assertEquals(result.choices[0].message.content, "middle");
 });
@@ -214,31 +241,89 @@ Deno.test("no thinking blocks → no reasoning fields", () => {
 Deno.test("thinking + tool_use (interleaved thinking)", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
     content: [
-      { type: "thinking", thinking: "I should call the tool", signature: "sig" },
+      {
+        type: "thinking",
+        thinking: "I should call the tool",
+        signature: "sig",
+      },
       { type: "tool_use", id: "tu_1", name: "search", input: { q: "x" } },
     ],
     stop_reason: "tool_use",
   }));
-  assertEquals(result.choices[0].message.reasoning_text, "I should call the tool");
+  assertEquals(
+    result.choices[0].message.reasoning_text,
+    "I should call the tool",
+  );
   assertEquals(result.choices[0].message.reasoning_opaque, "sig");
   assertEquals(result.choices[0].message.tool_calls!.length, 1);
   assertEquals(result.choices[0].message.content, null);
 });
 
+Deno.test("multiple thinking blocks project only the first scalar reasoning group", () => {
+  const result = translateMessagesToChatCompletionsResponse(mkResponse({
+    content: [
+      { type: "thinking", thinking: "First", signature: "sig_1" },
+      { type: "thinking", thinking: "Second", signature: "sig_2" },
+      { type: "text", text: "answer" },
+    ],
+  }));
+
+  assertEquals(result.choices[0].message.reasoning_text, "First");
+  assertEquals(result.choices[0].message.reasoning_opaque, "sig_1");
+});
+
+Deno.test("readable thinking without signature does not borrow opaque data from a later redacted block", () => {
+  const result = translateMessagesToChatCompletionsResponse(mkResponse({
+    content: [
+      { type: "thinking", thinking: "trace" },
+      {
+        type: "redacted_thinking",
+        data: "opaque_sig",
+      } as MessagesAssistantContentBlock,
+      { type: "text", text: "answer" },
+    ],
+  }));
+
+  assertEquals(result.choices[0].message.reasoning_text, "trace");
+  assertEquals(result.choices[0].message.reasoning_opaque, undefined);
+});
+
+Deno.test("first redacted_thinking ignores later readable thinking in scalar projection", () => {
+  const result = translateMessagesToChatCompletionsResponse(mkResponse({
+    content: [
+      {
+        type: "redacted_thinking",
+        data: "opaque_first",
+      } as MessagesAssistantContentBlock,
+      { type: "thinking", thinking: "later", signature: "sig_later" },
+      { type: "text", text: "answer" },
+    ],
+  }));
+
+  assertEquals(result.choices[0].message.reasoning_text, undefined);
+  assertEquals(result.choices[0].message.reasoning_opaque, "opaque_first");
+});
+
 // ── Stop reason mapping ──
 
 Deno.test("stop_reason end_turn → stop", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ stop_reason: "end_turn" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ stop_reason: "end_turn" }),
+  );
   assertEquals(result.choices[0].finish_reason, "stop");
 });
 
 Deno.test("stop_reason max_tokens → length", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ stop_reason: "max_tokens" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ stop_reason: "max_tokens" }),
+  );
   assertEquals(result.choices[0].finish_reason, "length");
 });
 
 Deno.test("stop_reason stop_sequence → stop", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ stop_reason: "stop_sequence" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ stop_reason: "stop_sequence" }),
+  );
   assertEquals(result.choices[0].finish_reason, "stop");
 });
 
@@ -251,17 +336,23 @@ Deno.test("stop_reason tool_use → tool_calls", () => {
 });
 
 Deno.test("stop_reason pause_turn → stop", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ stop_reason: "pause_turn" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ stop_reason: "pause_turn" }),
+  );
   assertEquals(result.choices[0].finish_reason, "stop");
 });
 
 Deno.test("stop_reason refusal → stop", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ stop_reason: "refusal" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ stop_reason: "refusal" }),
+  );
   assertEquals(result.choices[0].finish_reason, "stop");
 });
 
 Deno.test("stop_reason null → stop", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ stop_reason: null }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ stop_reason: null }),
+  );
   assertEquals(result.choices[0].finish_reason, "stop");
 });
 
@@ -305,12 +396,16 @@ Deno.test("usage with cache_read_input_tokens = 0 → prompt_tokens_details pres
 // ── ID / model passthrough ──
 
 Deno.test("id passed through", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ id: "msg_custom_id" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ id: "msg_custom_id" }),
+  );
   assertEquals(result.id, "msg_custom_id");
 });
 
 Deno.test("model passed through", () => {
-  const result = translateMessagesToChatCompletionsResponse(mkResponse({ model: "claude-opus-4-20250514" }));
+  const result = translateMessagesToChatCompletionsResponse(
+    mkResponse({ model: "claude-opus-4-20250514" }),
+  );
   assertEquals(result.model, "claude-opus-4-20250514");
 });
 
@@ -334,7 +429,12 @@ Deno.test("thinking + text + tool_use all present", () => {
 
 Deno.test("usage with cache_creation_input_tokens included in prompt_tokens", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
-    usage: { input_tokens: 80, output_tokens: 50, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 },
+    usage: {
+      input_tokens: 80,
+      output_tokens: 50,
+      cache_read_input_tokens: 20,
+      cache_creation_input_tokens: 30,
+    },
   }));
   assertEquals(result.usage!.prompt_tokens, 130); // 80 + 20 + 30
   assertEquals(result.usage!.completion_tokens, 50);
@@ -344,7 +444,11 @@ Deno.test("usage with cache_creation_input_tokens included in prompt_tokens", ()
 
 Deno.test("usage with cache_creation_input_tokens but no cache_read", () => {
   const result = translateMessagesToChatCompletionsResponse(mkResponse({
-    usage: { input_tokens: 100, output_tokens: 50, cache_creation_input_tokens: 30 },
+    usage: {
+      input_tokens: 100,
+      output_tokens: 50,
+      cache_creation_input_tokens: 30,
+    },
   }));
   assertEquals(result.usage!.prompt_tokens, 130); // 100 + 0 + 30
   assertEquals(result.usage!.total_tokens, 180);

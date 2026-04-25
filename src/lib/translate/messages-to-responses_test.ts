@@ -23,7 +23,6 @@ Deno.test("translateMessagesToResponses uses rs-prefixed ids for reasoning input
   const reasoning = result.input[0] as ResponseInputReasoning;
   assertEquals(reasoning.type, "reasoning");
   assertEquals(reasoning.id, "rs_0");
-  assertEquals(Object.hasOwn(reasoning, "encrypted_content"), true);
 });
 
 Deno.test("translateMessagesToResponses drops filtered-native tool_choice and rewrites assistant native web-search history as function-call history", () => {
@@ -75,67 +74,6 @@ Deno.test("translateMessagesToResponses drops filtered-native tool_choice and re
   ]);
 });
 
-Deno.test("translateMessagesToResponses omits encrypted_content when thinking signature is absent", () => {
-  const result = translateMessagesToResponses({
-    model: "gpt-test",
-    max_tokens: 256,
-    messages: [{
-      role: "assistant",
-      content: [{ type: "thinking", thinking: "trace" }],
-    }],
-  });
-
-  if (!Array.isArray(result.input)) throw new Error("expected input array");
-  const reasoning = result.input[0] as ResponseInputReasoning;
-  assertEquals(Object.hasOwn(reasoning, "encrypted_content"), false);
-});
-
-Deno.test("translateMessagesToResponses preserves empty-string thinking signatures", () => {
-  const result = translateMessagesToResponses({
-    model: "gpt-test",
-    max_tokens: 256,
-    messages: [{
-      role: "assistant",
-      content: [{ type: "thinking", thinking: "trace", signature: "" }],
-    }],
-  });
-
-  if (!Array.isArray(result.input)) throw new Error("expected input array");
-  const reasoning = result.input[0] as ResponseInputReasoning;
-  assertEquals(Object.hasOwn(reasoning, "encrypted_content"), true);
-  assertEquals(reasoning.encrypted_content, "");
-});
-
-Deno.test("translateMessagesToResponses keeps multiple thinking blocks as multiple reasoning input items", () => {
-  const result = translateMessagesToResponses({
-    model: "gpt-test",
-    max_tokens: 256,
-    messages: [{
-      role: "assistant",
-      content: [
-        { type: "thinking", thinking: "first", signature: "sig1" },
-        { type: "thinking", thinking: "second", signature: "sig2" },
-      ],
-    }],
-  });
-
-  if (!Array.isArray(result.input)) throw new Error("expected input array");
-  assertEquals(result.input, [
-    {
-      type: "reasoning",
-      id: "rs_0",
-      summary: [{ type: "summary_text", text: "first" }],
-      encrypted_content: "sig1",
-    },
-    {
-      type: "reasoning",
-      id: "rs_1",
-      summary: [{ type: "summary_text", text: "second" }],
-      encrypted_content: "sig2",
-    },
-  ]);
-});
-
 Deno.test("translateMessagesToResponses maps output_config.effort directly to reasoning.effort", () => {
   const result = translateMessagesToResponses({
     model: "gpt-test",
@@ -144,7 +82,8 @@ Deno.test("translateMessagesToResponses maps output_config.effort directly to re
     messages: [{ role: "user", content: "hi" }],
   });
 
-  assertEquals(result.reasoning, { effort: "xhigh", summary: "detailed" });
+  assertEquals(result.reasoning, { effort: "xhigh" });
+  assertEquals(result.include, ["reasoning.encrypted_content"]);
 });
 
 Deno.test("translateMessagesToResponses preserves output_config.effort max at the translation boundary", () => {
@@ -155,7 +94,7 @@ Deno.test("translateMessagesToResponses preserves output_config.effort max at th
     messages: [{ role: "user", content: "hi" }],
   });
 
-  assertEquals(result.reasoning, { effort: "max", summary: "detailed" });
+  assertEquals(result.reasoning, { effort: "max" });
 });
 
 Deno.test("translateMessagesToResponses preserves max_tokens at the translation boundary", () => {
@@ -176,7 +115,8 @@ Deno.test("translateMessagesToResponses maps thinking.disabled to reasoning.effo
     messages: [{ role: "user", content: "hi" }],
   });
 
-  assertEquals(result.reasoning, { effort: "none", summary: "detailed" });
+  assertEquals(result.reasoning, { effort: "none" });
+  assertEquals(result.include, ["reasoning.encrypted_content"]);
 });
 
 Deno.test("translateMessagesToResponses ignores non-disabled thinking without output_config.effort", () => {
@@ -188,6 +128,82 @@ Deno.test("translateMessagesToResponses ignores non-disabled thinking without ou
   });
 
   assertFalse("reasoning" in result);
+});
+
+Deno.test("translateMessagesToResponses preserves explicit temperature and omits translated-path defaults", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    temperature: 0.2,
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assertEquals(result.temperature, 0.2);
+  assertFalse("store" in result);
+  assertFalse("parallel_tool_calls" in result);
+});
+
+Deno.test("translateMessagesToResponses omits temperature when the source omitted it", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assertFalse("temperature" in result);
+});
+
+Deno.test("translateMessagesToResponses joins multi-block system text with double newlines", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    system: [
+      { type: "text", text: "Alpha" },
+      { type: "text", text: "Beta" },
+    ],
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assertEquals(result.instructions, "Alpha\n\nBeta");
+});
+
+Deno.test("translateMessagesToResponses preserves redacted_thinking as opaque reasoning input", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "assistant",
+      content: [{ type: "redacted_thinking", data: "opaque_sig" }],
+    }],
+  });
+
+  if (!Array.isArray(result.input)) throw new Error("expected input array");
+  assertEquals(result.input[0], {
+    type: "reasoning",
+    id: "rs_0",
+    summary: [],
+    encrypted_content: "opaque_sig",
+  });
+});
+
+Deno.test("translateMessagesToResponses omits encrypted_content for text-only thinking input", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "assistant",
+      content: [{ type: "thinking", thinking: "trace" }],
+    }],
+  });
+
+  if (!Array.isArray(result.input)) throw new Error("expected input array");
+  const reasoning = result.input[0] as ResponseInputReasoning;
+  assertEquals(reasoning, {
+    type: "reasoning",
+    id: "rs_0",
+    summary: [{ type: "summary_text", text: "trace" }],
+  });
+  assertFalse("encrypted_content" in reasoning);
 });
 
 Deno.test("getMessagesRequestedReasoningEffort prefers output_config.effort over thinking.disabled", () => {
@@ -256,53 +272,83 @@ Deno.test("translateMessagesToResponsesResult uses rs-prefixed ids for reasoning
   assertEquals(reasoning.id, "rs_0");
 });
 
-Deno.test("translateMessagesToResponsesResult preserves redacted_thinking as opaque-only reasoning", () => {
-  const result = translateMessagesToResponsesResult({
-    id: "msg_123",
-    type: "message",
-    role: "assistant",
-    model: "claude-test",
-    content: [{ type: "redacted_thinking", data: "opaque_only" }],
-    stop_reason: "end_turn",
-    stop_sequence: null,
-    usage: { input_tokens: 10, output_tokens: 3 },
-  });
-
-  const reasoning = result.output[0] as ResponseOutputReasoning;
-  assertEquals(reasoning.type, "reasoning");
-  assertEquals(reasoning.summary, []);
-  assertEquals(reasoning.encrypted_content, "opaque_only");
-});
-
-Deno.test("translateMessagesToResponsesResult keeps multiple thinking blocks as multiple reasoning output items", () => {
+Deno.test("translateMessagesToResponsesResult preserves assistant block order", () => {
   const result = translateMessagesToResponsesResult({
     id: "msg_123",
     type: "message",
     role: "assistant",
     model: "claude-test",
     content: [
-      { type: "thinking", thinking: "first", signature: "sig1" },
-      { type: "thinking", thinking: "second", signature: "sig2" },
+      { type: "text", text: "Before" },
+      { type: "tool_use", id: "tool_1", name: "lookup", input: { q: 1 } },
+      { type: "text", text: "After" },
     ],
-    stop_reason: "end_turn",
+    stop_reason: "tool_use",
     stop_sequence: null,
     usage: { input_tokens: 10, output_tokens: 3 },
   });
 
   assertEquals(result.output, [
     {
-      type: "reasoning",
-      id: "rs_0",
-      summary: [{ type: "summary_text", text: "first" }],
-      encrypted_content: "sig1",
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "Before" }],
     },
     {
-      type: "reasoning",
-      id: "rs_1",
-      summary: [{ type: "summary_text", text: "second" }],
-      encrypted_content: "sig2",
+      type: "function_call",
+      call_id: "tool_1",
+      name: "lookup",
+      arguments: '{"q":1}',
+      status: "completed",
+    },
+    {
+      type: "message",
+      role: "assistant",
+      content: [{ type: "output_text", text: "After" }],
     },
   ]);
+  assertEquals(result.output_text, "BeforeAfter");
+});
+
+Deno.test("translateMessagesToResponsesResult preserves redacted_thinking as opaque reasoning output", () => {
+  const result = translateMessagesToResponsesResult({
+    id: "msg_123",
+    type: "message",
+    role: "assistant",
+    model: "claude-test",
+    content: [{ type: "redacted_thinking", data: "opaque_sig" }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 3 },
+  });
+
+  assertEquals(result.output, [{
+    type: "reasoning",
+    id: "rs_0",
+    summary: [],
+    encrypted_content: "opaque_sig",
+  }]);
+});
+
+Deno.test("translateMessagesToResponsesResult omits encrypted_content for text-only thinking output", () => {
+  const result = translateMessagesToResponsesResult({
+    id: "msg_123",
+    type: "message",
+    role: "assistant",
+    model: "claude-test",
+    content: [{ type: "thinking", thinking: "trace" }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 3 },
+  });
+
+  const reasoning = result.output[0] as ResponseOutputReasoning;
+  assertEquals(reasoning, {
+    type: "reasoning",
+    id: "rs_0",
+    summary: [{ type: "summary_text", text: "trace" }],
+  });
+  assertFalse("encrypted_content" in reasoning);
 });
 
 Deno.test("translateMessagesToResponsesResult includes cache_creation_input_tokens in input_tokens", () => {

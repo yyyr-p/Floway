@@ -2,6 +2,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
   ChatCompletionsPayload,
+  ChatReasoningItem,
   ContentPart,
   Delta,
   Message,
@@ -12,12 +13,20 @@ import type {
   ResponseInputContent,
   ResponseInputItem,
   ResponseOutputItem,
-  ResponseTool,
-  ResponseToolChoice,
+  ResponseOutputReasoning,
   ResponsesPayload,
   ResponsesResult,
   ResponseStreamEvent,
+  ResponseTool,
+  ResponseToolChoice,
 } from "../responses-types.ts";
+import {
+  createResponsesOutputOrderState,
+  recordResponseOutputOrderEvent,
+  responsePartKey,
+  type ResponsesOutputOrderState,
+  shouldDeferForEarlierResponseOutput,
+} from "./responses-stream-order.ts";
 
 const toChatCompletionsContent = (
   content: string | ResponseInputContent[],
@@ -43,14 +52,15 @@ const toChatCompletionsContent = (
     });
   }
 
-  return parts.some((part) => part.type === "image_url")
-    ? parts
-    : parts
-      .filter((part): part is Extract<ContentPart, { type: "text" }> =>
-        part.type === "text"
-      )
-      .map((part) => part.text)
-      .join("");
+  return parts.some((part) => part.type === "image_url") ? parts : parts
+    .filter((part): part is Extract<ContentPart, { type: "text" }> =>
+      part.type === "text"
+    )
+    // Assumption: Responses text parts are transport fragments of one
+    // message, not paragraph-level blocks. Keep the current no-separator
+    // join unless upstream semantics prove otherwise.
+    .map((part) => part.text)
+    .join("");
 };
 
 const toAssistantText = (
@@ -62,51 +72,84 @@ const toAssistantText = (
     .filter((part): part is Extract<ResponseInputContent, { text: string }> =>
       part.type === "input_text" || part.type === "output_text"
     )
+    // Same assumption as above: these parts are one message's text fragments,
+    // so we preserve the existing no-separator flattening.
     .map((part) => part.text)
     .join("");
 };
 
-const ensureAssistant = (assistant: Message | null): Message =>
-  assistant ?? { role: "assistant", content: null };
+interface AssistantAccumulator {
+  message: Message;
+  hasScalarReasoning: boolean;
+}
+
+type ChatReasoningSourceItem =
+  | Extract<ResponseInputItem, { type: "reasoning" }>
+  | ResponseOutputReasoning;
+
+const ensureAssistant = (
+  assistant: AssistantAccumulator | null,
+): AssistantAccumulator =>
+  assistant ?? {
+    message: { role: "assistant", content: null },
+    hasScalarReasoning: false,
+  };
 
 const appendAssistantText = (
-  assistant: Message | null,
+  assistant: AssistantAccumulator | null,
   text: string,
-): Message | null => {
+): AssistantAccumulator | null => {
   if (!text) return assistant;
 
   const next = ensureAssistant(assistant);
-  next.content = typeof next.content === "string" ? next.content + text : text;
+  next.message.content = typeof next.message.content === "string"
+    ? next.message.content + text
+    : text;
   return next;
 };
 
 const appendAssistantReasoning = (
-  assistant: Message | null,
+  assistant: AssistantAccumulator | null,
   item: Extract<ResponseInputItem, { type: "reasoning" }>,
-): Message => {
+): AssistantAccumulator => {
   const next = ensureAssistant(assistant);
   const reasoningText = item.summary.map((part) => part.text).join("");
+  const reasoningItem = toChatReasoningItem(item);
+  next.message.reasoning_items = [
+    ...(next.message.reasoning_items ?? []),
+    reasoningItem,
+  ];
 
-  next.reasoning_text = typeof next.reasoning_text === "string"
-    ? next.reasoning_text + reasoningText
-    : reasoningText;
-
-  if (Object.hasOwn(item, "encrypted_content")) {
-    next.reasoning_opaque = typeof next.reasoning_opaque === "string"
-      ? next.reasoning_opaque + item.encrypted_content
-      : item.encrypted_content;
+  const hasEncryptedContent = Object.hasOwn(item, "encrypted_content");
+  if (!next.hasScalarReasoning && (reasoningText || hasEncryptedContent)) {
+    if (reasoningText) next.message.reasoning_text = reasoningText;
+    if (hasEncryptedContent) {
+      next.message.reasoning_opaque = item.encrypted_content;
+    }
+    next.hasScalarReasoning = true;
   }
 
   return next;
 };
 
+const toChatReasoningItem = (
+  item: ChatReasoningSourceItem,
+): ChatReasoningItem => ({
+  type: "reasoning",
+  id: item.id,
+  summary: item.summary,
+  ...(item.encrypted_content !== undefined
+    ? { encrypted_content: item.encrypted_content }
+    : {}),
+});
+
 const appendAssistantToolCall = (
-  assistant: Message | null,
+  assistant: AssistantAccumulator | null,
   item: Extract<ResponseInputItem, { type: "function_call" }>,
-): Message => {
+): AssistantAccumulator => {
   const next = ensureAssistant(assistant);
-  next.tool_calls = [
-    ...(next.tool_calls ?? []),
+  next.message.tool_calls = [
+    ...(next.message.tool_calls ?? []),
     {
       id: item.call_id,
       type: "function",
@@ -120,7 +163,7 @@ const appendAssistantToolCall = (
 };
 
 const translateResponseTools = (
-  tools: ResponseTool[] | null,
+  tools?: ResponseTool[] | null,
 ): Tool[] | undefined =>
   tools?.length
     ? tools.map((tool) => ({
@@ -135,15 +178,28 @@ const translateResponseTools = (
     : undefined;
 
 const translateResponseToolChoice = (
-  choice: ResponseToolChoice,
+  choice?: ResponseToolChoice,
 ): ChatCompletionsPayload["tool_choice"] =>
-  typeof choice === "string"
+  choice == null
+    ? undefined
+    : typeof choice === "string"
     ? choice
     : { type: "function", function: { name: choice.name } };
+
+const buildChatResponseFormat = (
+  text: ResponsesPayload["text"],
+): ChatCompletionsPayload["response_format"] | undefined => {
+  if (text === undefined) return undefined;
+  if (text === null) return null;
+  if (!Object.hasOwn(text, "format")) return undefined;
+  if (text.format === undefined) return undefined;
+  return text.format;
+};
 
 export const translateResponsesToChatCompletions = (
   payload: ResponsesPayload,
 ): ChatCompletionsPayload => {
+  const responseFormat = buildChatResponseFormat(payload.text);
   const messages: Message[] = payload.instructions
     ? [{ role: "system", content: payload.instructions }]
     : [];
@@ -151,10 +207,10 @@ export const translateResponsesToChatCompletions = (
   if (typeof payload.input === "string") {
     messages.push({ role: "user", content: payload.input });
   } else {
-    let assistant: Message | null = null;
+    let assistant: AssistantAccumulator | null = null;
     const flushAssistant = () => {
       if (!assistant) return;
-      messages.push(assistant);
+      messages.push(assistant.message);
       assistant = null;
     };
 
@@ -180,7 +236,10 @@ export const translateResponsesToChatCompletions = (
       }
 
       if (item.role === "assistant") {
-        assistant = appendAssistantText(assistant, toAssistantText(item.content));
+        assistant = appendAssistantText(
+          assistant,
+          toAssistantText(item.content),
+        );
         continue;
       }
 
@@ -197,15 +256,36 @@ export const translateResponsesToChatCompletions = (
   return {
     model: payload.model,
     messages,
-    max_tokens: payload.max_output_tokens,
-    stream: payload.stream,
-    temperature: payload.temperature,
-    top_p: payload.top_p,
+    ...(payload.max_output_tokens !== undefined
+      ? { max_tokens: payload.max_output_tokens }
+      : {}),
+    ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
+    ...(payload.temperature !== undefined
+      ? { temperature: payload.temperature }
+      : {}),
+    ...(payload.top_p !== undefined ? { top_p: payload.top_p } : {}),
+    ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {}),
+    ...(payload.store !== undefined ? { store: payload.store } : {}),
+    ...(payload.parallel_tool_calls !== undefined
+      ? { parallel_tool_calls: payload.parallel_tool_calls }
+      : {}),
+    ...(responseFormat !== undefined
+      ? { response_format: responseFormat }
+      : {}),
+    ...(payload.prompt_cache_key !== undefined
+      ? { prompt_cache_key: payload.prompt_cache_key }
+      : {}),
+    ...(payload.safety_identifier !== undefined
+      ? { safety_identifier: payload.safety_identifier }
+      : {}),
+    ...(payload.reasoning?.effort != null
+      ? { reasoning_effort: payload.reasoning.effort }
+      : {}),
+    ...(payload.service_tier !== undefined
+      ? { service_tier: payload.service_tier }
+      : {}),
     // Chat Completions has no request-level counterpart for Responses
     // `reasoning`; only explicit reasoning items survive this translation.
-    ...(typeof payload.metadata?.user_id === "string"
-      ? { user: payload.metadata.user_id }
-      : {}),
     tools: translateResponseTools(payload.tools),
     tool_choice: translateResponseToolChoice(payload.tool_choice),
   };
@@ -235,8 +315,10 @@ export const translateResponsesToChatCompletion = (
 ): ChatCompletionResponse => {
   let content = "";
   const toolCalls: ToolCall[] = [];
+  const reasoningItems: ChatReasoningItem[] = [];
   let reasoningText: string | undefined;
   let reasoningOpaque: string | undefined;
+  let hasScalarReasoning = false;
 
   for (const item of response.output) {
     if (item.type === "message") {
@@ -246,6 +328,9 @@ export const translateResponsesToChatCompletion = (
           continue;
         }
 
+        // Compromise: our local Chat shape has no dedicated refusal field, so
+        // keep refusal text visible rather than inventing extra translated
+        // semantics at this boundary.
         content += block.refusal;
       }
       continue;
@@ -260,17 +345,13 @@ export const translateResponsesToChatCompletion = (
       continue;
     }
 
+    reasoningItems.push(toChatReasoningItem(item));
     const text = item.summary.map((part) => part.text).join("");
-    if (text) {
-      reasoningText = typeof reasoningText === "string"
-        ? reasoningText + text
-        : text;
-    }
-
-    if (Object.hasOwn(item, "encrypted_content")) {
-      reasoningOpaque = typeof reasoningOpaque === "string"
-        ? reasoningOpaque + item.encrypted_content
-        : item.encrypted_content;
+    const hasEncryptedContent = Object.hasOwn(item, "encrypted_content");
+    if (!hasScalarReasoning && (text || hasEncryptedContent)) {
+      if (text) reasoningText = text;
+      if (hasEncryptedContent) reasoningOpaque = item.encrypted_content;
+      hasScalarReasoning = true;
     }
   }
 
@@ -293,9 +374,14 @@ export const translateResponsesToChatCompletion = (
         role: "assistant",
         content: content || null,
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        ...(reasoningText !== undefined ? { reasoning_text: reasoningText } : {}),
+        ...(reasoningText !== undefined
+          ? { reasoning_text: reasoningText }
+          : {}),
         ...(reasoningOpaque !== undefined
           ? { reasoning_opaque: reasoningOpaque }
+          : {}),
+        ...(reasoningItems.length > 0
+          ? { reasoning_items: reasoningItems }
           : {}),
       },
       finish_reason: mapFinishReason(response),
@@ -319,30 +405,209 @@ interface ResponsesToChatCompletionsStreamState {
   functionCallIndices: Map<number, number>;
   inputTokens: number;
   cachedTokens: number;
+  reasoningItems: ChatReasoningItem[];
+  firstScalarReasoningOutputIndex?: number;
+  pendingReasoningSummaryTexts: Map<string, {
+    outputIndex: number;
+    summaryIndex: number;
+    text: string;
+  }>;
+  emittedReasoningSummaryKeys: Set<string>;
+  emittedTextContentKeys: Set<string>;
+  emittedFunctionArgumentOutputIndexes: Set<number>;
+  outputOrder: ResponsesOutputOrderState;
   done: boolean;
 }
 
-export const createResponsesToChatCompletionsStreamState = (): ResponsesToChatCompletionsStreamState => ({
-  messageId: "",
-  model: "",
-  created: Math.floor(Date.now() / 1000),
-  toolCallIndex: -1,
-  functionCallIndices: new Map(),
-  inputTokens: 0,
-  cachedTokens: 0,
-  done: false,
-});
+export const createResponsesToChatCompletionsStreamState =
+  (): ResponsesToChatCompletionsStreamState => ({
+    messageId: "",
+    model: "",
+    created: Math.floor(Date.now() / 1000),
+    toolCallIndex: -1,
+    functionCallIndices: new Map(),
+    inputTokens: 0,
+    cachedTokens: 0,
+    reasoningItems: [],
+    pendingReasoningSummaryTexts: new Map(),
+    emittedReasoningSummaryKeys: new Set(),
+    emittedTextContentKeys: new Set(),
+    emittedFunctionArgumentOutputIndexes: new Set(),
+    outputOrder: createResponsesOutputOrderState(),
+    done: false,
+  });
+
+const shouldDeferForEarlierReasoning = (
+  event: ResponseStreamEvent,
+  state: ResponsesToChatCompletionsStreamState,
+): boolean => shouldDeferForEarlierResponseOutput(event, state.outputOrder);
+
+const trackReasoningOutputItem = (item: ResponseOutputItem): boolean =>
+  item.type === "reasoning";
+
+const flushPendingReasoningChunks = (
+  state: ResponsesToChatCompletionsStreamState,
+): ChatCompletionChunk[] => {
+  const chunks: ChatCompletionChunk[] = [];
+
+  if (state.reasoningItems.length > 0) {
+    chunks.push(makeChunk(state, { reasoning_items: state.reasoningItems }));
+    state.reasoningItems = [];
+  }
+
+  return chunks;
+};
+
+const shouldProjectScalarReasoning = (
+  outputIndex: number,
+  state: ResponsesToChatCompletionsStreamState,
+): boolean => {
+  state.firstScalarReasoningOutputIndex ??= outputIndex;
+  return state.firstScalarReasoningOutputIndex === outputIndex;
+};
+
+const emitReasoningSummaryDelta = (
+  outputIndex: number,
+  summaryIndex: number,
+  text: string,
+  state: ResponsesToChatCompletionsStreamState,
+): ChatCompletionChunk[] => {
+  if (!text || !shouldProjectScalarReasoning(outputIndex, state)) return [];
+
+  state.emittedReasoningSummaryKeys.add(
+    responsePartKey(outputIndex, summaryIndex),
+  );
+  state.pendingReasoningSummaryTexts.delete(
+    responsePartKey(outputIndex, summaryIndex),
+  );
+  return [makeChunk(state, { reasoning_text: text })];
+};
+
+const emitReasoningSummaryDoneFallback = (
+  outputIndex: number,
+  summaryIndex: number,
+  text: string,
+  state: ResponsesToChatCompletionsStreamState,
+): ChatCompletionChunk[] => {
+  if (!text || !shouldProjectScalarReasoning(outputIndex, state)) return [];
+
+  const key = responsePartKey(outputIndex, summaryIndex);
+  if (state.emittedReasoningSummaryKeys.has(key)) return [];
+
+  state.emittedReasoningSummaryKeys.add(key);
+  state.pendingReasoningSummaryTexts.delete(key);
+  return [makeChunk(state, { reasoning_text: text })];
+};
+
+const queueReasoningSummaryDoneFallback = (
+  outputIndex: number,
+  summaryIndex: number,
+  text: string,
+  state: ResponsesToChatCompletionsStreamState,
+): void => {
+  if (!text || !shouldProjectScalarReasoning(outputIndex, state)) return;
+
+  const key = responsePartKey(outputIndex, summaryIndex);
+  if (state.emittedReasoningSummaryKeys.has(key)) return;
+
+  state.pendingReasoningSummaryTexts.set(key, {
+    outputIndex,
+    summaryIndex,
+    text,
+  });
+};
+
+const flushPendingReasoningSummaryDoneFallbacks = (
+  outputIndex: number,
+  state: ResponsesToChatCompletionsStreamState,
+): ChatCompletionChunk[] => {
+  const pending = [...state.pendingReasoningSummaryTexts.values()]
+    .filter((item) => item.outputIndex === outputIndex)
+    .sort((a, b) => a.summaryIndex - b.summaryIndex);
+
+  return pending.flatMap((item) =>
+    emitReasoningSummaryDoneFallback(
+      item.outputIndex,
+      item.summaryIndex,
+      item.text,
+      state,
+    )
+  );
+};
+
+const flushAllPendingReasoningSummaryDoneFallbacks = (
+  state: ResponsesToChatCompletionsStreamState,
+): ChatCompletionChunk[] => {
+  const pending = [...state.pendingReasoningSummaryTexts.values()]
+    .sort((a, b) =>
+      a.outputIndex === b.outputIndex
+        ? a.summaryIndex - b.summaryIndex
+        : a.outputIndex - b.outputIndex
+    );
+
+  return pending.flatMap((item) =>
+    emitReasoningSummaryDoneFallback(
+      item.outputIndex,
+      item.summaryIndex,
+      item.text,
+      state,
+    )
+  );
+};
+
+const flushDeferredEvents = (
+  state: ResponsesToChatCompletionsStreamState,
+): ChatCompletionChunk[] => {
+  const chunks: ChatCompletionChunk[] = [];
+
+  while (state.outputOrder.deferredEvents.length > 0) {
+    const ready: ResponseStreamEvent[] = [];
+    const stillDeferred: ResponseStreamEvent[] = [];
+
+    for (const event of state.outputOrder.deferredEvents) {
+      if (shouldDeferForEarlierReasoning(event, state)) {
+        stillDeferred.push(event);
+      } else {
+        ready.push(event);
+      }
+    }
+
+    if (ready.length === 0) break;
+    state.outputOrder.deferredEvents = stillDeferred;
+
+    for (const event of ready) {
+      const translated = translateResponsesEventToChatCompletionsChunks(
+        event,
+        state,
+      );
+      if (translated !== "DONE") chunks.push(...translated);
+    }
+  }
+
+  return chunks;
+};
 
 export const translateResponsesEventToChatCompletionsChunks = (
   event: ResponseStreamEvent,
   state: ResponsesToChatCompletionsStreamState,
 ): ChatCompletionChunk[] | "DONE" => {
   if (state.done) return [];
+  if (shouldDeferForEarlierReasoning(event, state)) {
+    state.outputOrder.deferredEvents.push(event);
+    return [];
+  }
+  recordResponseOutputOrderEvent(
+    event,
+    state.outputOrder,
+    trackReasoningOutputItem,
+  );
 
   switch (event.type) {
     case "response.created": {
-      const { response } =
-        event as Extract<ResponseStreamEvent, { type: "response.created" }>;
+      const { response } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.created" }
+      >;
       state.messageId = response.id;
       state.model = response.model;
       state.inputTokens = response.usage?.input_tokens ?? 0;
@@ -352,8 +617,14 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.output_item.added": {
-      const { item, output_index } =
-        event as Extract<ResponseStreamEvent, { type: "response.output_item.added" }>;
+      const { item, output_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.output_item.added" }
+      >;
+      if (item.type === "reasoning") {
+        return [];
+      }
+
       if (item.type !== "function_call") return [];
 
       state.toolCallIndex++;
@@ -373,33 +644,104 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.output_item.done": {
-      const { item } =
-        event as Extract<ResponseStreamEvent, { type: "response.output_item.done" }>;
-      return item.type === "reasoning" && Object.hasOwn(item, "encrypted_content")
-        ? [makeChunk(state, { reasoning_opaque: item.encrypted_content })]
-        : [];
+      const { item, output_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.output_item.done" }
+      >;
+      if (item.type !== "reasoning") return [];
+
+      const chunks: ChatCompletionChunk[] = [];
+      state.reasoningItems.push(toChatReasoningItem(item));
+
+      for (const [summaryIndex, part] of item.summary.entries()) {
+        chunks.push(...emitReasoningSummaryDoneFallback(
+          output_index,
+          summaryIndex,
+          part.text,
+          state,
+        ));
+      }
+      chunks.push(...flushPendingReasoningSummaryDoneFallbacks(
+        output_index,
+        state,
+      ));
+
+      if (
+        Object.hasOwn(item, "encrypted_content") &&
+        shouldProjectScalarReasoning(output_index, state)
+      ) {
+        chunks.push(makeChunk(state, {
+          reasoning_opaque: item.encrypted_content,
+        }));
+      }
+
+      const deferred = flushDeferredEvents(state);
+      return [...chunks, ...flushPendingReasoningChunks(state), ...deferred];
     }
 
     case "response.reasoning_summary_text.delta": {
-      const { delta } =
-        event as Extract<ResponseStreamEvent, { type: "response.reasoning_summary_text.delta" }>;
-      return [makeChunk(state, { reasoning_text: delta })];
+      const { delta, output_index, summary_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.reasoning_summary_text.delta" }
+      >;
+      return emitReasoningSummaryDelta(
+        output_index,
+        summary_index,
+        delta,
+        state,
+      );
+    }
+
+    case "response.reasoning_summary_text.done": {
+      const { text, output_index, summary_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.reasoning_summary_text.done" }
+      >;
+      queueReasoningSummaryDoneFallback(
+        output_index,
+        summary_index,
+        text,
+        state,
+      );
+      return [];
     }
 
     case "response.output_text.delta": {
-      const { delta } =
-        event as Extract<ResponseStreamEvent, { type: "response.output_text.delta" }>;
+      const { delta, output_index, content_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.output_text.delta" }
+      >;
+      if (delta) {
+        state.emittedTextContentKeys.add(
+          responsePartKey(output_index, content_index),
+        );
+      }
       return delta ? [makeChunk(state, { content: delta })] : [];
     }
 
+    case "response.output_text.done": {
+      const { text, output_index, content_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.output_text.done" }
+      >;
+      const key = responsePartKey(output_index, content_index);
+      if (!text || state.emittedTextContentKeys.has(key)) return [];
+
+      state.emittedTextContentKeys.add(key);
+      return [makeChunk(state, { content: text })];
+    }
+
     case "response.function_call_arguments.delta": {
-      const { delta, output_index } =
-        event as Extract<ResponseStreamEvent, { type: "response.function_call_arguments.delta" }>;
+      const { delta, output_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.function_call_arguments.delta" }
+      >;
       if (!delta) return [];
 
       const toolCallIndex = state.functionCallIndices.get(output_index);
       if (toolCallIndex === undefined) return [];
 
+      state.emittedFunctionArgumentOutputIndexes.add(output_index);
       return [makeChunk(state, {
         tool_calls: [{
           index: toolCallIndex,
@@ -408,29 +750,47 @@ export const translateResponsesEventToChatCompletionsChunks = (
       })];
     }
 
-    case "response.completed":
-    case "response.incomplete": {
-      const { response } =
-        event as Extract<ResponseStreamEvent, { type: "response.completed" | "response.incomplete" }>;
-      const chunk = makeChunk(state, {}, mapFinishReason(response));
-
-      if (response.usage) {
-        chunk.usage = {
-          prompt_tokens: response.usage.input_tokens,
-          completion_tokens: response.usage.output_tokens,
-          total_tokens: response.usage.total_tokens,
-          ...(response.usage.input_tokens_details?.cached_tokens !== undefined
-            ? {
-              prompt_tokens_details: {
-                cached_tokens: response.usage.input_tokens_details.cached_tokens,
-              },
-            }
-            : {}),
-        };
+    case "response.function_call_arguments.done": {
+      const { arguments: args, output_index } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.function_call_arguments.done" }
+      >;
+      if (
+        !args || state.emittedFunctionArgumentOutputIndexes.has(output_index)
+      ) {
+        return [];
       }
 
+      const toolCallIndex = state.functionCallIndices.get(output_index);
+      if (toolCallIndex === undefined) return [];
+
+      state.emittedFunctionArgumentOutputIndexes.add(output_index);
+      return [makeChunk(state, {
+        tool_calls: [{
+          index: toolCallIndex,
+          function: { arguments: args },
+        }],
+      })];
+    }
+
+    case "response.completed":
+    case "response.incomplete": {
+      const { response } = event as Extract<
+        ResponseStreamEvent,
+        { type: "response.completed" | "response.incomplete" }
+      >;
+      const chunks: ChatCompletionChunk[] = [];
+
+      chunks.push(...flushAllPendingReasoningSummaryDoneFallbacks(state));
+      chunks.push(...flushPendingReasoningChunks(state));
+      chunks.push(...flushDeferredEvents(state));
+
+      const chunk = makeChunk(state, {}, mapFinishReason(response));
+
       state.done = true;
-      return [chunk];
+      chunks.push(chunk);
+      if (response.usage) chunks.push(makeUsageChunk(state, response.usage));
+      return chunks;
     }
 
     case "response.failed":
@@ -456,4 +816,27 @@ const makeChunk = (
     delta,
     finish_reason: finishReason,
   }],
+});
+
+const makeUsageChunk = (
+  state: ResponsesToChatCompletionsStreamState,
+  usage: NonNullable<ResponsesResult["usage"]>,
+): ChatCompletionChunk => ({
+  id: state.messageId,
+  object: "chat.completion.chunk",
+  created: state.created,
+  model: state.model,
+  choices: [],
+  usage: {
+    prompt_tokens: usage.input_tokens,
+    completion_tokens: usage.output_tokens,
+    total_tokens: usage.total_tokens,
+    ...(usage.input_tokens_details?.cached_tokens !== undefined
+      ? {
+        prompt_tokens_details: {
+          cached_tokens: usage.input_tokens_details.cached_tokens,
+        },
+      }
+      : {}),
+  },
 });

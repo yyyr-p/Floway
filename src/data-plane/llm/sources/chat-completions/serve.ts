@@ -38,6 +38,7 @@ export const serveChatCompletions = async (
     const payload = await c.req.json<ChatCompletionsPayload>();
     normalizeChatRequest(payload);
     c.set("model", payload.model || "unknown");
+    const includeUsageChunk = payload.stream_options?.include_usage === true;
     const apiKeyId = c.get("apiKeyId") as string | undefined;
 
     const { token: githubToken, accountType } = await getGithubCredentials();
@@ -57,6 +58,7 @@ export const serveChatCompletions = async (
         c,
         withTranslatedEvents(result, translateMessagesToSourceEvents),
         plan.wantsStream,
+        includeUsageChunk,
       );
     }
 
@@ -73,6 +75,7 @@ export const serveChatCompletions = async (
         c,
         withTranslatedEvents(result, translateResponsesToSourceEvents),
         plan.wantsStream,
+        includeUsageChunk,
       );
     }
 
@@ -86,11 +89,13 @@ export const serveChatCompletions = async (
         fetchOptions: plan.fetchOptions,
       }),
       plan.wantsStream,
+      includeUsageChunk,
     );
   } catch (error) {
     return await respondChatCompletions(
       c,
       internalErrorResult(502, toInternalDebugError(error, "chat-completions")),
+      false,
       false,
     );
   }

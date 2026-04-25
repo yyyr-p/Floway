@@ -1,14 +1,18 @@
 import type { ChatCompletionChunk } from "../chat-completions-types.ts";
-import {
-  MESSAGES_THINKING_PLACEHOLDER,
-  type MessagesStreamEventData,
-} from "../messages-types.ts";
+import type { MessagesStreamEventData } from "../messages-types.ts";
 import {
   mapChatCompletionsFinishReasonToMessagesStopReason,
   mapChatCompletionsUsageToMessagesUsage,
   toMessagesId,
 } from "./chat-completions-to-messages.ts";
 import { checkWhitespaceOverflow } from "./utils.ts";
+
+type ChatStreamDelta = ChatCompletionChunk["choices"][0]["delta"];
+type ChatStreamToolCalls = NonNullable<ChatStreamDelta["tool_calls"]>;
+
+type DeferredAfterThinking =
+  | { type: "content"; content: string }
+  | { type: "tool_calls"; toolCalls: ChatStreamToolCalls };
 
 interface ChatCompletionsToMessagesStreamState {
   messageStartSent: boolean;
@@ -22,13 +26,25 @@ interface ChatCompletionsToMessagesStreamState {
   }>;
   aborted?: boolean;
   thinkingBlockOpen?: boolean;
-  thinkingHasContent?: boolean;
-  thinkingSignatureSent?: boolean;
   pendingReasoningOpaque?: string;
+  pendingThinkingSignature?: string;
+  deferredAfterThinking: DeferredAfterThinking[];
+  pendingFinishReason?: ChatCompletionChunk["choices"][0]["finish_reason"];
+  pendingUsage?: ChatCompletionChunk["usage"];
+  messageStopped?: boolean;
   usageSent?: boolean;
 }
 
-const isToolBlockOpen = (state: ChatCompletionsToMessagesStreamState): boolean =>
+const hasPendingReasoning = (
+  state: ChatCompletionsToMessagesStreamState,
+): boolean =>
+  Boolean(
+    state.thinkingBlockOpen || state.pendingReasoningOpaque !== undefined,
+  );
+
+const isToolBlockOpen = (
+  state: ChatCompletionsToMessagesStreamState,
+): boolean =>
   state.contentBlockOpen &&
   Object.values(state.toolCalls).some((toolCall) =>
     toolCall.messagesBlockIndex === state.contentBlockIndex
@@ -40,19 +56,37 @@ const closeThinkingBlock = (
 ): void => {
   if (!state.thinkingBlockOpen) return;
 
-  if (!state.thinkingSignatureSent) {
+  if (state.pendingThinkingSignature !== undefined) {
     events.push({
       type: "content_block_delta",
       index: state.contentBlockIndex,
-      delta: { type: "signature_delta", signature: "" },
+      delta: {
+        type: "signature_delta",
+        signature: state.pendingThinkingSignature,
+      },
     });
+    state.pendingThinkingSignature = undefined;
   }
 
   events.push({ type: "content_block_stop", index: state.contentBlockIndex });
   state.contentBlockIndex++;
   state.contentBlockOpen = false;
   state.thinkingBlockOpen = false;
-  state.thinkingSignatureSent = false;
+};
+
+const attachOpaqueToOpenThinkingBlock = (
+  state: ChatCompletionsToMessagesStreamState,
+): boolean => {
+  if (
+    !state.thinkingBlockOpen || state.pendingReasoningOpaque === undefined
+  ) {
+    return false;
+  }
+
+  state.pendingThinkingSignature = (state.pendingThinkingSignature ?? "") +
+    state.pendingReasoningOpaque;
+  state.pendingReasoningOpaque = undefined;
+  return true;
 };
 
 const closeCurrentBlock = (
@@ -66,69 +100,38 @@ const closeCurrentBlock = (
   state.contentBlockOpen = false;
 };
 
-const handleReasoningDelta = (
-  delta: ChatCompletionChunk["choices"][0]["delta"],
+const emitPendingOpaqueReasoningBlock = (
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  if (delta.reasoning_text) {
-    if (!state.thinkingBlockOpen) {
-      closeCurrentBlock(state, events);
-      events.push({
-        type: "content_block_start",
-        index: state.contentBlockIndex,
-        content_block: { type: "thinking", thinking: "" },
-      });
-      state.contentBlockOpen = true;
-      state.thinkingBlockOpen = true;
-      state.thinkingHasContent = true;
+  if (state.pendingReasoningOpaque === undefined) return;
 
-      if (state.pendingReasoningOpaque) {
-        events.push({
-          type: "content_block_delta",
-          index: state.contentBlockIndex,
-          delta: {
-            type: "signature_delta",
-            signature: state.pendingReasoningOpaque,
-          },
-        });
-        state.thinkingSignatureSent = true;
-        state.pendingReasoningOpaque = undefined;
-      }
-    }
+  // Opaque data is attachable only to the currently open thinking block. Once a
+  // thinking block has closed, later opaque-only reasoning must become its own
+  // redacted_thinking block instead of being suppressed by global history.
+  if (attachOpaqueToOpenThinkingBlock(state)) return;
 
-    events.push({
-      type: "content_block_delta",
+  closeCurrentBlock(state, events);
+  events.push(
+    {
+      type: "content_block_start",
       index: state.contentBlockIndex,
-      delta: { type: "thinking_delta", thinking: delta.reasoning_text },
-    });
-  }
-
-  if (delta.reasoning_opaque === undefined || delta.reasoning_opaque === null) {
-    return;
-  }
-
-  if (state.thinkingBlockOpen) {
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: { type: "signature_delta", signature: delta.reasoning_opaque },
-    });
-    state.thinkingSignatureSent = true;
-    return;
-  }
-
-  state.pendingReasoningOpaque =
-    (state.pendingReasoningOpaque ?? "") + delta.reasoning_opaque;
+      content_block: {
+        type: "redacted_thinking",
+        data: state.pendingReasoningOpaque,
+      },
+    },
+    { type: "content_block_stop", index: state.contentBlockIndex },
+  );
+  state.contentBlockIndex++;
+  state.pendingReasoningOpaque = undefined;
 };
 
-const handleContentDelta = (
+const emitContentDelta = (
   content: string,
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  closeThinkingBlock(state, events);
-
   if (isToolBlockOpen(state)) {
     closeCurrentBlock(state, events);
   }
@@ -149,13 +152,64 @@ const handleContentDelta = (
   });
 };
 
-const handleToolCallsDelta = (
-  toolCalls: NonNullable<ChatCompletionChunk["choices"][0]["delta"]["tool_calls"]>,
+const handleReasoningDelta = (
+  delta: ChatStreamDelta,
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): boolean => {
-  closeThinkingBlock(state, events);
+  if (delta.reasoning_text) {
+    if (!state.thinkingBlockOpen) {
+      closeCurrentBlock(state, events);
+      events.push({
+        type: "content_block_start",
+        index: state.contentBlockIndex,
+        content_block: { type: "thinking", thinking: "" },
+      });
+      state.contentBlockOpen = true;
+      state.thinkingBlockOpen = true;
+      attachOpaqueToOpenThinkingBlock(state);
+    }
 
+    events.push({
+      type: "content_block_delta",
+      index: state.contentBlockIndex,
+      delta: { type: "thinking_delta", thinking: delta.reasoning_text },
+    });
+  }
+
+  if (delta.reasoning_opaque === undefined || delta.reasoning_opaque === null) {
+    return false;
+  }
+
+  if (state.thinkingBlockOpen) {
+    state.pendingThinkingSignature = (state.pendingThinkingSignature ?? "") +
+      delta.reasoning_opaque;
+    return flushPendingReasoningAndDeferred(state, events);
+  }
+
+  state.pendingReasoningOpaque = (state.pendingReasoningOpaque ?? "") +
+    delta.reasoning_opaque;
+  return false;
+};
+
+const handleContentDelta = (
+  content: string,
+  state: ChatCompletionsToMessagesStreamState,
+  events: MessagesStreamEventData[],
+): void => {
+  if (hasPendingReasoning(state)) {
+    state.deferredAfterThinking.push({ type: "content", content });
+    return;
+  }
+
+  emitContentDelta(content, state, events);
+};
+
+const emitToolCallsDelta = (
+  toolCalls: ChatStreamToolCalls,
+  state: ChatCompletionsToMessagesStreamState,
+  events: MessagesStreamEventData[],
+): boolean => {
   for (const toolCall of toolCalls) {
     if (toolCall.id && toolCall.function?.name) {
       closeCurrentBlock(state, events);
@@ -191,7 +245,9 @@ const handleToolCallsDelta = (
     toolCallInfo.consecutiveWhitespace = whitespace.count;
 
     if (whitespace.exceeded) {
-      console.warn("Infinite whitespace detected in tool call arguments, aborting stream");
+      console.warn(
+        "Infinite whitespace detected in tool call arguments, aborting stream",
+      );
       state.aborted = true;
       closeCurrentBlock(state, events);
       events.push({
@@ -218,67 +274,93 @@ const handleToolCallsDelta = (
   return false;
 };
 
+const flushPendingReasoningAndDeferred = (
+  state: ChatCompletionsToMessagesStreamState,
+  events: MessagesStreamEventData[],
+): boolean => {
+  // Opaque-only reasoning still owns source order: it may later become a
+  // thinking signature, so content/tool deltas wait behind the reasoning gate.
+  emitPendingOpaqueReasoningBlock(state, events);
+  closeThinkingBlock(state, events);
+
+  const deferred = state.deferredAfterThinking;
+  state.deferredAfterThinking = [];
+
+  for (const item of deferred) {
+    if (item.type === "content") {
+      emitContentDelta(item.content, state, events);
+      continue;
+    }
+
+    if (emitToolCallsDelta(item.toolCalls, state, events)) return true;
+  }
+
+  return false;
+};
+
+const handleToolCallsDelta = (
+  toolCalls: ChatStreamToolCalls,
+  state: ChatCompletionsToMessagesStreamState,
+  events: MessagesStreamEventData[],
+): boolean => {
+  if (hasPendingReasoning(state)) {
+    state.deferredAfterThinking.push({ type: "tool_calls", toolCalls });
+    return false;
+  }
+
+  return emitToolCallsDelta(toolCalls, state, events);
+};
+
 const handleFinishReason = (
   finishReason: ChatCompletionChunk["choices"][0]["finish_reason"],
   chunk: ChatCompletionChunk,
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  closeThinkingBlock(state, events);
-
-  if (state.pendingReasoningOpaque && !state.thinkingHasContent) {
-    events.push(
-      {
-        type: "content_block_start",
-        index: state.contentBlockIndex,
-        content_block: { type: "thinking", thinking: "" },
-      },
-      {
-        type: "content_block_delta",
-        index: state.contentBlockIndex,
-        delta: {
-          type: "thinking_delta",
-          thinking: MESSAGES_THINKING_PLACEHOLDER,
-        },
-      },
-      {
-        type: "content_block_delta",
-        index: state.contentBlockIndex,
-        delta: {
-          type: "signature_delta",
-          signature: state.pendingReasoningOpaque,
-        },
-      },
-      { type: "content_block_stop", index: state.contentBlockIndex },
-    );
-    state.contentBlockIndex++;
-  }
+  if (flushPendingReasoningAndDeferred(state, events)) return;
 
   closeCurrentBlock(state, events);
 
-  if (chunk.usage) state.usageSent = true;
+  state.pendingFinishReason = finishReason;
+  if (chunk.usage) state.pendingUsage = chunk.usage;
+  if (chunk.usage) flushFinalMessage(state, events);
+};
+
+const flushFinalMessage = (
+  state: ChatCompletionsToMessagesStreamState,
+  events: MessagesStreamEventData[],
+): void => {
+  if (!state.pendingFinishReason || state.messageStopped) return;
+
+  const usage = mapChatCompletionsUsageToMessagesUsage(state.pendingUsage);
+  if (state.pendingUsage) state.usageSent = true;
 
   events.push(
     {
       type: "message_delta",
       delta: {
         stop_reason: mapChatCompletionsFinishReasonToMessagesStopReason(
-          finishReason,
+          state.pendingFinishReason,
         ),
         stop_sequence: null,
       },
-      usage: mapChatCompletionsUsageToMessagesUsage(chunk.usage),
+      usage,
     },
     { type: "message_stop" },
   );
+
+  state.messageStopped = true;
+  state.pendingFinishReason = undefined;
 };
 
-export const createChatCompletionsToMessagesStreamState = (): ChatCompletionsToMessagesStreamState => ({
-  messageStartSent: false,
-  contentBlockIndex: 0,
-  contentBlockOpen: false,
-  toolCalls: {},
-});
+export const createChatCompletionsToMessagesStreamState =
+  (): ChatCompletionsToMessagesStreamState => ({
+    messageStartSent: false,
+    contentBlockIndex: 0,
+    contentBlockOpen: false,
+    toolCalls: {},
+    deferredAfterThinking: [],
+  });
 
 export const translateChatCompletionsChunkToMessagesEvents = (
   chunk: ChatCompletionChunk,
@@ -288,12 +370,8 @@ export const translateChatCompletionsChunkToMessagesEvents = (
 
   if (chunk.choices.length === 0) {
     if (!state.aborted && chunk.usage && !state.usageSent) {
-      state.usageSent = true;
-      events.push({
-        type: "message_delta",
-        delta: { stop_reason: null, stop_sequence: null },
-        usage: mapChatCompletionsUsageToMessagesUsage(chunk.usage),
-      });
+      state.pendingUsage = chunk.usage;
+      flushFinalMessage(state, events);
     }
 
     return events;
@@ -320,14 +398,19 @@ export const translateChatCompletionsChunkToMessagesEvents = (
     state.messageStartSent = true;
   }
 
-  handleReasoningDelta(choice.delta, state, events);
+  const aborted = handleReasoningDelta(choice.delta, state, events);
+  if (aborted) return events;
 
   if (choice.delta.content) {
     handleContentDelta(choice.delta.content, state, events);
   }
 
   if (choice.delta.tool_calls) {
-    const aborted = handleToolCallsDelta(choice.delta.tool_calls, state, events);
+    const aborted = handleToolCallsDelta(
+      choice.delta.tool_calls,
+      state,
+      events,
+    );
     if (aborted) return events;
   }
 
@@ -335,5 +418,19 @@ export const translateChatCompletionsChunkToMessagesEvents = (
     handleFinishReason(choice.finish_reason, chunk, state, events);
   }
 
+  return events;
+};
+
+// Call once after the upstream Chat stream is exhausted. Some final Messages SSE
+// events are intentionally buffered until end-of-stream so late usage and
+// opaque-only reasoning can be emitted in valid block/message order.
+export const flushChatCompletionsToMessagesEvents = (
+  state: ChatCompletionsToMessagesStreamState,
+): MessagesStreamEventData[] => {
+  const events: MessagesStreamEventData[] = [];
+  if (state.aborted) return events;
+  if (flushPendingReasoningAndDeferred(state, events)) return events;
+  closeCurrentBlock(state, events);
+  flushFinalMessage(state, events);
   return events;
 };
