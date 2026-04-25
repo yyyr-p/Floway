@@ -20,12 +20,12 @@ export function dashboardAssets() {
     const initTab = TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : defaultTab;
 
     // Chart instances and key name map stored outside Alpine to avoid reactive proxy wrapping
-    const _charts = { key: null, model: null };
+    const _charts = { key: null, model: null, searchKey: null };
     const _keyNameMap = new Map();
-    const _detailMaps = { key: null, model: null };
+    const _detailMaps = { key: null, model: null, searchKey: null };
 
     function destroyCharts() {
-      for (const k of ['key', 'model']) {
+      for (const k of ['key', 'model', 'searchKey']) {
         if (_charts[k]) { _charts[k].stop(); _charts[k].destroy(); _charts[k] = null; }
       }
     }
@@ -244,6 +244,11 @@ export function dashboardAssets() {
           tokenData: [],
           tokenKeyMetadata: [],
           tokenKeyColorOrder: [],
+          searchUsageData: [],
+          searchUsageActiveProvider: 'disabled',
+          searchUsageLoading: false,
+          searchUsageKeyMetadata: [],
+          searchUsageKeyColorOrder: [],
           chartsReady: false,
           tokenLoading: false,
           tokenSummary: { requests: 0, total: 0, input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
@@ -255,7 +260,7 @@ export function dashboardAssets() {
           importData: null,
           importMode: 'merge',
           importLoading: false,
-          importPreview: { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 },
+          importPreview: { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0, searchUsage: 0 },
           // Models tab — chat playground
           allModels: [],
           modelsSearch: '',
@@ -425,12 +430,12 @@ export function dashboardAssets() {
                 } else if (this.tab === 'keys') {
                   this.loadKeys();
                 } else if (this.tab === 'usage') {
-                  this.loadTokenUsage();
+                  this.loadUsageTabData();
                 }
 
                 setInterval(() => {
                   if (this.tab === 'upstream' && this.isAdmin) this.loadUsage();
-                  if (this.tab === 'usage') this.loadTokenUsage();
+                  if (this.tab === 'usage') this.loadUsageTabData();
                 }, 60000);
 
                 setInterval(() => {
@@ -458,7 +463,8 @@ export function dashboardAssets() {
                   if (!this.searchConfigLoaded) this.loadSearchConfig();
                 } else if (t === 'usage') {
                   this.tokenLoading = true;
-                  await this.fetchTokenData();
+                  this.searchUsageLoading = true;
+                  await this.fetchUsageTabData();
                   if (this.tab === 'usage') {
                     await this.$nextTick();
                     this.renderTokenCharts();
@@ -873,24 +879,29 @@ export function dashboardAssets() {
                     return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
                   },
 
-                  async fetchTokenData() {
+                  usageRangeParams() {
+                    const now = new Date();
+                    const rangeStart = new Date(now);
+                    if (this.tokenRange === 'today') {
+                      rangeStart.setTime(now.getTime() - 23 * 3600000);
+                      rangeStart.setMinutes(0, 0, 0);
+                    } else if (this.tokenRange === '7d') {
+                      rangeStart.setDate(rangeStart.getDate() - 6);
+                      rangeStart.setHours(0, 0, 0, 0);
+                    } else {
+                      rangeStart.setDate(rangeStart.getDate() - 29);
+                      rangeStart.setHours(0, 0, 0, 0);
+                    }
+                    return {
+                      start: rangeStart.toISOString().slice(0, 13),
+                      end: new Date(now.getTime() + 3600000).toISOString().slice(0, 13),
+                    };
+                  },
+
+                  async fetchTokenData(range = this.usageRangeParams()) {
                     this.tokenLoading = true;
                     try {
-                      const now = new Date();
-                      const rangeStart = new Date(now);
-                      if (this.tokenRange === 'today') {
-                        rangeStart.setTime(now.getTime() - 23 * 3600000);
-                        rangeStart.setMinutes(0, 0, 0);
-                      } else if (this.tokenRange === '7d') {
-                        rangeStart.setDate(rangeStart.getDate() - 6);
-                        rangeStart.setHours(0, 0, 0, 0);
-                      } else {
-                        rangeStart.setDate(rangeStart.getDate() - 29);
-                        rangeStart.setHours(0, 0, 0, 0);
-                      }
-                      const start = rangeStart.toISOString().slice(0, 13);
-                      const end = new Date(now.getTime() + 3600000).toISOString().slice(0, 13);
-                      const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end) + '&include_key_metadata=1', { headers: this.authHeaders() });
+                      const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(range.start) + '&end=' + encodeURIComponent(range.end) + '&include_key_metadata=1', { headers: this.authHeaders() });
                       if (resp.status === 401) {
                         this.logout();
                         return;
@@ -914,11 +925,45 @@ export function dashboardAssets() {
                     }
                   },
 
-                  async loadTokenUsage() {
-                    await this.fetchTokenData();
+                  async fetchSearchUsageData(range = this.usageRangeParams()) {
+                    this.searchUsageLoading = true;
+                    try {
+                      const resp = await fetch('/api/search-usage?start=' + encodeURIComponent(range.start) + '&end=' + encodeURIComponent(range.end) + '&include_key_metadata=1', { headers: this.authHeaders() });
+                      if (resp.status === 401) {
+                        this.logout();
+                        return;
+                      }
+                      if (resp.ok) {
+                        const body = await resp.json();
+                        this.searchUsageData = Array.isArray(body.records) ? body.records : [];
+                        this.searchUsageKeyMetadata = Array.isArray(body.keys) ? body.keys : [];
+                        this.searchUsageKeyColorOrder = Array.isArray(body.keyColorOrder) ? body.keyColorOrder : [];
+                        this.searchUsageActiveProvider = body.activeProvider || 'disabled';
+                      }
+                    } catch (e) {
+                      console.error('fetchSearchUsageData:', e);
+                    } finally {
+                      this.searchUsageLoading = false;
+                    }
+                  },
+
+                  async fetchUsageTabData() {
+                    const range = this.usageRangeParams();
+                    await Promise.all([
+                      this.fetchTokenData(range),
+                      this.fetchSearchUsageData(range),
+                    ]);
+                  },
+
+                  async loadUsageTabData() {
+                    await this.fetchUsageTabData();
                     if (this.tab !== 'usage') return;
                     await this.$nextTick();
                     this.renderTokenCharts();
+                  },
+
+                  async loadTokenUsage() {
+                    await this.loadUsageTabData();
                   },
 
                   buildBucketMap() {
@@ -978,6 +1023,27 @@ export function dashboardAssets() {
                           m.set(val, tokenChartMetricDetailValue(item, metric));
                         }
                       }
+                    }
+                    return { bucketMap, agg, detail };
+                  },
+
+                  aggregateSearchUsageBuckets(records) {
+                    const isDaily = this.tokenRange !== 'today';
+                    const bucketMap = this.buildBucketMap();
+                    const agg = new Map();
+                    const detail = new Map();
+                    for (const [key] of bucketMap) {
+                      agg.set(key, new Map());
+                      detail.set(key, new Map());
+                    }
+                    for (const r of records) {
+                      const utc = new Date(r.hour + ':00:00Z');
+                      const bucket = isDaily ? this.localDateKey(utc) : this.localHourKey(utc);
+                      if (!agg.has(bucket)) continue;
+                      const m = agg.get(bucket);
+                      m.set(r.keyId, (m.get(r.keyId) || 0) + r.requests);
+                      const dm = detail.get(bucket);
+                      dm.set(r.keyId, (dm.get(r.keyId) || 0) + r.requests);
                     }
                     return { bucketMap, agg, detail };
                   },
@@ -1063,12 +1129,27 @@ export function dashboardAssets() {
                       _charts.model.update('none');
                     }
 
+                    if (_charts.searchKey) {
+                      const filtered = this.searchUsageData.filter((r) => r.provider === this.searchUsageActiveProvider);
+                      const { agg, detail } = this.aggregateSearchUsageBuckets(filtered);
+                      _detailMaps.searchKey = detail;
+                      for (let i = 0; i < _charts.searchKey.data.datasets.length; i++) {
+                        const ds = _charts.searchKey.data.datasets[i];
+                        ds.data = bucketKeysArr.map((k) => agg.get(k)?.get(ds._keyId) ?? 0);
+                        const userHidden = this.hiddenKeys.has(ds._keyId);
+                        const hasData = ds.data.some((v) => v !== 0);
+                        _charts.searchKey.setDatasetVisibility(i, !userHidden && hasData);
+                      }
+                      _charts.searchKey.update('none');
+                    }
+
                     this.updateSummary();
                   },
 
                   renderTokenCharts() {
                     const canvasKey = document.getElementById('tokenChartByKey');
                     const canvasModel = document.getElementById('tokenChartByModel');
+                    const canvasSearchKey = document.getElementById('searchUsageChartByKey');
                     if (!canvasKey || !canvasModel || canvasKey.clientWidth === 0) return;
 
                     const data = this.tokenData;
@@ -1079,11 +1160,18 @@ export function dashboardAssets() {
                     const keyMetaMap = new Map();
                     const allKeyIds = new Set();
                     const allKeyIdsForOrder = new Set();
+                    const allSearchKeyIds = new Set();
+                    const allSearchKeyIdsForOrder = new Set();
                     const allModels = new Set();
                     for (const k of this.tokenKeyMetadata) {
                       keyNameMap.set(k.id, k.name);
                       keyMetaMap.set(k.id, { name: k.name, createdAt: k.createdAt });
                       allKeyIdsForOrder.add(k.id);
+                    }
+                    for (const k of this.searchUsageKeyMetadata) {
+                      keyNameMap.set(k.id, k.name);
+                      keyMetaMap.set(k.id, { name: k.name, createdAt: k.createdAt });
+                      allSearchKeyIdsForOrder.add(k.id);
                     }
                     for (const r of data) {
                       keyNameMap.set(r.keyId, r.keyName);
@@ -1092,6 +1180,13 @@ export function dashboardAssets() {
                       allKeyIdsForOrder.add(r.keyId);
                       allModels.add(substituteModelName(r.model));
                     }
+                    const activeSearchUsageData = this.searchUsageData.filter((r) => r.provider === this.searchUsageActiveProvider);
+                    for (const r of activeSearchUsageData) {
+                      keyNameMap.set(r.keyId, r.keyName);
+                      keyMetaMap.set(r.keyId, { name: r.keyName, createdAt: r.keyCreatedAt ?? keyMetaMap.get(r.keyId)?.createdAt });
+                      allSearchKeyIds.add(r.keyId);
+                      allSearchKeyIdsForOrder.add(r.keyId);
+                    }
 
                     const bucketMap = this.buildBucketMap();
                     const labels = [...bucketMap.values()];
@@ -1099,11 +1194,14 @@ export function dashboardAssets() {
 
                     const { agg: keyAgg, detail: keyDetail } = this.aggregateBuckets(data, 'keyId');
                     const { agg: modelAgg, detail: modelDetail } = this.aggregateBuckets(data, 'model');
+                    const { agg: searchKeyAgg, detail: searchKeyDetail } = this.aggregateSearchUsageBuckets(activeSearchUsageData);
                     _detailMaps.key = keyDetail;
                     _detailMaps.model = modelDetail;
+                    _detailMaps.searchKey = searchKeyDetail;
 
                     const keyList = usageKeyChartEntries([...allKeyIds], keyMetaMap, [...allKeyIdsForOrder], this.tokenKeyColorOrder);
                     const modelList = usageModelChartEntries([...allModels], this.allModels.map((m) => m.id));
+                    const searchKeyList = usageKeyChartEntries([...allSearchKeyIds], keyMetaMap, [...allSearchKeyIdsForOrder], this.searchUsageKeyColorOrder);
 
                     const keyDatasets = keyList.map(({ keyId, colorSlot }) => {
                       const c = usageChartColor(colorSlot);
@@ -1139,80 +1237,102 @@ export function dashboardAssets() {
                       };
                     });
 
+                    const searchKeyDatasets = searchKeyList.map(({ keyId, colorSlot }) => {
+                      const c = usageChartColor(colorSlot);
+                      return {
+                        label: self.redactKeys ? keyId.slice(0, 8) : (keyNameMap.get(keyId) || keyId.slice(0, 8)),
+                        data: bucketKeysArr.map((k) => searchKeyAgg.get(k)?.get(keyId) ?? 0),
+                        borderColor: c,
+                        backgroundColor: c + '40',
+                        borderWidth: 2,
+                        pointRadius: 2,
+                        pointHoverRadius: 5,
+                        tension: 0.3,
+                        fill: 'stack',
+                        spanGaps: false,
+                        _keyId: keyId,
+                      };
+                    });
+
                     this.updateSummary();
 
-                    const makeOptions = (onClick, chartType) => ({
-                      responsive: true,
-                      maintainAspectRatio: false,
-                      animation: false,
-                      interaction: { mode: 'index', intersect: false },
-                      plugins: {
-                        legend: {
-                          position: 'bottom',
-                          labels: {
-                            color: '#9e9e9e',
-                            font: { size: 11, family: "'DM Sans', sans-serif" },
-                            boxWidth: 12,
-                            padding: 16,
-                            usePointStyle: true,
-                            pointStyle: 'circle',
-                          },
-                          onClick,
-                        },
-                        tooltip: {
-                          backgroundColor: 'rgba(12,16,21,0.95)',
-                          borderColor: 'rgba(255,255,255,0.1)',
-                          borderWidth: 1,
-                          titleColor: '#e0e0e0',
-                          bodyColor: '#b0bec5',
-                          padding: 12,
-                          beforeBodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
-                          bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
-                          filter: (item) => item.parsed.y !== null && (self.tokenChartMetric === 'cacheHitRate' || item.parsed.y > 0),
-                          itemSort: (a, b) => b.parsed.y - a.parsed.y,
-                          callbacks: {
-                            beforeBody: (items) => {
-                              if (!items.length) return [];
-                              return formatTooltipHeader(tooltipLabelWidth(items[0].chart));
+                    const makeOptions = (onClick, chartType) => {
+                      const isSearchChart = chartType === 'searchKey';
+                      return {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        animation: false,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                          legend: {
+                            position: 'bottom',
+                            labels: {
+                              color: '#9e9e9e',
+                              font: { size: 11, family: "'DM Sans', sans-serif" },
+                              boxWidth: 12,
+                              padding: 16,
+                              usePointStyle: true,
+                              pointStyle: 'circle',
                             },
-                            label: (ctx) => {
-                              const bucket = bucketKeysArr[ctx.dataIndex];
-                              const dimKey = chartType === 'key' ? ctx.dataset._keyId : ctx.dataset._model;
-                              const detailMap = _detailMaps[chartType];
-                              const detail = detailMap?.get(bucket)?.get(dimKey);
-                              if (!detail) return ctx.dataset.label + ': ' + formatTokenChartAxisValue(ctx.parsed.y, self.tokenChartMetric);
-                              return formatTooltipRow(String(ctx.dataset.label || ''), tooltipLabelWidth(ctx.chart), detail);
+                            onClick,
+                          },
+                          tooltip: {
+                            backgroundColor: 'rgba(12,16,21,0.95)',
+                            borderColor: 'rgba(255,255,255,0.1)',
+                            borderWidth: 1,
+                            titleColor: '#e0e0e0',
+                            bodyColor: '#b0bec5',
+                            padding: 12,
+                            beforeBodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+                            bodyFont: { family: "'JetBrains Mono', monospace", size: 11 },
+                            filter: (item) => item.parsed.y !== null && (isSearchChart ? item.parsed.y > 0 : (self.tokenChartMetric === 'cacheHitRate' || item.parsed.y > 0)),
+                            itemSort: (a, b) => b.parsed.y - a.parsed.y,
+                            callbacks: {
+                              beforeBody: (items) => {
+                                if (isSearchChart) return [];
+                                if (!items.length) return [];
+                                return formatTooltipHeader(tooltipLabelWidth(items[0].chart));
+                              },
+                              label: (ctx) => {
+                                const bucket = bucketKeysArr[ctx.dataIndex];
+                                const dimKey = chartType === 'model' ? ctx.dataset._model : ctx.dataset._keyId;
+                                const detailMap = _detailMaps[chartType];
+                                const detail = detailMap?.get(bucket)?.get(dimKey);
+                                if (isSearchChart) return ctx.dataset.label + ': ' + Math.round(detail ?? ctx.parsed.y).toLocaleString();
+                                if (!detail) return ctx.dataset.label + ': ' + formatTokenChartAxisValue(ctx.parsed.y, self.tokenChartMetric);
+                                return formatTooltipRow(String(ctx.dataset.label || ''), tooltipLabelWidth(ctx.chart), detail);
+                              },
                             },
                           },
                         },
-                      },
-                      scales: {
-                        x: {
-                          stacked: true,
-                          grid: { color: 'rgba(255,255,255,0.04)' },
-                          ticks: { color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" }, maxRotation: 45 },
-                          border: { color: 'rgba(255,255,255,0.06)' },
-                        },
-                        y: {
-                          stacked: self.tokenChartMetric !== 'cacheHitRate',
-                          beginAtZero: true,
-                          suggestedMax: self.tokenChartMetric === 'cacheHitRate' ? 100 : undefined,
-                          title: {
-                            display: true,
-                            text: tokenChartMetricLabel(self.tokenChartMetric),
-                            color: '#9e9e9e',
-                            font: { size: 10, family: "'DM Sans', sans-serif" },
+                        scales: {
+                          x: {
+                            stacked: true,
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            ticks: { color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" }, maxRotation: 45 },
+                            border: { color: 'rgba(255,255,255,0.06)' },
                           },
-                          grid: { color: 'rgba(255,255,255,0.04)' },
-                          ticks: {
-                            color: '#9e9e9e',
-                            font: { size: 10, family: "'JetBrains Mono', monospace" },
-                            callback: (v) => formatTokenChartAxisValue(Number(v), self.tokenChartMetric),
+                          y: {
+                            stacked: isSearchChart || self.tokenChartMetric !== 'cacheHitRate',
+                            beginAtZero: true,
+                            suggestedMax: !isSearchChart && self.tokenChartMetric === 'cacheHitRate' ? 100 : undefined,
+                            title: {
+                              display: true,
+                              text: isSearchChart ? 'Search Requests' : tokenChartMetricLabel(self.tokenChartMetric),
+                              color: '#9e9e9e',
+                              font: { size: 10, family: "'DM Sans', sans-serif" },
+                            },
+                            grid: { color: 'rgba(255,255,255,0.04)' },
+                            ticks: {
+                              color: '#9e9e9e',
+                              font: { size: 10, family: "'JetBrains Mono', monospace" },
+                              callback: (v) => isSearchChart ? Math.round(Number(v)).toLocaleString() : formatTokenChartAxisValue(Number(v), self.tokenChartMetric),
+                            },
+                            border: { color: 'rgba(255,255,255,0.06)' },
                           },
-                          border: { color: 'rgba(255,255,255,0.06)' },
                         },
-                      },
-                    });
+                      };
+                    };
 
                     destroyCharts();
 
@@ -1238,6 +1358,19 @@ export function dashboardAssets() {
                       }, 'model'),
                     });
 
+                    if (canvasSearchKey && this.searchUsageActiveProvider !== 'disabled') {
+                      _charts.searchKey = new Chart(canvasSearchKey, {
+                        type: 'line',
+                        data: { labels, datasets: searchKeyDatasets },
+                        options: makeOptions((_e, legendItem, legend) => {
+                          const ds = legend.chart.data.datasets[legendItem.datasetIndex];
+                          if (self.hiddenKeys.has(ds._keyId)) self.hiddenKeys.delete(ds._keyId);
+                          else self.hiddenKeys.add(ds._keyId);
+                          self.refreshChartsData();
+                        }, 'searchKey'),
+                      });
+                    }
+
                     this.chartsReady = true;
                     this.refreshChartsData();
                   },
@@ -1250,13 +1383,19 @@ export function dashboardAssets() {
                       }
                       _charts.key.update('none');
                     }
+                    if (_charts.searchKey) {
+                      for (const ds of _charts.searchKey.data.datasets) {
+                        ds.label = this.redactKeys ? ds._keyId.slice(0, 8) : (_keyNameMap.get(ds._keyId) || ds._keyId.slice(0, 8));
+                      }
+                      _charts.searchKey.update('none');
+                    }
                   },
 
                   switchTokenRange(range) {
                     this.tokenRange = range;
                     destroyCharts();
                     this.chartsReady = false;
-                    this.loadTokenUsage();
+                    this.loadUsageTabData();
                   },
 
                   switchTokenChartMetric(metric) {
@@ -1297,7 +1436,7 @@ export function dashboardAssets() {
                     const file = event.target.files[0];
                     if (!file) return;
                     this.importFile = file;
-                    this.importPreview = { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 };
+                    this.importPreview = { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0, searchUsage: 0 };
                     this.importData = null;
 
                     const reader = new FileReader();
@@ -1316,6 +1455,7 @@ export function dashboardAssets() {
                           apiKeys: Array.isArray(json.data.apiKeys) ? json.data.apiKeys.length : 0,
                           githubAccounts: Array.isArray(json.data.githubAccounts) ? json.data.githubAccounts.length : 0,
                           usage: Array.isArray(json.data.usage) ? json.data.usage.length : 0,
+                          searchUsage: Array.isArray(json.data.searchUsage) ? json.data.searchUsage.length : 0,
                         };
                       } catch {
                         alert('Invalid JSON file');
@@ -1343,10 +1483,10 @@ export function dashboardAssets() {
                       }
                       const result = await resp.json();
                       if (resp.ok) {
-                        alert('Import complete: ' + result.imported.apiKeys + ' keys, ' + result.imported.githubAccounts + ' accounts, ' + result.imported.usage + ' usage records');
+                        alert('Import complete: ' + result.imported.apiKeys + ' keys, ' + result.imported.githubAccounts + ' accounts, ' + result.imported.usage + ' usage records, ' + result.imported.searchUsage + ' search usage records');
                         this.importFile = null;
                         this.importData = null;
-                        this.importPreview = { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0 };
+                        this.importPreview = { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0, searchUsage: 0 };
                       } else {
                         alert('Import failed: ' + (result.error || 'Unknown error'));
                       }

@@ -146,6 +146,16 @@ const fakeProviderOk: WebSearchProvider = async () => ({
   }],
 });
 
+const activeProvider = (
+  search: WebSearchProvider,
+  apiKeyId?: string,
+) =>
+  Object.assign(search, {
+    providerName: "tavily" as const,
+    search,
+    ...(apiKeyId ? { apiKeyId } : {}),
+  });
+
 const fakeProviderError = (
   errorCode: Extract<WebSearchProviderResult, { type: "error" }>["errorCode"],
 ): WebSearchProvider =>
@@ -493,6 +503,9 @@ Deno.test("prepareMessagesWebSearchShimRequest creates a separate user tool_resu
 });
 
 Deno.test("rewriteMessagesWebSearchResponseToNative converts pure web_search tool_use into pause_turn", async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
+
   const rewritten = await rewriteMessagesWebSearchResponseToNative(
     makeUpstreamToolUseResponse([{
       name: "web_search",
@@ -500,7 +513,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative converts pure web_search too
       input: { query: "latest React docs" },
     }]),
     activeMessagesWebSearchShimState(),
-    fakeProviderOk,
+    activeProvider(fakeProviderOk, "key_usage"),
   );
 
   assertEquals(rewritten.stop_reason, "pause_turn");
@@ -511,6 +524,12 @@ Deno.test("rewriteMessagesWebSearchResponseToNative converts pure web_search too
     { type: "direct" },
   );
   assertEquals(rewritten.usage.server_tool_use?.web_search_requests, 1);
+  assertEquals(await repo.searchUsage.listAll(), [{
+    provider: "tavily",
+    keyId: "key_usage",
+    hour: new Date().toISOString().slice(0, 13),
+    requests: 1,
+  }]);
 });
 
 Deno.test("rewriteMessagesWebSearchResponseToNative keeps remaining client tool_use in mixed turn", async () => {
@@ -524,7 +543,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative keeps remaining client tool_
       { name: "calc", id: "toolu_2", input: { expression: "2+2" } },
     ]),
     activeMessagesWebSearchShimState(),
-    fakeProviderOk,
+    activeProvider(fakeProviderOk),
   );
 
   assertEquals(rewritten.stop_reason, "tool_use");
@@ -543,6 +562,8 @@ Deno.test("rewriteMessagesWebSearchResponseToNative keeps remaining client tool_
 });
 
 Deno.test("rewriteMessagesWebSearchResponseToNative synthesizes max_uses_exceeded without calling the provider", async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
   let called = false;
 
   const rewritten = await rewriteMessagesWebSearchResponseToNative(
@@ -552,13 +573,13 @@ Deno.test("rewriteMessagesWebSearchResponseToNative synthesizes max_uses_exceede
       input: { query: "latest React docs" },
     }]),
     activeMessagesWebSearchShimState({ maxUses: 1, priorSearchUseCount: 1 }),
-    async () => {
+    activeProvider(async () => {
       called = true;
       return {
         type: "ok",
         results: [],
       };
-    },
+    }, "key_usage"),
   );
 
   assertEquals(called, false);
@@ -572,6 +593,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative synthesizes max_uses_exceede
     },
   });
   assertEquals(rewritten.usage.server_tool_use, undefined);
+  assertEquals(await repo.searchUsage.listAll(), []);
 });
 
 Deno.test("rewriteMessagesWebSearchResponseToNative maps provider errors into native-looking tool-result errors", async () => {
@@ -582,7 +604,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative maps provider errors into na
       input: { query: "latest React docs" },
     }]),
     activeMessagesWebSearchShimState(),
-    fakeProviderError("too_many_requests"),
+    activeProvider(fakeProviderError("too_many_requests")),
   );
 
   assertEquals(rewritten.content[1], {
@@ -598,6 +620,9 @@ Deno.test("rewriteMessagesWebSearchResponseToNative maps provider errors into na
 });
 
 Deno.test("rewriteMessagesWebSearchResponseToNative uses invalid_tool_input for blank queries", async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
+
   const rewritten = await rewriteMessagesWebSearchResponseToNative(
     makeUpstreamToolUseResponse([{
       name: "web_search",
@@ -605,7 +630,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative uses invalid_tool_input for 
       input: { query: "   " },
     }]),
     activeMessagesWebSearchShimState(),
-    fakeProviderOk,
+    activeProvider(fakeProviderOk, "key_usage"),
   );
 
   assertEquals(rewritten.content[1], {
@@ -618,6 +643,34 @@ Deno.test("rewriteMessagesWebSearchResponseToNative uses invalid_tool_input for 
     },
   });
   assertEquals(rewritten.stop_reason, "pause_turn");
+  assertEquals(await repo.searchUsage.listAll(), []);
+});
+
+Deno.test("rewriteMessagesWebSearchResponseToNative uses query_too_long without recording usage", async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
+
+  const rewritten = await rewriteMessagesWebSearchResponseToNative(
+    makeUpstreamToolUseResponse([{
+      name: "web_search",
+      id: "toolu_1",
+      input: { query: "x".repeat(1001) },
+    }]),
+    activeMessagesWebSearchShimState(),
+    activeProvider(fakeProviderOk, "key_usage"),
+  );
+
+  assertEquals(rewritten.content[1], {
+    type: "web_search_tool_result",
+    tool_use_id: "srvtoolu_1",
+    caller: { type: "direct" },
+    content: {
+      type: "web_search_tool_result_error",
+      error_code: "query_too_long",
+    },
+  });
+  assertEquals(rewritten.stop_reason, "pause_turn");
+  assertEquals(await repo.searchUsage.listAll(), []);
 });
 
 Deno.test("rewriteMessagesWebSearchResponseToNative forwards only definition-level domain policy to the provider", async () => {
@@ -641,7 +694,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative forwards only definition-lev
       allowedDomains: ["react.dev"],
       blockedDomains: ["example.com"],
     }),
-    async (request) => {
+    activeProvider(async (request) => {
       providerRequest = {
         query: request.query,
         allowedDomains: request.allowedDomains,
@@ -651,7 +704,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative forwards only definition-lev
         type: "ok",
         results: [],
       };
-    },
+    }),
   );
 
   assertEquals(providerRequest, {
@@ -679,10 +732,10 @@ Deno.test("rewriteMessagesWebSearchResponseToNative counts thrown provider attem
       },
     ]),
     activeMessagesWebSearchShimState({ maxUses: 1 }),
-    async () => {
+    activeProvider(async () => {
       callCount += 1;
       throw new Error("provider exploded");
-    },
+    }),
   );
 
   assertEquals(callCount, 1);
@@ -745,7 +798,7 @@ Deno.test("rewriteMessagesWebSearchResponseToNative rewrites search_result_locat
     activeMessagesWebSearchShimState({
       requestSearchResultOwnership: ["owned", "foreign"],
     }),
-    fakeProviderOk,
+    activeProvider(fakeProviderOk),
   );
 
   const textBlock = rewritten.content[0] as MessagesTextBlock;
@@ -765,7 +818,7 @@ Deno.test("collectAndRewriteMessagesWebSearchEventsToNative rewrites collected S
       ),
     ),
     activeMessagesWebSearchShimState(),
-    fakeProviderOk,
+    activeProvider(fakeProviderOk),
   );
 
   const rewritten = await collectMessagesEventsToResponse(frames);
@@ -799,13 +852,13 @@ Deno.test("rewriteMessagesWebSearchResponseToNative preserves user-defined web_s
   const rewritten = await rewriteMessagesWebSearchResponseToNative(
     upstreamResponse,
     prepared.state,
-    async () => {
+    activeProvider(async () => {
       called = true;
       return {
         type: "ok",
         results: [],
       };
-    },
+    }),
   );
 
   assertEquals(called, false);

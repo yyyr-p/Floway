@@ -8,6 +8,7 @@ export interface EmitInput<TPayload> {
   payload: TPayload;
   githubToken: string;
   accountType: string;
+  apiKeyId?: string;
   fetchOptions?: CopilotFetchOptions;
 }
 

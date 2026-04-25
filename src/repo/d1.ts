@@ -6,9 +6,12 @@ import type {
   GitHubRepo,
   Repo,
   SearchConfigRepo,
+  SearchUsageRecord,
+  SearchUsageRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
+import { assertWebSearchProviderName } from "../lib/web-search-types.ts";
 
 // Minimal D1 type definitions (subset of @cloudflare/workers-types)
 interface D1Result<T = Record<string, unknown>> {
@@ -374,6 +377,109 @@ class D1UsageRepo implements UsageRepo {
   }
 }
 
+class D1SearchUsageRepo implements SearchUsageRepo {
+  constructor(private db: D1Database) {}
+
+  async record(
+    provider: SearchUsageRecord["provider"],
+    keyId: string,
+    hour: string,
+    requests: number,
+  ): Promise<void> {
+    const validProvider = assertWebSearchProviderName(provider);
+    await this.db
+      .prepare(
+        `INSERT INTO search_usage (provider, key_id, hour, requests) VALUES (?, ?, ?, ?)
+         ON CONFLICT (provider, key_id, hour) DO UPDATE SET
+           requests = requests + excluded.requests`,
+      )
+      .bind(validProvider, keyId, hour, requests)
+      .run();
+  }
+
+  async query(
+    opts: {
+      provider?: SearchUsageRecord["provider"];
+      keyId?: string;
+      start: string;
+      end: string;
+    },
+  ): Promise<SearchUsageRecord[]> {
+    const filters = ["hour >= ?", "hour < ?"];
+    const binds: unknown[] = [opts.start, opts.end];
+    if (opts.provider) {
+      const validProvider = assertWebSearchProviderName(opts.provider);
+      filters.unshift("provider = ?");
+      binds.unshift(validProvider);
+    }
+    if (opts.keyId) {
+      filters.push("key_id = ?");
+      binds.push(opts.keyId);
+    }
+
+    const { results } = await this.db
+      .prepare(
+        `SELECT provider, key_id, hour, requests FROM search_usage WHERE ${
+          filters.join(" AND ")
+        } ORDER BY hour`,
+      )
+      .bind(...binds)
+      .all<{
+        provider: string;
+        key_id: string;
+        hour: string;
+        requests: number;
+      }>();
+    return results.map(toSearchUsageRecord);
+  }
+
+  async listAll(): Promise<SearchUsageRecord[]> {
+    const { results } = await this.db
+      .prepare(
+        "SELECT provider, key_id, hour, requests FROM search_usage ORDER BY hour",
+      )
+      .all<{
+        provider: string;
+        key_id: string;
+        hour: string;
+        requests: number;
+      }>();
+    return results.map(toSearchUsageRecord);
+  }
+
+  async set(record: SearchUsageRecord): Promise<void> {
+    const provider = assertWebSearchProviderName(record.provider);
+    await this.db
+      .prepare(
+        `INSERT INTO search_usage (provider, key_id, hour, requests) VALUES (?, ?, ?, ?)
+         ON CONFLICT (provider, key_id, hour) DO UPDATE SET
+           requests = excluded.requests`,
+      )
+      .bind(provider, record.keyId, record.hour, record.requests)
+      .run();
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare("DELETE FROM search_usage").run();
+  }
+}
+
+function toSearchUsageRecord(
+  row: {
+    provider: string;
+    key_id: string;
+    hour: string;
+    requests: number;
+  },
+): SearchUsageRecord {
+  return {
+    provider: assertWebSearchProviderName(row.provider),
+    keyId: row.key_id,
+    hour: row.hour,
+    requests: row.requests,
+  };
+}
+
 class D1CacheRepo implements CacheRepo {
   constructor(private db: D1Database) {}
 
@@ -432,6 +538,7 @@ export class D1Repo implements Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
+  searchUsage: SearchUsageRepo;
   cache: CacheRepo;
   searchConfig: SearchConfigRepo;
 
@@ -439,6 +546,7 @@ export class D1Repo implements Repo {
     this.apiKeys = new D1ApiKeyRepo(db);
     this.github = new D1GitHubRepo(db);
     this.usage = new D1UsageRepo(db);
+    this.searchUsage = new D1SearchUsageRepo(db);
     this.cache = new D1CacheRepo(db);
     this.searchConfig = new D1SearchConfigRepo(db);
   }

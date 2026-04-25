@@ -38,6 +38,7 @@ export const serveMessages = async (
     const payload = await c.req.json<MessagesPayload>();
     normalizeMessagesRequest(payload);
     c.set("model", payload.model || "unknown");
+    const apiKeyId = c.get("apiKeyId") as string | undefined;
 
     const { token: githubToken, accountType } = await getGithubCredentials();
     const plan = await planMessagesRequest(
@@ -55,6 +56,7 @@ export const serveMessages = async (
           payload,
           githubToken,
           accountType,
+          apiKeyId,
           fetchOptions: plan.fetchOptions,
           rawBeta: plan.rawBeta,
         }),
@@ -68,6 +70,7 @@ export const serveMessages = async (
         payload: buildResponsesTargetRequest(payload),
         githubToken,
         accountType,
+        apiKeyId,
         fetchOptions: plan.fetchOptions,
       });
 
@@ -83,6 +86,7 @@ export const serveMessages = async (
       payload: buildChatTargetRequest(payload),
       githubToken,
       accountType,
+      apiKeyId,
       fetchOptions: plan.fetchOptions,
     });
 

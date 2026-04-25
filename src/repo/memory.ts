@@ -8,9 +8,12 @@ import type {
   GitHubRepo,
   Repo,
   SearchConfigRepo,
+  SearchUsageRecord,
+  SearchUsageRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
+import { assertWebSearchProviderName } from "../lib/web-search-types.ts";
 
 class MemoryApiKeyRepo implements ApiKeyRepo {
   private store = new Map<string, ApiKey>();
@@ -175,6 +178,78 @@ class MemoryUsageRepo implements UsageRepo {
   }
 }
 
+class MemorySearchUsageRepo implements SearchUsageRepo {
+  private store = new Map<string, SearchUsageRecord>();
+
+  private key(r: {
+    provider: SearchUsageRecord["provider"];
+    keyId: string;
+    hour: string;
+  }): string {
+    return `${r.provider}\0${r.keyId}\0${r.hour}`;
+  }
+
+  record(
+    provider: SearchUsageRecord["provider"],
+    keyId: string,
+    hour: string,
+    requests: number,
+  ): Promise<void> {
+    return Promise.resolve().then(() => {
+      const validProvider = assertWebSearchProviderName(provider);
+      const k = this.key({ provider: validProvider, keyId, hour });
+      const existing = this.store.get(k);
+      if (existing) {
+        existing.requests += requests;
+      } else {
+        this.store.set(k, { provider: validProvider, keyId, hour, requests });
+      }
+    });
+  }
+
+  query(
+    opts: {
+      provider?: SearchUsageRecord["provider"];
+      keyId?: string;
+      start: string;
+      end: string;
+    },
+  ): Promise<SearchUsageRecord[]> {
+    return Promise.resolve().then(() => {
+      const provider = opts.provider
+        ? assertWebSearchProviderName(opts.provider)
+        : undefined;
+      return [...this.store.values()]
+        .filter((r) => !provider || r.provider === provider)
+        .filter((r) => !opts.keyId || r.keyId === opts.keyId)
+        .filter((r) => r.hour >= opts.start && r.hour < opts.end)
+        .map((r) => ({ ...r }))
+        .sort((a, b) => a.hour.localeCompare(b.hour));
+    });
+  }
+
+  listAll(): Promise<SearchUsageRecord[]> {
+    return Promise.resolve(
+      [...this.store.values()]
+        .map((r) => ({ ...r }))
+        .sort((a, b) => a.hour.localeCompare(b.hour)),
+    );
+  }
+
+  set(record: SearchUsageRecord): Promise<void> {
+    return Promise.resolve().then(() => {
+      const provider = assertWebSearchProviderName(record.provider);
+      const validRecord = { ...record, provider };
+      this.store.set(this.key(validRecord), validRecord);
+    });
+  }
+
+  deleteAll(): Promise<void> {
+    this.store.clear();
+    return Promise.resolve();
+  }
+}
+
 class MemoryCacheRepo implements CacheRepo {
   private store = new Map<string, { value: string; expiresAt?: number }>();
 
@@ -224,6 +299,7 @@ export class InMemoryRepo implements Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
+  searchUsage: SearchUsageRepo;
   cache: CacheRepo;
   searchConfig: SearchConfigRepo;
 
@@ -231,6 +307,7 @@ export class InMemoryRepo implements Repo {
     this.apiKeys = new MemoryApiKeyRepo();
     this.github = new MemoryGitHubRepo();
     this.usage = new MemoryUsageRepo();
+    this.searchUsage = new MemorySearchUsageRepo();
     this.cache = new MemoryCacheRepo();
     this.searchConfig = new MemorySearchConfigRepo();
   }

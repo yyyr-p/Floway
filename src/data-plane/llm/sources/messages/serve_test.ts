@@ -1746,7 +1746,7 @@ Deno.test("stripReservedKeywords handles all-billing system blocks by removing s
 });
 
 Deno.test("/v1/messages rewrites native web search to an upstream client tool without renaming web_search and returns pause_turn", async () => {
-  const { apiKey } = await setupNativeWebSearchRouteTest();
+  const { apiKey, repo } = await setupNativeWebSearchRouteTest();
   const capture: {
     upstreamBody?: Record<string, unknown>;
     upstreamBeta?: string | null;
@@ -1821,6 +1821,12 @@ Deno.test("/v1/messages rewrites native web search to an upstream client tool wi
     name: "web_search",
   });
   assertEquals(capture.searchBody?.query, "latest React docs");
+  assertEquals(await repo.searchUsage.listAll(), [{
+    provider: "tavily",
+    keyId: apiKey.id,
+    hour: new Date().toISOString().slice(0, 13),
+    requests: 1,
+  }]);
 });
 
 Deno.test("/v1/messages keeps tool_use when native web search shares a turn with client tools", async () => {

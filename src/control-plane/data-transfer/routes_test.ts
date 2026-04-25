@@ -3,7 +3,12 @@ import { Hono } from "hono";
 import { DEFAULT_SEARCH_CONFIG } from "../../data-plane/tools/web-search/search-config.ts";
 import { initRepo } from "../../repo/index.ts";
 import { InMemoryRepo } from "../../repo/memory.ts";
-import type { ApiKey, GitHubAccount, UsageRecord } from "../../repo/types.ts";
+import type {
+  ApiKey,
+  GitHubAccount,
+  SearchUsageRecord,
+  UsageRecord,
+} from "../../repo/types.ts";
 import { exportData, importData } from "./routes.ts";
 
 // ---- Fixtures ----
@@ -67,6 +72,20 @@ const USAGE_2: UsageRecord = {
   cacheCreationTokens: 50,
 };
 
+const SEARCH_USAGE_1: SearchUsageRecord = {
+  provider: "tavily",
+  keyId: "key-aaa",
+  hour: "2026-01-01T10",
+  requests: 2,
+};
+
+const SEARCH_USAGE_2: SearchUsageRecord = {
+  provider: "microsoft-grounding",
+  keyId: "key-bbb",
+  hour: "2026-01-01T11",
+  requests: 4,
+};
+
 // ---- Helpers ----
 
 function setup() {
@@ -109,6 +128,8 @@ Deno.test("export — empty database returns correct structure", async () => {
   assertEquals(result.data.activeGithubAccountId, null);
   assertEquals(Array.isArray(result.data.usage), true);
   assertEquals(result.data.usage.length, 0);
+  assertEquals(Array.isArray(result.data.searchUsage), true);
+  assertEquals(result.data.searchUsage.length, 0);
   assertEquals(result.data.searchConfig, DEFAULT_SEARCH_CONFIG);
 });
 
@@ -122,6 +143,8 @@ Deno.test("export — contains all stored data", async () => {
   await repo.github.setActiveId(200);
   await repo.usage.set(USAGE_1);
   await repo.usage.set(USAGE_2);
+  await repo.searchUsage.set(SEARCH_USAGE_1);
+  await repo.searchUsage.set(SEARCH_USAGE_2);
   await repo.searchConfig.save({
     provider: "tavily",
     tavily: { apiKey: "tvly-test" },
@@ -134,6 +157,7 @@ Deno.test("export — contains all stored data", async () => {
   assertEquals(result.data.githubAccounts.length, 2);
   assertEquals(result.data.activeGithubAccountId, 200);
   assertEquals(result.data.usage.length, 2);
+  assertEquals(result.data.searchUsage.length, 2);
   assertEquals(result.data.searchConfig.provider, "tavily");
 });
 
@@ -203,6 +227,19 @@ Deno.test("export — usage records contain all fields", async () => {
   assertEquals(u.cacheCreationTokens, USAGE_1.cacheCreationTokens);
 });
 
+Deno.test("export — searchUsage records contain all fields", async () => {
+  const { app, repo } = setup();
+  await repo.searchUsage.set(SEARCH_USAGE_1);
+
+  const result = await doExport(app);
+  const u = result.data.searchUsage[0];
+
+  assertEquals(u.provider, SEARCH_USAGE_1.provider);
+  assertEquals(u.keyId, SEARCH_USAGE_1.keyId);
+  assertEquals(u.hour, SEARCH_USAGE_1.hour);
+  assertEquals(u.requests, SEARCH_USAGE_1.requests);
+});
+
 // ---- Tests: round-trip (import → export) ----
 
 Deno.test("round-trip — replace import then export yields equivalent data", async () => {
@@ -213,12 +250,18 @@ Deno.test("round-trip — replace import then export yields equivalent data", as
     githubAccounts: [ACCOUNT_X, ACCOUNT_Y],
     activeGithubAccountId: 100,
     usage: [USAGE_1, USAGE_2],
+    searchUsage: [SEARCH_USAGE_1, SEARCH_USAGE_2],
   };
 
   const { status, body } = await doImport(app, "replace", original);
   assertEquals(status, 200);
   assertEquals(body.ok, true);
-  assertEquals(body.imported, { apiKeys: 2, githubAccounts: 2, usage: 2 });
+  assertEquals(body.imported, {
+    apiKeys: 2,
+    githubAccounts: 2,
+    usage: 2,
+    searchUsage: 2,
+  });
 
   const exported = await doExport(app);
 
@@ -229,15 +272,21 @@ Deno.test("round-trip — replace import then export yields equivalent data", as
     a.user.id - b.user.id;
   const sortByUsage = (a: UsageRecord, b: UsageRecord) =>
     a.hour.localeCompare(b.hour) || a.keyId.localeCompare(b.keyId);
+  const sortBySearchUsage = (a: SearchUsageRecord, b: SearchUsageRecord) =>
+    a.hour.localeCompare(b.hour) ||
+    a.provider.localeCompare(b.provider) ||
+    a.keyId.localeCompare(b.keyId);
 
   exported.data.apiKeys.sort(sortById);
   exported.data.githubAccounts.sort(sortByUserId);
   exported.data.usage.sort(sortByUsage);
+  exported.data.searchUsage.sort(sortBySearchUsage);
 
   const expected = { ...original };
   expected.apiKeys = [...original.apiKeys].sort(sortById);
   expected.githubAccounts = [...original.githubAccounts].sort(sortByUserId);
   expected.usage = [...original.usage].sort(sortByUsage);
+  expected.searchUsage = [...original.searchUsage].sort(sortBySearchUsage);
 
   assertEquals(exported.data.apiKeys, expected.apiKeys);
   assertEquals(exported.data.githubAccounts, expected.githubAccounts);
@@ -246,6 +295,7 @@ Deno.test("round-trip — replace import then export yields equivalent data", as
     expected.activeGithubAccountId,
   );
   assertEquals(exported.data.usage, expected.usage);
+  assertEquals(exported.data.searchUsage, expected.searchUsage);
 });
 
 Deno.test("round-trip — merge import then export contains both old and new data", async () => {
@@ -256,6 +306,7 @@ Deno.test("round-trip — merge import then export contains both old and new dat
   await repo.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
   await repo.github.setActiveId(100);
   await repo.usage.set(USAGE_1);
+  await repo.searchUsage.set(SEARCH_USAGE_1);
 
   // Merge new data
   const newData = {
@@ -263,6 +314,7 @@ Deno.test("round-trip — merge import then export contains both old and new dat
     githubAccounts: [ACCOUNT_Y],
     activeGithubAccountId: 200,
     usage: [USAGE_2],
+    searchUsage: [SEARCH_USAGE_2],
   };
 
   const { status } = await doImport(app, "merge", newData);
@@ -273,8 +325,57 @@ Deno.test("round-trip — merge import then export contains both old and new dat
   assertEquals(exported.data.apiKeys.length, 2);
   assertEquals(exported.data.githubAccounts.length, 2);
   assertEquals(exported.data.usage.length, 2);
+  assertEquals(exported.data.searchUsage.length, 2);
   // Merge preserves existing activeId
   assertEquals(exported.data.activeGithubAccountId, 100);
+});
+
+Deno.test("import replace — clears existing searchUsage before importing provided records", async () => {
+  const { app, repo } = setup();
+
+  await repo.searchUsage.set(SEARCH_USAGE_1);
+
+  const { status, body } = await doImport(app, "replace", {
+    searchUsage: [SEARCH_USAGE_2],
+  });
+
+  assertEquals(status, 200);
+  assertEquals(body.imported.searchUsage, 1);
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.searchUsage, [SEARCH_USAGE_2]);
+});
+
+Deno.test("import replace — rejects invalid searchUsage before clearing existing data", async () => {
+  const { app, repo } = setup();
+
+  await repo.apiKeys.save(KEY_A);
+  await repo.searchUsage.set(SEARCH_USAGE_1);
+
+  const resp = await app.request("/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      mode: "replace",
+      data: {
+        searchUsage: [{
+          provider: "disabled",
+          keyId: "key-bad",
+          hour: "2026-01-01T12",
+          requests: 1,
+        }],
+      },
+    }),
+  });
+
+  assertEquals(resp.status, 400);
+  assertEquals(await resp.json(), {
+    error: "invalid searchUsage record at index 0",
+  });
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.apiKeys, [KEY_A]);
+  assertEquals(exported.data.searchUsage, [SEARCH_USAGE_1]);
 });
 
 Deno.test("export/import include searchConfig and replace it as a singleton when present", async () => {
@@ -364,6 +465,8 @@ Deno.test("round-trip — export from A, import into B, export from B matches A"
   await repoA.github.setActiveId(100);
   await repoA.usage.set(USAGE_1);
   await repoA.usage.set(USAGE_2);
+  await repoA.searchUsage.set(SEARCH_USAGE_1);
+  await repoA.searchUsage.set(SEARCH_USAGE_2);
 
   const exportA = await doExport(appA);
 
@@ -384,13 +487,19 @@ Deno.test("round-trip — export from A, import into B, export from B matches A"
     a.user.id - b.user.id;
   const sortByUsage = (a: UsageRecord, b: UsageRecord) =>
     a.hour.localeCompare(b.hour) || a.keyId.localeCompare(b.keyId);
+  const sortBySearchUsage = (a: SearchUsageRecord, b: SearchUsageRecord) =>
+    a.hour.localeCompare(b.hour) ||
+    a.provider.localeCompare(b.provider) ||
+    a.keyId.localeCompare(b.keyId);
 
   exportA.data.apiKeys.sort(sortById);
   exportA.data.githubAccounts.sort(sortByUserId);
   exportA.data.usage.sort(sortByUsage);
+  exportA.data.searchUsage.sort(sortBySearchUsage);
   exportB.data.apiKeys.sort(sortById);
   exportB.data.githubAccounts.sort(sortByUserId);
   exportB.data.usage.sort(sortByUsage);
+  exportB.data.searchUsage.sort(sortBySearchUsage);
 
   assertEquals(exportB.data.apiKeys, exportA.data.apiKeys);
   assertEquals(exportB.data.githubAccounts, exportA.data.githubAccounts);
@@ -399,6 +508,7 @@ Deno.test("round-trip — export from A, import into B, export from B matches A"
     exportA.data.activeGithubAccountId,
   );
   assertEquals(exportB.data.usage, exportA.data.usage);
+  assertEquals(exportB.data.searchUsage, exportA.data.searchUsage);
 });
 
 // ---- Tests: import modes ----
@@ -410,6 +520,7 @@ Deno.test("import replace — clears existing data", async () => {
   await repo.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
   await repo.github.setActiveId(100);
   await repo.usage.set(USAGE_1);
+  await repo.searchUsage.set(SEARCH_USAGE_1);
 
   // Replace with only KEY_B
   await doImport(app, "replace", {
@@ -425,6 +536,7 @@ Deno.test("import replace — clears existing data", async () => {
   assertEquals(exported.data.githubAccounts.length, 0);
   assertEquals(exported.data.activeGithubAccountId, null);
   assertEquals(exported.data.usage.length, 0);
+  assertEquals(exported.data.searchUsage.length, 0);
 });
 
 Deno.test("import merge — preserves existing active ID", async () => {
@@ -519,5 +631,10 @@ Deno.test("import — handles missing optional arrays gracefully", async () => {
   const { status, body } = await doImport(app, "replace", {});
   assertEquals(status, 200);
   assertEquals(body.ok, true);
-  assertEquals(body.imported, { apiKeys: 0, githubAccounts: 0, usage: 0 });
+  assertEquals(body.imported, {
+    apiKeys: 0,
+    githubAccounts: 0,
+    usage: 0,
+    searchUsage: 0,
+  });
 });

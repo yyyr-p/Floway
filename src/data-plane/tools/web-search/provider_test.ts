@@ -1,4 +1,6 @@
 import { assertEquals } from "@std/assert";
+import { initRepo } from "../../../repo/index.ts";
+import { InMemoryRepo } from "../../../repo/memory.ts";
 import { jsonResponse, withMockedFetch } from "../../../test-helpers.ts";
 import {
   resolveConfiguredWebSearchProvider,
@@ -193,3 +195,30 @@ Deno.test(
     );
   },
 );
+
+Deno.test("testSearchConfigConnection does not record search usage", async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
+
+  await withMockedFetch(
+    () =>
+      jsonResponse({
+        results: [{
+          title: "React",
+          url: "https://react.dev",
+          content: "Docs",
+        }],
+      }),
+    async () => {
+      const result = await testSearchConfigConnection({
+        provider: "tavily",
+        tavily: { apiKey: "tvly-test" },
+        microsoftGrounding: { apiKey: "" },
+      });
+
+      assertEquals(result.ok, true);
+    },
+  );
+
+  assertEquals(await repo.searchUsage.listAll(), []);
+});

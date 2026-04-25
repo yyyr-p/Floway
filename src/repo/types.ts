@@ -1,3 +1,5 @@
+import type { WebSearchProviderName } from "../lib/web-search-types.ts";
+
 export interface ApiKey {
   id: string;
   name: string;
@@ -26,6 +28,13 @@ export interface UsageRecord {
   outputTokens: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+}
+
+export interface SearchUsageRecord {
+  provider: WebSearchProviderName;
+  keyId: string;
+  hour: string;
+  requests: number;
 }
 
 export interface ApiKeyRepo {
@@ -67,6 +76,26 @@ export interface UsageRepo {
   deleteAll(): Promise<void>;
 }
 
+export interface SearchUsageRepo {
+  record(
+    provider: WebSearchProviderName,
+    keyId: string,
+    hour: string,
+    requests: number,
+  ): Promise<void>;
+  query(
+    opts: {
+      provider?: WebSearchProviderName;
+      keyId?: string;
+      start: string;
+      end: string;
+    },
+  ): Promise<SearchUsageRecord[]>;
+  listAll(): Promise<SearchUsageRecord[]>;
+  set(record: SearchUsageRecord): Promise<void>;
+  deleteAll(): Promise<void>;
+}
+
 export interface CacheRepo {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlMs?: number): Promise<void>;
@@ -82,6 +111,7 @@ export interface Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
+  searchUsage: SearchUsageRepo;
   cache: CacheRepo;
   searchConfig: SearchConfigRepo;
 }

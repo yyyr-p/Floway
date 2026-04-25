@@ -1,5 +1,10 @@
 import type { SearchConfig } from "../../data-plane/tools/web-search/types.ts";
-import type { ApiKey, GitHubAccount, UsageRecord } from "../../repo/types.ts";
+import type {
+  ApiKey,
+  GitHubAccount,
+  SearchUsageRecord,
+  UsageRecord,
+} from "../../repo/types.ts";
 
 export interface ExportPayload {
   version: 1;
@@ -9,6 +14,7 @@ export interface ExportPayload {
     githubAccounts: GitHubAccount[];
     activeGithubAccountId: number | null;
     usage: UsageRecord[];
+    searchUsage: SearchUsageRecord[];
     searchConfig: SearchConfig;
   };
 }

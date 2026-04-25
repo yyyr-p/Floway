@@ -49,6 +49,7 @@ export const serveResponses = async (
     const payload = await c.req.json<ResponsesPayload>();
     normalizeResponsesRequest(payload);
     c.set("model", payload.model || "unknown");
+    const apiKeyId = c.get("apiKeyId") as string | undefined;
 
     const { token: githubToken, accountType } = await getGithubCredentials();
     const plan = await planResponsesRequest(payload, githubToken, accountType);
@@ -75,6 +76,7 @@ export const serveResponses = async (
         payload: messagesPayload,
         githubToken,
         accountType,
+        apiKeyId,
         fetchOptions: plan.fetchOptions,
       });
 

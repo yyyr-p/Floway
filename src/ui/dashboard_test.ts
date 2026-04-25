@@ -88,6 +88,22 @@ function usageRecord(offsetHours: number, overrides: Record<string, unknown>) {
   };
 }
 
+function searchUsageRecord(
+  offsetHours: number,
+  overrides: Record<string, unknown>,
+) {
+  const date = new Date();
+  date.setHours(date.getHours() + offsetHours, 0, 0, 0);
+  return {
+    provider: "tavily",
+    hour: date.toISOString().slice(0, 13),
+    keyId: "key_1",
+    keyName: "Primary",
+    requests: 1,
+    ...overrides,
+  };
+}
+
 const TEST_USAGE_KEY_COLOR_ORDER = [
   "46360b74-2457-4a38-a116-7afdb2894632",
   "4969165b-3412-436c-87d9-3fd4770164b5",
@@ -182,7 +198,16 @@ Deno.test("DashboardPage preserves empty cache hit rate chart points", () => {
   );
   assertStringIncludes(
     html,
-    "item.parsed.y !== null && (self.tokenChartMetric === 'cacheHitRate' || item.parsed.y > 0)",
+    "item.parsed.y !== null && (isSearchChart ? item.parsed.y > 0 : (self.tokenChartMetric === 'cacheHitRate' || item.parsed.y > 0))",
+  );
+});
+
+Deno.test("DashboardPage filters search usage tooltip items independently from token metric", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(
+    html,
+    "filter: (item) => item.parsed.y !== null && (isSearchChart ? item.parsed.y > 0 : (self.tokenChartMetric === 'cacheHitRate' || item.parsed.y > 0))",
   );
 });
 
@@ -477,4 +502,62 @@ Deno.test("DashboardPage usage summary metric focus styling only shows borders o
     "border border-transparent cursor-pointer transition-colors hover:border-white/10 focus:outline-none focus-visible:border-accent-cyan/40",
   );
   assertFalse(html.includes("focus:ring"));
+});
+
+Deno.test("DashboardPage renders search usage chart after token summary content", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(html, "Search Usage — Per Key");
+  assertStringIncludes(html, "searchUsageActiveProvider !== 'disabled'");
+  assertStringIncludes(html, "searchUsageChartByKey");
+  assert(
+    html.indexOf("Search Usage — Per Key") > html.indexOf("Cache Hit Rate"),
+  );
+});
+
+Deno.test("DashboardPage import preview includes search usage records", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(html, "searchUsage: 0");
+  assertStringIncludes(
+    html,
+    "searchUsage: Array.isArray(json.data.searchUsage) ? json.data.searchUsage.length : 0",
+  );
+  assertStringIncludes(html, "Search Usage Records");
+  assertStringIncludes(html, "x-text=\"importPreview.searchUsage\"");
+  assertStringIncludes(
+    html,
+    "result.imported.searchUsage + ' search usage records'",
+  );
+});
+
+Deno.test("dashboardApp renders search usage per-key datasets for active provider only", () => {
+  const { app, charts } = createDashboardHarness();
+  app.searchUsageActiveProvider = "tavily";
+  app.searchUsageData = [
+    searchUsageRecord(-1, {
+      provider: "tavily",
+      keyId: "key-a",
+      keyName: "Search A",
+      requests: 5,
+    }),
+    searchUsageRecord(0, {
+      provider: "microsoft-grounding",
+      keyId: "key-b",
+      keyName: "Search B",
+      requests: 7,
+    }),
+  ];
+
+  app.renderTokenCharts();
+
+  const searchKeyChart = charts.find((chart) =>
+    (chart.canvas as { id?: string }).id === "searchUsageChartByKey"
+  );
+  assert(searchKeyChart);
+  assertEquals(searchKeyChart.data.datasets.length, 1);
+  assertEquals(searchKeyChart.data.datasets[0]._keyId, "key-a");
+  assertEquals(searchKeyChart.data.datasets[0].label, "Search A");
+  assert(searchKeyChart.data.datasets[0].data.includes(5));
+  assertFalse(searchKeyChart.data.datasets[0].data.includes(7));
 });

@@ -6,9 +6,12 @@ import type {
   GitHubRepo,
   Repo,
   SearchConfigRepo,
+  SearchUsageRecord,
+  SearchUsageRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
+import { assertWebSearchProviderName } from "../lib/web-search-types.ts";
 
 const SEARCH_CONFIG_KEY: Deno.KvKey = ["config", "search_config"];
 
@@ -271,6 +274,73 @@ class DenoKvUsageRepo implements UsageRepo {
   }
 }
 
+class DenoKvSearchUsageRepo implements SearchUsageRepo {
+  constructor(private kv: Deno.Kv) {}
+
+  async record(
+    provider: SearchUsageRecord["provider"],
+    keyId: string,
+    hour: string,
+    requests: number,
+  ): Promise<void> {
+    const validProvider = assertWebSearchProviderName(provider);
+    await this.kv.atomic()
+      .sum(["search_usage", validProvider, keyId, hour, "r"], BigInt(requests))
+      .commit();
+  }
+
+  async query(
+    opts: {
+      provider?: SearchUsageRecord["provider"];
+      keyId?: string;
+      start: string;
+      end: string;
+    },
+  ): Promise<SearchUsageRecord[]> {
+    const provider = opts.provider
+      ? assertWebSearchProviderName(opts.provider)
+      : undefined;
+    const prefix: Deno.KvKey = provider
+      ? ["search_usage", provider]
+      : ["search_usage"];
+    const records = await this.collect(prefix);
+    return records
+      .filter((r) => !opts.keyId || r.keyId === opts.keyId)
+      .filter((r) => r.hour >= opts.start && r.hour < opts.end);
+  }
+
+  async listAll(): Promise<SearchUsageRecord[]> {
+    return await this.collect(["search_usage"]);
+  }
+
+  async set(record: SearchUsageRecord): Promise<void> {
+    const provider = assertWebSearchProviderName(record.provider);
+    await this.kv.set(
+      ["search_usage", provider, record.keyId, record.hour, "r"],
+      new Deno.KvU64(BigInt(record.requests)),
+    );
+  }
+
+  async deleteAll(): Promise<void> {
+    for await (const entry of this.kv.list({ prefix: ["search_usage"] })) {
+      await this.kv.delete(entry.key);
+    }
+  }
+
+  private async collect(prefix: Deno.KvKey): Promise<SearchUsageRecord[]> {
+    const records: SearchUsageRecord[] = [];
+    for await (const entry of this.kv.list<Deno.KvU64>({ prefix })) {
+      records.push({
+        provider: assertWebSearchProviderName(entry.key[1]),
+        keyId: entry.key[2] as string,
+        hour: entry.key[3] as string,
+        requests: Number(entry.value),
+      });
+    }
+    return records.sort((a, b) => a.hour.localeCompare(b.hour));
+  }
+}
+
 class DenoKvCacheRepo implements CacheRepo {
   constructor(private kv: Deno.Kv) {}
 
@@ -309,6 +379,7 @@ export class DenoKvRepo implements Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
   usage: UsageRepo;
+  searchUsage: SearchUsageRepo;
   cache: CacheRepo;
   searchConfig: SearchConfigRepo;
 
@@ -316,6 +387,7 @@ export class DenoKvRepo implements Repo {
     this.apiKeys = new DenoKvApiKeyRepo(kv);
     this.github = new DenoKvGitHubRepo(kv);
     this.usage = new DenoKvUsageRepo(kv);
+    this.searchUsage = new DenoKvSearchUsageRepo(kv);
     this.cache = new DenoKvCacheRepo(kv);
     this.searchConfig = new DenoKvSearchConfigRepo(kv);
   }

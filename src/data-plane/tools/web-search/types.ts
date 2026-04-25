@@ -1,7 +1,10 @@
 import type { MessagesWebSearchErrorCode } from "../../../lib/messages-types.ts";
+import type { WebSearchProviderName } from "../../../lib/web-search-types.ts";
+
+export type { WebSearchProviderName } from "../../../lib/web-search-types.ts";
 
 export interface SearchConfig {
-  provider: "disabled" | "tavily" | "microsoft-grounding";
+  provider: "disabled" | WebSearchProviderName;
   tavily: { apiKey: string };
   microsoftGrounding: { apiKey: string };
 }

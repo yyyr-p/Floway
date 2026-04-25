@@ -1187,6 +1187,31 @@ export function renderUsageTab() {
             "w-20",
           )}
         </div>
+
+        <div
+          x-show="searchUsageActiveProvider !== 'disabled'"
+          class="mt-6 pt-5 border-t border-white/5"
+        >
+          <div class="flex items-center gap-3 mb-4">
+            <span
+              class="text-xs font-medium text-gray-500 uppercase tracking-widest block"
+            >Search Usage — Per Key</span>
+            <template x-if="searchUsageLoading">
+              ${spinner("h-3.5 w-3.5 text-gray-500")}
+            </template>
+          </div>
+          <div style="height: 320px; position: relative;">
+            <template x-if="searchUsageLoading && !chartsReady">
+              <div class="absolute inset-0 flex items-center justify-center">
+                <div class="flex flex-col items-center gap-3">
+                  ${spinner("h-6 w-6 text-accent-cyan/60")}
+                  <span class="text-xs text-gray-500">Loading usage data…</span>
+                </div>
+              </div>
+            </template>
+            <canvas id="searchUsageChartByKey"></canvas>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -1293,7 +1318,7 @@ export function renderSettingsTab() {
 
           <template x-if="importPreview.ready">
             <div>
-              <div class="grid grid-cols-3 gap-3 mb-4">
+              <div class="grid grid-cols-4 gap-3 mb-4">
                 <div class="bg-surface-800 rounded-lg p-3 text-center">
                   <p class="text-xs text-gray-500 mb-1">API Keys</p>
                   <p
@@ -1315,6 +1340,14 @@ export function renderSettingsTab() {
                   <p
                     class="text-lg font-bold font-mono text-white"
                     x-text="importPreview.usage"
+                  >
+                  </p>
+                </div>
+                <div class="bg-surface-800 rounded-lg p-3 text-center">
+                  <p class="text-xs text-gray-500 mb-1">Search Usage Records</p>
+                  <p
+                    class="text-lg font-bold font-mono text-white"
+                    x-text="importPreview.searchUsage"
                   >
                   </p>
                 </div>
