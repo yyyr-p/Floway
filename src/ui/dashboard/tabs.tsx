@@ -627,6 +627,7 @@ export function renderUpstreamTab() {
               ></label>
               <input
                 type="password"
+                autocomplete="off"
                 :placeholder="searchConfigDraft.provider === 'tavily' ? 'Tavily API key' : searchConfigDraft.provider === 'microsoft-grounding' ? 'Microsoft Grounding API key' : 'No credential needed when disabled'"
                 :value="searchCredentialValue"
                 @input="setSearchCredentialValue($event.target.value)"

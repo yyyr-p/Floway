@@ -162,6 +162,7 @@ Deno.test("DashboardPage renders the search section below the usage cards withou
   assertStringIncludes(html, "Microsoft Grounding");
   assertStringIncludes(html, "Save Search Config");
   assertStringIncludes(html, "Test Search");
+  assertStringIncludes(html, 'autocomplete="off"');
   assertStringIncludes(
     html,
     ":disabled=\"!searchConfigLoaded || searchConfigTesting || searchConfigDraft.provider === 'disabled'\"",
