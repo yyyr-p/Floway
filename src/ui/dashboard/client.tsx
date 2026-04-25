@@ -50,6 +50,68 @@ export function dashboardAssets() {
       cacheHitRate: { label: 'Cache Hit Rate', kind: 'percent' },
     };
 
+    const USAGE_CHART_PALETTE = ['#00e5ff', '#00e676', '#ffd740', '#ff5252', '#7c4dff', '#ff6e40', '#64ffda', '#eeff41', '#40c4ff', '#ea80fc'];
+
+    function usageChartColor(slot) {
+      return USAGE_CHART_PALETTE[slot % USAGE_CHART_PALETTE.length];
+    }
+
+    function compareUsageKeyIds(a, b, keyMetaMap) {
+      const am = keyMetaMap.get(a) || {};
+      const bm = keyMetaMap.get(b) || {};
+      if (am.createdAt && bm.createdAt && am.createdAt !== bm.createdAt) return am.createdAt.localeCompare(bm.createdAt);
+      if (am.createdAt !== bm.createdAt) return am.createdAt ? -1 : 1;
+      return a.localeCompare(b);
+    }
+
+    function usageKeyColorSlots(colorOrder) {
+      const explicitSlotById = new Map();
+      const futureSlotByIndex = new Map();
+      let maxFutureIndex = 0;
+      for (let i = 0; i < colorOrder.length; i++) {
+        const token = colorOrder[i];
+        const futureMatch = token.match(/^future-(\\d+)$/);
+        if (futureMatch) {
+          const futureIndex = Number(futureMatch[1]);
+          futureSlotByIndex.set(futureIndex, i);
+          maxFutureIndex = Math.max(maxFutureIndex, futureIndex);
+        } else {
+          explicitSlotById.set(token, i);
+        }
+      }
+      return { explicitSlotById, futureSlotByIndex, maxFutureIndex };
+    }
+
+    function usageFutureColorSlot(futureIndex, colorOrderLength, futureSlotByIndex, maxFutureIndex) {
+      return futureSlotByIndex.get(futureIndex)
+        ?? colorOrderLength + futureIndex - maxFutureIndex - 1;
+    }
+
+    function usageKeyChartEntries(keyIds, keyMetaMap, keyIdsForOrder = keyIds, colorOrder = []) {
+      const present = new Set(keyIds);
+      const { explicitSlotById, futureSlotByIndex, maxFutureIndex } = usageKeyColorSlots(colorOrder);
+      const futureKeyIds = [...new Set([...keyIdsForOrder, ...keyIds])]
+        .filter((keyId) => !explicitSlotById.has(keyId))
+        .sort((a, b) => compareUsageKeyIds(a, b, keyMetaMap));
+      const futureSlotByKeyId = new Map(futureKeyIds.map((keyId, i) => [keyId, usageFutureColorSlot(i + 1, colorOrder.length, futureSlotByIndex, maxFutureIndex)]));
+
+      return [...present]
+        .map((keyId) => ({
+          keyId,
+          colorSlot: explicitSlotById.get(keyId) ?? futureSlotByKeyId.get(keyId),
+        }))
+        .filter((entry) => entry.colorSlot !== undefined)
+        .sort((a, b) => a.colorSlot - b.colorSlot || compareUsageKeyIds(a.keyId, b.keyId, keyMetaMap));
+    }
+
+    function usageModelChartEntries(models, knownModels) {
+      const present = new Set(models);
+      const order = [...new Set([...knownModels, ...models])].sort();
+      return order
+        .map((model, slot) => ({ model, colorSlot: slot }))
+        .filter((entry) => present.has(entry.model));
+    }
+
     function tokenChartMetricRecordValue(record, metric) {
       if (metric === 'requests') return record.requests;
       if (metric === 'input') return record.inputTokens;
@@ -180,6 +242,8 @@ export function dashboardAssets() {
           tokenRange: 'today',
           tokenChartMetric: 'total',
           tokenData: [],
+          tokenKeyMetadata: [],
+          tokenKeyColorOrder: [],
           chartsReady: false,
           tokenLoading: false,
           tokenSummary: { requests: 0, total: 0, input: 0, output: 0, cacheRead: 0, cacheCreation: 0 },
@@ -450,6 +514,10 @@ export function dashboardAssets() {
                       this.codexModel = this.codexModels[0] || '';
 
                       this.modelsLoaded = true;
+                      if (this.tab === 'usage' && this.chartsReady) {
+                        await this.$nextTick();
+                        this.renderTokenCharts();
+                      }
                     } catch (e) {
                       console.error('loadModels:', e);
                     }
@@ -822,12 +890,23 @@ export function dashboardAssets() {
                       }
                       const start = rangeStart.toISOString().slice(0, 13);
                       const end = new Date(now.getTime() + 3600000).toISOString().slice(0, 13);
-                      const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end), { headers: this.authHeaders() });
+                      const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(start) + '&end=' + encodeURIComponent(end) + '&include_key_metadata=1', { headers: this.authHeaders() });
                       if (resp.status === 401) {
                         this.logout();
                         return;
                       }
-                      if (resp.ok) this.tokenData = await resp.json();
+                      if (resp.ok) {
+                        const body = await resp.json();
+                        if (Array.isArray(body)) {
+                          this.tokenData = body;
+                          this.tokenKeyMetadata = [];
+                          this.tokenKeyColorOrder = [];
+                        } else {
+                          this.tokenData = Array.isArray(body.records) ? body.records : [];
+                          this.tokenKeyMetadata = Array.isArray(body.keys) ? body.keys : [];
+                          this.tokenKeyColorOrder = Array.isArray(body.keyColorOrder) ? body.keyColorOrder : [];
+                        }
+                      }
                     } catch (e) {
                       console.error('fetchTokenData:', e);
                     } finally {
@@ -879,7 +958,7 @@ export function dashboardAssets() {
                       const bucket = isDaily ? this.localDateKey(utc) : this.localHourKey(utc);
                       if (!agg.has(bucket)) continue;
                       const m = agg.get(bucket);
-                      const val = r[dimension];
+                      const val = dimension === 'model' ? substituteModelName(r.model) : r[dimension];
                       if (metric !== 'cacheHitRate') {
                         m.set(val, (m.get(val) || 0) + tokenChartMetricRecordValue(r, metric));
                       }
@@ -931,7 +1010,7 @@ export function dashboardAssets() {
                   },
 
                   updateSummary() {
-                    const filtered = this.tokenData.filter((r) => !this.hiddenKeys.has(r.keyId) && !this.hiddenModels.has(r.model));
+                    const filtered = this.tokenData.filter((r) => !this.hiddenKeys.has(r.keyId) && !this.hiddenModels.has(substituteModelName(r.model)));
                     let totalReqs = 0, totalIn = 0, totalOut = 0, totalCR = 0, totalCC = 0;
                     for (const r of filtered) {
                       totalReqs += r.requests;
@@ -955,7 +1034,7 @@ export function dashboardAssets() {
                     const bucketKeysArr = [...bucketMap.keys()];
 
                     if (_charts.key) {
-                      const filtered = this.tokenData.filter((r) => !this.hiddenModels.has(r.model));
+                      const filtered = this.tokenData.filter((r) => !this.hiddenModels.has(substituteModelName(r.model)));
                       const { agg, detail } = this.aggregateBuckets(filtered, 'keyId');
                       _detailMaps.key = detail;
                       this.applyTokenChartMetricOptions(_charts.key);
@@ -992,18 +1071,26 @@ export function dashboardAssets() {
                     const canvasModel = document.getElementById('tokenChartByModel');
                     if (!canvasKey || !canvasModel || canvasKey.clientWidth === 0) return;
 
-                    const palette = ['#00e5ff', '#00e676', '#ffd740', '#ff5252', '#7c4dff', '#ff6e40', '#64ffda', '#eeff41', '#40c4ff', '#ea80fc'];
                     const data = this.tokenData;
                     const self = this;
 
                     const keyNameMap = _keyNameMap;
                     keyNameMap.clear();
+                    const keyMetaMap = new Map();
                     const allKeyIds = new Set();
+                    const allKeyIdsForOrder = new Set();
                     const allModels = new Set();
+                    for (const k of this.tokenKeyMetadata) {
+                      keyNameMap.set(k.id, k.name);
+                      keyMetaMap.set(k.id, { name: k.name, createdAt: k.createdAt });
+                      allKeyIdsForOrder.add(k.id);
+                    }
                     for (const r of data) {
                       keyNameMap.set(r.keyId, r.keyName);
+                      keyMetaMap.set(r.keyId, { name: r.keyName, createdAt: r.keyCreatedAt ?? keyMetaMap.get(r.keyId)?.createdAt });
                       allKeyIds.add(r.keyId);
-                      allModels.add(r.model);
+                      allKeyIdsForOrder.add(r.keyId);
+                      allModels.add(substituteModelName(r.model));
                     }
 
                     const bucketMap = this.buildBucketMap();
@@ -1015,11 +1102,11 @@ export function dashboardAssets() {
                     _detailMaps.key = keyDetail;
                     _detailMaps.model = modelDetail;
 
-                    const keyList = [...allKeyIds].sort((a, b) => (keyNameMap.get(a) || a).localeCompare(keyNameMap.get(b) || b));
-                    const modelList = [...allModels].sort();
+                    const keyList = usageKeyChartEntries([...allKeyIds], keyMetaMap, [...allKeyIdsForOrder], this.tokenKeyColorOrder);
+                    const modelList = usageModelChartEntries([...allModels], this.allModels.map((m) => m.id));
 
-                    const keyDatasets = keyList.map((keyId, i) => {
-                      const c = palette[i % palette.length];
+                    const keyDatasets = keyList.map(({ keyId, colorSlot }) => {
+                      const c = usageChartColor(colorSlot);
                       return {
                         label: self.redactKeys ? keyId.slice(0, 8) : (keyNameMap.get(keyId) || keyId.slice(0, 8)),
                         data: bucketKeysArr.map((k) => self.tokenChartBucketValue(keyAgg, k, keyId)),
@@ -1035,8 +1122,8 @@ export function dashboardAssets() {
                       };
                     });
 
-                    const modelDatasets = modelList.map((model, i) => {
-                      const c = palette[i % palette.length];
+                    const modelDatasets = modelList.map(({ model, colorSlot }) => {
+                      const c = usageChartColor(colorSlot);
                       return {
                         label: model,
                         data: bucketKeysArr.map((k) => self.tokenChartBucketValue(modelAgg, k, model)),
