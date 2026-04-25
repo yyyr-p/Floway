@@ -5,8 +5,8 @@
 // usage records for all keys. API keys themselves are only readable by their owner.
 
 import type { Context } from "hono";
-import { queryUsage } from "../lib/usage-tracker.ts";
-import { listApiKeys } from "../lib/api-keys.ts";
+import { queryUsage } from "../../lib/usage-tracker.ts";
+import { listApiKeys } from "../../lib/api-keys.ts";
 
 export const tokenUsage = async (c: Context) => {
   const keyId = c.req.query("key_id") || undefined;
@@ -14,7 +14,9 @@ export const tokenUsage = async (c: Context) => {
   const end = c.req.query("end") ?? "";
 
   if (!start || !end) {
-    return c.json({ error: "start and end query parameters are required (e.g. 2026-03-09T00)" }, 400);
+    return c.json({
+      error: "start and end query parameters are required (e.g. 2026-03-09T00)",
+    }, 400);
   }
 
   const [records, keys] = await Promise.all([

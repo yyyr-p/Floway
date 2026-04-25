@@ -4,21 +4,23 @@
 
 import type { Context } from "hono";
 import {
-  listGithubAccounts,
   addGithubAccount,
-  removeGithubAccount,
-  setActiveGithubAccount,
   getActiveGithubAccount,
   type GitHubUser,
-} from "../lib/github.ts";
-import { clearCopilotTokenCache, githubHeaders } from "../lib/copilot.ts";
-import { getEnv } from "../lib/env.ts";
-import { validateApiKey } from "../lib/api-keys.ts";
-import { clearModelsCache } from "../lib/models-cache.ts";
-
-// GitHub OAuth app client ID (same as Copilot extension)
-const GITHUB_CLIENT_ID = "Iv1.b507a08c87ecfe98";
-const GITHUB_SCOPES = "read:user";
+  listGithubAccounts,
+  removeGithubAccount,
+  setActiveGithubAccount,
+} from "../../lib/github.ts";
+import { clearCopilotTokenCache } from "../../lib/copilot.ts";
+import { getEnv } from "../../lib/env.ts";
+import { validateApiKey } from "../../lib/api-keys.ts";
+import { clearModelsCache } from "../../lib/models-cache.ts";
+import {
+  detectAccountType,
+  fetchGitHubUser,
+  pollGitHubDeviceFlow,
+  startGitHubDeviceFlow,
+} from "./github-device-flow.ts";
 
 /** POST /auth/login — validate ADMIN_KEY or API key */
 export const authLogin = async (c: Context) => {
@@ -59,32 +61,9 @@ export const authLogout = (_c: Context) => {
 /** GET /auth/github — start GitHub Device Flow */
 export const authGithub = async (c: Context) => {
   try {
-    const resp = await fetch("https://github.com/login/device/code", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify({
-        client_id: GITHUB_CLIENT_ID,
-        scope: GITHUB_SCOPES,
-      }),
-    });
-
-    if (!resp.ok) {
-      const text = await resp.text();
-      return c.json({ error: `GitHub error: ${text}` }, 502);
-    }
-
-    const data = (await resp.json()) as {
-      device_code: string;
-      user_code: string;
-      verification_uri: string;
-      expires_in: number;
-      interval: number;
-    };
-
-    return c.json(data);
+    const result = await startGitHubDeviceFlow();
+    if (!result.ok) return c.json({ error: result.error }, 502);
+    return c.json(result.data);
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     return c.json({ error: msg }, 502);
@@ -96,31 +75,7 @@ export const authGithubPoll = async (c: Context) => {
   try {
     const body = await c.req.json<{ device_code: string }>();
 
-    // Poll GitHub for access token
-    const resp = await fetch(
-      "https://github.com/login/oauth/access_token",
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          accept: "application/json",
-        },
-        body: JSON.stringify({
-          client_id: GITHUB_CLIENT_ID,
-          device_code: body.device_code,
-          grant_type: "urn:ietf:params:oauth:grant-type:device_code",
-        }),
-      },
-    );
-
-    const data = (await resp.json()) as {
-      access_token?: string;
-      token_type?: string;
-      scope?: string;
-      error?: string;
-      error_description?: string;
-      interval?: number;
-    };
+    const data = await pollGitHubDeviceFlow(body.device_code);
 
     if (data.error === "authorization_pending") {
       return c.json({ status: "pending" });
@@ -138,24 +93,7 @@ export const authGithubPoll = async (c: Context) => {
     }
 
     if (data.access_token) {
-      // Fetch user info
-      const userResp = await fetch("https://api.github.com/user", {
-        headers: {
-          authorization: `token ${data.access_token}`,
-          accept: "application/json",
-          "user-agent": "copilot-deno",
-        },
-      });
-
-      let user: GitHubUser = {
-        login: "unknown",
-        avatar_url: "",
-        name: null,
-        id: 0,
-      };
-      if (userResp.ok) {
-        user = (await userResp.json()) as GitHubUser;
-      }
+      const user = await fetchGitHubUser(data.access_token);
 
       // Store account and set as active
       const accountType = await detectAccountType(data.access_token);
@@ -236,19 +174,3 @@ export const authGithubSwitch = async (c: Context) => {
   clearModelsCache();
   return c.json({ ok: true });
 };
-
-async function detectAccountType(githubToken: string): Promise<string> {
-  try {
-    const resp = await fetch("https://api.github.com/copilot_internal/user", {
-      headers: await githubHeaders(githubToken),
-    });
-    if (!resp.ok) return "individual";
-    const data = (await resp.json()) as { copilot_plan?: string };
-    if (data.copilot_plan && ["individual", "business", "enterprise"].includes(data.copilot_plan)) {
-      return data.copilot_plan;
-    }
-    return "individual";
-  } catch {
-    return "individual";
-  }
-}

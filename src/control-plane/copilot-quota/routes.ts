@@ -1,8 +1,8 @@
 // GET /api/copilot-quota — fetch Copilot usage/quota info from GitHub API
 
 import type { Context } from "hono";
-import { githubHeaders } from "../lib/copilot.ts";
-import { getGithubCredentials } from "../lib/github.ts";
+import { githubHeaders } from "../../lib/copilot.ts";
+import { getGithubCredentials } from "../../lib/github.ts";
 
 interface QuotaDetail {
   entitlement: number;

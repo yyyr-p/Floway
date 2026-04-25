@@ -1,10 +1,10 @@
 import { assertEquals } from "@std/assert";
 import { Hono } from "hono";
-import { DEFAULT_SEARCH_CONFIG } from "../data-plane/web-search/search-config.ts";
-import { initRepo } from "../repo/index.ts";
-import { InMemoryRepo } from "../repo/memory.ts";
-import { exportData, importData } from "./data-transfer.ts";
-import type { ApiKey, GitHubAccount, UsageRecord } from "../repo/types.ts";
+import { DEFAULT_SEARCH_CONFIG } from "../../data-plane/web-search/search-config.ts";
+import { initRepo } from "../../repo/index.ts";
+import { InMemoryRepo } from "../../repo/memory.ts";
+import type { ApiKey, GitHubAccount, UsageRecord } from "../../repo/types.ts";
+import { exportData, importData } from "./routes.ts";
 
 // ---- Fixtures ----
 

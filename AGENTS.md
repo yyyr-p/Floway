@@ -43,6 +43,7 @@ Important files:
 
 - `entry-cloudflare.ts`: Workers entrypoint, env + repo initialization.
 - `src/app.ts`: Hono app wiring, middleware, route registration.
+- `src/control-plane/routes.ts`: control-plane route registration.
 - `src/lib/env.ts`: pluggable env access.
 - `src/repo/types.ts`: repo interfaces.
 - `src/repo/d1.ts`: D1-backed repo.
@@ -153,6 +154,12 @@ Do not introduce a canonical internal IR for requests.
 - Response handling is event-first.
 - Non-stream client responses should be assembled from source-shaped event
   streams whenever practical.
+
+### Contract Stability
+
+Control-plane API endpoints and schemas are dashboard-owned. They need to stay
+consistent with the frontend, tests, and auth policy, but they are not external
+compatibility APIs unless explicitly documented as such.
 
 ## Authentication and Authorization
 

@@ -1,22 +1,26 @@
 // API key management routes
 
 import type { Context } from "hono";
-import { createApiKey, listApiKeys, getApiKeyById, deleteApiKey, rotateApiKey, renameApiKey, type ApiKey } from "../lib/api-keys.ts";
-
-function keyToJson(k: ApiKey) {
-  return { id: k.id, name: k.name, key: k.key, created_at: k.createdAt, last_used_at: k.lastUsedAt ?? null };
-}
+import {
+  createApiKey,
+  deleteApiKey,
+  getApiKeyById,
+  listApiKeys,
+  renameApiKey,
+  rotateApiKey,
+} from "../../lib/api-keys.ts";
+import { apiKeyToJson } from "./serialize.ts";
 
 export const listKeys = async (c: Context) => {
   const isAdmin = c.get("isAdmin");
   if (isAdmin) {
     const keys = await listApiKeys();
-    return c.json(keys.map((k) => keyToJson(k)));
+    return c.json(keys.map((k) => apiKeyToJson(k)));
   }
   // Non-admin: return only the caller's own key
   const keyId = c.get("apiKeyId") as string;
   const key = await getApiKeyById(keyId);
-  return c.json(key ? [keyToJson(key)] : []);
+  return c.json(key ? [apiKeyToJson(key)] : []);
 };
 
 export const createKey = async (c: Context) => {
@@ -26,7 +30,7 @@ export const createKey = async (c: Context) => {
   }
 
   const key = await createApiKey(body.name);
-  return c.json(keyToJson(key), 201);
+  return c.json(apiKeyToJson(key), 201);
 };
 
 export const deleteKey = async (c: Context) => {
@@ -40,7 +44,7 @@ export const rotateKey = async (c: Context) => {
   const id = c.req.param("id") ?? "";
   const key = await rotateApiKey(id);
   if (!key) return c.json({ error: "Key not found" }, 404);
-  return c.json(keyToJson(key));
+  return c.json(apiKeyToJson(key));
 };
 
 export const renameKey = async (c: Context) => {
@@ -52,5 +56,5 @@ export const renameKey = async (c: Context) => {
 
   const key = await renameApiKey(id, body.name);
   if (!key) return c.json({ error: "Key not found" }, 404);
-  return c.json(keyToJson(key));
+  return c.json(apiKeyToJson(key));
 };

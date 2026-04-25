@@ -1,22 +1,10 @@
 // Data transfer routes — export/import all database data as JSON
 
 import type { Context } from "hono";
-import { normalizeSearchConfig } from "../data-plane/web-search/search-config.ts";
-import type { SearchConfig } from "../data-plane/web-search/types.ts";
-import { getRepo } from "../repo/index.ts";
-import type { ApiKey, GitHubAccount, UsageRecord } from "../repo/types.ts";
-
-interface ExportPayload {
-  version: 1;
-  exportedAt: string;
-  data: {
-    apiKeys: ApiKey[];
-    githubAccounts: GitHubAccount[];
-    activeGithubAccountId: number | null;
-    usage: UsageRecord[];
-    searchConfig: SearchConfig;
-  };
-}
+import { normalizeSearchConfig } from "../../data-plane/web-search/search-config.ts";
+import { getRepo } from "../../repo/index.ts";
+import type { ApiKey, GitHubAccount, UsageRecord } from "../../repo/types.ts";
+import type { ExportPayload } from "./types.ts";
 
 /** GET /api/export — dump all data as JSON */
 export const exportData = async (c: Context) => {
