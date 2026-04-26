@@ -718,6 +718,58 @@ Deno.test("DashboardPage usage summary metric focus styling only shows borders o
   assertFalse(html.includes("focus:ring"));
 });
 
+Deno.test("DashboardPage renders mobile-friendly dashboard chrome", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(html, "max-w-6xl mx-auto px-4 sm:px-6 pt-4 sm:pt-5 pb-8");
+  assertStringIncludes(
+    html,
+    "order-3 flex w-full max-w-full gap-1 overflow-x-auto rounded-lg bg-surface-800 p-0.5 sm:order-none sm:w-fit",
+  );
+  assertStringIncludes(
+    html,
+    "shrink-0 px-2 py-2 rounded-md text-xs font-medium transition-all sm:px-4 sm:text-sm",
+  );
+});
+
+Deno.test("DashboardPage renders mobile-friendly admin controls", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(
+    html,
+    "flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center",
+  );
+  assertStringIncludes(html, "aria-label=\"Copy API key\"");
+  assertStringIncludes(html, "aria-label=\"Rename API key\"");
+  assertStringIncludes(html, "aria-label=\"Rotate API key\"");
+  assertStringIncludes(html, "aria-label=\"Delete API key\"");
+  assertStringIncludes(html, "min-h-9 min-w-9");
+});
+
+Deno.test("DashboardPage renders Settings import preview responsively", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(html, "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 mb-4");
+  assertStringIncludes(html, "flex flex-col gap-3 mb-4 sm:flex-row");
+  assertFalse(html.includes("grid grid-cols-4 gap-3 mb-4"));
+});
+
+Deno.test("DashboardPage renders Models playground as a mobile stack", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(
+    html,
+    "glass-card glow-border animate-in flex h-[calc(100dvh-130px)] min-h-[560px] flex-col overflow-hidden lg:h-[calc(100vh-140px)] lg:flex-row",
+  );
+  assertStringIncludes(
+    html,
+    "max-h-56 w-full shrink-0 border-b border-white/[0.06] flex flex-col lg:max-h-none lg:w-72 lg:border-b-0 lg:border-r",
+  );
+  assertFalse(
+    html.includes('style="height: calc(100vh - 140px); display: flex; overflow: hidden;"'),
+  );
+});
+
 Deno.test("DashboardPage renders search usage chart after token summary content", () => {
   const html = DashboardPage().toString();
 
