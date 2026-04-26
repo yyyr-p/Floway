@@ -626,41 +626,78 @@ Deno.test("dashboardApp aligns dotted Claude usage IDs with dashed model metadat
   assertEquals(modelChart.data.datasets[0].backgroundColor, "#00e67640");
 });
 
-Deno.test("dashboardApp reapplies known model-id color slots when model metadata finishes loading", async () => {
+Deno.test("dashboardApp waits for model metadata before first usage chart render", async () => {
   const originalFetch = globalThis.fetch;
-  globalThis.fetch = () =>
-    Promise.resolve(
-      new Response(
-        JSON.stringify({
-          data: [
-            {
-              id: "model-a",
-              name: "Model A",
-              model_picker_enabled: true,
-              capabilities: {},
-              supported_endpoints: [],
-            },
-            {
-              id: "model-b",
-              name: "Model B",
-              model_picker_enabled: true,
-              capabilities: {},
-              supported_endpoints: [],
-            },
-          ],
-        }),
-        { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    );
+  let resolveModels!: () => void;
+  const modelsResponse = new Promise<Response>((resolve) => {
+    resolveModels = () =>
+      resolve(
+        new Response(
+          JSON.stringify({
+            data: [
+              {
+                id: "model-a",
+                name: "Model A",
+                model_picker_enabled: true,
+                capabilities: {},
+                supported_endpoints: [],
+              },
+              {
+                id: "model-b",
+                name: "Model B",
+                model_picker_enabled: true,
+                capabilities: {},
+                supported_endpoints: [],
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+  });
+
+  globalThis.fetch = (input) => {
+    const url = String(input);
+    if (url.startsWith("/api/models")) return modelsResponse;
+    if (url.startsWith("/api/token-usage")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            records: [usageRecord(0, { model: "model-b" })],
+            keys: [],
+            keyColorOrder: [],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    if (url.startsWith("/api/search-usage")) {
+      return Promise.resolve(
+        new Response(
+          JSON.stringify({
+            records: [],
+            keys: [],
+            keyColorOrder: [],
+            activeProvider: "disabled",
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      );
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  };
 
   try {
     const { app, charts } = createDashboardHarness();
     app.$nextTick = () => Promise.resolve();
-    app.tokenData = [usageRecord(0, { model: "model-b" })];
-    app.renderTokenCharts();
-    assertEquals(charts[1].data.datasets[0].borderColor, "#00e5ff");
+    const usageReady = app.loadUsageTabData(app.loadModels());
 
-    await app.loadModels();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assertEquals(app.tokenLoading, true);
+    assertEquals(charts.length, 0);
+
+    resolveModels();
+    await usageReady;
 
     const modelChart = charts.at(-1);
     assert(modelChart);

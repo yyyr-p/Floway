@@ -23,6 +23,7 @@ export function dashboardAssets() {
     const _charts = { key: null, model: null, searchKey: null };
     const _keyNameMap = new Map();
     const _detailMaps = { key: null, model: null, searchKey: null };
+    let _modelsLoadPromise = null;
 
     function destroyCharts() {
       for (const k of ['key', 'model', 'searchKey']) {
@@ -465,7 +466,7 @@ export function dashboardAssets() {
                         return;
                       }
 
-                      this.loadModels();
+                      const modelsReady = this.ensureModelsLoaded();
 
                       if (this.tab === 'upstream' && this.isAdmin) {
                         this.loadMe();
@@ -474,7 +475,7 @@ export function dashboardAssets() {
                       } else if (this.tab === 'keys') {
                         this.loadKeys();
                       } else if (this.tab === 'usage') {
-                        this.loadUsageTabData();
+                        this.loadUsageTabData(modelsReady);
                       }
 
                       setInterval(() => {
@@ -508,16 +509,22 @@ export function dashboardAssets() {
                       } else if (t === 'usage') {
                         this.tokenLoading = true;
                         this.searchUsageLoading = true;
-                        await this.fetchUsageTabData();
-                        if (this.tab === 'usage') {
-                          await this.$nextTick();
-                          this.renderTokenCharts();
-                        }
+                        await this.loadUsageTabData();
                       } else if (t === 'keys') {
                         await this.loadKeys();
                       } else if (t === 'models') {
                         if (this.allModels.length === 0) await this.loadAllModels();
                       }
+                    },
+
+                    ensureModelsLoaded() {
+                      if (this.modelsLoaded || this.allModels.length > 0) return Promise.resolve();
+                      if (!_modelsLoadPromise) {
+                        _modelsLoadPromise = this.loadModels().finally(() => {
+                          _modelsLoadPromise = null;
+                        });
+                      }
+                      return _modelsLoadPromise;
                     },
 
                     async loadModels() {
@@ -943,7 +950,6 @@ export function dashboardAssets() {
                         },
 
                         async fetchTokenData(range = this.usageRangeParams()) {
-                          this.tokenLoading = true;
                           try {
                             const resp = await fetch('/api/token-usage?start=' + encodeURIComponent(range.start) + '&end=' + encodeURIComponent(range.end) + '&include_key_metadata=1', { headers: this.authHeaders() });
                             if (resp.status === 401) {
@@ -964,13 +970,10 @@ export function dashboardAssets() {
                             }
                           } catch (e) {
                             console.error('fetchTokenData:', e);
-                          } finally {
-                            this.tokenLoading = false;
                           }
                         },
 
                         async fetchSearchUsageData(range = this.usageRangeParams()) {
-                          this.searchUsageLoading = true;
                           try {
                             const resp = await fetch('/api/search-usage?start=' + encodeURIComponent(range.start) + '&end=' + encodeURIComponent(range.end) + '&include_key_metadata=1', { headers: this.authHeaders() });
                             if (resp.status === 401) {
@@ -986,8 +989,6 @@ export function dashboardAssets() {
                             }
                           } catch (e) {
                             console.error('fetchSearchUsageData:', e);
-                          } finally {
-                            this.searchUsageLoading = false;
                           }
                         },
 
@@ -999,11 +1000,21 @@ export function dashboardAssets() {
                           ]);
                         },
 
-                        async loadUsageTabData() {
-                          await this.fetchUsageTabData();
-                          if (this.tab !== 'usage') return;
-                          await this.$nextTick();
-                          this.renderTokenCharts();
+                        async loadUsageTabData(modelsReady = this.ensureModelsLoaded()) {
+                          this.tokenLoading = true;
+                          this.searchUsageLoading = true;
+                          try {
+                            await Promise.all([
+                              modelsReady,
+                              this.fetchUsageTabData(),
+                            ]);
+                            if (this.tab !== 'usage') return;
+                            await this.$nextTick();
+                            this.renderTokenCharts();
+                          } finally {
+                            this.tokenLoading = false;
+                            this.searchUsageLoading = false;
+                          }
                         },
 
                         async loadTokenUsage() {
@@ -1547,7 +1558,7 @@ export function dashboardAssets() {
                         // ---- Models tab ----
 
                         async loadAllModels() {
-                          if (this.allModels.length === 0) await this.loadModels();
+                          await this.ensureModelsLoaded();
                         },
 
                         selectChatModel(id) {
