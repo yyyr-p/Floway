@@ -34,7 +34,13 @@ interface CopilotUsageResponse {
 
 export const copilotQuota = async (c: Context) => {
   try {
-    const { token: githubToken } = await getGithubCredentials();
+    const userIdParam = c.req.query("user_id");
+    const userId = userIdParam === undefined ? undefined : Number(userIdParam);
+    if (userIdParam !== undefined && !Number.isSafeInteger(userId)) {
+      return c.json({ error: "Invalid GitHub account ID" }, 400);
+    }
+
+    const { token: githubToken } = await getGithubCredentials(userId);
 
     const resp = await fetch(
       "https://api.github.com/copilot_internal/user",

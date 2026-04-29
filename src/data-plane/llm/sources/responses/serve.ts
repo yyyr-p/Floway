@@ -1,6 +1,5 @@
 import type { Context } from "hono";
 import type { ResponsesPayload } from "../../../../lib/responses-types.ts";
-import { getGithubCredentials } from "../../../../lib/github.ts";
 import { normalizeResponsesRequest } from "./normalize/request.ts";
 import { planResponsesRequest } from "./plan.ts";
 import { getModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
@@ -19,6 +18,7 @@ import {
 import { toInternalDebugError } from "../../shared/errors/internal-debug-error.ts";
 import type { ProtocolFrame } from "../../shared/stream/types.ts";
 import type { SourceResponseStreamEvent } from "./events/protocol.ts";
+import { withAccountFallback } from "../../../shared/account-pool/fallback.ts";
 
 const withTranslatedEvents = <T>(
   result: StreamExecuteResult<T>,
@@ -49,45 +49,45 @@ export const serveResponses = async (
     normalizeResponsesRequest(payload);
     c.set("model", payload.model || "unknown");
     const apiKeyId = c.get("apiKeyId") as string | undefined;
+    const wantsStream = payload.stream === true;
 
-    const { token: githubToken, accountType } = await getGithubCredentials();
-    const capabilities = await getModelCapabilities(
-      payload.model,
-      githubToken,
-      accountType,
-    );
-    const plan = planResponsesRequest(payload, capabilities);
-    if (!plan) return unsupportedResponsesModelResponse(payload.model);
-    payload.model = capabilities.model?.id ?? payload.model;
-
-    if (plan.target === "responses") {
-      return await respondResponses(
-        c,
-        await emitToResponses({
-          sourceApi: "responses",
-          payload,
-          githubToken,
-          accountType,
-          fetchOptions: plan.fetchOptions,
-        }),
-        plan.wantsStream,
+    const result = await withAccountFallback<
+      StreamExecuteResult<SourceResponseStreamEvent> | Response
+    >(payload.model, async ({ account }) => {
+      const attemptPayload = structuredClone(payload);
+      const capabilities = await getModelCapabilities(
+        attemptPayload.model,
+        account.token,
+        account.accountType,
       );
-    }
+      const plan = planResponsesRequest(attemptPayload, capabilities);
+      if (!plan) return unsupportedResponsesModelResponse(attemptPayload.model);
+      attemptPayload.model = capabilities.model?.id ?? attemptPayload.model;
 
-    if (plan.target === "messages") {
-      const messagesPayload = await buildMessagesTargetRequest(payload);
-      const result = await emitToMessages({
-        sourceApi: "responses",
-        payload: messagesPayload,
-        githubToken,
-        accountType,
-        apiKeyId,
-        fetchOptions: plan.fetchOptions,
-      });
+      if (plan.target === "responses") {
+        return await emitToResponses({
+          sourceApi: "responses",
+          payload: attemptPayload,
+          githubToken: account.token,
+          accountType: account.accountType,
+          fetchOptions: plan.fetchOptions,
+        });
+      }
 
-      return await respondResponses(
-        c,
-        withTranslatedEvents(
+      if (plan.target === "messages") {
+        const messagesPayload = await buildMessagesTargetRequest(
+          attemptPayload,
+        );
+        const result = await emitToMessages({
+          sourceApi: "responses",
+          payload: messagesPayload,
+          githubToken: account.token,
+          accountType: account.accountType,
+          apiKeyId,
+          fetchOptions: plan.fetchOptions,
+        });
+
+        return withTranslatedEvents(
           result,
           (events) =>
             translateToSourceEvents(
@@ -95,24 +95,30 @@ export const serveResponses = async (
               createTranslatedResponseId(),
               messagesPayload.model,
             ),
-        ),
-        plan.wantsStream,
-      );
-    }
+        );
+      }
 
-    const chatPayload = buildChatCompletionsTargetRequest(payload);
-    const result = await emitToChatCompletions({
-      sourceApi: "responses",
-      payload: chatPayload,
-      githubToken,
-      accountType,
-      fetchOptions: plan.fetchOptions,
+      const chatPayload = buildChatCompletionsTargetRequest(attemptPayload);
+      const result = await emitToChatCompletions({
+        sourceApi: "responses",
+        payload: chatPayload,
+        githubToken: account.token,
+        accountType: account.accountType,
+        fetchOptions: plan.fetchOptions,
+      });
+
+      return withTranslatedEvents(
+        result,
+        translateChatCompletionsToSourceEvents,
+      );
     });
+
+    if (result instanceof Response) return result;
 
     return await respondResponses(
       c,
-      withTranslatedEvents(result, translateChatCompletionsToSourceEvents),
-      plan.wantsStream,
+      result,
+      wantsStream,
     );
   } catch (error) {
     return await respondResponses(

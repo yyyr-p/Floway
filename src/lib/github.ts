@@ -21,39 +21,43 @@ export async function addGithubAccount(
   user: GitHubUser,
   accountType: string,
 ): Promise<void> {
-  const repo = getRepo().github;
-  await repo.saveAccount(user.id, { token, accountType, user });
-  await repo.setActiveId(user.id);
+  await getRepo().github.saveAccount(user.id, { token, accountType, user });
 }
 
 export async function removeGithubAccount(userId: number): Promise<void> {
-  const repo = getRepo().github;
-  await repo.deleteAccount(userId);
-  const activeId = await repo.getActiveId();
-  if (activeId === userId) {
-    await repo.clearActiveId();
-  }
+  await getRepo().github.deleteAccount(userId);
 }
 
-export async function setActiveGithubAccount(
-  userId: number,
+export async function setGithubAccountOrder(
+  userIds: number[],
 ): Promise<boolean> {
   const repo = getRepo().github;
-  const account = await repo.getAccount(userId);
-  if (!account) return false;
-  await repo.setActiveId(userId);
+  const accounts = await repo.listAccounts();
+  const accountIds = new Set(accounts.map((account) => account.user.id));
+  const requestedIds = new Set(userIds);
+  if (
+    userIds.length !== accounts.length ||
+    requestedIds.size !== userIds.length ||
+    userIds.some((id) => !accountIds.has(id))
+  ) {
+    return false;
+  }
+
+  await repo.setOrder(userIds);
   return true;
 }
 
-export async function getActiveGithubAccount() {
+export async function getGithubCredentials(
+  userId?: number,
+): Promise<GithubCredentials> {
   const repo = getRepo().github;
-  const activeId = await repo.getActiveId();
-  if (activeId == null) return null;
-  return repo.getAccount(activeId);
-}
-
-export async function getGithubCredentials(): Promise<GithubCredentials> {
-  const account = await getActiveGithubAccount();
-  if (!account) throw new Error("No GitHub account connected — add one via the dashboard");
+  const account = userId === undefined
+    ? (await repo.listAccounts())[0] ?? null
+    : await repo.getAccount(userId);
+  if (!account) {
+    throw new Error(userId === undefined
+      ? "No GitHub account connected — add one via the dashboard"
+      : "GitHub account not found");
+  }
   return { token: account.token, accountType: account.accountType };
 }

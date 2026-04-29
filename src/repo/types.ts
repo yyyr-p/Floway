@@ -37,6 +37,13 @@ export interface SearchUsageRecord {
   requests: number;
 }
 
+export interface AccountModelBackoffRecord {
+  accountId: number;
+  model: string;
+  status: number;
+  expiresAt: number;
+}
+
 export interface ApiKeyRepo {
   list(): Promise<ApiKey[]>;
   findByRawKey(rawKey: string): Promise<ApiKey | null>;
@@ -51,9 +58,7 @@ export interface GitHubRepo {
   getAccount(userId: number): Promise<GitHubAccount | null>;
   saveAccount(userId: number, account: GitHubAccount): Promise<void>;
   deleteAccount(userId: number): Promise<void>;
-  getActiveId(): Promise<number | null>;
-  setActiveId(userId: number): Promise<void>;
-  clearActiveId(): Promise<void>;
+  setOrder(userIds: number[]): Promise<void>;
   deleteAllAccounts(): Promise<void>;
 }
 
@@ -100,6 +105,20 @@ export interface CacheRepo {
   get(key: string): Promise<string | null>;
   set(key: string, value: string, ttlMs?: number): Promise<void>;
   delete(key: string): Promise<void>;
+  deletePrefix(prefix: string): Promise<void>;
+}
+
+export interface AccountModelBackoffRepo {
+  get(
+    accountId: number,
+    model: string,
+  ): Promise<AccountModelBackoffRecord | null>;
+  list(accountIds: number[]): Promise<AccountModelBackoffRecord[]>;
+  mark(record: AccountModelBackoffRecord): Promise<void>;
+  clear(accountId: number, model: string): Promise<void>;
+  clearModel(accountIds: number[], model: string): Promise<void>;
+  clearAccount(accountId: number): Promise<void>;
+  deleteAll(): Promise<void>;
 }
 
 export interface SearchConfigRepo {
@@ -113,5 +132,6 @@ export interface Repo {
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
   cache: CacheRepo;
+  accountModelBackoffs: AccountModelBackoffRepo;
   searchConfig: SearchConfigRepo;
 }

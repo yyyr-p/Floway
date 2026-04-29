@@ -125,7 +125,6 @@ Deno.test("export — empty database returns correct structure", async () => {
   assertEquals(result.data.apiKeys.length, 0);
   assertEquals(Array.isArray(result.data.githubAccounts), true);
   assertEquals(result.data.githubAccounts.length, 0);
-  assertEquals(result.data.activeGithubAccountId, null);
   assertEquals(Array.isArray(result.data.usage), true);
   assertEquals(result.data.usage.length, 0);
   assertEquals(Array.isArray(result.data.searchUsage), true);
@@ -140,7 +139,6 @@ Deno.test("export — contains all stored data", async () => {
   await repo.apiKeys.save(KEY_B);
   await repo.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
   await repo.github.saveAccount(ACCOUNT_Y.user.id, ACCOUNT_Y);
-  await repo.github.setActiveId(200);
   await repo.usage.set(USAGE_1);
   await repo.usage.set(USAGE_2);
   await repo.searchUsage.set(SEARCH_USAGE_1);
@@ -155,7 +153,6 @@ Deno.test("export — contains all stored data", async () => {
 
   assertEquals(result.data.apiKeys.length, 2);
   assertEquals(result.data.githubAccounts.length, 2);
-  assertEquals(result.data.activeGithubAccountId, 200);
   assertEquals(result.data.usage.length, 2);
   assertEquals(result.data.searchUsage.length, 2);
   assertEquals(result.data.searchConfig.provider, "tavily");
@@ -248,7 +245,6 @@ Deno.test("round-trip — replace import then export yields equivalent data", as
   const original = {
     apiKeys: [KEY_A, KEY_B],
     githubAccounts: [ACCOUNT_X, ACCOUNT_Y],
-    activeGithubAccountId: 100,
     usage: [USAGE_1, USAGE_2],
     searchUsage: [SEARCH_USAGE_1, SEARCH_USAGE_2],
   };
@@ -290,10 +286,6 @@ Deno.test("round-trip — replace import then export yields equivalent data", as
 
   assertEquals(exported.data.apiKeys, expected.apiKeys);
   assertEquals(exported.data.githubAccounts, expected.githubAccounts);
-  assertEquals(
-    exported.data.activeGithubAccountId,
-    expected.activeGithubAccountId,
-  );
   assertEquals(exported.data.usage, expected.usage);
   assertEquals(exported.data.searchUsage, expected.searchUsage);
 });
@@ -304,7 +296,6 @@ Deno.test("round-trip — merge import then export contains both old and new dat
   // Pre-existing data
   await repo.apiKeys.save(KEY_A);
   await repo.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
-  await repo.github.setActiveId(100);
   await repo.usage.set(USAGE_1);
   await repo.searchUsage.set(SEARCH_USAGE_1);
 
@@ -312,7 +303,6 @@ Deno.test("round-trip — merge import then export contains both old and new dat
   const newData = {
     apiKeys: [KEY_B],
     githubAccounts: [ACCOUNT_Y],
-    activeGithubAccountId: 200,
     usage: [USAGE_2],
     searchUsage: [SEARCH_USAGE_2],
   };
@@ -326,8 +316,6 @@ Deno.test("round-trip — merge import then export contains both old and new dat
   assertEquals(exported.data.githubAccounts.length, 2);
   assertEquals(exported.data.usage.length, 2);
   assertEquals(exported.data.searchUsage.length, 2);
-  // Merge preserves existing activeId
-  assertEquals(exported.data.activeGithubAccountId, 100);
 });
 
 Deno.test("import replace — clears existing searchUsage before importing provided records", async () => {
@@ -393,7 +381,6 @@ Deno.test("export/import include searchConfig and replace it as a singleton when
   const { status } = await doImport(app, "merge", {
     apiKeys: [],
     githubAccounts: [],
-    activeGithubAccountId: null,
     usage: [],
     searchConfig: {
       provider: "microsoft-grounding",
@@ -422,7 +409,6 @@ Deno.test("import replace resets searchConfig to default when the payload omits 
   const { status } = await doImport(app, "replace", {
     apiKeys: [],
     githubAccounts: [],
-    activeGithubAccountId: null,
     usage: [],
   });
 
@@ -438,7 +424,6 @@ Deno.test("round-trip — double import with replace is idempotent", async () =>
   const data = {
     apiKeys: [KEY_A],
     githubAccounts: [ACCOUNT_X],
-    activeGithubAccountId: 100,
     usage: [USAGE_1],
   };
 
@@ -462,7 +447,6 @@ Deno.test("round-trip — export from A, import into B, export from B matches A"
   await repoA.apiKeys.save(KEY_A);
   await repoA.apiKeys.save(KEY_B);
   await repoA.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
-  await repoA.github.setActiveId(100);
   await repoA.usage.set(USAGE_1);
   await repoA.usage.set(USAGE_2);
   await repoA.searchUsage.set(SEARCH_USAGE_1);
@@ -503,10 +487,6 @@ Deno.test("round-trip — export from A, import into B, export from B matches A"
 
   assertEquals(exportB.data.apiKeys, exportA.data.apiKeys);
   assertEquals(exportB.data.githubAccounts, exportA.data.githubAccounts);
-  assertEquals(
-    exportB.data.activeGithubAccountId,
-    exportA.data.activeGithubAccountId,
-  );
   assertEquals(exportB.data.usage, exportA.data.usage);
   assertEquals(exportB.data.searchUsage, exportA.data.searchUsage);
 });
@@ -518,7 +498,6 @@ Deno.test("import replace — clears existing data", async () => {
 
   await repo.apiKeys.save(KEY_A);
   await repo.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
-  await repo.github.setActiveId(100);
   await repo.usage.set(USAGE_1);
   await repo.searchUsage.set(SEARCH_USAGE_1);
 
@@ -526,7 +505,6 @@ Deno.test("import replace — clears existing data", async () => {
   await doImport(app, "replace", {
     apiKeys: [KEY_B],
     githubAccounts: [],
-    activeGithubAccountId: null,
     usage: [],
   });
 
@@ -534,37 +512,8 @@ Deno.test("import replace — clears existing data", async () => {
   assertEquals(exported.data.apiKeys.length, 1);
   assertEquals(exported.data.apiKeys[0].id, KEY_B.id);
   assertEquals(exported.data.githubAccounts.length, 0);
-  assertEquals(exported.data.activeGithubAccountId, null);
   assertEquals(exported.data.usage.length, 0);
   assertEquals(exported.data.searchUsage.length, 0);
-});
-
-Deno.test("import merge — preserves existing active ID", async () => {
-  const { app, repo } = setup();
-
-  await repo.github.saveAccount(ACCOUNT_X.user.id, ACCOUNT_X);
-  await repo.github.setActiveId(100);
-
-  await doImport(app, "merge", {
-    githubAccounts: [ACCOUNT_Y],
-    activeGithubAccountId: 200,
-  });
-
-  const exported = await doExport(app);
-  // Active ID should remain 100 (existing), not overwritten to 200
-  assertEquals(exported.data.activeGithubAccountId, 100);
-});
-
-Deno.test("import merge — sets active ID when currently unset", async () => {
-  const { app } = setup();
-
-  await doImport(app, "merge", {
-    githubAccounts: [ACCOUNT_X],
-    activeGithubAccountId: 100,
-  });
-
-  const exported = await doExport(app);
-  assertEquals(exported.data.activeGithubAccountId, 100);
 });
 
 Deno.test("import merge — upserts existing records by key", async () => {

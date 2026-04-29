@@ -64,14 +64,12 @@ export const exportData = async (c: Context) => {
   const [
     apiKeys,
     githubAccounts,
-    activeGithubAccountId,
     usage,
     searchUsage,
     rawSearchConfig,
   ] = await Promise.all([
     repo.apiKeys.list(),
     repo.github.listAccounts(),
-    repo.github.getActiveId(),
     repo.usage.listAll(),
     repo.searchUsage.listAll(),
     repo.searchConfig.get(),
@@ -83,7 +81,6 @@ export const exportData = async (c: Context) => {
     data: {
       apiKeys,
       githubAccounts,
-      activeGithubAccountId,
       usage,
       searchUsage,
       searchConfig: normalizeSearchConfig(rawSearchConfig),
@@ -119,16 +116,13 @@ export const importData = async (c: Context) => {
     }, 400);
   }
   const searchUsage = searchUsageResult.records;
-  const activeId: number | null = typeof data.activeGithubAccountId === "number"
-    ? data.activeGithubAccountId
-    : null;
-
   if (mode === "replace") {
     await Promise.all([
       repo.apiKeys.deleteAll(),
       repo.github.deleteAllAccounts(),
       repo.usage.deleteAll(),
       repo.searchUsage.deleteAll(),
+      repo.accountModelBackoffs.deleteAll(),
     ]);
     await repo.searchConfig.save(normalizeSearchConfig(data.searchConfig));
   }
@@ -151,19 +145,6 @@ export const importData = async (c: Context) => {
   // Import search usage records
   for (const record of searchUsage) {
     await repo.searchUsage.set(record);
-  }
-
-  // Set active GitHub account
-  if (activeId != null) {
-    if (mode === "replace") {
-      await repo.github.setActiveId(activeId);
-    } else {
-      // Merge: only set if currently unset
-      const current = await repo.github.getActiveId();
-      if (current == null) {
-        await repo.github.setActiveId(activeId);
-      }
-    }
   }
 
   if (

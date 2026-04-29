@@ -1,4 +1,7 @@
-import { copilotFetch } from "../../../../lib/copilot.ts";
+import {
+  copilotFetch,
+  isCopilotTokenFetchError,
+} from "../../../../lib/copilot.ts";
 import type {
   ResponsesPayload,
   ResponsesResult,
@@ -73,6 +76,15 @@ export const emitToResponses = async (
 
     return responsesRawResultToProtocolResult(result);
   } catch (error) {
+    if (isCopilotTokenFetchError(error)) {
+      return {
+        type: "upstream-error",
+        status: error.status,
+        headers: new Headers(error.headers),
+        body: new TextEncoder().encode(error.body),
+      };
+    }
+
     return internalErrorResult(
       502,
       toInternalDebugError(error, input.sourceApi, "responses"),

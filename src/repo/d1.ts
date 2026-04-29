@@ -1,4 +1,6 @@
 import type {
+  AccountModelBackoffRecord,
+  AccountModelBackoffRepo,
   ApiKey,
   ApiKeyRepo,
   CacheRepo,
@@ -32,6 +34,7 @@ export interface D1Database {
 }
 
 const SEARCH_CONFIG_KEY = "search_config";
+const GITHUB_ACCOUNT_ORDER_KEY = "github_account_order";
 
 const serializeStoredConfig = (value: unknown): string =>
   JSON.stringify(value === undefined ? null : value);
@@ -134,10 +137,67 @@ function toApiKey(
 class D1GitHubRepo implements GitHubRepo {
   constructor(private db: D1Database) {}
 
+  private async listAccountIds(): Promise<number[]> {
+    const { results } = await this.db
+      .prepare("SELECT user_id FROM github_accounts ORDER BY user_id")
+      .all<{ user_id: number }>();
+    return results.map((row) => row.user_id);
+  }
+
+  private async readOrder(): Promise<number[]> {
+    const orderRow = await this.db
+      .prepare("SELECT value FROM config WHERE key = ?")
+      .bind(GITHUB_ACCOUNT_ORDER_KEY)
+      .first<{ value: string }>();
+
+    if (orderRow?.value) {
+      try {
+        const parsed = JSON.parse(orderRow.value) as unknown;
+        if (Array.isArray(parsed)) {
+          return parsed.filter((id): id is number => Number.isInteger(id));
+        }
+      } catch {
+        return [];
+      }
+    }
+
+    return [];
+  }
+
+  private async writeOrder(userIds: number[]): Promise<void> {
+    if (userIds.length === 0) {
+      await this.db.prepare("DELETE FROM config WHERE key = ?")
+        .bind(GITHUB_ACCOUNT_ORDER_KEY)
+        .run();
+      return;
+    }
+
+    await this.db
+      .prepare(
+        `INSERT INTO config (key, value) VALUES (?, ?)
+         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
+      )
+      .bind(GITHUB_ACCOUNT_ORDER_KEY, JSON.stringify(userIds))
+      .run();
+  }
+
+  private async normalizeOrder(userIds: number[]): Promise<number[]> {
+    const accountIds = await this.listAccountIds();
+    const accountIdSet = new Set(accountIds);
+    const seen = new Set<number>();
+    const ordered = userIds.filter((id) => {
+      if (!accountIdSet.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    const rest = accountIds.filter((id) => !seen.has(id));
+    return [...ordered, ...rest];
+  }
+
   async listAccounts(): Promise<GitHubAccount[]> {
     const { results } = await this.db
       .prepare(
-        "SELECT user_id, token, account_type, login, name, avatar_url FROM github_accounts",
+        "SELECT user_id, token, account_type, login, name, avatar_url FROM github_accounts ORDER BY user_id",
       )
       .all<
         {
@@ -149,7 +209,14 @@ class D1GitHubRepo implements GitHubRepo {
           avatar_url: string;
         }
       >();
-    return results.map(toGitHubAccount);
+    const rank = new Map(
+      (await this.readOrder()).map((id, index) => [id, index]),
+    );
+    return results.map(toGitHubAccount).sort((a, b) =>
+      (rank.get(a.user.id) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(b.user.id) ?? Number.MAX_SAFE_INTEGER) ||
+      a.user.id - b.user.id
+    );
   }
 
   async getAccount(userId: number): Promise<GitHubAccount | null> {
@@ -186,42 +253,26 @@ class D1GitHubRepo implements GitHubRepo {
         account.user.avatar_url,
       )
       .run();
+    const order = await this.readOrder();
+    if (!order.includes(userId)) {
+      await this.writeOrder(await this.normalizeOrder([...order, userId]));
+    }
   }
 
   async deleteAccount(userId: number): Promise<void> {
     await this.db.prepare("DELETE FROM github_accounts WHERE user_id = ?").bind(
       userId,
     ).run();
+    await this.writeOrder(await this.normalizeOrder(await this.readOrder()));
   }
 
-  async getActiveId(): Promise<number | null> {
-    const row = await this.db
-      .prepare("SELECT value FROM config WHERE key = 'active_github_account'")
-      .first<{ value: string }>();
-    return row ? Number(row.value) : null;
-  }
-
-  async setActiveId(userId: number): Promise<void> {
-    await this.db
-      .prepare(
-        `INSERT INTO config (key, value) VALUES ('active_github_account', ?)
-         ON CONFLICT (key) DO UPDATE SET value = excluded.value`,
-      )
-      .bind(String(userId))
-      .run();
-  }
-
-  async clearActiveId(): Promise<void> {
-    await this.db.prepare(
-      "DELETE FROM config WHERE key = 'active_github_account'",
-    ).run();
+  async setOrder(userIds: number[]): Promise<void> {
+    await this.writeOrder(await this.normalizeOrder(userIds));
   }
 
   async deleteAllAccounts(): Promise<void> {
     await this.db.prepare("DELETE FROM github_accounts").run();
-    await this.db.prepare(
-      "DELETE FROM config WHERE key = 'active_github_account'",
-    ).run();
+    await this.writeOrder([]);
   }
 }
 
@@ -501,6 +552,102 @@ class D1CacheRepo implements CacheRepo {
   async delete(key: string): Promise<void> {
     await this.db.prepare("DELETE FROM config WHERE key = ?").bind(key).run();
   }
+
+  async deletePrefix(prefix: string): Promise<void> {
+    await this.db.prepare("DELETE FROM config WHERE key >= ? AND key < ?")
+      .bind(prefix, `${prefix}\uffff`)
+      .run();
+  }
+}
+
+class D1AccountModelBackoffRepo implements AccountModelBackoffRepo {
+  constructor(private db: D1Database) {}
+
+  async get(
+    accountId: number,
+    model: string,
+  ): Promise<AccountModelBackoffRecord | null> {
+    const row = await this.db.prepare(
+      "SELECT account_id, model, status, expires_at FROM account_model_backoffs WHERE account_id = ? AND model = ?",
+    )
+      .bind(accountId, model)
+      .first<{
+        account_id: number;
+        model: string;
+        status: number;
+        expires_at: number;
+      }>();
+    return row
+      ? {
+        accountId: row.account_id,
+        model: row.model,
+        status: row.status,
+        expiresAt: row.expires_at,
+      }
+      : null;
+  }
+
+  async list(accountIds: number[]): Promise<AccountModelBackoffRecord[]> {
+    if (accountIds.length === 0) return [];
+
+    const placeholders = accountIds.map(() => "?").join(", ");
+    const { results } = await this.db.prepare(
+      `SELECT account_id, model, status, expires_at FROM account_model_backoffs WHERE account_id IN (${placeholders}) ORDER BY account_id, model`,
+    )
+      .bind(...accountIds)
+      .all<{
+        account_id: number;
+        model: string;
+        status: number;
+        expires_at: number;
+      }>();
+    return results.map((row) => ({
+      accountId: row.account_id,
+      model: row.model,
+      status: row.status,
+      expiresAt: row.expires_at,
+    }));
+  }
+
+  async mark(record: AccountModelBackoffRecord): Promise<void> {
+    await this.db.prepare(
+      `INSERT INTO account_model_backoffs (account_id, model, status, expires_at) VALUES (?, ?, ?, ?)
+       ON CONFLICT (account_id, model) DO UPDATE SET status = excluded.status, expires_at = excluded.expires_at`,
+    )
+      .bind(record.accountId, record.model, record.status, record.expiresAt)
+      .run();
+  }
+
+  async clear(accountId: number, model: string): Promise<void> {
+    await this.db.prepare(
+      "DELETE FROM account_model_backoffs WHERE account_id = ? AND model = ?",
+    )
+      .bind(accountId, model)
+      .run();
+  }
+
+  async clearModel(accountIds: number[], model: string): Promise<void> {
+    if (accountIds.length === 0) return;
+
+    const placeholders = accountIds.map(() => "?").join(", ");
+    await this.db.prepare(
+      `DELETE FROM account_model_backoffs WHERE model = ? AND account_id IN (${placeholders})`,
+    )
+      .bind(model, ...accountIds)
+      .run();
+  }
+
+  async clearAccount(accountId: number): Promise<void> {
+    await this.db.prepare(
+      "DELETE FROM account_model_backoffs WHERE account_id = ?",
+    )
+      .bind(accountId)
+      .run();
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare("DELETE FROM account_model_backoffs").run();
+  }
 }
 
 class D1SearchConfigRepo implements SearchConfigRepo {
@@ -540,6 +687,7 @@ export class D1Repo implements Repo {
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
   cache: CacheRepo;
+  accountModelBackoffs: AccountModelBackoffRepo;
   searchConfig: SearchConfigRepo;
 
   constructor(db: D1Database) {
@@ -548,6 +696,7 @@ export class D1Repo implements Repo {
     this.usage = new D1UsageRepo(db);
     this.searchUsage = new D1SearchUsageRepo(db);
     this.cache = new D1CacheRepo(db);
+    this.accountModelBackoffs = new D1AccountModelBackoffRepo(db);
     this.searchConfig = new D1SearchConfigRepo(db);
   }
 }

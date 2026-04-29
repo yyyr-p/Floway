@@ -289,6 +289,7 @@ export function dashboardAssets() {
                 tab: initTab,
                 meLoaded: false,
                 githubAccounts: [],
+                selectedGithubAccountId: null,
                 usageData: null,
                 usageError: false,
                 usagePercent: 0,
@@ -334,6 +335,7 @@ export function dashboardAssets() {
                 importMode: 'merge',
                 importLoading: false,
                 importPreview: { ready: false, exportedAt: null, apiKeys: 0, githubAccounts: 0, usage: 0, searchUsage: 0 },
+                expandedUnavailableAccountId: null,
                 // Models tab — chat playground
                 allModels: [],
                 modelsSearch: '',
@@ -501,8 +503,7 @@ export function dashboardAssets() {
                       const modelsReady = this.ensureModelsLoaded();
 
                       if (this.tab === 'upstream' && this.isAdmin) {
-                        this.loadMe();
-                        this.loadUsage();
+                        this.loadMe().then(() => this.loadUsage());
                         this.loadSearchConfig();
                       } else if (this.tab === 'keys') {
                         this.loadKeys();
@@ -535,8 +536,8 @@ export function dashboardAssets() {
                       this.tab = t;
                       location.hash = '#' + t;
                       if (t === 'upstream' && this.isAdmin) {
-                        if (!this.meLoaded) this.loadMe();
-                        this.loadUsage();
+                        if (!this.meLoaded) await this.loadMe();
+                        await this.loadUsage();
                         if (!this.searchConfigLoaded) this.loadSearchConfig();
                       } else if (t === 'usage') {
                         this.tokenLoading = true;
@@ -619,8 +620,14 @@ export function dashboardAssets() {
                               this.logout();
                               return;
                             }
-                            const data = await resp.json();
-                            this.githubAccounts = data.accounts || [];
+                          const data = await resp.json();
+                          this.githubAccounts = data.accounts || [];
+                          if (!this.githubAccounts.some((acct) => acct.id === this.selectedGithubAccountId)) {
+                            this.selectedGithubAccountId = this.githubAccounts[0]?.id ?? null;
+                          }
+                          if (!this.githubAccounts.some((acct) => acct.id === this.expandedUnavailableAccountId)) {
+                            this.expandedUnavailableAccountId = null;
+                          }
                           } catch (e) {
                             console.error('loadMe:', e);
                           } finally {
@@ -629,8 +636,14 @@ export function dashboardAssets() {
                         },
 
                         async loadUsage() {
+                          if (!this.selectedGithubAccountId) {
+                            this.usageData = null;
+                            this.usageError = false;
+                            this.usagePercent = 0;
+                            return;
+                          }
                           try {
-                            const resp = await fetch('/api/copilot-quota', { headers: this.authHeaders() });
+                            const resp = await fetch('/api/copilot-quota?user_id=' + encodeURIComponent(this.selectedGithubAccountId), { headers: this.authHeaders() });
                             if (resp.status === 401) {
                               this.logout();
                               return;
@@ -808,26 +821,84 @@ export function dashboardAssets() {
                           }
                         },
 
-                        async switchGithubAccount(userId) {
+                        async selectGithubAccount(userId) {
+                          if (this.selectedGithubAccountId === userId) return;
+                          this.selectedGithubAccountId = userId;
+                          await this.loadUsage();
+                        },
+
+                        async moveGithubAccount(userId, direction) {
+                          const index = this.githubAccounts.findIndex((acct) => acct.id === userId);
+                          const nextIndex = index + direction;
+                          if (index < 0 || nextIndex < 0 || nextIndex >= this.githubAccounts.length) return;
+
+                          const ordered = [...this.githubAccounts];
+                          const current = ordered[index];
+                          ordered[index] = ordered[nextIndex];
+                          ordered[nextIndex] = current;
+
                           try {
-                            const resp = await fetch('/auth/github/switch', {
+                            const resp = await fetch('/auth/github/order', {
                               method: 'POST',
                               headers: { ...this.authHeaders(), 'Content-Type': 'application/json' },
-                              body: JSON.stringify({ user_id: userId }),
+                              body: JSON.stringify({ user_ids: ordered.map((acct) => acct.id) }),
                             });
                             if (resp.status === 401) {
                               this.logout();
                               return;
                             }
                             if (resp.ok) {
+                              this.githubAccounts = ordered;
                               await this.loadMe();
                               await this.loadUsage();
                             } else {
-                              alert('Failed to switch account');
+                              alert('Failed to update account order');
                             }
                           } catch (e) {
-                            console.error('switchGithubAccount:', e);
+                            console.error('moveGithubAccount:', e);
                           }
+                        },
+
+                        unavailableModels(acct) {
+                          return Array.isArray(acct?.temporarily_unavailable_models)
+                            ? acct.temporarily_unavailable_models.filter((status) => {
+                              const expiresAt = Date.parse(status.expires_at || '');
+                              return Number.isFinite(expiresAt) && expiresAt > this.now;
+                            })
+                            : [];
+                        },
+
+                        hasUnavailableModels(acct) {
+                          return this.unavailableModels(acct).length > 0;
+                        },
+
+                        unavailablePanelOpen(acct) {
+                          return this.hasUnavailableModels(acct) && this.expandedUnavailableAccountId === acct.id;
+                        },
+
+                        toggleUnavailableDetails(acct) {
+                          if (!this.hasUnavailableModels(acct)) return;
+                          this.expandedUnavailableAccountId = this.expandedUnavailableAccountId === acct.id ? null : acct.id;
+                        },
+
+                        unavailableBadgeText(acct) {
+                          const count = this.unavailableModels(acct).length;
+                          return count + ' backoff';
+                        },
+
+                        cooldownRemaining(status) {
+                          const expiresAt = Date.parse(status.expires_at || '');
+                          const remainingMs = expiresAt - this.now;
+                          const totalMinutes = Math.max(1, Math.ceil(remainingMs / 60000));
+                          const hours = Math.floor(totalMinutes / 60);
+                          const minutes = totalMinutes % 60;
+                          if (hours > 0 && minutes > 0) return hours + 'h ' + minutes + 'm';
+                          if (hours > 0) return hours + 'h';
+                          return minutes + 'm';
+                        },
+
+                        cooldownRecoveryText(status) {
+                          return 'in ' + this.cooldownRemaining(status);
                         },
 
                         async loadKeys() {

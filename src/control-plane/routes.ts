@@ -10,8 +10,8 @@ import {
 import {
   authGithub,
   authGithubDisconnect,
+  authGithubOrder,
   authGithubPoll,
-  authGithubSwitch,
   authLogin,
   authLogout,
   authMe,
@@ -39,7 +39,7 @@ export const mountControlPlane = (app: Hono) => {
   adminAuth.get("/github", authGithub);
   adminAuth.post("/github/poll", authGithubPoll);
   adminAuth.delete("/github/:id", authGithubDisconnect);
-  adminAuth.post("/github/switch", authGithubSwitch);
+  adminAuth.post("/github/order", authGithubOrder);
   adminAuth.get("/me", authMe);
   app.route("/auth", adminAuth);
 

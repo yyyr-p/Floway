@@ -12,7 +12,6 @@ export interface ExportPayload {
   data: {
     apiKeys: ApiKey[];
     githubAccounts: GitHubAccount[];
-    activeGithubAccountId: number | null;
     usage: UsageRecord[];
     searchUsage: SearchUsageRecord[];
     searchConfig: SearchConfig;

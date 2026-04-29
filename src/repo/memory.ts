@@ -1,6 +1,8 @@
 // In-memory repository implementation for testing
 
 import type {
+  AccountModelBackoffRecord,
+  AccountModelBackoffRepo,
   ApiKey,
   ApiKeyRepo,
   CacheRepo,
@@ -50,10 +52,17 @@ class MemoryApiKeyRepo implements ApiKeyRepo {
 
 class MemoryGitHubRepo implements GitHubRepo {
   private accounts = new Map<number, GitHubAccount>();
-  private activeId: number | null = null;
+  private order: number[] = [];
 
   listAccounts(): Promise<GitHubAccount[]> {
-    return Promise.resolve([...this.accounts.values()]);
+    const rank = new Map(this.order.map((id, index) => [id, index]));
+    return Promise.resolve(
+      [...this.accounts.values()].sort((a, b) =>
+        (rank.get(a.user.id) ?? Number.MAX_SAFE_INTEGER) -
+          (rank.get(b.user.id) ?? Number.MAX_SAFE_INTEGER) ||
+        a.user.id - b.user.id
+      ),
+    );
   }
 
   getAccount(userId: number): Promise<GitHubAccount | null> {
@@ -62,32 +71,33 @@ class MemoryGitHubRepo implements GitHubRepo {
 
   saveAccount(userId: number, account: GitHubAccount): Promise<void> {
     this.accounts.set(userId, { ...account, user: { ...account.user } });
+    if (!this.order.includes(userId)) this.order.push(userId);
     return Promise.resolve();
   }
 
   deleteAccount(userId: number): Promise<void> {
     this.accounts.delete(userId);
-    if (this.activeId === userId) this.activeId = null;
+    this.order = this.order.filter((id) => id !== userId);
     return Promise.resolve();
   }
 
-  getActiveId(): Promise<number | null> {
-    return Promise.resolve(this.activeId);
-  }
-
-  setActiveId(userId: number): Promise<void> {
-    this.activeId = userId;
-    return Promise.resolve();
-  }
-
-  clearActiveId(): Promise<void> {
-    this.activeId = null;
+  setOrder(userIds: number[]): Promise<void> {
+    const seen = new Set<number>();
+    const ordered = userIds.filter((id) => {
+      if (!this.accounts.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    const rest = [...this.accounts.keys()]
+      .filter((id) => !seen.has(id))
+      .sort((a, b) => a - b);
+    this.order = [...ordered, ...rest];
     return Promise.resolve();
   }
 
   deleteAllAccounts(): Promise<void> {
     this.accounts.clear();
-    this.activeId = null;
+    this.order = [];
     return Promise.resolve();
   }
 }
@@ -278,6 +288,70 @@ class MemoryCacheRepo implements CacheRepo {
     this.store.delete(key);
     return Promise.resolve();
   }
+
+  deletePrefix(prefix: string): Promise<void> {
+    for (const key of this.store.keys()) {
+      if (key.startsWith(prefix)) this.store.delete(key);
+    }
+    return Promise.resolve();
+  }
+}
+
+class MemoryAccountModelBackoffRepo implements AccountModelBackoffRepo {
+  private store = new Map<string, AccountModelBackoffRecord>();
+
+  private key(accountId: number, model: string): string {
+    return `${accountId}\0${model}`;
+  }
+
+  get(
+    accountId: number,
+    model: string,
+  ): Promise<AccountModelBackoffRecord | null> {
+    const record = this.store.get(this.key(accountId, model));
+    return Promise.resolve(record ? { ...record } : null);
+  }
+
+  list(accountIds: number[]): Promise<AccountModelBackoffRecord[]> {
+    const accountIdSet = new Set(accountIds);
+    return Promise.resolve(
+      [...this.store.values()]
+        .filter((record) => accountIdSet.has(record.accountId))
+        .map((record) => ({ ...record }))
+        .sort((a, b) =>
+          a.accountId - b.accountId || a.model.localeCompare(b.model)
+        ),
+    );
+  }
+
+  mark(record: AccountModelBackoffRecord): Promise<void> {
+    this.store.set(this.key(record.accountId, record.model), { ...record });
+    return Promise.resolve();
+  }
+
+  clear(accountId: number, model: string): Promise<void> {
+    this.store.delete(this.key(accountId, model));
+    return Promise.resolve();
+  }
+
+  clearModel(accountIds: number[], model: string): Promise<void> {
+    for (const accountId of accountIds) {
+      this.store.delete(this.key(accountId, model));
+    }
+    return Promise.resolve();
+  }
+
+  clearAccount(accountId: number): Promise<void> {
+    for (const key of this.store.keys()) {
+      if (key.startsWith(`${accountId}\0`)) this.store.delete(key);
+    }
+    return Promise.resolve();
+  }
+
+  deleteAll(): Promise<void> {
+    this.store.clear();
+    return Promise.resolve();
+  }
 }
 
 class MemorySearchConfigRepo implements SearchConfigRepo {
@@ -301,6 +375,7 @@ export class InMemoryRepo implements Repo {
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
   cache: CacheRepo;
+  accountModelBackoffs: AccountModelBackoffRepo;
   searchConfig: SearchConfigRepo;
 
   constructor() {
@@ -309,6 +384,7 @@ export class InMemoryRepo implements Repo {
     this.usage = new MemoryUsageRepo();
     this.searchUsage = new MemorySearchUsageRepo();
     this.cache = new MemoryCacheRepo();
+    this.accountModelBackoffs = new MemoryAccountModelBackoffRepo();
     this.searchConfig = new MemorySearchConfigRepo();
   }
 }

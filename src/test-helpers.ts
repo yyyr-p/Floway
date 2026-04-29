@@ -58,7 +58,6 @@ export async function setupAppTest(options: SetupOptions = {}): Promise<AppTestC
     },
   };
   await repo.github.saveAccount(githubAccount.user.id, githubAccount);
-  await repo.github.setActiveId(githubAccount.user.id);
 
   if (options.searchConfig !== undefined) {
     await repo.searchConfig.save(options.searchConfig);

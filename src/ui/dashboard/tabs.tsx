@@ -452,56 +452,132 @@ export function renderUpstreamTab() {
             </template>
             <template x-if="meLoaded && githubAccounts.length > 0">
               <div class="space-y-1">
-                <template x-for="acct in githubAccounts" :key="acct.id">
+                <template x-for="(acct, index) in githubAccounts" :key="acct.id">
                   <div
-                    @click="!acct.active && switchGithubAccount(acct.id)"
-                    class="flex items-center justify-between gap-3 rounded-lg px-3 py-2.5 transition-colors"
-                    :class="acct.active ? 'bg-accent-cyan/5 border border-accent-cyan/15' : 'hover:bg-white/[0.03] cursor-pointer border border-transparent'"
+                    @click="selectGithubAccount(acct.id)"
+                    class="rounded-lg px-3 py-2.5 transition-colors"
+                    :class="selectedGithubAccountId === acct.id ? 'bg-accent-cyan/5 border border-accent-cyan/15' : 'hover:bg-white/[0.03] cursor-pointer border border-transparent'"
                   >
-                    <div class="flex items-center gap-3 min-w-0">
-                      <div class="relative shrink-0">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-start">
+                      <div class="flex min-w-0 flex-1 items-start gap-3">
                         <img
                           :src="acct.avatar_url"
-                          class="w-9 h-9 rounded-lg ring-1 ring-white/5"
+                          class="w-9 h-9 shrink-0 rounded-lg ring-1 ring-white/5"
                         />
-                        <div
-                          x-show="acct.active"
-                          class="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-accent-emerald ring-2 ring-surface-800"
-                        >
+                        <div class="min-w-0 flex-1">
+                          <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p
+                              class="min-w-0 truncate text-sm text-white font-medium"
+                              x-text="acct.name || acct.login"
+                            >
+                            </p>
+                          </div>
+                          <p class="text-xs text-gray-500 truncate" x-text="'@' + acct.login">
+                          </p>
+                          <div class="mt-2" x-show="hasUnavailableModels(acct)">
+                            <button
+                              type="button"
+                              @click.stop="toggleUnavailableDetails(acct)"
+                              :aria-expanded="unavailablePanelOpen(acct).toString()"
+                              class="inline-flex min-h-7 items-center gap-1.5 rounded-md bg-accent-amber/10 px-2 text-[10px] font-medium uppercase tracking-widest text-accent-amber ring-1 ring-accent-amber/20 transition-colors hover:bg-accent-amber/15"
+                            >
+                              <span class="h-1.5 w-1.5 rounded-full bg-accent-amber status-pulse"></span>
+                              <span x-text="unavailableBadgeText(acct)"></span>
+                              <svg
+                                x-show="hasUnavailableModels(acct)"
+                                class="h-3 w-3 transition-transform"
+                                :class="unavailablePanelOpen(acct) ? 'rotate-180' : ''"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                              >
+                                <polyline points="6 9 12 15 18 9" />
+                              </svg>
+                            </button>
+                          </div>
+                          <div
+                            x-show="unavailablePanelOpen(acct)"
+                            @click.stop
+                            class="mt-2 space-y-1.5 rounded-lg border border-accent-amber/10 bg-black/15 p-2"
+                          >
+                            <template
+                              x-for="status in unavailableModels(acct)"
+                              :key="status.model + ':' + status.status"
+                            >
+                              <div class="flex flex-col gap-1 rounded-md bg-white/[0.03] px-2 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                                <div class="min-w-0">
+                                  <p
+                                    class="break-all font-mono text-[11px] text-white"
+                                    x-text="status.model"
+                                  ></p>
+                                  <p
+                                    class="mt-0.5 text-[10px] text-gray-500"
+                                    x-text="'HTTP ' + status.status"
+                                  ></p>
+                                </div>
+                                <span
+                                  class="w-fit shrink-0 font-mono text-[10px] text-accent-amber"
+                                  x-text="cooldownRecoveryText(status)"
+                                ></span>
+                              </div>
+                            </template>
+                          </div>
                         </div>
                       </div>
-                      <div class="min-w-0">
-                        <p
-                          class="text-sm text-white font-medium truncate"
-                          x-text="acct.name || acct.login"
+                      <div class="flex w-full shrink-0 items-center justify-end gap-1 border-t border-white/[0.04] pt-2 sm:w-auto sm:border-t-0 sm:pt-0 sm:gap-1.5">
+                        <button
+                          @click.stop="moveGithubAccount(acct.id, -1)"
+                          class="inline-flex min-h-8 min-w-8 items-center justify-center rounded-md text-gray-600 hover:text-accent-cyan hover:bg-white/[0.04] transition-colors p-1 disabled:opacity-30 disabled:hover:text-gray-600 disabled:hover:bg-transparent sm:min-h-9 sm:min-w-9"
+                          :disabled="index === 0"
+                          aria-label="Move account up"
+                          title="Move up"
                         >
-                        </p>
-                        <p class="text-xs text-gray-500 truncate" x-text="'@' + acct.login">
-                        </p>
+                          <svg
+                            class="w-3.5 h-3.5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <polyline points="18 15 12 9 6 15" />
+                          </svg>
+                        </button>
+                        <button
+                          @click.stop="moveGithubAccount(acct.id, 1)"
+                          class="inline-flex min-h-8 min-w-8 items-center justify-center rounded-md text-gray-600 hover:text-accent-cyan hover:bg-white/[0.04] transition-colors p-1 disabled:opacity-30 disabled:hover:text-gray-600 disabled:hover:bg-transparent sm:min-h-9 sm:min-w-9"
+                          :disabled="index === githubAccounts.length - 1"
+                          aria-label="Move account down"
+                          title="Move down"
+                        >
+                          <svg
+                            class="w-3.5 h-3.5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <polyline points="6 9 12 15 18 9" />
+                          </svg>
+                        </button>
+                        <button
+                          @click.stop="disconnectGithub(acct.id, acct.login)"
+                          class="inline-flex min-h-8 min-w-8 items-center justify-center rounded-md text-gray-600 hover:text-accent-rose hover:bg-white/[0.04] transition-colors p-1 sm:min-h-9 sm:min-w-9"
+                          aria-label="Disconnect GitHub account"
+                          title="Disconnect"
+                        >
+                          <svg
+                            class="w-3.5 h-3.5"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                          >
+                            <line x1="18" y1="6" x2="6" y2="18" />
+                            <line x1="6" y1="6" x2="18" y2="18" />
+                          </svg>
+                        </button>
                       </div>
-                    </div>
-                    <div class="flex shrink-0 items-center gap-2">
-                      <span
-                        x-show="acct.active"
-                        class="text-[10px] font-medium text-accent-emerald uppercase tracking-widest"
-                      >Active</span>
-                      <button
-                        @click.stop="disconnectGithub(acct.id, acct.login)"
-                        class="inline-flex min-h-9 min-w-9 items-center justify-center rounded-md text-gray-600 hover:text-accent-rose hover:bg-white/[0.04] transition-colors p-1"
-                        aria-label="Disconnect GitHub account"
-                        title="Disconnect"
-                      >
-                        <svg
-                          class="w-3.5 h-3.5"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="2"
-                        >
-                          <line x1="18" y1="6" x2="6" y2="18" />
-                          <line x1="6" y1="6" x2="18" y2="18" />
-                        </svg>
-                      </button>
                     </div>
                   </div>
                 </template>

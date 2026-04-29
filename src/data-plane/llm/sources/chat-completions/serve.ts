@@ -3,7 +3,6 @@ import type {
   ChatCompletionChunk,
   ChatCompletionsPayload,
 } from "../../../../lib/chat-completions-types.ts";
-import { getGithubCredentials } from "../../../../lib/github.ts";
 import { normalizeChatRequest } from "./normalize/request.ts";
 import { planChatRequest } from "./plan.ts";
 import { getModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
@@ -21,6 +20,7 @@ import {
 } from "../../shared/errors/result.ts";
 import { toInternalDebugError } from "../../shared/errors/internal-debug-error.ts";
 import type { ProtocolFrame } from "../../shared/stream/types.ts";
+import { withAccountFallback } from "../../../shared/account-pool/fallback.ts";
 
 const withTranslatedEvents = <T>(
   result: StreamExecuteResult<T>,
@@ -43,61 +43,59 @@ export const serveChatCompletions = async (
     // Chat SSE exposes usage only when the caller requested `include_usage`.
     const includeUsageChunk = payload.stream_options?.include_usage === true;
     const apiKeyId = c.get("apiKeyId") as string | undefined;
+    const wantsStream = payload.stream === true;
 
-    const { token: githubToken, accountType } = await getGithubCredentials();
-    const capabilities = await getModelCapabilities(
+    const result = await withAccountFallback(
       payload.model,
-      githubToken,
-      accountType,
+      async ({ account }) => {
+        const attemptPayload = structuredClone(payload);
+        const capabilities = await getModelCapabilities(
+          attemptPayload.model,
+          account.token,
+          account.accountType,
+        );
+        const plan = planChatRequest(attemptPayload, capabilities);
+        attemptPayload.model = capabilities.model?.id ?? attemptPayload.model;
+
+        if (plan.target === "messages") {
+          const result = await emitToMessages({
+            sourceApi: "chat-completions",
+            payload: await buildMessagesTargetRequest(attemptPayload),
+            githubToken: account.token,
+            accountType: account.accountType,
+            apiKeyId,
+            fetchOptions: plan.fetchOptions,
+          });
+
+          return withTranslatedEvents(result, translateMessagesToSourceEvents);
+        }
+
+        if (plan.target === "responses") {
+          const result = await emitToResponses({
+            sourceApi: "chat-completions",
+            payload: buildResponsesTargetRequest(attemptPayload),
+            githubToken: account.token,
+            accountType: account.accountType,
+            fetchOptions: plan.fetchOptions,
+          });
+
+          return withTranslatedEvents(result, translateResponsesToSourceEvents);
+        }
+
+        return await emitToChatCompletions({
+          sourceApi: "chat-completions",
+          payload: attemptPayload,
+          githubToken: account.token,
+          accountType: account.accountType,
+          fetchOptions: plan.fetchOptions,
+        });
+      },
     );
-    const plan = planChatRequest(payload, capabilities);
-    payload.model = capabilities.model?.id ?? payload.model;
-
-    if (plan.target === "messages") {
-      const result = await emitToMessages({
-        sourceApi: "chat-completions",
-        payload: await buildMessagesTargetRequest(payload),
-        githubToken,
-        accountType,
-        apiKeyId,
-        fetchOptions: plan.fetchOptions,
-      });
-
-      return await respondChatCompletions(
-        c,
-        withTranslatedEvents(result, translateMessagesToSourceEvents),
-        plan.wantsStream,
-        includeUsageChunk,
-      );
-    }
-
-    if (plan.target === "responses") {
-      const result = await emitToResponses({
-        sourceApi: "chat-completions",
-        payload: buildResponsesTargetRequest(payload),
-        githubToken,
-        accountType,
-        fetchOptions: plan.fetchOptions,
-      });
-
-      return await respondChatCompletions(
-        c,
-        withTranslatedEvents(result, translateResponsesToSourceEvents),
-        plan.wantsStream,
-        includeUsageChunk,
-      );
-    }
 
     return await respondChatCompletions(
       c,
-      await emitToChatCompletions({
-        sourceApi: "chat-completions",
-        payload,
-        githubToken,
-        accountType,
-        fetchOptions: plan.fetchOptions,
-      }),
-      plan.wantsStream,
+      result,
+      wantsStream,
       includeUsageChunk,
     );
   } catch (error) {

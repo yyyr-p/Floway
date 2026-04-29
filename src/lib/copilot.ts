@@ -18,27 +18,46 @@ let vscodeVersionExpiresAt = 0;
 
 // Two-level Copilot token cache: in-process (60s) + KV (cross-datacenter).
 // In-process avoids KV reads on every request. KV avoids HTTP fetches on cold starts.
-const COPILOT_TOKEN_KV_KEY = "copilot_token";
+const LEGACY_COPILOT_TOKEN_KV_KEY = "copilot_token";
+const COPILOT_TOKEN_KV_KEY_PREFIX = "copilot_token_v2";
 const IN_PROCESS_TTL_MS = 60_000;
-let cachedToken: string | null = null;
-let cachedExpiresAt = 0;
-let cachedForGithubToken: string | null = null;
-let cachedTokenAt = 0; // when the in-process cache was last populated
+const inProcessTokenCache = new Map<string, {
+  entry: CopilotTokenCacheEntry;
+  cachedAt: number;
+}>();
 
 interface CopilotTokenCacheEntry {
   token: string;
   expiresAt: number;
-  forGithubToken: string;
 }
+
+export class CopilotTokenFetchError extends Error {
+  constructor(
+    readonly status: number,
+    readonly body: string,
+    readonly headers: Headers,
+  ) {
+    super(`Copilot token fetch failed: ${status} ${body}`);
+    this.name = "CopilotTokenFetchError";
+  }
+}
+
+export const isCopilotTokenFetchError = (
+  error: unknown,
+): error is CopilotTokenFetchError => error instanceof CopilotTokenFetchError;
+
+export const isAccountSwitchableStatus = (status: number): boolean =>
+  // 500 is included for account fallback because Copilot has been observed to
+  // return account-sensitive upstream failures, primarily with gpt-5.3-codex.
+  // Keeping it model-agnostic prepares for the same failure mode on other models.
+  status === 429 || status === 403 || status === 500;
 
 /** Clear the cached Copilot token from both in-process and KV storage */
 export async function clearCopilotTokenCache(): Promise<void> {
-  cachedToken = null;
-  cachedExpiresAt = 0;
-  cachedForGithubToken = null;
-  cachedTokenAt = 0;
+  inProcessTokenCache.clear();
   try {
-    await getRepo().cache.delete(COPILOT_TOKEN_KV_KEY);
+    await getRepo().cache.delete(LEGACY_COPILOT_TOKEN_KV_KEY);
+    await getRepo().cache.deletePrefix(`${COPILOT_TOKEN_KV_KEY_PREFIX}:`);
   } catch {
     // Ignore — KV may not be available during initialization
   }
@@ -50,7 +69,9 @@ function copilotBaseUrl(accountType: string): string {
 
 async function fetchVSCodeVersion(): Promise<string> {
   const now = Date.now();
-  if (cachedVSCodeVersion && vscodeVersionExpiresAt > now) return cachedVSCodeVersion;
+  if (cachedVSCodeVersion && vscodeVersionExpiresAt > now) {
+    return cachedVSCodeVersion;
+  }
 
   try {
     const resp = await fetch(
@@ -59,15 +80,23 @@ async function fetchVSCodeVersion(): Promise<string> {
     );
     if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
     const releases = (await resp.json()) as string[];
-    if (Array.isArray(releases) && releases.length > 0 && typeof releases[0] === "string") {
+    if (
+      Array.isArray(releases) && releases.length > 0 &&
+      typeof releases[0] === "string"
+    ) {
       cachedVSCodeVersion = releases[0];
       vscodeVersionExpiresAt = now + VSCODE_VERSION_TTL_MS;
       return cachedVSCodeVersion;
     }
     throw new Error("Invalid response format");
   } catch (e) {
-    console.warn(`Failed to fetch VS Code version: ${e instanceof Error ? e.message : String(e)}, using fallback`);
-    return cachedVSCodeVersion ?? FALLBACK_EDITOR_VERSION.replace("vscode/", "");
+    console.warn(
+      `Failed to fetch VS Code version: ${
+        e instanceof Error ? e.message : String(e)
+      }, using fallback`,
+    );
+    return cachedVSCodeVersion ??
+      FALLBACK_EDITOR_VERSION.replace("vscode/", "");
   }
 }
 
@@ -75,45 +104,73 @@ async function getEditorVersion(): Promise<string> {
   return `vscode/${await fetchVSCodeVersion()}`;
 }
 
-async function withRetry<T>(fn: () => Promise<T>, maxRetries = 3, baseDelayMs = 1000): Promise<T> {
+async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 3,
+  baseDelayMs = 1000,
+): Promise<T> {
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     try {
       return await fn();
     } catch (e) {
       // Don't retry client errors (4xx) — they won't change on retry
+      if (isCopilotTokenFetchError(e) && isAccountSwitchableStatus(e.status)) {
+        throw e;
+      }
       if (e instanceof Error && /failed: 4\d{2} /.test(e.message)) throw e;
       if (attempt >= maxRetries) throw e;
       const delay = baseDelayMs * Math.pow(2, attempt);
-      console.warn(`Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${e instanceof Error ? e.message : String(e)}`);
+      console.warn(
+        `Retry ${attempt + 1}/${maxRetries} after ${delay}ms: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
   throw new Error("Unreachable");
 }
 
-function isTokenValid(token: string | null, expiresAt: number, forGithubToken: string | null, githubToken: string): boolean {
-  if (!token || !forGithubToken) return false;
+function isTokenValid(token: string | null, expiresAt: number): boolean {
+  if (!token) return false;
   const now = Math.floor(Date.now() / 1000);
-  return forGithubToken === githubToken && expiresAt > now + 60;
+  return expiresAt > now + 60;
+}
+
+async function copilotTokenCacheKey(
+  githubToken: string,
+  accountType: string,
+): Promise<string> {
+  const bytes = new TextEncoder().encode(`${accountType}:${githubToken}`);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  const hash = Array.from(
+    new Uint8Array(digest),
+    (byte) => byte.toString(16).padStart(2, "0"),
+  ).join("");
+  return `${COPILOT_TOKEN_KV_KEY_PREFIX}:${hash}`;
 }
 
 async function getCopilotToken(githubToken: string): Promise<string> {
+  const cacheKey = await copilotTokenCacheKey(githubToken, "copilot");
+
   // Level 1: in-process cache (avoids KV read on hot path)
   const now = Date.now();
-  if (isTokenValid(cachedToken, cachedExpiresAt, cachedForGithubToken, githubToken) && now - cachedTokenAt < IN_PROCESS_TTL_MS) {
-    return cachedToken!;
+  const cached = inProcessTokenCache.get(cacheKey);
+  if (
+    cached &&
+    isTokenValid(cached.entry.token, cached.entry.expiresAt) &&
+    now - cached.cachedAt < IN_PROCESS_TTL_MS
+  ) {
+    return cached.entry.token;
   }
 
   // Level 2: KV cache (cross-datacenter, survives isolate restarts)
   try {
-    const raw = await getRepo().cache.get(COPILOT_TOKEN_KV_KEY);
+    const raw = await getRepo().cache.get(cacheKey);
     if (raw) {
       const entry = JSON.parse(raw) as CopilotTokenCacheEntry;
-      if (isTokenValid(entry.token, entry.expiresAt, entry.forGithubToken, githubToken)) {
-        cachedToken = entry.token;
-        cachedExpiresAt = entry.expiresAt;
-        cachedForGithubToken = entry.forGithubToken;
-        cachedTokenAt = now;
+      if (isTokenValid(entry.token, entry.expiresAt)) {
+        inProcessTokenCache.set(cacheKey, { entry, cachedAt: now });
         return entry.token;
       }
     }
@@ -124,33 +181,42 @@ async function getCopilotToken(githubToken: string): Promise<string> {
   // Level 3: fetch from GitHub API
   return withRetry(async () => {
     const editorVer = await getEditorVersion();
-    const resp = await fetch("https://api.github.com/copilot_internal/v2/token", {
-      headers: {
-        authorization: `token ${githubToken}`,
-        "content-type": "application/json",
-        accept: "application/json",
-        "editor-version": editorVer,
-        "editor-plugin-version": EDITOR_PLUGIN_VERSION,
-        "user-agent": USER_AGENT,
-        "x-github-api-version": API_VERSION,
+    const resp = await fetch(
+      "https://api.github.com/copilot_internal/v2/token",
+      {
+        headers: {
+          authorization: `token ${githubToken}`,
+          "content-type": "application/json",
+          accept: "application/json",
+          "editor-version": editorVer,
+          "editor-plugin-version": EDITOR_PLUGIN_VERSION,
+          "user-agent": USER_AGENT,
+          "x-github-api-version": API_VERSION,
+        },
       },
-    });
+    );
 
     if (!resp.ok) {
       const text = await resp.text();
-      throw new Error(`Copilot token fetch failed: ${resp.status} ${text}`);
+      throw new CopilotTokenFetchError(
+        resp.status,
+        text,
+        new Headers(resp.headers),
+      );
     }
 
-    const data = (await resp.json()) as { token: string; expires_at: number; refresh_in: number };
+    const data = (await resp.json()) as {
+      token: string;
+      expires_at: number;
+      refresh_in: number;
+    };
 
-    // Populate both cache levels
-    cachedToken = data.token;
-    cachedExpiresAt = data.expires_at;
-    cachedForGithubToken = githubToken;
-    cachedTokenAt = Date.now();
-
-    const entry: CopilotTokenCacheEntry = { token: data.token, expiresAt: data.expires_at, forGithubToken: githubToken };
-    getRepo().cache.set(COPILOT_TOKEN_KV_KEY, JSON.stringify(entry)).catch(() => {});
+    const entry: CopilotTokenCacheEntry = {
+      token: data.token,
+      expiresAt: data.expires_at,
+    };
+    inProcessTokenCache.set(cacheKey, { entry, cachedAt: Date.now() });
+    getRepo().cache.set(cacheKey, JSON.stringify(entry)).catch(() => {});
 
     return data.token;
   });
@@ -187,13 +253,17 @@ export async function copilotFetch(
   if (options?.vision) headers.set("copilot-vision-request", "true");
   if (options?.initiator) headers.set("X-Initiator", options.initiator);
   if (options?.extraHeaders) {
-    for (const [k, v] of Object.entries(options.extraHeaders)) headers.set(k, v);
+    for (const [k, v] of Object.entries(options.extraHeaders)) {
+      headers.set(k, v);
+    }
   }
 
   return await fetch(`${baseUrl}${path}`, { ...init, headers });
 }
 
-export async function githubHeaders(githubToken: string): Promise<Record<string, string>> {
+export async function githubHeaders(
+  githubToken: string,
+): Promise<Record<string, string>> {
   const editorVer = await getEditorVersion();
   return {
     authorization: `token ${githubToken}`,

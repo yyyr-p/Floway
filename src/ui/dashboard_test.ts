@@ -812,6 +812,39 @@ Deno.test("DashboardPage renders mobile-friendly admin controls", () => {
   assertStringIncludes(html, "min-h-9 min-w-9");
 });
 
+Deno.test("DashboardPage uses frontend-only selected GitHub account for quota display", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(html, "selectedGithubAccountId: null");
+  assertStringIncludes(html, "@click=\"selectGithubAccount(acct.id)\"");
+  assertStringIncludes(html, "selectedGithubAccountId === acct.id");
+  assertStringIncludes(html, "'/api/copilot-quota?user_id='");
+  assertStringIncludes(html, "async selectGithubAccount(userId)");
+  assertFalse(html.includes("/auth/github/switch"));
+});
+
+Deno.test("DashboardPage only shows GitHub account backoff status when models are cooling down", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(html, 'x-show="hasUnavailableModels(acct)"');
+  assertStringIncludes(html, "return count + ' backoff';");
+  assertStringIncludes(html, "x-text=\"unavailableBadgeText(acct)\"");
+  assertStringIncludes(html, "x-text=\"cooldownRecoveryText(status)\"");
+  assertStringIncludes(html, "expiresAt > this.now");
+  assertStringIncludes(html, "return 'in ' + this.cooldownRemaining(status);");
+  assertStringIncludes(
+    html,
+    "flex flex-col gap-1 rounded-md bg-white/[0.03] px-2 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3",
+  );
+  assertStringIncludes(
+    html,
+    "w-fit shrink-0 font-mono text-[10px] text-accent-amber",
+  );
+  assertFalse(html.includes("'Ready'"));
+  assertFalse(html.includes(" limited"));
+  assertFalse(html.includes("expired"));
+});
+
 Deno.test("DashboardPage renders Settings import preview responsively", () => {
   const html = DashboardPage().toString();
 

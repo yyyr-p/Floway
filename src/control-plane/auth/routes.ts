@@ -5,16 +5,19 @@
 import type { Context } from "hono";
 import {
   addGithubAccount,
-  getActiveGithubAccount,
   type GitHubUser,
   listGithubAccounts,
   removeGithubAccount,
-  setActiveGithubAccount,
+  setGithubAccountOrder,
 } from "../../lib/github.ts";
 import { clearCopilotTokenCache } from "../../lib/copilot.ts";
 import { getEnv } from "../../lib/env.ts";
 import { validateApiKey } from "../../lib/api-keys.ts";
 import { clearModelsCache } from "../../lib/models-cache.ts";
+import {
+  clearAccountModelBackoffs,
+  listAccountModelBackoffs,
+} from "../../lib/account-model-backoffs.ts";
 import {
   detectAccountType,
   fetchGitHubUser,
@@ -95,7 +98,7 @@ export const authGithubPoll = async (c: Context) => {
     if (data.access_token) {
       const user = await fetchGitHubUser(data.access_token);
 
-      // Store account and set as active
+      // Store account; request priority is controlled only by account order.
       const accountType = await detectAccountType(data.access_token);
       await addGithubAccount(data.access_token, user, accountType);
       await clearCopilotTokenCache();
@@ -110,40 +113,55 @@ export const authGithubPoll = async (c: Context) => {
   }
 };
 
-/** GET /auth/me — get all GitHub accounts + active account info */
+/** GET /auth/me — get all GitHub accounts in priority order */
 export const authMe = async (c: Context) => {
   const accounts = await listGithubAccounts();
-  const active = await getActiveGithubAccount();
+  const unavailableStatuses = await listAccountModelBackoffs(
+    accounts.map((account) => account.user.id),
+  );
+  const unavailableByAccount = new Map<number, typeof unavailableStatuses>();
+  for (const status of unavailableStatuses) {
+    const accountStatuses = unavailableByAccount.get(status.accountId) ?? [];
+    accountStatuses.push(status);
+    unavailableByAccount.set(status.accountId, accountStatuses);
+  }
 
-  // If we have an active account but no user info cached, try to fetch it
-  if (active && !active.user.login) {
+  const refreshedAccounts = await Promise.all(accounts.map(async (account) => {
+    if (account.user.login) return account;
     try {
       const userResp = await fetch("https://api.github.com/user", {
         headers: {
-          authorization: `token ${active.token}`,
+          authorization: `token ${account.token}`,
           accept: "application/json",
           "user-agent": "copilot-deno",
         },
       });
-      if (userResp.ok) {
-        active.user = (await userResp.json()) as GitHubUser;
-        await addGithubAccount(active.token, active.user, active.accountType);
-      }
+      if (!userResp.ok) return account;
+      const user = (await userResp.json()) as GitHubUser;
+      await addGithubAccount(account.token, user, account.accountType);
+      return { ...account, user };
     } catch {
-      // Ignore — user just stays as-is
+      // Ignore — user just stays as-is.
+      return account;
     }
-  }
+  }));
 
   return c.json({
     authenticated: true,
-    github_connected: accounts.length > 0,
-    accounts: accounts.map((a) => ({
+    github_connected: refreshedAccounts.length > 0,
+    accounts: refreshedAccounts.map((a) => ({
       id: a.user.id,
       login: a.user.login,
       name: a.user.name,
       avatar_url: a.user.avatar_url,
       account_type: a.accountType,
-      active: active?.user.id === a.user.id,
+      temporarily_unavailable_models:
+        (unavailableByAccount.get(a.user.id) ?? [])
+          .map((status) => ({
+            model: status.model,
+            status: status.status,
+            expires_at: new Date(status.expiresAt).toISOString(),
+          })),
     })),
   });
 };
@@ -155,22 +173,24 @@ export const authGithubDisconnect = async (c: Context) => {
     return c.json({ error: "Invalid user ID" }, 400);
   }
   await removeGithubAccount(userId);
+  await clearAccountModelBackoffs(userId);
   await clearCopilotTokenCache();
   clearModelsCache();
   return c.json({ ok: true });
 };
 
-/** POST /auth/github/switch — switch active GitHub account */
-export const authGithubSwitch = async (c: Context) => {
-  const body = await c.req.json<{ user_id: number }>();
-  if (!body.user_id) {
-    return c.json({ error: "user_id is required" }, 400);
+/** POST /auth/github/order — set GitHub account priority order */
+export const authGithubOrder = async (c: Context) => {
+  const body = await c.req.json<{ user_ids: number[] }>();
+  if (!Array.isArray(body.user_ids)) {
+    return c.json({ error: "user_ids is required" }, 400);
   }
-  const ok = await setActiveGithubAccount(body.user_id);
+
+  const ok = await setGithubAccountOrder(body.user_ids);
   if (!ok) {
-    return c.json({ error: "Account not found" }, 404);
+    return c.json({ error: "Invalid GitHub account order" }, 400);
   }
-  await clearCopilotTokenCache();
+
   clearModelsCache();
   return c.json({ ok: true });
 };

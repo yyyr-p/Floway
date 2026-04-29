@@ -1,4 +1,6 @@
 import type {
+  AccountModelBackoffRecord,
+  AccountModelBackoffRepo,
   ApiKey,
   ApiKeyRepo,
   CacheRepo,
@@ -14,6 +16,7 @@ import type {
 import { assertWebSearchProviderName } from "../lib/web-search-types.ts";
 
 const SEARCH_CONFIG_KEY: Deno.KvKey = ["config", "search_config"];
+const GITHUB_ACCOUNT_ORDER_KEY: Deno.KvKey = ["config", "github_account_order"];
 
 class DenoKvApiKeyRepo implements ApiKeyRepo {
   constructor(private kv: Deno.Kv) {}
@@ -82,6 +85,47 @@ class DenoKvApiKeyRepo implements ApiKeyRepo {
 class DenoKvGitHubRepo implements GitHubRepo {
   constructor(private kv: Deno.Kv) {}
 
+  private async listAccountIds(): Promise<number[]> {
+    const ids: number[] = [];
+    for await (const entry of this.kv.list({ prefix: ["github_accounts"] })) {
+      ids.push(entry.key[1] as number);
+    }
+    return ids.sort((a, b) => a - b);
+  }
+
+  private async readOrder(): Promise<number[]> {
+    const orderEntry = await this.kv.get<number[]>(GITHUB_ACCOUNT_ORDER_KEY);
+    if (Array.isArray(orderEntry.value)) {
+      return orderEntry.value.filter((id): id is number =>
+        Number.isInteger(id)
+      );
+    }
+
+    return [];
+  }
+
+  private async writeOrder(userIds: number[]): Promise<void> {
+    if (userIds.length === 0) {
+      await this.kv.delete(GITHUB_ACCOUNT_ORDER_KEY);
+      return;
+    }
+
+    await this.kv.set(GITHUB_ACCOUNT_ORDER_KEY, userIds);
+  }
+
+  private async normalizeOrder(userIds: number[]): Promise<number[]> {
+    const accountIds = await this.listAccountIds();
+    const accountIdSet = new Set(accountIds);
+    const seen = new Set<number>();
+    const ordered = userIds.filter((id) => {
+      if (!accountIdSet.has(id) || seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+    const rest = accountIds.filter((id) => !seen.has(id));
+    return [...ordered, ...rest];
+  }
+
   async listAccounts(): Promise<GitHubAccount[]> {
     const accounts: GitHubAccount[] = [];
     for await (
@@ -91,7 +135,14 @@ class DenoKvGitHubRepo implements GitHubRepo {
     ) {
       if (entry.value) accounts.push(withDefaultAccountType(entry.value));
     }
-    return accounts;
+    const rank = new Map(
+      (await this.readOrder()).map((id, index) => [id, index]),
+    );
+    return accounts.sort((a, b) =>
+      (rank.get(a.user.id) ?? Number.MAX_SAFE_INTEGER) -
+        (rank.get(b.user.id) ?? Number.MAX_SAFE_INTEGER) ||
+      a.user.id - b.user.id
+    );
   }
 
   async getAccount(userId: number): Promise<GitHubAccount | null> {
@@ -104,33 +155,26 @@ class DenoKvGitHubRepo implements GitHubRepo {
 
   async saveAccount(userId: number, account: GitHubAccount): Promise<void> {
     await this.kv.set(["github_accounts", userId], account);
+    const order = await this.readOrder();
+    if (!order.includes(userId)) {
+      await this.writeOrder(await this.normalizeOrder([...order, userId]));
+    }
   }
 
   async deleteAccount(userId: number): Promise<void> {
     await this.kv.delete(["github_accounts", userId]);
+    await this.writeOrder(await this.normalizeOrder(await this.readOrder()));
   }
 
-  async getActiveId(): Promise<number | null> {
-    const entry = await this.kv.get<number>([
-      "config",
-      "active_github_account",
-    ]);
-    return entry.value;
-  }
-
-  async setActiveId(userId: number): Promise<void> {
-    await this.kv.set(["config", "active_github_account"], userId);
-  }
-
-  async clearActiveId(): Promise<void> {
-    await this.kv.delete(["config", "active_github_account"]);
+  async setOrder(userIds: number[]): Promise<void> {
+    await this.writeOrder(await this.normalizeOrder(userIds));
   }
 
   async deleteAllAccounts(): Promise<void> {
     for await (const entry of this.kv.list({ prefix: ["github_accounts"] })) {
       await this.kv.delete(entry.key);
     }
-    await this.kv.delete(["config", "active_github_account"]);
+    await this.writeOrder([]);
   }
 }
 
@@ -360,6 +404,89 @@ class DenoKvCacheRepo implements CacheRepo {
   async delete(key: string): Promise<void> {
     await this.kv.delete(["cache", key]);
   }
+
+  async deletePrefix(prefix: string): Promise<void> {
+    for await (const entry of this.kv.list({ prefix: ["cache"] })) {
+      const key = entry.key[1];
+      if (typeof key === "string" && key.startsWith(prefix)) {
+        await this.kv.delete(entry.key);
+      }
+    }
+  }
+}
+
+class DenoKvAccountModelBackoffRepo implements AccountModelBackoffRepo {
+  constructor(private kv: Deno.Kv) {}
+
+  private key(accountId: number, model: string): Deno.KvKey {
+    return ["account_model_backoffs", accountId, model];
+  }
+
+  async get(
+    accountId: number,
+    model: string,
+  ): Promise<AccountModelBackoffRecord | null> {
+    const entry = await this.kv.get<AccountModelBackoffRecord>(
+      this.key(accountId, model),
+    );
+    return entry.value;
+  }
+
+  async list(accountIds: number[]): Promise<AccountModelBackoffRecord[]> {
+    const records: AccountModelBackoffRecord[] = [];
+    for (const accountId of accountIds) {
+      for await (
+        const entry of this.kv.list<AccountModelBackoffRecord>({
+          prefix: ["account_model_backoffs", accountId],
+        })
+      ) {
+        records.push(entry.value);
+      }
+    }
+    return records.sort((a, b) =>
+      a.accountId - b.accountId || a.model.localeCompare(b.model)
+    );
+  }
+
+  async mark(record: AccountModelBackoffRecord): Promise<void> {
+    const ttlMs = record.expiresAt - Date.now();
+    if (ttlMs <= 0) {
+      await this.clear(record.accountId, record.model);
+      return;
+    }
+
+    await this.kv.set(this.key(record.accountId, record.model), record, {
+      expireIn: ttlMs,
+    });
+  }
+
+  async clear(accountId: number, model: string): Promise<void> {
+    await this.kv.delete(this.key(accountId, model));
+  }
+
+  async clearModel(accountIds: number[], model: string): Promise<void> {
+    await Promise.all(
+      accountIds.map((accountId) => this.clear(accountId, model)),
+    );
+  }
+
+  async clearAccount(accountId: number): Promise<void> {
+    for await (
+      const entry of this.kv.list({
+        prefix: ["account_model_backoffs", accountId],
+      })
+    ) {
+      await this.kv.delete(entry.key);
+    }
+  }
+
+  async deleteAll(): Promise<void> {
+    for await (
+      const entry of this.kv.list({ prefix: ["account_model_backoffs"] })
+    ) {
+      await this.kv.delete(entry.key);
+    }
+  }
 }
 
 class DenoKvSearchConfigRepo implements SearchConfigRepo {
@@ -381,6 +508,7 @@ export class DenoKvRepo implements Repo {
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
   cache: CacheRepo;
+  accountModelBackoffs: AccountModelBackoffRepo;
   searchConfig: SearchConfigRepo;
 
   constructor(kv: Deno.Kv) {
@@ -389,6 +517,7 @@ export class DenoKvRepo implements Repo {
     this.usage = new DenoKvUsageRepo(kv);
     this.searchUsage = new DenoKvSearchUsageRepo(kv);
     this.cache = new DenoKvCacheRepo(kv);
+    this.accountModelBackoffs = new DenoKvAccountModelBackoffRepo(kv);
     this.searchConfig = new DenoKvSearchConfigRepo(kv);
   }
 }

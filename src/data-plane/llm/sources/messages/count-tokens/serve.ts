@@ -1,8 +1,11 @@
 import type { Context } from "hono";
-import { copilotFetch } from "../../../../../lib/copilot.ts";
-import { getGithubCredentials } from "../../../../../lib/github.ts";
+import {
+  copilotFetch,
+  isCopilotTokenFetchError,
+} from "../../../../../lib/copilot.ts";
 import { normalizeModelName } from "../../../../../lib/model-name.ts";
 import type { MessagesPayload } from "../../../../../lib/messages-types.ts";
+import { withAccountFallback } from "../../../../shared/account-pool/fallback.ts";
 
 export const countTokens = async (c: Context) => {
   try {
@@ -11,13 +14,15 @@ export const countTokens = async (c: Context) => {
       payload.model = normalizeModelName(payload.model);
     }
 
-    const { token: githubToken, accountType } = await getGithubCredentials();
-
-    const resp = await copilotFetch(
-      "/v1/messages/count_tokens",
-      { method: "POST", body: JSON.stringify(payload) },
-      githubToken,
-      accountType,
+    const resp = await withAccountFallback(
+      payload.model,
+      ({ account }) =>
+        copilotFetch(
+          "/v1/messages/count_tokens",
+          { method: "POST", body: JSON.stringify(payload) },
+          account.token,
+          account.accountType,
+        ),
     );
 
     return new Response(resp.body, {
@@ -27,6 +32,13 @@ export const countTokens = async (c: Context) => {
       },
     });
   } catch (e: unknown) {
+    if (isCopilotTokenFetchError(e)) {
+      return new Response(e.body, {
+        status: e.status,
+        headers: e.headers,
+      });
+    }
+
     const msg = e instanceof Error ? e.message : String(e);
     console.error("Error counting tokens:", msg);
     return c.json({
