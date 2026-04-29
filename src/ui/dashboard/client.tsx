@@ -33,6 +33,38 @@ export function dashboardAssets() {
 
     const pad2 = (n) => String(n).padStart(2, '0');
 
+    function copyTextWithTextarea(text) {
+      const textarea = document.createElement('textarea');
+      textarea.value = text;
+      textarea.setAttribute('readonly', '');
+      textarea.style.position = 'fixed';
+      textarea.style.top = '0';
+      textarea.style.left = '-9999px';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      try {
+        if (!document.execCommand('copy')) {
+          throw new Error('document.execCommand("copy") failed');
+        }
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+
+    async function copyText(text) {
+      const value = String(text);
+      const clipboard = globalThis.navigator?.clipboard;
+      // Clipboard API is absent outside secure contexts in some browsers, so
+      // dashboard copy buttons keep a click-bound textarea fallback.
+      if (clipboard?.writeText) {
+        await clipboard.writeText(value);
+        return;
+      }
+      copyTextWithTextarea(value);
+    }
+
     function formatTokenCount(n) {
       return n >= 1e6 ? (n / 1e6).toFixed(1) + 'M' : n >= 1e3 ? (n / 1e3).toFixed(1) + 'K' : String(n);
     }
@@ -915,7 +947,7 @@ export function dashboardAssets() {
                         },
 
                         async copySnippet(text, tag) {
-                          await navigator.clipboard.writeText(text);
+                          await copyText(text);
                           this.copied = tag;
                           setTimeout(() => {
                             this.copied = false;

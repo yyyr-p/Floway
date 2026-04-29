@@ -49,7 +49,7 @@ function extractDashboardScript() {
   throw new Error("dashboard script not found");
 }
 
-function createDashboardHarness() {
+function createDashboardHarness(options: { document?: unknown } = {}) {
   const charts: FakeChart[] = [];
   class FakeChart {
     canvas: unknown;
@@ -87,7 +87,7 @@ function createDashboardHarness() {
   };
   const location = { hash: "#usage", origin: "https://example.test" };
   const window = { addEventListener() {}, location };
-  const document = {
+  const document = options.document ?? {
     getElementById(id: string) {
       return { id, clientWidth: 640 };
     },
@@ -272,6 +272,72 @@ Deno.test("DashboardPage preserves empty cache hit rate chart points", () => {
     html,
     "item.parsed.y !== null && (isSearchChart ? item.parsed.y > 0 : (isTokenChartPercentMetric(self.tokenChartMetric) || item.parsed.y > 0))",
   );
+});
+
+Deno.test("dashboardApp copies snippets with textarea fallback when Clipboard API is unavailable", async () => {
+  const originalNavigator = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "navigator",
+  );
+  const originalSetTimeout = Object.getOwnPropertyDescriptor(
+    globalThis,
+    "setTimeout",
+  );
+  const copiedValues: string[] = [];
+  const textarea = {
+    value: "",
+    style: {} as Record<string, string>,
+    setAttribute() {},
+    focus() {},
+    select() {},
+  };
+  const document = {
+    getElementById(id: string) {
+      return { id, clientWidth: 640 };
+    },
+    createElement(tag: string) {
+      assertEquals(tag, "textarea");
+      return textarea;
+    },
+    body: {
+      appendChild(node: unknown) {
+        assertEquals(node, textarea);
+      },
+      removeChild(node: unknown) {
+        assertEquals(node, textarea);
+      },
+    },
+    execCommand(command: string) {
+      assertEquals(command, "copy");
+      copiedValues.push(textarea.value);
+      return true;
+    },
+  };
+
+  Object.defineProperty(globalThis, "navigator", {
+    value: {},
+    configurable: true,
+  });
+  Object.defineProperty(globalThis, "setTimeout", {
+    value: () => 0,
+    configurable: true,
+  });
+
+  try {
+    const { app } = createDashboardHarness({ document });
+
+    await app.copySnippet("test-api-key", "key-1");
+
+    assertEquals(copiedValues, ["test-api-key"]);
+    assertEquals(app.copied, "key-1");
+  } finally {
+    if (originalNavigator) {
+      Object.defineProperty(globalThis, "navigator", originalNavigator);
+    }
+    if (originalSetTimeout) {
+      Object.defineProperty(globalThis, "setTimeout", originalSetTimeout);
+    }
+  }
 });
 
 Deno.test("DashboardPage filters search usage tooltip items independently from token metric", () => {
