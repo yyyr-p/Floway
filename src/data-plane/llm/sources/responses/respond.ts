@@ -14,6 +14,7 @@ import { upstreamErrorToResponse } from "../../shared/errors/upstream-error.ts";
 import { proxySSE } from "../../shared/stream/proxy-sse.ts";
 import { sseFrame } from "../../shared/stream/types.ts";
 import { runSourceInterceptors } from "../run-interceptors.ts";
+import { withUsageResponseMetadata } from "../../../../middleware/usage-response-metadata.ts";
 
 const internalResponsesErrorPayload = (error: InternalDebugError) => ({
   error: {
@@ -65,11 +66,13 @@ export const respondResponses = async (
     return internalResponsesErrorResponse(result.status, result.error);
   }
 
-  return wantsStream
+  const response = wantsStream
     ? proxySSE(c, responsesProtocolEventsToSSEFrames(result.events), {
       onError: internalResponsesStreamErrorFrame,
     })
     : Response.json(
       await collectResponsesProtocolEventsToResult(result.events),
     );
+
+  return withUsageResponseMetadata(response, { usageModel: result.usageModel });
 };

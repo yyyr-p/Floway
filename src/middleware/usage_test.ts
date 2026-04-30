@@ -1,4 +1,5 @@
-import { assertEquals, assertExists } from "@std/assert";
+import { assertEquals, assertExists, assertRejects } from "@std/assert";
+import { Hono } from "hono";
 import {
   copilotModels,
   flushAsyncWork,
@@ -9,6 +10,22 @@ import {
   sseResponse,
   withMockedFetch,
 } from "../test-helpers.ts";
+import { usageMiddleware } from "./usage.ts";
+
+const requestUsageMiddlewareOnly = async (
+  keyId: string,
+  response: Response,
+): Promise<Response> => {
+  const app = new Hono<{ Variables: { apiKeyId: string } }>();
+  app.use("*", async (c, next) => {
+    c.set("apiKeyId", keyId);
+    await next();
+  });
+  app.use("*", usageMiddleware);
+  app.post("/v1/messages", () => response);
+
+  return await app.request("/v1/messages", { method: "POST" });
+};
 
 Deno.test("usage middleware records non-streaming usage and updates lastUsedAt", async () => {
   const { repo, apiKey } = await setupAppTest();
@@ -84,7 +101,252 @@ Deno.test("usage middleware records non-streaming usage and updates lastUsedAt",
   assertExists(updatedKey?.lastUsedAt);
 });
 
-Deno.test("usage middleware records streaming usage from Responses SSE", async () => {
+Deno.test("usage middleware records resolved model after dated Claude alias fallback", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-haiku-4.5", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      return jsonResponse({
+        id: "msg_alias_usage",
+        type: "message",
+        role: "assistant",
+        model: "claude-haiku-4.5",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 7, output_tokens: 3 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-haiku-4-5-20251001",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    await response.json();
+  });
+
+  await flushAsyncWork();
+
+  const usage = await repo.usage.listAll();
+  assertEquals(usage.length, 1);
+  assertEquals(usage[0].model, "claude-haiku-4.5");
+});
+
+Deno.test("usage middleware records resolved model instead of upstream response model", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "gpt-5.5", supported_endpoints: ["/responses"] },
+      ]));
+    }
+    if (url.pathname === "/responses") {
+      return jsonResponse({
+        id: "resp_internal_version_usage",
+        object: "response",
+        model: "gpt-5.5-2026-04-23",
+        status: "completed",
+        output: [],
+        output_text: "ok",
+        usage: { input_tokens: 7, output_tokens: 3, total_tokens: 10 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        input: "Hi",
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    await response.json();
+  });
+
+  await flushAsyncWork();
+
+  const usage = await repo.usage.listAll();
+  assertEquals(usage.length, 1);
+  assertEquals(usage[0].model, "gpt-5.5");
+});
+
+Deno.test("usage middleware records non-LLM response model without route context", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "text-embedding-real", supported_endpoints: ["/embeddings"] },
+      ]));
+    }
+    if (url.pathname === "/embeddings") {
+      return jsonResponse({
+        object: "list",
+        model: "text-embedding-real",
+        data: [{ object: "embedding", index: 0, embedding: [0.1] }],
+        usage: { prompt_tokens: 5, total_tokens: 5 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/embeddings", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "text-embedding-real",
+        input: "hello",
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    await response.json();
+  });
+
+  await flushAsyncWork();
+
+  const usage = await repo.usage.listAll();
+  assertEquals(usage.length, 1);
+  assertEquals(usage[0].model, "text-embedding-real");
+});
+
+Deno.test("usage middleware records resolved model when non-streaming LLM response omits model", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      return jsonResponse({
+        id: "msg_missing_model_usage",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 7, output_tokens: 3 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    await response.json();
+  });
+
+  const usage = await repo.usage.listAll();
+  assertEquals(usage.length, 1);
+  assertEquals(usage[0].model, "claude-native");
+});
+
+Deno.test("usage middleware rejects non-streaming usage without any model signal", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  const response = await requestUsageMiddlewareOnly(
+    apiKey.id,
+    Response.json({
+      id: "msg_missing_model_usage",
+      usage: { input_tokens: 7, output_tokens: 3 },
+    }),
+  );
+
+  assertEquals(response.status, 500);
+  assertEquals(await repo.usage.listAll(), []);
+});
+
+Deno.test("usage middleware records resolved model when streaming LLM response omits model", async () => {
   const { repo, apiKey } = await setupAppTest();
 
   await withMockedFetch((request) => {
@@ -112,9 +374,184 @@ Deno.test("usage middleware records streaming usage from Responses SSE", async (
           data: {
             type: "response.completed",
             response: {
+              id: "resp_missing_model_usage",
+              object: "response",
+              status: "completed",
+              output: [],
+              output_text: "",
+              usage: {
+                input_tokens: 11,
+                output_tokens: 13,
+                total_tokens: 24,
+              },
+            },
+          },
+        },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-direct-responses",
+        input: "Hi",
+        stream: true,
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    await response.text();
+  });
+
+  await flushAsyncWork();
+  const usage = await repo.usage.listAll();
+  assertEquals(usage.length, 1);
+  assertEquals(usage[0].model, "gpt-direct-responses");
+});
+
+Deno.test("usage middleware rejects streaming usage without any model signal", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  const response = await requestUsageMiddlewareOnly(
+    apiKey.id,
+    new Response(
+      'data: {"usage":{"prompt_tokens":7,"completion_tokens":3}}\n\n',
+      { headers: { "content-type": "text/event-stream" } },
+    ),
+  );
+
+  assertEquals(response.status, 200);
+  await assertRejects(
+    () => response.text(),
+    Error,
+    "Usage response has token usage but no model",
+  );
+  assertEquals(await repo.usage.listAll(), []);
+});
+
+Deno.test("usage middleware rejects when usage persistence fails", async () => {
+  const { repo, apiKey } = await setupAppTest();
+  repo.usage.record = (() =>
+    Promise.reject(
+      new Error("usage write failed"),
+    )) as typeof repo.usage.record;
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "claude-native", supported_endpoints: ["/v1/messages"] },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      return jsonResponse({
+        id: "msg_usage_write_failure",
+        type: "message",
+        role: "assistant",
+        model: "claude-native",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 7, output_tokens: 3 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 64,
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+
+    assertEquals(response.status, 500);
+  });
+});
+
+Deno.test("usage middleware rejects non-streaming invalid JSON instead of skipping accounting", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  const response = await requestUsageMiddlewareOnly(
+    apiKey.id,
+    new Response("not-json", {
+      headers: { "content-type": "application/json" },
+    }),
+  );
+
+  assertEquals(response.status, 500);
+  assertEquals(await repo.usage.listAll(), []);
+});
+
+Deno.test("usage middleware rejects streaming invalid JSON instead of skipping accounting", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  const response = await requestUsageMiddlewareOnly(
+    apiKey.id,
+    new Response("data: {bad-json}\n\n", {
+      headers: { "content-type": "text/event-stream" },
+    }),
+  );
+
+  assertEquals(response.status, 200);
+  await assertRejects(() => response.text(), SyntaxError);
+  assertEquals(await repo.usage.listAll(), []);
+});
+
+Deno.test("usage middleware records streaming Responses usage under resolved model", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "gpt-5.5", supported_endpoints: ["/responses"] },
+      ]));
+    }
+    if (url.pathname === "/responses") {
+      return sseResponse([
+        {
+          event: "response.completed",
+          data: {
+            type: "response.completed",
+            response: {
               id: "resp_usage",
               object: "response",
-              model: "gpt-direct-responses",
+              model: "gpt-5.5-2026-04-23",
               status: "completed",
               output: [],
               output_text: "",
@@ -139,7 +576,7 @@ Deno.test("usage middleware records streaming usage from Responses SSE", async (
         "x-api-key": apiKey.key,
       },
       body: JSON.stringify({
-        model: "gpt-direct-responses",
+        model: "gpt-5.5",
         input: [{ type: "message", role: "user", content: "Hi" }],
         instructions: null,
         temperature: 1,
@@ -163,7 +600,7 @@ Deno.test("usage middleware records streaming usage from Responses SSE", async (
   const usage = await repo.usage.listAll();
   assertEquals(usage.length, 1);
   assertEquals(usage[0].keyId, apiKey.id);
-  assertEquals(usage[0].model, "gpt-direct-responses");
+  assertEquals(usage[0].model, "gpt-5.5");
   assertEquals(usage[0].inputTokens, 11);
   assertEquals(usage[0].outputTokens, 13);
   assertEquals(usage[0].cacheReadTokens, 4);

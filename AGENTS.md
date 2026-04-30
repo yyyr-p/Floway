@@ -317,6 +317,10 @@ the result. Do not claim success from inspection alone.
 In this repository, run Wrangler via `npx wrangler` instead of assuming a global
 install.
 
+When deploying, use `npx wrangler deploy` directly. Do not pass the `--dry-run`
+parameter to `npx wrangler deploy`; Wrangler may open a browser for Cloudflare
+login, and the human can complete that login flow when needed.
+
 For manual data-plane validation during development, prefer `ADMIN_KEY` with the
 existing `x-models-playground: 1` header on approved playground routes instead
 of using any normal API key path. Do not reuse an existing normal API key for

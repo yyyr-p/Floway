@@ -29,8 +29,14 @@ const withTranslatedEvents = <T>(
   ) => AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
 ): StreamExecuteResult<ChatCompletionChunk> =>
   result.type === "events"
-    ? { type: "events", events: translate(result.events) }
+    ? { ...result, events: translate(result.events) }
     : result;
+
+const withUsageModel = <T>(
+  result: StreamExecuteResult<T>,
+  usageModel: string,
+): StreamExecuteResult<T> =>
+  result.type === "events" ? { ...result, usageModel } : result;
 
 export const serveChatCompletions = async (
   c: Context,
@@ -38,7 +44,6 @@ export const serveChatCompletions = async (
   try {
     const payload = await c.req.json<ChatCompletionsPayload>();
     normalizeChatRequest(payload);
-    c.set("model", payload.model || "unknown");
     // Target interceptors may force upstream usage for gateway accounting, but
     // Chat SSE exposes usage only when the caller requested `include_usage`.
     const includeUsageChunk = payload.stream_options?.include_usage === true;
@@ -58,37 +63,50 @@ export const serveChatCompletions = async (
         attemptPayload.model = capabilities.model?.id ?? attemptPayload.model;
 
         if (plan.target === "messages") {
+          const targetPayload = await buildMessagesTargetRequest(
+            attemptPayload,
+          );
           const result = await emitToMessages({
             sourceApi: "chat-completions",
-            payload: await buildMessagesTargetRequest(attemptPayload),
+            payload: targetPayload,
             githubToken: account.token,
             accountType: account.accountType,
             apiKeyId,
             fetchOptions: plan.fetchOptions,
           });
 
-          return withTranslatedEvents(result, translateMessagesToSourceEvents);
+          return withUsageModel(
+            withTranslatedEvents(result, translateMessagesToSourceEvents),
+            targetPayload.model,
+          );
         }
 
         if (plan.target === "responses") {
+          const targetPayload = buildResponsesTargetRequest(attemptPayload);
           const result = await emitToResponses({
             sourceApi: "chat-completions",
-            payload: buildResponsesTargetRequest(attemptPayload),
+            payload: targetPayload,
             githubToken: account.token,
             accountType: account.accountType,
             fetchOptions: plan.fetchOptions,
           });
 
-          return withTranslatedEvents(result, translateResponsesToSourceEvents);
+          return withUsageModel(
+            withTranslatedEvents(result, translateResponsesToSourceEvents),
+            targetPayload.model,
+          );
         }
 
-        return await emitToChatCompletions({
-          sourceApi: "chat-completions",
-          payload: attemptPayload,
-          githubToken: account.token,
-          accountType: account.accountType,
-          fetchOptions: plan.fetchOptions,
-        });
+        return withUsageModel(
+          await emitToChatCompletions({
+            sourceApi: "chat-completions",
+            payload: attemptPayload,
+            githubToken: account.token,
+            accountType: account.accountType,
+            fetchOptions: plan.fetchOptions,
+          }),
+          attemptPayload.model,
+        );
       },
     );
 

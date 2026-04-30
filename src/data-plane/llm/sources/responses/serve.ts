@@ -27,8 +27,14 @@ const withTranslatedEvents = <T>(
   ) => AsyncIterable<ProtocolFrame<SourceResponseStreamEvent>>,
 ): StreamExecuteResult<SourceResponseStreamEvent> =>
   result.type === "events"
-    ? { type: "events", events: translate(result.events) }
+    ? { ...result, events: translate(result.events) }
     : result;
+
+const withUsageModel = <T>(
+  result: StreamExecuteResult<T>,
+  usageModel: string,
+): StreamExecuteResult<T> =>
+  result.type === "events" ? { ...result, usageModel } : result;
 
 const unsupportedResponsesModelResponse = (model: string): Response =>
   Response.json({
@@ -47,7 +53,6 @@ export const serveResponses = async (
   try {
     const payload = await c.req.json<ResponsesPayload>();
     normalizeResponsesRequest(payload);
-    c.set("model", payload.model || "unknown");
     const apiKeyId = c.get("apiKeyId") as string | undefined;
     const wantsStream = payload.stream === true;
 
@@ -65,13 +70,16 @@ export const serveResponses = async (
       attemptPayload.model = capabilities.model?.id ?? attemptPayload.model;
 
       if (plan.target === "responses") {
-        return await emitToResponses({
-          sourceApi: "responses",
-          payload: attemptPayload,
-          githubToken: account.token,
-          accountType: account.accountType,
-          fetchOptions: plan.fetchOptions,
-        });
+        return withUsageModel(
+          await emitToResponses({
+            sourceApi: "responses",
+            payload: attemptPayload,
+            githubToken: account.token,
+            accountType: account.accountType,
+            fetchOptions: plan.fetchOptions,
+          }),
+          attemptPayload.model,
+        );
       }
 
       if (plan.target === "messages") {
@@ -87,14 +95,17 @@ export const serveResponses = async (
           fetchOptions: plan.fetchOptions,
         });
 
-        return withTranslatedEvents(
-          result,
-          (events) =>
-            translateToSourceEvents(
-              events,
-              createTranslatedResponseId(),
-              messagesPayload.model,
-            ),
+        return withUsageModel(
+          withTranslatedEvents(
+            result,
+            (events) =>
+              translateToSourceEvents(
+                events,
+                createTranslatedResponseId(),
+                messagesPayload.model,
+              ),
+          ),
+          messagesPayload.model,
         );
       }
 
@@ -107,9 +118,12 @@ export const serveResponses = async (
         fetchOptions: plan.fetchOptions,
       });
 
-      return withTranslatedEvents(
-        result,
-        translateChatCompletionsToSourceEvents,
+      return withUsageModel(
+        withTranslatedEvents(
+          result,
+          translateChatCompletionsToSourceEvents,
+        ),
+        chatPayload.model,
       );
     });
 

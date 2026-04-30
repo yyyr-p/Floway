@@ -4,6 +4,11 @@
 import type { Context, Next } from "hono";
 import { recordUsage } from "../lib/usage-tracker.ts";
 import { touchApiKeyLastUsed } from "../lib/api-keys.ts";
+import {
+  getUsageResponseMetadata,
+  stripUsageResponseMetadata,
+  type UsageResponseMetadata,
+} from "./usage-response-metadata.ts";
 
 const PROXY_SUFFIXES = [
   "/messages",
@@ -23,8 +28,8 @@ export const usageMiddleware = async (c: Context, next: Next) => {
 
   await next();
 
-  // Read model set by route handlers (avoids redundant JSON.parse of request body)
-  const model: string = c.get("model") ?? "unknown";
+  const metadata = getUsageResponseMetadata(c.res);
+  c.res = stripUsageResponseMetadata(c.res);
 
   const keyId: string | undefined = c.get("apiKeyId");
   if (!keyId) return;
@@ -33,21 +38,17 @@ export const usageMiddleware = async (c: Context, next: Next) => {
   const status = c.res.status;
   if (status < 200 || status >= 300) return; // skip error responses
 
-  try {
-    if (contentType.includes("text/event-stream")) {
-      interceptStreaming(c, keyId, model);
-    } else {
-      await interceptNonStreaming(c, keyId, model);
-    }
-  } catch (e) {
-    console.error("Usage tracking error:", e);
+  if (contentType.includes("text/event-stream")) {
+    interceptStreaming(c, keyId, metadata);
+  } else {
+    await interceptNonStreaming(c, keyId, metadata?.usageModel);
   }
 };
 
 async function interceptNonStreaming(
   c: Context,
   keyId: string,
-  model: string,
+  usageModel: string | undefined,
 ): Promise<void> {
   const original = c.res;
   const cloned = original.clone();
@@ -55,29 +56,22 @@ async function interceptNonStreaming(
   let json: any;
   try {
     json = await cloned.json();
-  } catch {
-    return;
+  } catch (error) {
+    throw new Error("Usage response is not valid JSON", { cause: error });
   }
 
   const usage = extractUsageFromJson(json);
   if (usage) {
-    const p1 = recordUsage(
-      keyId,
-      model,
-      usage.input,
-      usage.output,
-      usage.cacheRead,
-      usage.cacheCreation,
-    ).catch((e) => console.error("Usage record error:", e));
-    const p2 = touchApiKeyLastUsed(keyId).catch((e) =>
-      console.error("Touch lastUsedAt error:", e)
-    );
-    safeWaitUntil(c, p1);
-    safeWaitUntil(c, p2);
+    const model = requireUsageModel(usageModel ?? extractModelFromJson(json));
+    await persistUsage(keyId, model, usage);
   }
 }
 
-function interceptStreaming(c: Context, keyId: string, model: string): void {
+function interceptStreaming(
+  c: Context,
+  keyId: string,
+  metadata: UsageResponseMetadata | undefined,
+): void {
   const original = c.res;
   const body = original.body;
   if (!body) return;
@@ -87,6 +81,7 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
     output: 0,
     cacheRead: 0,
     cacheCreation: 0,
+    model: metadata?.usageModel,
   };
   let gotInputFromStart = false;
   let buffer = "";
@@ -104,28 +99,17 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
         gotInputFromStart = consumeUsageLine(line, usage, gotInputFromStart);
       }
     },
-    flush() {
+    async flush() {
       buffer += decoder.decode();
       if (buffer) {
         gotInputFromStart = consumeUsageLine(buffer, usage, gotInputFromStart);
       }
 
-      applyHiddenChatStreamUsage(c, usage);
+      applyHiddenChatStreamUsage(metadata, usage);
 
       if (usage.input > 0 || usage.output > 0) {
-        const p1 = recordUsage(
-          keyId,
-          model,
-          usage.input,
-          usage.output,
-          usage.cacheRead,
-          usage.cacheCreation,
-        ).catch((e) => console.error("Usage record error:", e));
-        const p2 = touchApiKeyLastUsed(keyId).catch((e) =>
-          console.error("Touch lastUsedAt error:", e)
-        );
-        safeWaitUntil(c, p1);
-        safeWaitUntil(c, p2);
+        const model = requireUsageModel(usage.model);
+        await persistUsage(keyId, model, usage);
       }
     },
   });
@@ -137,34 +121,17 @@ function interceptStreaming(c: Context, keyId: string, model: string): void {
   });
 }
 
-/** Safely call waitUntil if available (CF Workers). Deno Deploy throws on c.executionCtx access. */
-function safeWaitUntil(c: Context, promise: Promise<unknown>): void {
-  try {
-    c.executionCtx?.waitUntil?.(promise);
-  } catch {
-    // Deno Deploy: no ExecutionContext — promises settle on their own
-  }
-}
-
 interface UsageInfo {
   input: number;
   output: number;
   cacheRead: number;
   cacheCreation: number;
+  model?: string;
 }
 
 interface StreamUsageInfo extends UsageInfo {
   kind: "messages-start" | "messages-delta" | "final";
   fromStart: boolean;
-}
-
-interface HiddenChatStreamUsageCapture {
-  usage?: {
-    prompt_tokens: number;
-    completion_tokens: number;
-    total_tokens: number;
-    prompt_tokens_details?: { cached_tokens: number };
-  };
 }
 
 type JsonObject = Record<string, unknown>;
@@ -177,6 +144,50 @@ function asObject(value: unknown): JsonObject | null {
 
 function readNumber(value: unknown): number | null {
   return typeof value === "number" ? value : null;
+}
+
+function readString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function requireUsageModel(model: string | null | undefined): string {
+  if (model) return model;
+  throw new Error("Usage response has token usage but no model");
+}
+
+const persistUsage = async (
+  keyId: string,
+  model: string,
+  usage: UsageInfo,
+): Promise<void> => {
+  await Promise.all([
+    recordUsage(
+      keyId,
+      model,
+      usage.input,
+      usage.output,
+      usage.cacheRead,
+      usage.cacheCreation,
+    ),
+    touchApiKeyLastUsed(keyId),
+  ]);
+};
+
+// Successful source-shaped responses carry the model that actually produced
+// the usage. Use that structured output instead of a request-context side
+// channel so accounting follows alias resolution and translated paths.
+function extractModelFromJson(json: unknown): string | null {
+  const payload = asObject(json);
+  return readString(payload?.model);
+}
+
+function extractModelFromStreamEvent(parsed: unknown): string | null {
+  const payload = asObject(parsed);
+  if (!payload) return null;
+
+  return readString(payload.model) ??
+    readString(asObject(payload.message)?.model) ??
+    readString(asObject(payload.response)?.model);
 }
 
 function setInputUsage(total: UsageInfo, next: UsageInfo): void {
@@ -209,11 +220,11 @@ function mergeStreamUsage(total: UsageInfo, next: StreamUsageInfo): void {
   total.output = next.output;
 }
 
-function applyHiddenChatStreamUsage(c: Context, usage: UsageInfo): void {
-  const capture = c.get("chatCompletionsHiddenUsageCapture") as
-    | HiddenChatStreamUsageCapture
-    | undefined;
-  const hiddenUsage = capture?.usage;
+function applyHiddenChatStreamUsage(
+  metadata: UsageResponseMetadata | undefined,
+  usage: UsageInfo,
+): void {
+  const hiddenUsage = metadata?.hiddenChatStreamUsageCapture?.usage;
   if (!hiddenUsage) return;
   if (usage.input > 0 || usage.output > 0) return;
 
@@ -233,16 +244,13 @@ function consumeUsageLine(
   const data = line.slice(6).trim();
   if (!data || data === "[DONE]") return gotInputFromStart;
 
-  try {
-    const parsed = JSON.parse(data);
-    const extracted = extractUsageFromStreamEvent(parsed, gotInputFromStart);
-    if (!extracted) return gotInputFromStart;
+  const parsed = JSON.parse(data);
+  usage.model ??= extractModelFromStreamEvent(parsed) ?? undefined;
+  const extracted = extractUsageFromStreamEvent(parsed, gotInputFromStart);
+  if (!extracted) return gotInputFromStart;
 
-    mergeStreamUsage(usage, extracted);
-    return gotInputFromStart || extracted.fromStart;
-  } catch {
-    return gotInputFromStart;
-  }
+  mergeStreamUsage(usage, extracted);
+  return gotInputFromStart || extracted.fromStart;
 }
 
 // deno-lint-ignore no-explicit-any
