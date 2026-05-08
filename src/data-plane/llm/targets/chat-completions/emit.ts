@@ -18,7 +18,10 @@ import { isSSEResponse } from "../../shared/stream/is-sse-response.ts";
 import { jsonFrame } from "../../shared/stream/types.ts";
 import { runTargetInterceptors } from "../run-interceptors.ts";
 import type { EmitInput, EmitResult, RawEmitResult } from "../emit-types.ts";
-import { withUpstreamSuccessTelemetry } from "../telemetry.ts";
+import {
+  recordUpstreamHttpFailure,
+  withUpstreamTelemetry,
+} from "../telemetry.ts";
 import { chatCompletionsStreamFramesToEvents } from "./events/from-stream.ts";
 import { chatCompletionsTargetInterceptors } from "./interceptors/index.ts";
 
@@ -55,7 +58,10 @@ export const emitToChatCompletions = async (
           input.fetchOptions,
         );
 
-        if (!response.ok) return await readUpstreamError(response);
+        if (!response.ok) {
+          recordUpstreamHttpFailure(input, "chat-completions");
+          return await readUpstreamError(response);
+        }
         if (!response.body) {
           return internalErrorResult(
             502,
@@ -68,7 +74,7 @@ export const emitToChatCompletions = async (
         }
 
         if (isSSEResponse(response)) {
-          return eventResult(withUpstreamSuccessTelemetry(
+          return eventResult(withUpstreamTelemetry(
             parseSSEStream(response.body),
             input,
             "chat-completions",
@@ -76,7 +82,7 @@ export const emitToChatCompletions = async (
           ));
         }
 
-        return eventResult(withUpstreamSuccessTelemetry(
+        return eventResult(withUpstreamTelemetry(
           (async function* () {
             yield jsonFrame(await response.json() as ChatCompletionResponse);
           })(),

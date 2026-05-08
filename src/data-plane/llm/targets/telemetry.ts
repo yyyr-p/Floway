@@ -1,5 +1,6 @@
 import {
   type PerformanceTelemetryContext,
+  recordPerformanceError,
   recordPerformanceLatency,
 } from "../../../lib/performance-telemetry.ts";
 import { scheduleBackground } from "../../../lib/background.ts";
@@ -8,7 +9,9 @@ import type { EmitInput } from "./emit-types.ts";
 import type { SseFrame, StreamFrame } from "../shared/stream/types.ts";
 import { chatCompletionsErrorPayloadMessage } from "../../../lib/chat-completions-errors.ts";
 
-export function withUpstreamSuccessTelemetry<T>(
+type TerminalKind = "success" | "failure";
+
+export function withUpstreamTelemetry<T>(
   events: AsyncIterable<T>,
   input: EmitInput<{ model: string; stream?: boolean | null }>,
   targetApi: PerformanceApiName,
@@ -16,58 +19,99 @@ export function withUpstreamSuccessTelemetry<T>(
 ): AsyncIterable<T> {
   return (async function* () {
     let recorded = false;
-    const recordOnce = (durationMs: number) => {
+    const recordOnce = (kind: TerminalKind, durationMs: number) => {
       if (recorded || !input.apiKeyId) return;
       recorded = true;
+      const context = upstreamContext(input, targetApi);
       scheduleBackground(
         input.scheduleBackground,
-        recordPerformanceLatency(
-          upstreamContext(input, targetApi),
-          "upstream_success",
-          durationMs,
-        ),
+        kind === "success"
+          ? recordPerformanceLatency(context, "upstream_success", durationMs)
+          : recordPerformanceError(context, "upstream_success"),
       );
     };
 
-    for await (const event of events) {
-      const isSuccessfulFrame = isSuccessfulUpstreamFrame(event, targetApi);
-      const successDurationMs = isSuccessfulFrame
-        ? performance.now() - startedAt
-        : 0;
+    // Track whether the upstream iterator itself reached an end state (EOF or
+    // threw). The outer finally needs this so it can distinguish:
+    //   * upstream ended without a terminal frame  -> record as failure
+    //   * downstream consumer cancelled mid-stream -> do not record anything
+    // Async generators don't expose the reason their body unwinds, so we set
+    // this flag explicitly only on natural loop exit / upstream throw.
+    let upstreamEnded = false;
+    try {
       try {
-        yield event;
-      } finally {
-        // Source protocol collectors intentionally stop at terminal events and
-        // may never pull the raw upstream stream to EOF, so record success when
-        // a target-owned success marker has been delivered downstream.
-        if (isSuccessfulFrame) recordOnce(successDurationMs);
+        for await (const event of events) {
+          const terminal = classifyTerminalFrame(event, targetApi);
+          const terminalDurationMs = terminal
+            ? performance.now() - startedAt
+            : 0;
+          try {
+            yield event;
+          } finally {
+            // Source protocol collectors stop at terminal events and may never
+            // pull the upstream iterator to EOF, so record once a target-owned
+            // terminal marker has been delivered downstream.
+            if (terminal) recordOnce(terminal, terminalDurationMs);
+          }
+        }
+        upstreamEnded = true;
+      } catch (error) {
+        upstreamEnded = true;
+        throw error;
+      }
+    } finally {
+      // EOF without any terminal frame, or an upstream-thrown error mid-stream,
+      // means upstream failed to produce a complete response. Record as a
+      // failure. Client-initiated cancel skips this branch because the for
+      // await body unwinds via a return completion that bypasses the assignment
+      // above and never sets upstreamEnded.
+      if (!recorded && upstreamEnded) {
+        recordOnce("failure", performance.now() - startedAt);
       }
     }
   })();
 }
 
-function isSuccessfulUpstreamFrame(
-  value: unknown,
+export function recordUpstreamHttpFailure(
+  input: EmitInput<{ model: string; stream?: boolean | null }>,
   targetApi: PerformanceApiName,
-): boolean {
-  if (!isStreamFrame(value)) return false;
-  if (value.type === "json") {
-    return isSuccessfulUpstreamJsonFrame(value.data, targetApi);
-  }
-  return isSuccessfulUpstreamSseFrame(value, targetApi);
+): void {
+  if (!input.apiKeyId) return;
+  scheduleBackground(
+    input.scheduleBackground,
+    recordPerformanceError(
+      upstreamContext(input, targetApi),
+      "upstream_success",
+    ),
+  );
 }
 
-function isSuccessfulUpstreamJsonFrame(
+function classifyTerminalFrame(
+  value: unknown,
+  targetApi: PerformanceApiName,
+): TerminalKind | null {
+  if (!isStreamFrame(value)) return null;
+  if (value.type === "json") {
+    return classifyJsonTerminal(value.data, targetApi);
+  }
+  return classifySseTerminal(value, targetApi);
+}
+
+function classifyJsonTerminal(
   data: unknown,
   targetApi: PerformanceApiName,
-): boolean {
+): TerminalKind | null {
   if (targetApi === "responses") {
-    return (data as { status?: unknown }).status !== "failed";
+    const status = (data as { status?: unknown }).status;
+    if (status === "failed") return "failure";
+    return "success";
   }
   if (targetApi === "messages") {
-    return (data as { type?: unknown }).type !== "error";
+    const type = (data as { type?: unknown }).type;
+    if (type === "error") return "failure";
+    return "success";
   }
-  return !chatCompletionsErrorPayloadMessage(data);
+  return chatCompletionsErrorPayloadMessage(data) ? "failure" : "success";
 }
 
 function isStreamFrame(value: unknown): value is StreamFrame<unknown> {
@@ -78,27 +122,41 @@ function isStreamFrame(value: unknown): value is StreamFrame<unknown> {
     typeof (value as { data?: unknown }).data === "string";
 }
 
-function isSuccessfulUpstreamSseFrame(
+function classifySseTerminal(
   frame: SseFrame,
   targetApi: PerformanceApiName,
-): boolean {
+): TerminalKind | null {
   const data = frame.data.trim();
-  if (data === "[DONE]") return targetApi === "chat-completions";
+  if (data === "[DONE]") {
+    return targetApi === "chat-completions" ? "success" : null;
+  }
+
+  let parsed: { type?: unknown; status?: unknown } | null = null;
+  try {
+    parsed = JSON.parse(data) as { type?: unknown; status?: unknown };
+  } catch {
+    return null;
+  }
 
   let eventType = frame.event;
-  try {
-    const parsed = JSON.parse(data) as { type?: unknown };
-    if (typeof parsed.type === "string") eventType = parsed.type;
-  } catch {
-    return false;
-  }
+  if (typeof parsed.type === "string") eventType = parsed.type;
 
-  if (targetApi === "messages") return eventType === "message_stop";
-  if (targetApi === "responses") {
-    return eventType === "response.completed" ||
-      eventType === "response.incomplete";
+  if (targetApi === "messages") {
+    if (eventType === "message_stop") return "success";
+    if (eventType === "error") return "failure";
+    return null;
   }
-  return false;
+  if (targetApi === "responses") {
+    if (
+      eventType === "response.completed" ||
+      eventType === "response.incomplete"
+    ) return "success";
+    if (eventType === "response.failed") return "failure";
+    if (parsed.status === "failed") return "failure";
+    return null;
+  }
+  if (chatCompletionsErrorPayloadMessage(parsed)) return "failure";
+  return null;
 }
 
 function upstreamContext(

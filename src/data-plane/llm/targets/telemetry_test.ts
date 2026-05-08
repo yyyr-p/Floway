@@ -1,54 +1,119 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import { initRepo } from "../../../repo/index.ts";
 import { InMemoryRepo } from "../../../repo/memory.ts";
-import { withUpstreamSuccessTelemetry } from "./telemetry.ts";
+import {
+  recordUpstreamHttpFailure,
+  withUpstreamTelemetry,
+} from "./telemetry.ts";
 
-const throwingEvents = async function* () {
-  yield { type: "first" };
-  throw new Error("stream failed");
-};
+interface TelemetryHarness {
+  repo: InMemoryRepo;
+  background: Promise<unknown>[];
+}
 
-Deno.test("withUpstreamSuccessTelemetry does not record interrupted upstream streams as success", async () => {
+const setup = (): TelemetryHarness => {
   const repo = new InMemoryRepo();
   initRepo(repo);
-  const background: Promise<unknown>[] = [];
+  return { repo, background: [] };
+};
 
-  const events = withUpstreamSuccessTelemetry(
-    throwingEvents(),
-    {
-      sourceApi: "messages",
-      payload: { model: "claude-broken", stream: true },
-      githubToken: "token",
-      accountType: "individual",
-      apiKeyId: "key_a",
-      clientStream: true,
-      runtimeLocation: "SJC",
-      scheduleBackground: (promise) => background.push(promise),
-    },
+const baseInput = (
+  harness: TelemetryHarness,
+  overrides: { sourceApi?: "messages" | "responses" | "chat-completions"; model?: string; stream?: boolean } = {},
+) => ({
+  sourceApi: overrides.sourceApi ?? "messages",
+  payload: {
+    model: overrides.model ?? "claude-test",
+    stream: overrides.stream ?? true,
+  },
+  githubToken: "token",
+  accountType: "individual",
+  apiKeyId: "key_a",
+  clientStream: overrides.stream ?? true,
+  runtimeLocation: "SJC",
+  scheduleBackground: (promise: Promise<unknown>) => {
+    harness.background.push(promise);
+  },
+}) as const;
+
+Deno.test("withUpstreamTelemetry records EOF-without-terminal as upstream failure", async () => {
+  const harness = setup();
+
+  const events = withUpstreamTelemetry(
+    (async function* () {
+      yield { type: "sse" as const, data: '{"type":"message_start"}' };
+    })(),
+    baseInput(harness),
     "messages",
     performance.now(),
   );
 
-  await assertRejects(
-    async () => {
-      for await (const _event of events) {
-        // Consume until the upstream iterable reports its failure.
-      }
-    },
-    Error,
-    "stream failed",
-  );
-  await Promise.all(background);
+  for await (const _event of events) {
+    // Drain to EOF without ever seeing a terminal frame.
+  }
+  await Promise.all(harness.background);
 
-  assertEquals(await repo.performance.listAll(), []);
+  const rows = await harness.repo.performance.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].metricScope, "upstream_success");
+  assertEquals(rows[0].requests, 0);
+  assertEquals(rows[0].errors, 1);
 });
 
-Deno.test("withUpstreamSuccessTelemetry does not record failed Responses JSON as success", async () => {
-  const repo = new InMemoryRepo();
-  initRepo(repo);
-  const background: Promise<unknown>[] = [];
+Deno.test("withUpstreamTelemetry records upstream-thrown stream errors as upstream failure", async () => {
+  const harness = setup();
 
-  const events = withUpstreamSuccessTelemetry(
+  const events = withUpstreamTelemetry(
+    (async function* () {
+      yield { type: "sse" as const, data: '{"type":"message_start"}' };
+      throw new Error("stream failed");
+    })(),
+    baseInput(harness),
+    "messages",
+    performance.now(),
+  );
+
+  let thrown: unknown;
+  try {
+    for await (const _event of events) {
+      // Consume until upstream throws.
+    }
+  } catch (error) {
+    thrown = error;
+  }
+  await Promise.all(harness.background);
+
+  assertEquals((thrown as Error)?.message, "stream failed");
+  const rows = await harness.repo.performance.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].errors, 1);
+  assertEquals(rows[0].requests, 0);
+});
+
+Deno.test("withUpstreamTelemetry does not record consumer-cancelled streams", async () => {
+  const harness = setup();
+
+  const iterator = withUpstreamTelemetry(
+    (async function* () {
+      yield { type: "sse" as const, data: '{"type":"message_start"}' };
+      yield { type: "sse" as const, data: '{"type":"content_block_delta"}' };
+    })(),
+    baseInput(harness),
+    "messages",
+    performance.now(),
+  )[Symbol.asyncIterator]();
+
+  await iterator.next();
+  await iterator.return?.(undefined);
+  await Promise.all(harness.background);
+
+  assertEquals(await harness.repo.performance.listAll(), []);
+});
+
+Deno.test("withUpstreamTelemetry records failed Responses JSON as upstream failure", async () => {
+  const harness = setup();
+
+  const events = withUpstreamTelemetry(
     (async function* () {
       yield {
         type: "json" as const,
@@ -63,16 +128,7 @@ Deno.test("withUpstreamSuccessTelemetry does not record failed Responses JSON as
         },
       };
     })(),
-    {
-      sourceApi: "responses",
-      payload: { model: "gpt-failed-json", stream: false },
-      githubToken: "token",
-      accountType: "individual",
-      apiKeyId: "key_a",
-      clientStream: false,
-      runtimeLocation: "SJC",
-      scheduleBackground: (promise) => background.push(promise),
-    },
+    baseInput(harness, { sourceApi: "responses", model: "gpt-failed-json", stream: false }),
     "responses",
     performance.now(),
   );
@@ -80,31 +136,76 @@ Deno.test("withUpstreamSuccessTelemetry does not record failed Responses JSON as
   for await (const _event of events) {
     // Consume every upstream frame.
   }
-  await Promise.all(background);
+  await Promise.all(harness.background);
 
-  assertEquals(await repo.performance.listAll(), []);
+  const rows = await harness.repo.performance.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].metricScope, "upstream_success");
+  assertEquals(rows[0].errors, 1);
+  assertEquals(rows[0].requests, 0);
 });
 
-Deno.test("withUpstreamSuccessTelemetry does not treat DONE as Messages or Responses success", async () => {
-  for (const targetApi of ["messages", "responses"] as const) {
-    const repo = new InMemoryRepo();
-    initRepo(repo);
-    const background: Promise<unknown>[] = [];
+Deno.test("withUpstreamTelemetry records Messages SSE error event as upstream failure", async () => {
+  const harness = setup();
 
-    const events = withUpstreamSuccessTelemetry(
+  const events = withUpstreamTelemetry(
+    (async function* () {
+      yield { type: "sse" as const, data: '{"type":"message_start"}' };
+      yield {
+        type: "sse" as const,
+        event: "error",
+        data: '{"type":"error","error":{"type":"overloaded_error","message":"slow down"}}',
+      };
+    })(),
+    baseInput(harness),
+    "messages",
+    performance.now(),
+  );
+
+  for await (const _event of events) {
+    // Consume both frames.
+  }
+  await Promise.all(harness.background);
+
+  const rows = await harness.repo.performance.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].errors, 1);
+  assertEquals(rows[0].requests, 0);
+});
+
+Deno.test("withUpstreamTelemetry records Responses SSE failure event as upstream failure", async () => {
+  const harness = setup();
+
+  const events = withUpstreamTelemetry(
+    (async function* () {
+      yield { type: "sse" as const, data: '{"type":"response.created"}' };
+      yield { type: "sse" as const, data: '{"type":"response.failed","response":{"status":"failed"}}' };
+    })(),
+    baseInput(harness, { sourceApi: "responses", model: "gpt-failed-stream" }),
+    "responses",
+    performance.now(),
+  );
+
+  for await (const _event of events) {
+    // Consume both frames.
+  }
+  await Promise.all(harness.background);
+
+  const rows = await harness.repo.performance.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].errors, 1);
+  assertEquals(rows[0].requests, 0);
+});
+
+Deno.test("withUpstreamTelemetry treats DONE as terminal only for chat-completions", async () => {
+  for (const targetApi of ["messages", "responses"] as const) {
+    const harness = setup();
+
+    const events = withUpstreamTelemetry(
       (async function* () {
         yield { type: "sse" as const, data: "[DONE]" };
       })(),
-      {
-        sourceApi: targetApi,
-        payload: { model: `gpt-${targetApi}-done`, stream: true },
-        githubToken: "token",
-        accountType: "individual",
-        apiKeyId: "key_a",
-        clientStream: true,
-        runtimeLocation: "SJC",
-        scheduleBackground: (promise) => background.push(promise),
-      },
+      baseInput(harness, { sourceApi: targetApi, model: `gpt-${targetApi}-done` }),
       targetApi,
       performance.now(),
     );
@@ -112,32 +213,26 @@ Deno.test("withUpstreamSuccessTelemetry does not treat DONE as Messages or Respo
     for await (const _event of events) {
       // Consume every upstream frame.
     }
-    await Promise.all(background);
+    await Promise.all(harness.background);
 
-    assertEquals(await repo.performance.listAll(), []);
+    // [DONE] is not a terminal for messages/responses, and the stream ended
+    // without one, so this records as an EOF-without-terminal failure.
+    const rows = await harness.repo.performance.listAll();
+    assertEquals(rows.length, 1);
+    assertEquals(rows[0].errors, 1);
+    assertEquals(rows[0].requests, 0);
   }
 });
 
-Deno.test("withUpstreamSuccessTelemetry snapshots duration when the success frame arrives", async () => {
-  const repo = new InMemoryRepo();
-  initRepo(repo);
-  const background: Promise<unknown>[] = [];
+Deno.test("withUpstreamTelemetry snapshots duration when the success frame arrives", async () => {
+  const harness = setup();
   const startedAt = performance.now();
 
-  const iterator = withUpstreamSuccessTelemetry(
+  const iterator = withUpstreamTelemetry(
     (async function* () {
       yield { type: "sse" as const, data: '{"type":"message_stop"}' };
     })(),
-    {
-      sourceApi: "messages",
-      payload: { model: "claude-timing", stream: true },
-      githubToken: "token",
-      accountType: "individual",
-      apiKeyId: "key_a",
-      clientStream: true,
-      runtimeLocation: "SJC",
-      scheduleBackground: (promise) => background.push(promise),
-    },
+    baseInput(harness, { model: "claude-timing" }),
     "messages",
     startedAt,
   )[Symbol.asyncIterator]();
@@ -145,10 +240,54 @@ Deno.test("withUpstreamSuccessTelemetry snapshots duration when the success fram
   assertEquals((await iterator.next()).done, false);
   await new Promise((resolve) => setTimeout(resolve, 80));
   assertEquals((await iterator.next()).done, true);
-  await Promise.all(background);
+  await Promise.all(harness.background);
 
-  const rows = await repo.performance.listAll();
+  const rows = await harness.repo.performance.listAll();
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "upstream_success");
+  assertEquals(rows[0].requests, 1);
+  assertEquals(rows[0].errors, 0);
   assertEquals(rows[0].totalMsSum < 40, true);
+});
+
+Deno.test("recordUpstreamHttpFailure records a single error for non-2xx responses", async () => {
+  const harness = setup();
+  recordUpstreamHttpFailure(baseInput(harness, { sourceApi: "messages" }), "messages");
+  await Promise.all(harness.background);
+
+  const rows = await harness.repo.performance.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].metricScope, "upstream_success");
+  assertEquals(rows[0].errors, 1);
+  assertEquals(rows[0].requests, 0);
+});
+
+Deno.test("withUpstreamTelemetry skips recording when apiKeyId is absent", async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
+  const background: Promise<unknown>[] = [];
+
+  const events = withUpstreamTelemetry(
+    (async function* () {
+      yield { type: "sse" as const, data: '{"type":"message_stop"}' };
+    })(),
+    {
+      sourceApi: "messages",
+      payload: { model: "claude-anon", stream: true },
+      githubToken: "token",
+      accountType: "individual",
+      clientStream: true,
+      runtimeLocation: "SJC",
+      scheduleBackground: (promise) => background.push(promise),
+    },
+    "messages",
+    performance.now(),
+  );
+
+  for await (const _event of events) {
+    // Consume terminal.
+  }
+  await Promise.all(background);
+
+  assertEquals(await repo.performance.listAll(), []);
 });

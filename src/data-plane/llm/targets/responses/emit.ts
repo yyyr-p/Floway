@@ -17,7 +17,10 @@ import { isSSEResponse } from "../../shared/stream/is-sse-response.ts";
 import { jsonFrame } from "../../shared/stream/types.ts";
 import { runTargetInterceptors } from "../run-interceptors.ts";
 import type { EmitInput, EmitResult, RawEmitResult } from "../emit-types.ts";
-import { withUpstreamSuccessTelemetry } from "../telemetry.ts";
+import {
+  recordUpstreamHttpFailure,
+  withUpstreamTelemetry,
+} from "../telemetry.ts";
 import { type SequencedResponseStreamEvent } from "./events/from-result.ts";
 import { responsesStreamFramesToEvents } from "./events/from-stream.ts";
 import { responsesTargetInterceptors } from "./interceptors/index.ts";
@@ -54,7 +57,10 @@ export const emitToResponses = async (
           input.fetchOptions,
         );
 
-        if (!response.ok) return await readUpstreamError(response);
+        if (!response.ok) {
+          recordUpstreamHttpFailure(input, "responses");
+          return await readUpstreamError(response);
+        }
         if (!response.body) {
           return internalErrorResult(
             502,
@@ -67,7 +73,7 @@ export const emitToResponses = async (
         }
 
         if (isSSEResponse(response)) {
-          return eventResult(withUpstreamSuccessTelemetry(
+          return eventResult(withUpstreamTelemetry(
             parseSSEStream(response.body),
             input,
             "responses",
@@ -75,7 +81,7 @@ export const emitToResponses = async (
           ));
         }
 
-        return eventResult(withUpstreamSuccessTelemetry(
+        return eventResult(withUpstreamTelemetry(
           (async function* () {
             yield jsonFrame(await response.json() as ResponsesResult);
           })(),

@@ -315,6 +315,7 @@ Deno.test("performance telemetry records upstream errors under resolved dimensio
   const rows = await repo.performance.query({
     start: "2026-01-01T00",
     end: "9999-01-01T00",
+    metricScope: "request_total",
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "request_total");
@@ -379,6 +380,7 @@ Deno.test("performance telemetry keeps resolved dimensions after context-window 
   const rows = await repo.performance.query({
     start: "2026-01-01T00",
     end: "9999-01-01T00",
+    metricScope: "request_total",
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "request_total");
@@ -510,6 +512,7 @@ Deno.test("performance telemetry treats protocol error SSE frames as request err
   const rows = await repo.performance.query({
     start: "2026-01-01T00",
     end: "9999-01-01T00",
+    metricScope: "request_total",
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "request_total");
@@ -697,6 +700,7 @@ Deno.test("performance telemetry keeps resolved dimensions for non-stream Messag
   const rows = await repo.performance.query({
     start: "2026-01-01T00",
     end: "9999-01-01T00",
+    metricScope: "request_total",
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "request_total");
@@ -825,6 +829,7 @@ Deno.test("performance telemetry keeps resolved dimensions for non-stream Chat p
   const rows = await repo.performance.query({
     start: "2026-01-01T00",
     end: "9999-01-01T00",
+    metricScope: "request_total",
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "request_total");
@@ -837,7 +842,7 @@ Deno.test("performance telemetry keeps resolved dimensions for non-stream Chat p
   assertEquals(rows[0].buckets.length, 0);
 });
 
-Deno.test("performance telemetry treats Responses failed JSON as request error without upstream success", async () => {
+Deno.test("performance telemetry treats Responses failed JSON as request error and upstream failure", async () => {
   const { repo, apiKey } = await setupAppTest();
 
   await withMockedFetch((request) => {
@@ -891,12 +896,23 @@ Deno.test("performance telemetry treats Responses failed JSON as request error w
   const rows = await repo.performance.query({
     start: "2026-01-01T00",
     end: "9999-01-01T00",
+    metricScope: "request_total",
   });
   assertEquals(rows.length, 1);
   assertEquals(rows[0].metricScope, "request_total");
   assertEquals(rows[0].model, "gpt-failed-json");
   assertEquals(rows[0].requests, 0);
   assertEquals(rows[0].errors, 1);
+
+  const upstreamRows = await repo.performance.query({
+    start: "2026-01-01T00",
+    end: "9999-01-01T00",
+    metricScope: "upstream_success",
+  });
+  assertEquals(upstreamRows.length, 1);
+  assertEquals(upstreamRows[0].requests, 0);
+  assertEquals(upstreamRows[0].errors, 1);
+  assertEquals(upstreamRows[0].buckets.length, 0);
 });
 
 Deno.test("performance telemetry records unsupported Responses model errors under resolved model", async () => {
