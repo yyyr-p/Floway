@@ -1,0 +1,38 @@
+---
+name: audit-copilot-workarounds
+description: Use periodically to verify each documented workaround is still
+  needed against current Copilot upstream. Inventories drift, dispatches
+  parallel cluster audits, runs live probes, and produces deletion commits
+  with experimental justification.
+---
+
+# Audit Copilot Workarounds
+
+Workarounds rot. Re-validate them against current Copilot upstream.
+
+## Flow
+
+1. Inventory drift between `index.ts` registrations, AGENTS.md
+   "Data Plane Workarounds", and TRANSLATION.md.
+2. Dispatch parallel read-only audits, one per source/target × API cluster.
+3. Loop further agent rounds until remaining open questions are only
+   "needs live probe" or "needs human decision".
+4. Run live probes for the former.
+5. Land deletion + doc commits. Hand the human the rest.
+
+## Extra constraints
+
+- **Live probes need full-matrix evidence.** Test every applicable model
+  from `GET /models`, on every account in D1 (different account types
+  may diverge). One model is never enough to delete.
+- **One workaround per deletion commit.** Never bundle.
+- **Each deletion commit message must contain the live experiment
+  conclusion** that justified it: which models tested, which values,
+  exact upstream error text when relevant, and the originating commit
+  sha being reverted.
+- **When a policy value (threshold, floor, retry count) has no official
+  upstream basis, the comment must say so explicitly** in addition to
+  citing prior-art permalinks.
+- **Token discovery is your job.** D1 holds GitHub PATs and account
+  metadata; figure out the exchange path from the codebase. Don't ask
+  the human for credentials.
