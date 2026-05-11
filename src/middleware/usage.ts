@@ -254,6 +254,19 @@ function consumeUsageLine(
 // deno-lint-ignore no-explicit-any
 function extractUsageFromJson(json: any): UsageInfo | null {
   if (json?.usage?.input_tokens != null) {
+    // Responses non-stream replies share usage.input_tokens with Messages but
+    // use OpenAI semantics: input_tokens already includes cached_tokens, and
+    // there is no cache-write concept. Discriminate by input_tokens_details,
+    // which only Responses populates.
+    if (json.usage.input_tokens_details) {
+      return {
+        input: json.usage.input_tokens,
+        output: json.usage.output_tokens ?? 0,
+        cacheRead: json.usage.input_tokens_details.cached_tokens ?? 0,
+        cacheCreation: 0,
+      };
+    }
+
     const cacheRead = json.usage.cache_read_input_tokens ?? 0;
     const cacheCreation = json.usage.cache_creation_input_tokens ?? 0;
     return {

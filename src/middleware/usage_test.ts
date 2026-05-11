@@ -27,6 +27,73 @@ const requestUsageMiddlewareOnly = async (
   return await app.request("/v1/messages", { method: "POST" });
 };
 
+Deno.test("usage middleware records non-streaming Responses cache_read from input_tokens_details", async () => {
+  const { repo, apiKey } = await setupAppTest();
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        { id: "gpt-resp-cached", supported_endpoints: ["/responses"] },
+      ]));
+    }
+    if (url.pathname === "/responses") {
+      return jsonResponse({
+        id: "resp_cached_usage",
+        object: "response",
+        model: "gpt-resp-cached",
+        status: "completed",
+        output: [],
+        output_text: "ok",
+        usage: {
+          input_tokens: 100,
+          output_tokens: 9,
+          total_tokens: 109,
+          input_tokens_details: { cached_tokens: 30 },
+        },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-resp-cached",
+        input: "Hi",
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    await response.json();
+  });
+
+  await flushAsyncWork();
+
+  const usage = await repo.usage.listAll();
+  assertEquals(usage.length, 1);
+  assertEquals(usage[0].model, "gpt-resp-cached");
+  assertEquals(usage[0].inputTokens, 100);
+  assertEquals(usage[0].outputTokens, 9);
+  assertEquals(usage[0].cacheReadTokens, 30);
+  assertEquals(usage[0].cacheCreationTokens, 0);
+});
+
 Deno.test("usage middleware records non-streaming usage and updates lastUsedAt", async () => {
   const { repo, apiKey } = await setupAppTest();
 
