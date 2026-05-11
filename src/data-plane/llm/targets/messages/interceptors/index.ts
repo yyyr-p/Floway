@@ -4,6 +4,7 @@ import type { EmitToMessagesInput } from "../emit.ts";
 import { withMissingMaxTokensFilled } from "./fill-missing-max-tokens.ts";
 import { withBetaHeaderFixed } from "./fix-beta-header.ts";
 import { withInvalidThinkingBlocksFiltered } from "./filter-invalid-thinking-blocks.ts";
+import { withThinkingDisplayPromoted } from "./promote-thinking-display.ts";
 import { withDoneSentinelStripped } from "./strip-done-sentinel.ts";
 import { withEagerInputStreamingStripped } from "./strip-eager-input-streaming.ts";
 import { withServiceTierStripped } from "./strip-service-tier.ts";
@@ -13,6 +14,7 @@ export const messagesTargetInterceptors = [
   withMessagesWebSearchShim,
   withMissingMaxTokensFilled,
   withInvalidThinkingBlocksFiltered,
+  withThinkingDisplayPromoted,
   withBetaHeaderFixed,
   withServiceTierStripped,
   withEagerInputStreamingStripped,

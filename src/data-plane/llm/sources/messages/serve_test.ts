@@ -755,6 +755,214 @@ Deno.test("/v1/messages keeps caller thinking and tool_choice unchanged on nativ
   assertEquals(upstreamBeta, null);
 });
 
+Deno.test("/v1/messages sends summarized thinking upstream while exposing 4.7 default omitted downstream", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+  let upstreamBeta: string | null = null;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        {
+          id: "claude-opus-4.7-1m-internal",
+          supported_endpoints: ["/v1/messages"],
+          adaptiveThinking: true,
+        },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      upstreamBeta = request.headers.get("anthropic-beta");
+      return makeAssistantSSE("msg_thinking", [
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking: "private summary" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "signature_delta", signature: "sig_4_7" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+        "anthropic-beta": "redact-thinking-2026-02-12",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4.7-1m-internal",
+        max_tokens: 64,
+        stream: false,
+        thinking: { type: "adaptive" },
+        messages: [{ role: "user", content: "think" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.content, [{
+      type: "thinking",
+      thinking: "",
+      signature: "sig_4_7",
+    }]);
+  });
+
+  assertExists(upstreamBody);
+  assertEquals(
+    (upstreamBody!.thinking as Record<string, unknown>).display,
+    "summarized",
+  );
+  assertEquals(upstreamBeta, null);
+});
+
+Deno.test("/v1/messages streams explicit omitted without thinking_delta while preserving signature", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+  let upstreamBeta: string | null = null;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        {
+          id: "claude-opus-4.7",
+          supported_endpoints: ["/v1/messages"],
+          adaptiveThinking: true,
+        },
+      ]));
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = JSON.parse(await request.text());
+      upstreamBeta = request.headers.get("anthropic-beta");
+      return makeAssistantSSE("msg_thinking_stream", [
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "thinking", thinking: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "thinking_delta", thinking: "hidden summary" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "signature_delta", signature: "sig_stream" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+        "anthropic-beta": "redact-thinking-2026-02-12",
+      },
+      body: JSON.stringify({
+        model: "claude-opus-4.7",
+        max_tokens: 64,
+        stream: true,
+        thinking: { type: "adaptive", display: "omitted" },
+        messages: [{ role: "user", content: "think" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const events = parseSSEText(await response.text())
+      .map((event) => JSON.parse(event.data));
+
+    const thinkingStart = events.find((event) =>
+      event.type === "content_block_start" &&
+      event.content_block.type === "thinking"
+    );
+    assertExists(thinkingStart);
+    assertEquals(thinkingStart.content_block.thinking, "");
+    assertFalse(events.some((event) =>
+      event.type === "content_block_delta" &&
+      event.delta.type === "thinking_delta"
+    ));
+    assertExists(events.find((event) =>
+      event.type === "content_block_delta" &&
+      event.delta.type === "signature_delta" &&
+      event.delta.signature === "sig_stream"
+    ));
+  });
+
+  assertExists(upstreamBody);
+  assertEquals(
+    (upstreamBody!.thinking as Record<string, unknown>).display,
+    "summarized",
+  );
+  assertEquals(upstreamBeta, null);
+});
+
 Deno.test("/v1/messages resolves base Claude models to effort variants before planning", async () => {
   const { apiKey } = await setupAppTest();
 

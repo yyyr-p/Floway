@@ -44,6 +44,14 @@ export const eventResult = <T>(
   return result;
 };
 
+export const mapEventResult = <TEvent, TMappedEvent>(
+  result: ExecuteResult<TEvent>,
+  mapEvents: (events: AsyncIterable<TEvent>) => AsyncIterable<TMappedEvent>,
+): ExecuteResult<TMappedEvent> =>
+  result.type === "events"
+    ? { ...result, events: mapEvents(result.events) }
+    : result;
+
 export const internalErrorResult = (
   status: number,
   error: InternalDebugError,

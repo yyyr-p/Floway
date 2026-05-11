@@ -1,5 +1,7 @@
 export const MESSAGES_THINKING_PLACEHOLDER = "Thinking...";
 
+export type MessagesThinkingDisplay = "omitted" | "summarized" | "full";
+
 export interface MessagesPayload {
   model: string;
   messages: MessagesMessage[];
@@ -19,6 +21,7 @@ export interface MessagesPayload {
   thinking?: {
     type: "enabled" | "adaptive" | "disabled";
     budget_tokens?: number;
+    display?: MessagesThinkingDisplay;
   };
   output_config?: { effort?: string };
   service_tier?: "auto" | "standard_only";
