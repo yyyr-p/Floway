@@ -60,3 +60,23 @@ export type ChatPlan =
     wantsStream: boolean;
     fetchOptions: CopilotFetchOptions;
   };
+
+export type GeminiPlan =
+  | {
+    source: "gemini";
+    target: "messages";
+    wantsStream: boolean;
+    fetchOptions: CopilotFetchOptions;
+  }
+  | {
+    source: "gemini";
+    target: "responses";
+    wantsStream: boolean;
+    fetchOptions: CopilotFetchOptions;
+  }
+  | {
+    source: "gemini";
+    target: "chat-completions";
+    wantsStream: boolean;
+    fetchOptions: CopilotFetchOptions;
+  };

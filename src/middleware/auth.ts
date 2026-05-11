@@ -17,6 +17,14 @@ const PLAYGROUND_PATHS = new Set([
   "/v1/embeddings",
 ]);
 
+const isPlaygroundPath = (path: string): boolean =>
+  PLAYGROUND_PATHS.has(path) || isGeminiModelsPath(path);
+
+// Gemini model, generateContent, streamGenerateContent, and countTokens routes are
+// all scoped under /v1beta/models; keep the ADMIN_KEY playground escape hatch there.
+const isGeminiModelsPath = (path: string): boolean =>
+  path === "/v1beta/models" || path.startsWith("/v1beta/models/");
+
 export const authMiddleware = async (c: Context, next: Next) => {
   const path = c.req.path;
 
@@ -33,8 +41,13 @@ export const authMiddleware = async (c: Context, next: Next) => {
     c.set("isAdmin", true);
     if (DASHBOARD_PREFIXES.some((p) => path.startsWith(p))) return next();
     // Dashboard Models playground escape hatch
-    if (c.req.header("x-models-playground") === "1" && PLAYGROUND_PATHS.has(path)) return next();
-    return c.json({ error: "This key is for dashboard only. Create an API key for API access." }, 403);
+    if (c.req.header("x-models-playground") === "1" && isPlaygroundPath(path)) {
+      return next();
+    }
+    return c.json({
+      error:
+        "This key is for dashboard only. Create an API key for API access.",
+    }, 403);
   }
 
   // API key — full access
@@ -60,8 +73,9 @@ function extractKey(c: Context): string | null {
   const url = new URL(c.req.url);
   return (
     url.searchParams.get("key") ??
-    c.req.header("x-api-key") ??
-    c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ??
-    null
+      c.req.header("x-api-key") ??
+      c.req.header("x-goog-api-key") ??
+      c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ??
+      null
   );
 }

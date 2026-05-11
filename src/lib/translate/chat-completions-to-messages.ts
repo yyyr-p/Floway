@@ -192,7 +192,8 @@ const translateChatCompletionsTools = (
   tools.map((tool) => ({
     name: tool.function.name,
     description: tool.function.description,
-    input_schema: tool.function.parameters,
+    input_schema: tool.function.parameters ??
+      { type: "object", properties: {} },
     ...(tool.function.strict !== undefined
       ? { strict: tool.function.strict }
       : {}),

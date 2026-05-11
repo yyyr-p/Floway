@@ -17,9 +17,9 @@ are not.
 ## Project Snapshot
 
 `copilot-gateway` is a GitHub Copilot API proxy. It exposes standard Anthropic
-Messages, OpenAI Responses, and OpenAI Chat Completions interfaces on top of
-Copilot upstream APIs so tools like Claude Code and Codex CLI can use a Copilot
-subscription.
+Messages, OpenAI Responses, OpenAI Chat Completions, and Google Gemini
+interfaces on top of Copilot upstream APIs so tools like Claude Code, Codex CLI,
+and Gemini-compatible clients can use a Copilot subscription.
 
 Runtime stack:
 
@@ -70,6 +70,8 @@ Data plane:
 - `/v1/embeddings`
 - `/v1/models`
 - `/v1/messages/count_tokens`
+- `/v1beta/models`
+- `/v1beta/models/*`
 
 Translation, stream handling, and Copilot workarounds belong to the data plane
 only.
@@ -79,7 +81,10 @@ only.
 The data plane is organized under `src/data-plane/` by endpoint and tool
 capability first:
 
-- `src/data-plane/llm/`: Messages, Responses, and Chat Completions LLM routing
+- `src/data-plane/llm/`: Messages, Responses, Chat Completions, and Gemini LLM
+  routing
+- `src/data-plane/gemini/`: Gemini model-listing and token-count endpoint
+  capabilities
 - `src/data-plane/models/`: models endpoint capability
 - `src/data-plane/embeddings/`: embeddings endpoint capability
 - `src/data-plane/tools/`: data-plane tool capabilities such as web search
@@ -94,22 +99,25 @@ The LLM subtree is role-organized:
 - `src/data-plane/llm/shared/`
 
 `sources`, `targets`, and `translate` under `src/data-plane/llm/` are only for
-Messages, Responses, and Chat Completions. Do not place `models`, `embeddings`,
-or data-plane tools inside that LLM routing graph.
+Messages, Responses, Chat Completions, and Gemini LLM generation routing. Do not
+place `models`, `embeddings`, data-plane tools, Gemini model listing, or Gemini
+count-tokens endpoint code inside that LLM routing graph.
 
 `src/app.ts` mounts `mountControlPlane` and `mountDataPlane`. The data-plane
-route inventory is owned by `src/data-plane/routes.ts`, and the three LLM source
+route inventory is owned by `src/data-plane/routes.ts`, and the four LLM source
 entries are mounted by `src/data-plane/llm/routes.ts`:
 
 - `serveMessages`
 - `serveResponses`
 - `serveChatCompletions`
+- `serveGeminiPost`
 
 Each source API has one unique entry:
 
 - `serveMessages`
 - `serveResponses`
 - `serveChatCompletions`
+- `serveGemini`
 
 Each source entry follows the same pipeline:
 
@@ -205,6 +213,14 @@ Primary proxy routes:
 - `GET /v1/models`
 - `POST /v1/embeddings`
 
+Gemini-compatible routes:
+
+- `GET /v1beta/models`
+- `GET /v1beta/models/:model`
+- `POST /v1beta/models/:model:generateContent`
+- `POST /v1beta/models/:model:streamGenerateContent`
+- `POST /v1beta/models/:model:countTokens`
+
 ## Data Plane Routing Rules
 
 `/v1/messages` chooses among:
@@ -231,6 +247,18 @@ model supports it.
 If no capability-backed target is available, `/v1/chat/completions` keeps its
 legacy model-name fallback: `claude*` models route through `/v1/messages`, and
 other models route through native `/chat/completions`.
+
+`/v1beta/models/:model:generateContent` and
+`/v1beta/models/:model:streamGenerateContent` use the same target preference as
+the Chat Completions source:
+
+1. Translated `/v1/messages`
+2. Translated `/chat/completions`
+3. Translated `/responses`
+
+If no capability-backed target is available, Gemini keeps the same legacy
+model-name fallback as Chat Completions: `claude*` models route through
+`/v1/messages`, and other models route through native `/chat/completions`.
 
 Planning is the only layer allowed to make this routing decision.
 
@@ -264,6 +292,19 @@ Current placement:
 - `src/data-plane/llm/sources/responses/normalize/`
   - rewrite `apply_patch` from `custom` to `function`
   - remove unsupported `image_generation` tools and forced tool choices
+- `src/data-plane/llm/sources/gemini/normalize/`
+  - strip unsupported Gemini file/code part fields
+  - strip unsupported Gemini tool capabilities, including `googleSearch`, until
+    it can be routed through the web-search shim
+  - strip `safetySettings`
+- `src/data-plane/llm/sources/gemini/serve.ts`
+  - hide `thought: true` summary parts by default
+  - only expose Gemini thought summaries when
+    `generationConfig.thinkingConfig.includeThoughts === true`
+  - preserve `thoughtSignature` on the next visible text or function-call action
+    part so clients can echo it next turn
+- `src/data-plane/llm/sources/gemini/respond.ts`
+  - translate source errors into Google RPC Status envelopes
 - `src/data-plane/llm/targets/messages/interceptors/filter-invalid-thinking-blocks.ts`
   - filter invalid thinking blocks
 - `src/data-plane/llm/targets/messages/interceptors/fix-beta-header.ts`
@@ -376,6 +417,7 @@ Copilot gateway implementations:
 - `https://github.com/StarryKira/copilot2api-go`
 - `https://github.com/messense/copilot-api-proxy`
 - `https://github.com/san-tian/copilot-pool-gateway`
+- `https://github.com/xuangong/copilot-api-gateway`
 
 General LLM gateway implementations:
 
@@ -481,6 +523,9 @@ These rules apply project-wide, not only to the data plane.
 - Pairwise translators belong in `src/data-plane/llm/translate/`.
 - Models endpoint work belongs in `src/data-plane/models/`.
 - Embeddings endpoint work belongs in `src/data-plane/embeddings/`.
+- Gemini model listing and count-token endpoints belong in
+  `src/data-plane/gemini/`.
+- Gemini generation source work belongs in `src/data-plane/llm/sources/gemini/`.
 - Data-plane tool capability work belongs in `src/data-plane/tools/<tool>/`,
   such as `src/data-plane/tools/web-search/`.
 - Shared data-plane HTTP helpers belong in `src/data-plane/shared/http/`.

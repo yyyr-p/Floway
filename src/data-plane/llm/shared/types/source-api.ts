@@ -1,1 +1,5 @@
-export type SourceApi = "messages" | "responses" | "chat-completions";
+export type SourceApi =
+  | "messages"
+  | "responses"
+  | "chat-completions"
+  | "gemini";

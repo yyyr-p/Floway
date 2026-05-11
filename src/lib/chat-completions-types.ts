@@ -8,6 +8,10 @@ export interface ChatCompletionsPayload {
   stream?: boolean | null;
   temperature?: number | null;
   top_p?: number | null;
+  n?: number | null;
+  seed?: number | null;
+  presence_penalty?: number | null;
+  frequency_penalty?: number | null;
   user?: string | null;
   metadata?: Record<string, unknown> | null;
   store?: boolean | null;
@@ -33,7 +37,7 @@ export interface Tool {
   function: {
     name: string;
     description?: string;
-    parameters: Record<string, unknown>;
+    parameters?: Record<string, unknown>;
     strict?: boolean;
   };
 }
@@ -104,6 +108,7 @@ interface Usage {
   completion_tokens_details?: {
     accepted_prediction_tokens: number;
     rejected_prediction_tokens: number;
+    reasoning_tokens?: number;
   };
 }
 

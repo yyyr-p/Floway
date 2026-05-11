@@ -85,5 +85,5 @@ function isLlmApiName(
   value: unknown,
 ): value is PerformanceTelemetryContext["sourceApi"] {
   return value === "messages" || value === "responses" ||
-    value === "chat-completions";
+    value === "chat-completions" || value === "gemini";
 }

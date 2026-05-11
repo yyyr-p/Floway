@@ -25,8 +25,12 @@ const SOURCE_API_BY_PATH: Record<string, PerformanceApiName> = {
   "/v1/chat/completions": "chat-completions",
 };
 
+const sourceApiFromPath = (path: string): PerformanceApiName | undefined =>
+  SOURCE_API_BY_PATH[path] ??
+    (path.startsWith("/v1beta/models/") ? "gemini" : undefined);
+
 export const performanceMiddleware = async (c: Context, next: Next) => {
-  const sourceApi = SOURCE_API_BY_PATH[c.req.path];
+  const sourceApi = sourceApiFromPath(c.req.path);
   if (!sourceApi || c.req.method !== "POST") return await next();
 
   const startedAt = performance.now();

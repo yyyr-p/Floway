@@ -2,7 +2,8 @@
 
 A lightweight and secure API proxy deployed on serverless platforms that exposes
 your GitHub Copilot subscription as standard **Anthropic Messages API** and
-**OpenAI Responses API** endpoints — letting you use
+**OpenAI Responses API**, **OpenAI Chat Completions**, and **Google Gemini API**
+endpoints — letting you use
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code),
 [Codex CLI](https://github.com/openai/codex), and other coding agents through
 Copilot.
@@ -17,6 +18,9 @@ Copilot Gateway translates between API formats on the fly:
   through accordingly
 - **Any OpenAI-compatible client** can use the Chat Completions endpoint —
   Gateway translates to Messages or Responses API as needed
+- **Gemini-compatible clients** can use `generateContent`,
+  `streamGenerateContent`, `countTokens`, and `models` routes under
+  `/v1beta/models` — Gateway translates them to Copilot-backed LLM targets
 
 The gateway auto-detects each model's supported endpoints (native Messages,
 Responses, or Chat Completions) and picks the best translation path. When
@@ -114,7 +118,8 @@ Claude Code / Codex CLI / any client
   ├── POST /v1/responses         ← OpenAI Responses API
   ├── POST /v1/chat/completions  ← OpenAI Chat Completions
   ├── POST /v1/embeddings        ← Embeddings passthrough
-  └── GET  /v1/models            ← Model listing
+  ├── GET  /v1/models            ← OpenAI model listing
+  └── GET/POST /v1beta/models/... ← Gemini models/generate/count tokens
         │
         ▼ (auto-selects translation path per model)
   GitHub Copilot API

@@ -39,7 +39,11 @@ export interface SearchUsageRecord {
 }
 
 export type PerformanceMetricScope = "request_total" | "upstream_success";
-export type PerformanceApiName = "messages" | "responses" | "chat-completions";
+export type PerformanceApiName =
+  | "messages"
+  | "responses"
+  | "chat-completions"
+  | "gemini";
 
 export interface PerformanceDimensions {
   hour: string;

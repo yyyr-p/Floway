@@ -76,7 +76,8 @@ const translateChatTools = (tools?: Tool[] | null): ResponseTool[] | null =>
     ? tools.map((tool) => ({
       type: "function",
       name: tool.function.name,
-      parameters: tool.function.parameters,
+      parameters: tool.function.parameters ??
+        { type: "object", properties: {} },
       // Chat function tools are non-strict by default while Responses function
       // tools default strict; make omission explicit to preserve Chat semantics.
       strict: tool.function.strict ?? false,

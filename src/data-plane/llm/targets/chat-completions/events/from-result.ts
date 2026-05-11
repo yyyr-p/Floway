@@ -14,79 +14,123 @@ interface ChatCompletionResultToEventsOptions {
   onUsageChunk?: (usage: NonNullable<ChatCompletionResponse["usage"]>) => void;
 }
 
+type ResultChoice = ChatCompletionResponse["choices"][number];
+type ChunkChoice = ChatCompletionChunk["choices"][number];
+type Delta = ChunkChoice["delta"];
+
 const makeChunk = (
   response: ChatCompletionResponse,
-  delta: Record<string, unknown>,
-  finishReason: ChatCompletionChunk["choices"][number]["finish_reason"] = null,
+  choices: ChunkChoice[],
 ): ChatCompletionChunk => ({
   id: response.id,
   object: "chat.completion.chunk",
   created: response.created,
   model: response.model,
-  choices: [{
-    index: 0,
-    delta,
-    finish_reason: finishReason,
-  }],
+  choices,
 });
+
+const makeChoice = (
+  choice: ResultChoice,
+  delta: Delta,
+  finishReason: ChunkChoice["finish_reason"] = null,
+): ChunkChoice => ({
+  index: choice.index,
+  delta,
+  finish_reason: finishReason,
+});
+
+const pushDeltaChunk = (
+  frames: Array<EventFrame<ChatCompletionChunk> | DoneFrame>,
+  response: ChatCompletionResponse,
+  choices: ChunkChoice[],
+): void => {
+  if (choices.length) frames.push(eventFrame(makeChunk(response, choices)));
+};
 
 export const chatCompletionResultToEvents = (
   response: ChatCompletionResponse,
   options: ChatCompletionResultToEventsOptions = {},
 ): Array<EventFrame<ChatCompletionChunk> | DoneFrame> => {
-  const choice = response.choices[0];
   const includeUsageChunk = options.includeUsageChunk ?? true;
   const frames: Array<EventFrame<ChatCompletionChunk> | DoneFrame> = [
-    eventFrame(makeChunk(response, { role: "assistant" })),
+    eventFrame(makeChunk(
+      response,
+      response.choices.map((choice) =>
+        makeChoice(choice, { role: "assistant" })
+      ),
+    )),
   ];
 
-  if (
-    choice?.message.reasoning_text !== undefined &&
-    choice.message.reasoning_text !== null
-  ) {
-    frames.push(eventFrame(makeChunk(response, {
-      reasoning_text: choice.message.reasoning_text,
-    })));
-  }
+  pushDeltaChunk(
+    frames,
+    response,
+    response.choices.flatMap((choice) =>
+      choice.message.reasoning_text !== undefined &&
+        choice.message.reasoning_text !== null
+        ? [
+          makeChoice(choice, { reasoning_text: choice.message.reasoning_text }),
+        ]
+        : []
+    ),
+  );
 
-  if (
-    choice?.message.reasoning_opaque !== undefined &&
-    choice.message.reasoning_opaque !== null
-  ) {
-    frames.push(eventFrame(makeChunk(response, {
-      reasoning_opaque: choice.message.reasoning_opaque,
-    })));
-  }
+  pushDeltaChunk(
+    frames,
+    response,
+    response.choices.flatMap((choice) =>
+      choice.message.reasoning_opaque !== undefined &&
+        choice.message.reasoning_opaque !== null
+        ? [
+          makeChoice(choice, {
+            reasoning_opaque: choice.message.reasoning_opaque,
+          }),
+        ]
+        : []
+    ),
+  );
 
-  if (choice?.message.reasoning_items?.length) {
-    frames.push(eventFrame(makeChunk(response, {
-      reasoning_items: choice.message.reasoning_items,
-    })));
-  }
+  pushDeltaChunk(
+    frames,
+    response,
+    response.choices.flatMap((choice) =>
+      choice.message.reasoning_items?.length
+        ? [
+          makeChoice(choice, {
+            reasoning_items: choice.message.reasoning_items,
+          }),
+        ]
+        : []
+    ),
+  );
 
-  if (
-    choice?.message.content !== undefined && choice.message.content !== null
-  ) {
-    frames.push(eventFrame(makeChunk(response, {
-      content: choice.message.content,
-    })));
-  }
+  pushDeltaChunk(
+    frames,
+    response,
+    response.choices.flatMap((choice) =>
+      choice.message.content !== undefined && choice.message.content !== null
+        ? [makeChoice(choice, { content: choice.message.content })]
+        : []
+    ),
+  );
 
-  choice?.message.tool_calls?.forEach((toolCall, index) => {
-    frames.push(eventFrame(makeChunk(response, {
-      tool_calls: [{
-        index,
-        id: toolCall.id,
-        type: toolCall.type,
-        function: toolCall.function,
-      }],
-    })));
+  response.choices.forEach((choice) => {
+    choice.message.tool_calls?.forEach((toolCall, index) => {
+      frames.push(eventFrame(makeChunk(response, [makeChoice(choice, {
+        tool_calls: [{
+          index,
+          id: toolCall.id,
+          type: toolCall.type,
+          function: toolCall.function,
+        }],
+      })])));
+    });
   });
 
   frames.push(eventFrame(makeChunk(
     response,
-    {},
-    choice?.finish_reason ?? null,
+    response.choices.map((choice) =>
+      makeChoice(choice, {}, choice.finish_reason)
+    ),
   )));
 
   if (response.usage) options.onUsageChunk?.(response.usage);

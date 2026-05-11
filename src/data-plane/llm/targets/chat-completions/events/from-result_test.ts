@@ -65,6 +65,70 @@ Deno.test("chatCompletionResultToEvents can hide usage chunks for client-visible
   );
 });
 
+Deno.test("chatCompletionResultToEvents preserves all choices from terminal JSON", () => {
+  const frames = Array.from(chatCompletionResultToEvents({
+    id: "chatcmpl_multi",
+    object: "chat.completion",
+    created: 123,
+    model: "gpt-test",
+    choices: [{
+      index: 0,
+      message: { role: "assistant", content: "first" },
+      finish_reason: "stop",
+    }, {
+      index: 1,
+      message: { role: "assistant", content: "second" },
+      finish_reason: "length",
+    }],
+  }, { includeUsageChunk: false }));
+
+  const contentFrame = frames.find((frame) =>
+    frame.type === "event" &&
+    frame.event.choices.some((choice) => choice.delta.content !== undefined)
+  );
+  const finishFrame = frames.find((frame) =>
+    frame.type === "event" &&
+    frame.event.choices.some((choice) => choice.finish_reason !== null)
+  );
+
+  assertEquals(contentFrame, {
+    type: "event",
+    event: {
+      id: "chatcmpl_multi",
+      object: "chat.completion.chunk",
+      created: 123,
+      model: "gpt-test",
+      choices: [{
+        index: 0,
+        delta: { content: "first" },
+        finish_reason: null,
+      }, {
+        index: 1,
+        delta: { content: "second" },
+        finish_reason: null,
+      }],
+    },
+  });
+  assertEquals(finishFrame, {
+    type: "event",
+    event: {
+      id: "chatcmpl_multi",
+      object: "chat.completion.chunk",
+      created: 123,
+      model: "gpt-test",
+      choices: [{
+        index: 0,
+        delta: {},
+        finish_reason: "stop",
+      }, {
+        index: 1,
+        delta: {},
+        finish_reason: "length",
+      }],
+    },
+  });
+});
+
 Deno.test("chatCompletionResultToEvents preserves reasoning_items from terminal JSON", () => {
   const frames = Array.from(chatCompletionResultToEvents({
     id: "chatcmpl_reasoning_items",

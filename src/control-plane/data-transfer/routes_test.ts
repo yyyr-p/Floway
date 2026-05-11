@@ -120,6 +120,21 @@ const PERFORMANCE_2: PerformanceTelemetryRecord = {
   buckets: [{ lowerMs: 200, upperMs: 284, count: 3 }],
 };
 
+const PERFORMANCE_GEMINI: PerformanceTelemetryRecord = {
+  hour: "2026-01-01T12",
+  metricScope: "request_total",
+  keyId: "key-aaa",
+  model: "claude-sonnet-4.5",
+  sourceApi: "gemini",
+  targetApi: "messages",
+  stream: true,
+  runtimeLocation: "SJC",
+  requests: 7,
+  errors: 0,
+  totalMsSum: 1400,
+  buckets: [{ lowerMs: 100, upperMs: 142, count: 7 }],
+};
+
 // ---- Helpers ----
 
 function setup() {
@@ -476,6 +491,20 @@ Deno.test("import replace — clears existing performance when explicitly includ
 
   const exported = await doExport(app, true);
   assertEquals(exported.data.performance, []);
+});
+
+Deno.test("import replace — accepts Gemini performance records", async () => {
+  const { app } = setup();
+
+  const { status, body } = await doImport(app, "replace", {
+    performance: [PERFORMANCE_GEMINI],
+  });
+
+  assertEquals(status, 200);
+  assertEquals(body.imported.performance, 1);
+
+  const exported = await doExport(app, true);
+  assertEquals(exported.data.performance, [PERFORMANCE_GEMINI]);
 });
 
 Deno.test("import replace — rejects invalid searchUsage before clearing existing data", async () => {

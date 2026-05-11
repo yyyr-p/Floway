@@ -1,11 +1,14 @@
 # Data Plane Translation
 
-This document describes the current translation behavior between the three
+This document describes the current translation behavior between the four
 client-facing data-plane APIs:
 
 - Anthropic Messages: `POST /v1/messages`
 - OpenAI Responses: `POST /v1/responses`
 - OpenAI Chat Completions: `POST /v1/chat/completions`
+- Google Gemini: `POST /v1beta/models/{model}:generateContent`,
+  `POST /v1beta/models/{model}:streamGenerateContent`,
+  `POST /v1beta/models/{model}:countTokens`, and `GET /v1beta/models`
 
 Route planning uses model capability data from `supported_endpoints`. Request
 translation is direct and pairwise; there is no canonical internal request IR.
@@ -35,6 +38,17 @@ pairwise translators.
 If Chat planning cannot derive capabilities, it keeps the legacy heuristic:
 Claude-prefixed models use the Messages target; other models use the Chat
 Completions target.
+
+`/v1beta/models/{model}:generateContent` and
+`/v1beta/models/{model}:streamGenerateContent` select:
+
+1. translated `/v1/messages`
+2. translated `/chat/completions`
+3. translated `/responses`
+
+If Gemini planning cannot derive capabilities, it uses the same legacy fallback
+shape as Chat Completions: Claude-prefixed models use the Messages target; other
+models use the Chat Completions target.
 
 ## Boundary Rules
 
@@ -66,6 +80,21 @@ Responses source boundary:
 - removes unsupported `image_generation` tools and forced tool choices before
   planning/emission
 
+Gemini source boundary:
+
+- removes unsupported `fileData`, `executableCode`, and `codeExecutionResult`
+  part fields before planning/emission
+- removes unsupported Gemini tool capabilities such as `googleSearch`,
+  `codeExecution`, URL context, file search, MCP servers, and maps, keeping only
+  function declarations
+- drops `safetySettings`, which has no upstream target control
+- hides `thought: true` summary parts by default; they are only returned when
+  `generationConfig.thinkingConfig.includeThoughts === true`, while
+  `thoughtSignature` remains attached to the next visible text or function-call
+  action part
+- shapes errors as Google RPC Status payloads while preserving internal debug
+  fields for gateway failures
+
 Native Messages target:
 
 - strips unsupported `service_tier`
@@ -91,6 +120,81 @@ Native Chat Completions target:
 The Chat source still only exposes final usage-only SSE chunks to clients when
 the caller requested `stream_options.include_usage: true`. Hidden upstream usage
 is preserved separately for gateway accounting.
+
+## Gemini Source
+
+Request mapping shared by the Gemini source translation pairs:
+
+- URL model IDs from `/v1beta/models/{model}:...` become the target request
+  model after normal model resolution.
+- `contents[].role: "user"` becomes user input; `contents[].role: "model"`
+  becomes assistant/model output history.
+- text parts map to target text blocks/messages.
+- supported `inlineData` images (`image/jpeg`, `image/png`, `image/gif`, and
+  `image/webp`) map to target image inputs where the target supports them.
+- `systemInstruction.parts[].text` becomes the target system/instructions field,
+  joined with blank lines.
+- `functionCall` maps to target tool/function calls. Missing Gemini function
+  call IDs are replaced with deterministic `gemini_call_<turn>_<part>` IDs so
+  later `functionResponse` parts can be paired.
+- `functionResponse` maps to target tool/function results. When the response
+  lacks an ID, the translator pairs it with the earliest unmatched call of the
+  same function name, then falls back to a deterministic ID.
+- Gemini `thought: true` text maps to target readable reasoning/thinking.
+- Gemini `thoughtSignature` maps to the target opaque reasoning signature field:
+  Messages `signature` or `redacted_thinking`, Responses `encrypted_content`,
+  and Chat `reasoning_opaque`.
+- `thinkingBudget` and `thinkingLevel` map to the target's closest reasoning or
+  thinking controls. Budget `0` disables thinking when the target has an
+  explicit disabled state; positive budgets choose low/medium/high effort where
+  the target only supports effort levels.
+- `maxOutputTokens`, `temperature`, `topP`, `topK`, `stopSequences`,
+  `presencePenalty`, `frequencyPenalty`, `seed`, `responseMimeType`, and
+  `responseSchema` are passed through when the selected target has a natural
+  field.
+- Gemini function declarations become target function/tool definitions;
+  `functionCallingConfig` maps to the closest target tool-choice control.
+
+Response mapping shared by the Gemini source translation pairs:
+
+- Target text output becomes Gemini model content text parts.
+- Target reasoning summaries or thinking deltas become Gemini thought-summary
+  parts internally, then the Gemini source boundary removes them unless the
+  client explicitly requested `includeThoughts: true`.
+- Target opaque reasoning signatures become Gemini `thoughtSignature` attached
+  to the next visible text or function-call action part. If no action arrives
+  before the finish event, the signature is flushed on an empty text part so
+  clients can echo it in the next turn.
+- Target tool/function calls become Gemini `functionCall` parts.
+- Target usage maps to Gemini `usageMetadata`; reasoning/thinking tokens map to
+  `thoughtsTokenCount` when available.
+- Gemini streaming emits data-only SSE chunks containing full
+  `GenerateContentResponse` objects and does not emit a `[DONE]` sentinel.
+- Gemini non-streaming responses are assembled from source-shaped Gemini event
+  streams.
+
+Gemini models and token counting:
+
+- `GET /v1beta/models` and `GET /v1beta/models/{model}` translate the Copilot
+  model list to Gemini model objects with `generateContent`,
+  `streamGenerateContent`, and `countTokens` generation methods.
+- `POST /v1beta/models/{model}:countTokens` translates the Gemini request shape
+  through the Messages count-tokens path.
+
+Known losses:
+
+- `fileData`, executable-code parts, code-execution results, cached content,
+  Gemini Files API URIs, native code execution, grounding/citation metadata, URL
+  context, file search, maps, computer use, and MCP server tools have no current
+  upstream target equivalent and are omitted.
+- `googleSearch` is currently dropped at the Gemini source boundary; future work
+  should route it through the existing web-search shim.
+- `safetySettings` are omitted because the Copilot targets do not expose
+  equivalent safety controls.
+- `candidateCount > 1` is not supported by the Copilot targets; the gateway
+  returns one candidate.
+- Gemini response safety ratings, grounding metadata, and citation metadata are
+  not synthesized from ordinary target output.
 
 ## Messages To Responses
 

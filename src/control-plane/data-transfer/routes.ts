@@ -24,6 +24,7 @@ const PERFORMANCE_API_NAMES = new Set<PerformanceApiName>([
   "messages",
   "responses",
   "chat-completions",
+  "gemini",
 ]);
 
 const hasOwn = (value: object, key: string) =>
