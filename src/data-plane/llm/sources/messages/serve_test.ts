@@ -605,7 +605,7 @@ Deno.test("/v1/messages uses native endpoint and applies native request workarou
   assertExists(upstreamBody);
   assertEquals(upstreamBody!.stream, true);
   assertEquals(upstreamBody!.system, "system note");
-  assertFalse("service_tier" in upstreamBody!);
+  assertEquals(upstreamBody!.service_tier, "auto");
   assertEquals(
     (upstreamBody!.tools as Array<Record<string, unknown>>).length,
     1,
