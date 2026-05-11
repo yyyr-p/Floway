@@ -265,7 +265,7 @@ Deno.test("/v1/chat/completions prefers the native chat path on dual-endpoint mo
   assertExists(upstreamBody);
   const messages = upstreamBody!.messages as Array<Record<string, unknown>>;
   assertEquals(messages[0].role, "user");
-  assertFalse("service_tier" in upstreamBody!);
+  assertEquals(upstreamBody!.service_tier, "auto");
 });
 
 Deno.test("/v1/chat/completions strips dated Claude aliases before model routing", async () => {
