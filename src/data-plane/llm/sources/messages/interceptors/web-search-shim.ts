@@ -10,6 +10,7 @@ import type {
   MessagesPayload,
   MessagesResponse,
   MessagesSearchResultBlock,
+  MessagesStreamEventData,
   MessagesTextBlock,
   MessagesTextCitation,
   MessagesTool,
@@ -19,10 +20,11 @@ import type {
   MessagesWebSearchResultBlock,
   MessagesWebSearchToolResultError,
 } from "../../../../../lib/messages-types.ts";
-import { collectMessagesProtocolEventsToResponse } from "../../../sources/messages/events/to-response.ts";
+import { collectMessagesProtocolEventsToResponse } from "../events/to-response.ts";
+import { messagesResultToEvents } from "../events/from-result.ts";
 import { internalErrorResult } from "../../../shared/errors/result.ts";
 import { toInternalDebugError } from "../../../shared/errors/internal-debug-error.ts";
-import { jsonFrame, type StreamFrame } from "../../../shared/stream/types.ts";
+import { type ProtocolFrame } from "../../../shared/stream/types.ts";
 import {
   resolveConfiguredWebSearchProvider,
   type WebSearchProvider,
@@ -37,9 +39,8 @@ import type {
   WebSearchProviderRequest,
   WebSearchProviderResult,
 } from "../../../../tools/web-search/types.ts";
-import type { TargetInterceptor } from "../../run-interceptors.ts";
-import type { EmitToMessagesInput } from "../emit.ts";
-import { messagesStreamFramesToEvents } from "../events/from-stream.ts";
+import type { SourceInterceptor } from "../../run-interceptors.ts";
+import type { MessagesSourceContext } from "./types.ts";
 
 const MAX_QUERY_LENGTH = 1000;
 const WEB_SEARCH_TOOL_NAME = "web_search";
@@ -990,21 +991,22 @@ export const rewriteMessagesWebSearchResponseToNative = async (
 
 export const collectAndRewriteMessagesWebSearchEventsToNative =
   async function* (
-    frames: AsyncIterable<StreamFrame<MessagesResponse>>,
+    frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
     state: MessagesWebSearchShimState,
     provider?: ActiveMessagesWebSearchProvider,
-  ): AsyncGenerator<StreamFrame<MessagesResponse>> {
+  ): AsyncGenerator<ProtocolFrame<MessagesStreamEventData>> {
     // Native-looking web_search replay is order-sensitive: we may need to
     // execute multiple searches, inject result blocks, and then rewrite later
     // text citations against the final search-result ordering. That forces us
     // to buffer the whole upstream Messages stream here and trade first-byte
     // latency for a single coherent rewritten response.
-    const response = await collectMessagesProtocolEventsToResponse(
-      messagesStreamFramesToEvents(frames),
+    const response = await collectMessagesProtocolEventsToResponse(frames);
+    const rewritten = await rewriteMessagesWebSearchResponseToNative(
+      response,
+      state,
+      provider,
     );
-    yield jsonFrame(
-      await rewriteMessagesWebSearchResponseToNative(response, state, provider),
-    );
+    yield* messagesResultToEvents(rewritten);
   };
 
 const buildSyntheticInvalidRequestUpstreamError = (message: string) => ({
@@ -1021,7 +1023,6 @@ const buildSyntheticInvalidRequestUpstreamError = (message: string) => ({
 });
 
 const resolveActiveMessagesWebSearchProvider = async (
-  sourceApi: EmitToMessagesInput["sourceApi"],
   apiKeyId: string | undefined,
 ): Promise<
   | { type: "ok"; provider: ActiveMessagesWebSearchProvider }
@@ -1049,26 +1050,30 @@ const resolveActiveMessagesWebSearchProvider = async (
           ? "Native Messages web search requires an enabled search provider."
           : `Native Messages web search is missing the configured ${configuredProvider.provider} credential.`,
       ),
-      sourceApi,
       "messages",
     ),
   );
 };
 
 /**
- * Copilot's native `/v1/messages` target rejects Anthropic's native web search
- * tool types, but it does accept ordinary client `tool_use` / `tool_result`
- * turns and `search_result` citations. This boundary shim rewrites the request
- * into that client-tool shape and rewrites the response back to Anthropic's
- * native-looking server-tool surface.
+ * Anthropic exposes native `web_search_*` server tools, but Copilot's upstream
+ * surfaces (whether `/v1/messages`, `/responses`, or `/chat/completions`) do
+ * not run those server tools for us. This source-level shim rewrites the
+ * native tool definition into an ordinary client `web_search` tool, executes
+ * each search the model issues using the gateway's configured provider, and
+ * rewrites the response back to the Anthropic native `server_tool_use` /
+ * `web_search_tool_result` / `web_search_result_location` shape.
+ *
+ * Living at the source means every Messages routing path (native messages,
+ * via responses, via chat-completions) sees the same gateway-executed search
+ * behavior — the translators below this layer only ever see ordinary client
+ * tool turns and `search_result` blocks.
  */
-export const withMessagesWebSearchShim: TargetInterceptor<
-  EmitToMessagesInput,
-  MessagesResponse
+export const withMessagesWebSearchShim: SourceInterceptor<
+  MessagesSourceContext,
+  MessagesStreamEventData
 > = async (ctx, run) => {
-  const prepared = prepareMessagesWebSearchShimRequest(
-    ctx.payload as MessagesPayload,
-  );
+  const prepared = prepareMessagesWebSearchShimRequest(ctx.payload);
 
   if (prepared.type === "invalid-request") {
     return buildSyntheticInvalidRequestUpstreamError(prepared.message);
@@ -1079,24 +1084,17 @@ export const withMessagesWebSearchShim: TargetInterceptor<
   }
 
   const provider = prepared.state.mode === "active"
-    ? await resolveActiveMessagesWebSearchProvider(
-      ctx.sourceApi,
-      ctx.apiKeyId,
-    )
+    ? await resolveActiveMessagesWebSearchProvider(ctx.apiKeyId)
     : { type: "ok" as const, provider: undefined };
-  if (provider.type !== "ok") {
-    return provider;
-  }
+  if (provider.type !== "ok") return provider;
 
   ctx.payload = prepared.payload;
 
   const result = await run();
-  if (result.type !== "events") {
-    return result;
-  }
+  if (result.type !== "events") return result;
 
   return {
-    type: "events",
+    ...result,
     events: collectAndRewriteMessagesWebSearchEventsToNative(
       result.events,
       prepared.state,

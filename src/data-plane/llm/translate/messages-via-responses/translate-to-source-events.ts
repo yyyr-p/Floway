@@ -11,7 +11,7 @@ import {
   type ProtocolFrame,
 } from "../../shared/stream/types.ts";
 import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
-import { messagesResultToEvents } from "../../targets/messages/events/from-result.ts";
+import { messagesResultToEvents } from "../../sources/messages/events/from-result.ts";
 import {
   upstreamResponsesStreamAlgebra,
   type UpstreamResponseStreamEvent,

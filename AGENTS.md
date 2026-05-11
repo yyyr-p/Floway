@@ -291,9 +291,15 @@ Current placement:
   - resolve Claude compatibility aliases and variants before account fallback
   - keep account fallback model-fixed after one final upstream ID is selected
 - `src/data-plane/llm/sources/messages/interceptors/`
+  - rewrite native Anthropic `web_search_*` server tools into a
+    gateway-executed shim that runs once at the source layer, so every
+    Messages routing path (native messages, via responses, via
+    chat-completions) sees the same gateway-executed search behavior
+  - replay shim-owned search history back upstream as `search_result` blocks
+  - rewrite upstream tool use, tool results, and citations back into native
+    `web_search` blocks for downstream Messages clients
   - strip `x-anthropic-billing-header` prompt attribution
   - strip `cache_control.scope`
-  - remove unsupported `web_search` tools
   - rewrite upstream context-window errors into the Anthropic compact
     `invalid_request_error` envelope expected by Messages clients
 - `src/data-plane/llm/sources/responses/interceptors/`
@@ -316,12 +322,6 @@ Current placement:
 - `src/data-plane/llm/targets/messages/interceptors/fix-beta-header.ts`
   - whitelist `anthropic-beta`
   - auto-add `interleaved-thinking-2025-05-14` when required
-- `src/data-plane/llm/targets/messages/interceptors/web-search-shim.ts`
-  - rewrite native Anthropic `web_search_*` server tools into a gateway-executed
-    Messages-compatible shim
-  - replay shim-owned search history back upstream as `search_result` blocks
-  - rewrite upstream tool use, tool results, and citations back into native
-    `web_search` blocks for downstream Messages clients
 - `src/data-plane/llm/targets/messages/interceptors/strip-service-tier.ts`
   - strip unsupported `service_tier`
 - `src/data-plane/llm/targets/messages/interceptors/strip-done-sentinel.ts`

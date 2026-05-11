@@ -8,10 +8,8 @@ import { withThinkingDisplayPromoted } from "./promote-thinking-display.ts";
 import { withDoneSentinelStripped } from "./strip-done-sentinel.ts";
 import { withEagerInputStreamingStripped } from "./strip-eager-input-streaming.ts";
 import { withServiceTierStripped } from "./strip-service-tier.ts";
-import { withMessagesWebSearchShim } from "./web-search-shim.ts";
 
 export const messagesTargetInterceptors = [
-  withMessagesWebSearchShim,
   withMissingMaxTokensFilled,
   withInvalidThinkingBlocksFiltered,
   withThinkingDisplayPromoted,

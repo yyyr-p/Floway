@@ -4,6 +4,7 @@ import type {
   MessagesClientTool,
   MessagesPayload,
   MessagesResponse,
+  MessagesStreamEventData,
   MessagesTextBlock,
   MessagesToolResultBlock,
   MessagesToolResultContentBlock,
@@ -11,23 +12,19 @@ import type {
 } from "../../../../../lib/messages-types.ts";
 import {
   collectMessagesProtocolEventsToResponse,
-} from "../../../sources/messages/events/to-response.ts";
+} from "../events/to-response.ts";
 import {
   messagesProtocolEventsToSSEFrames,
-  messagesProtocolEventToSSEFrame,
-} from "../../../sources/messages/events/to-sse.ts";
+} from "../events/to-sse.ts";
 import { type WebSearchProvider } from "../../../../tools/web-search/provider.ts";
 import { DEFAULT_SEARCH_CONFIG } from "../../../../tools/web-search/search-config.ts";
 import type { WebSearchProviderResult } from "../../../../tools/web-search/types.ts";
 import { InMemoryRepo } from "../../../../../repo/memory.ts";
 import { initRepo } from "../../../../../repo/index.ts";
 import {
-  jsonFrame,
-  type SseFrame,
-  type StreamFrame,
+  type ProtocolFrame,
 } from "../../../shared/stream/types.ts";
 import { messagesResultToEvents } from "../events/from-result.ts";
-import { messagesStreamFramesToEvents } from "../events/from-stream.ts";
 import {
   collectAndRewriteMessagesWebSearchEventsToNative,
   decodeWebSearchCitationPayload,
@@ -178,19 +175,9 @@ const collect = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
   return collected;
 };
 
-const messagesResponseToSSEFrames = (
+const messagesResponseToProtocolFrames = (
   response: MessagesResponse,
-): SseFrame[] =>
-  messagesResultToEvents(response).map((frame) =>
-    messagesProtocolEventToSSEFrame(frame.event)
-  );
-
-const collectRawMessagesFramesToResponse = async (
-  frames: AsyncIterable<StreamFrame<MessagesResponse>>,
-): Promise<MessagesResponse> =>
-  await collectMessagesProtocolEventsToResponse(
-    messagesStreamFramesToEvents(frames),
-  );
+): ProtocolFrame<MessagesStreamEventData>[] => messagesResultToEvents(response);
 
 Deno.test("web search shim payload codecs use minimal cgws1 payloads", () => {
   const encryptedContent = encodeWebSearchResultPayload({
@@ -829,10 +816,10 @@ Deno.test("rewriteMessagesWebSearchResponseToNative rewrites search_result_locat
   assertEquals(textBlock.citations?.[1]?.type, "search_result_location");
 });
 
-Deno.test("collectAndRewriteMessagesWebSearchEventsToNative rewrites collected SSE frames once", async () => {
+Deno.test("collectAndRewriteMessagesWebSearchEventsToNative rewrites collected events once", async () => {
   const frames = collectAndRewriteMessagesWebSearchEventsToNative(
     toAsyncIterable(
-      messagesResponseToSSEFrames(
+      messagesResponseToProtocolFrames(
         makeUpstreamToolUseResponse([{
           name: "web_search",
           id: "toolu_1",
@@ -844,7 +831,7 @@ Deno.test("collectAndRewriteMessagesWebSearchEventsToNative rewrites collected S
     activeProvider(fakeProviderOk),
   );
 
-  const rewritten = await collectRawMessagesFramesToResponse(frames);
+  const rewritten = await collectMessagesProtocolEventsToResponse(frames);
 
   assertEquals(rewritten.stop_reason, "pause_turn");
   assertEquals(rewritten.content[0].type, "server_tool_use");
@@ -894,15 +881,12 @@ Deno.test("withMessagesWebSearchShim returns internal-error when request require
   await repo.searchConfig.save(DEFAULT_SEARCH_CONFIG);
 
   const result = await withMessagesWebSearchShim({
-    sourceApi: "messages",
     payload: {
       model: "claude-test",
       max_tokens: 64,
       messages: [{ role: "user", content: "latest React docs" }],
       tools: [{ type: "web_search_20260209" }],
     },
-    githubToken: "ghu_test",
-    accountType: "individual",
   }, () => Promise.reject(new Error("run should not be called")));
 
   assertEquals(result.type, "internal-error");
@@ -915,44 +899,39 @@ Deno.test("withMessagesWebSearchShim allows replay-only history when the search 
 
   const { tools: _tools, ...payload } = makeNativeReplayPayload();
 
-  const result = await withMessagesWebSearchShim({
-    sourceApi: "messages",
-    payload,
-    githubToken: "ghu_test",
-    accountType: "individual",
-  }, () =>
+  const result = await withMessagesWebSearchShim({ payload }, () =>
     Promise.resolve({
       type: "events",
-      events: toAsyncIterable([
-        jsonFrame<MessagesResponse>({
-          id: "msg_replay_only",
-          type: "message",
-          role: "assistant",
-          model: "claude-test",
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          usage: { input_tokens: 10, output_tokens: 1 },
-          content: [{
-            type: "text",
-            text: "Use the docs.",
-            citations: [{
-              type: "search_result_location",
-              url: "https://react.dev",
-              title: "React",
-              search_result_index: 0,
-              start_block_index: 0,
-              end_block_index: 0,
-              cited_text: "Official React documentation",
-            }],
+      events: toAsyncIterable(messagesResponseToProtocolFrames({
+        id: "msg_replay_only",
+        type: "message",
+        role: "assistant",
+        model: "claude-test",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+        content: [{
+          type: "text",
+          text: "Use the docs.",
+          citations: [{
+            type: "search_result_location",
+            url: "https://react.dev",
+            title: "React",
+            search_result_index: 0,
+            start_block_index: 0,
+            end_block_index: 0,
+            cited_text: "Official React documentation",
           }],
-        }),
-      ]),
+        }],
+      })),
     }));
 
   assertEquals(result.type, "events");
   if (result.type !== "events") throw new Error("expected events result");
 
-  const rewritten = await collectRawMessagesFramesToResponse(result.events);
+  const rewritten = await collectMessagesProtocolEventsToResponse(
+    result.events,
+  );
   const textBlock = rewritten.content[0] as MessagesTextBlock;
   assertEquals(textBlock.citations?.[0]?.type, "web_search_result_location");
 });
@@ -964,48 +943,37 @@ Deno.test("withMessagesWebSearchShim emits native-like citation deltas for repla
 
   const { tools: _tools, ...payload } = makeNativeReplayPayload();
 
-  const result = await withMessagesWebSearchShim({
-    sourceApi: "messages",
-    payload,
-    githubToken: "ghu_test",
-    accountType: "individual",
-  }, () =>
+  const result = await withMessagesWebSearchShim({ payload }, () =>
     Promise.resolve({
       type: "events",
-      events: toAsyncIterable([
-        jsonFrame<MessagesResponse>({
-          id: "msg_replay_only_stream",
-          type: "message",
-          role: "assistant",
-          model: "claude-test",
-          stop_reason: "end_turn",
-          stop_sequence: null,
-          usage: { input_tokens: 10, output_tokens: 1 },
-          content: [{
-            type: "text",
-            text: "Use the docs.",
-            citations: [{
-              type: "search_result_location",
-              url: "https://react.dev",
-              title: "React",
-              search_result_index: 0,
-              start_block_index: 0,
-              end_block_index: 0,
-              cited_text: "Official React documentation",
-            }],
+      events: toAsyncIterable(messagesResponseToProtocolFrames({
+        id: "msg_replay_only_stream",
+        type: "message",
+        role: "assistant",
+        model: "claude-test",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 10, output_tokens: 1 },
+        content: [{
+          type: "text",
+          text: "Use the docs.",
+          citations: [{
+            type: "search_result_location",
+            url: "https://react.dev",
+            title: "React",
+            search_result_index: 0,
+            start_block_index: 0,
+            end_block_index: 0,
+            cited_text: "Official React documentation",
           }],
-        }),
-      ]),
+        }],
+      })),
     }));
 
   assertEquals(result.type, "events");
   if (result.type !== "events") throw new Error("expected events result");
 
-  const frames = await collect(
-    messagesProtocolEventsToSSEFrames(
-      messagesStreamFramesToEvents(result.events),
-    ),
-  );
+  const frames = await collect(messagesProtocolEventsToSSEFrames(result.events));
   const citationFrame = frames.find((frame) => {
     if (frame.type !== "sse" || frame.event !== "content_block_delta") {
       return false;

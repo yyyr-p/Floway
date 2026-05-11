@@ -571,7 +571,6 @@ Deno.test("/v1/messages uses native endpoint and applies native request workarou
         service_tier: "auto",
         thinking: { type: "enabled", budget_tokens: 512 },
         tools: [
-          { type: "web_search", name: "web", input_schema: {} },
           {
             name: "calc",
             description: "calculator",
@@ -2645,4 +2644,215 @@ Deno.test("/v1/messages rejects native web search tool name collisions before up
       },
     });
   });
+});
+
+Deno.test("/v1/messages routes native web search through translated /responses target", async () => {
+  const { apiKey } = await setupNativeWebSearchRouteTest();
+  let upstreamResponsesBody: Record<string, unknown> | undefined;
+  let searchBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        {
+          id: "gpt-search-via-responses",
+          supported_endpoints: ["/responses"],
+        },
+      ]));
+    }
+    if (url.pathname === "/responses") {
+      upstreamResponsesBody = JSON.parse(await request.text());
+      return sseResponse([{
+        event: "response.completed",
+        data: {
+          type: "response.completed",
+          response: {
+            id: "resp_search",
+            object: "response",
+            model: "gpt-search-via-responses",
+            status: "completed",
+            output_text: "",
+            output: [{
+              type: "function_call",
+              id: "fc_1",
+              call_id: "toolu_search_1",
+              name: "web_search",
+              arguments: '{"query":"latest React docs"}',
+              status: "completed",
+            }],
+            usage: { input_tokens: 12, output_tokens: 5, total_tokens: 17 },
+          },
+        },
+      }]);
+    }
+    if (url.hostname === "api.tavily.com" && url.pathname === "/search") {
+      searchBody = JSON.parse(await request.text());
+      return jsonResponse({
+        results: [{
+          title: "React",
+          url: "https://react.dev",
+          published_date: "2026-04-01",
+          content: "Official React docs",
+        }],
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-search-via-responses",
+        max_tokens: 64,
+        stream: false,
+        tools: [makeWebSearchTool()],
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.stop_reason, "pause_turn");
+    assertEquals(body.content[0].type, "server_tool_use");
+    assertEquals(body.content[0].name, "web_search");
+    assertEquals(body.content[0].input.query, "latest React docs");
+    assertEquals(body.content[1].type, "web_search_tool_result");
+    assertEquals(body.content[1].content[0].url, "https://react.dev");
+    assertEquals(body.usage.server_tool_use.web_search_requests, 1);
+  });
+
+  assertExists(upstreamResponsesBody);
+  // Shim rewrote the native tool into an ordinary client function tool before
+  // the translator turned it into a Responses function tool.
+  const upstreamTools =
+    upstreamResponsesBody!.tools as Array<Record<string, unknown>>;
+  assertEquals(upstreamTools.length, 1);
+  assertEquals(upstreamTools[0].type, "function");
+  assertEquals(upstreamTools[0].name, "web_search");
+  assertEquals(searchBody?.query, "latest React docs");
+});
+
+Deno.test("/v1/messages routes native web search through translated /chat/completions target", async () => {
+  const { apiKey } = await setupNativeWebSearchRouteTest();
+  let upstreamChatBody: Record<string, unknown> | undefined;
+  let searchBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        {
+          id: "gpt-search-via-chat",
+          supported_endpoints: ["/chat/completions"],
+        },
+      ]));
+    }
+    if (url.pathname === "/chat/completions") {
+      upstreamChatBody = JSON.parse(await request.text());
+      return sseResponse([
+        {
+          data: {
+            id: "chatcmpl_search",
+            object: "chat.completion.chunk",
+            created: 1,
+            model: "gpt-search-via-chat",
+            choices: [{
+              index: 0,
+              delta: {
+                role: "assistant",
+                tool_calls: [{
+                  index: 0,
+                  id: "toolu_search_1",
+                  type: "function",
+                  function: {
+                    name: "web_search",
+                    arguments: '{"query":"latest React docs"}',
+                  },
+                }],
+              },
+              finish_reason: "tool_calls",
+            }],
+            usage: { prompt_tokens: 12, completion_tokens: 5 },
+          },
+        },
+        { data: "[DONE]" },
+      ]);
+    }
+    if (url.hostname === "api.tavily.com" && url.pathname === "/search") {
+      searchBody = JSON.parse(await request.text());
+      return jsonResponse({
+        results: [{
+          title: "React",
+          url: "https://react.dev",
+          published_date: "2026-04-01",
+          content: "Official React docs",
+        }],
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-search-via-chat",
+        max_tokens: 64,
+        stream: false,
+        tools: [makeWebSearchTool()],
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.stop_reason, "pause_turn");
+    assertEquals(body.content[0].type, "server_tool_use");
+    assertEquals(body.content[0].name, "web_search");
+    assertEquals(body.content[0].input.query, "latest React docs");
+    assertEquals(body.content[1].type, "web_search_tool_result");
+    assertEquals(body.content[1].content[0].url, "https://react.dev");
+    assertEquals(body.usage.server_tool_use.web_search_requests, 1);
+  });
+
+  assertExists(upstreamChatBody);
+  const upstreamTools =
+    upstreamChatBody!.tools as Array<Record<string, unknown>>;
+  assertEquals(upstreamTools.length, 1);
+  assertEquals(upstreamTools[0].type, "function");
+  assertEquals(
+    (upstreamTools[0].function as Record<string, unknown>).name,
+    "web_search",
+  );
+  assertEquals(searchBody?.query, "latest React docs");
 });
