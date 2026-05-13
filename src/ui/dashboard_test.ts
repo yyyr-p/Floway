@@ -28,6 +28,11 @@ type ChartOptions = {
     };
   };
   scales: {
+    x?: {
+      ticks?: {
+        callback?: (value: unknown, index: number) => unknown;
+      };
+    };
     y: {
       title: { text?: string };
       stacked?: boolean;
@@ -64,22 +69,37 @@ function expected4hChartLabels(count: number) {
   for (let i = count - 1; i >= 0; i--) {
     const d = new Date(start.getTime() - i * 4 * 3600000);
     const h = d.getHours();
-    if (h % 8 === 0) {
-      const dateKey = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" +
-        pad(d.getDate());
-      const endH = (h + 8) % 24;
-      const time = pad(h) + ":00 – " + pad(endH) + ":00";
-      const datePrefix = dateKey !== prevDateKey
-        ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
-          " "
-        : "";
-      labels.push(datePrefix + time);
-      prevDateKey = dateKey;
-    } else {
-      labels.push("");
-    }
+    const dateKey = d.getFullYear() + "-" + pad(d.getMonth() + 1) + "-" +
+      pad(d.getDate());
+    const endH = (h + 4) % 24;
+    const time = pad(h) + ":00 – " + pad(endH) + ":00";
+    const datePrefix = dateKey !== prevDateKey
+      ? d.toLocaleDateString("en-US", { month: "short", day: "numeric" }) +
+        " "
+      : "";
+    labels.push(datePrefix + time);
+    prevDateKey = dateKey;
   }
   return labels;
+}
+
+function expected4hAxisTickLabels(count: number) {
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() - (start.getHours() % 4));
+  const labels = expected4hChartLabels(count);
+  const result = [];
+  for (let i = count - 1; i >= 0; i--) {
+    const d = new Date(start.getTime() - i * 4 * 3600000);
+    result.push(d.getHours() % 8 === 0 ? labels[count - 1 - i] : "");
+  }
+  return result;
+}
+
+function renderAxisTickLabels(chart: ChartConfig) {
+  const callback = chart.options.scales.x?.ticks?.callback;
+  assert(callback);
+  return chart.data.labels?.map((_, index) => callback(index, index));
 }
 
 function extractDashboardScript() {
@@ -272,8 +292,35 @@ Deno.test("dashboardApp renders performance chart with 4h buckets for 7d range",
   app.renderPerformanceChart();
 
   assertEquals(charts[0].data.labels, expected4hChartLabels(42));
+  assertFalse(charts[0].data.labels?.includes(""));
+  assertEquals(renderAxisTickLabels(charts[0]), expected4hAxisTickLabels(42));
   assertEquals(charts[0].data.datasets[0].data.length, 42);
   assertEquals(charts[0].data.datasets[0].data.at(-1), 600);
+});
+
+Deno.test("dashboardApp renders token chart with labeled 4h buckets for 7d range", () => {
+  const { app, charts } = createDashboardHarness();
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(start.getHours() - (start.getHours() % 4));
+
+  app.tab = "usage";
+  app.tokenRange = "7d";
+  app.tokenData = [
+    usageRecord(0, {
+      hour: start.toISOString().slice(0, 13),
+      inputTokens: 10,
+      outputTokens: 5,
+    }),
+  ];
+
+  app.renderTokenCharts();
+
+  assertEquals(charts[0].data.labels, expected4hChartLabels(42));
+  assertFalse(charts[0].data.labels?.includes(""));
+  assertEquals(renderAxisTickLabels(charts[0]), expected4hAxisTickLabels(42));
+  assertEquals(charts[0].data.datasets[0].data.length, 42);
+  assertEquals(charts[0].data.datasets[0].data.at(-1), 15);
 });
 
 Deno.test("dashboardApp renders performance percentile comparison chart", () => {

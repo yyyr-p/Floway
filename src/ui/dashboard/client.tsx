@@ -33,6 +33,15 @@ export function dashboardAssets() {
 
     const pad2 = (n) => String(n).padStart(2, '0');
 
+    function chartXAxisTickCallback(bucketKeys, labels, compact4h) {
+      return (_value, index) => {
+        const label = labels[index] ?? '';
+        if (!compact4h) return label;
+        const hour = Number(String(bucketKeys[index] ?? '').slice(11, 13));
+        return Number.isFinite(hour) && hour % 8 === 0 ? label : '';
+      };
+    }
+
     function copyTextWithTextarea(text) {
       const textarea = document.createElement('textarea');
       textarea.value = text;
@@ -1109,18 +1118,14 @@ export function dashboardAssets() {
                             const d = new Date(start.getTime() - i * 4 * 3600000);
                             const key = this.localHourKey(d);
                             const h = d.getHours();
-                            if (h % 8 === 0) {
-                              const dateKey = this.localDateKey(d);
-                              const endH = (h + 8) % 24;
-                              const time = pad2(h) + ':00 \\u2013 ' + pad2(endH) + ':00';
-                              const datePrefix = dateKey !== prevDateKey
-                                ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' '
-                                : '';
-                              map.set(key, datePrefix + time);
-                              prevDateKey = dateKey;
-                            } else {
-                              map.set(key, '');
-                            }
+                            const dateKey = this.localDateKey(d);
+                            const endH = (h + 4) % 24;
+                            const time = pad2(h) + ':00 \\u2013 ' + pad2(endH) + ':00';
+                            const datePrefix = dateKey !== prevDateKey
+                              ? d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' '
+                              : '';
+                            map.set(key, datePrefix + time);
+                            prevDateKey = dateKey;
                           }
                           return map;
                         },
@@ -1386,7 +1391,7 @@ export function dashboardAssets() {
                                     },
                                   },
                                   scales: {
-                                    x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" }, maxRotation: 45 }, border: { color: 'rgba(255,255,255,0.06)' } },
+                                    x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" }, maxRotation: 45, callback: chartXAxisTickCallback(bucketKeysArr, labels, self.performanceRange === '7d') }, border: { color: 'rgba(255,255,255,0.06)' } },
                                     y: { type: 'logarithmic', beginAtZero: false, title: { display: true, text: self.performanceChartView === 'percentile' ? self.performanceModel + ' latency' : self.performancePercentileLabel() + ' latency', color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" } }, grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#9e9e9e', font: { size: 10, family: "'JetBrains Mono', monospace" }, callback: (v) => formatDurationMs(Number(v)) }, border: { color: 'rgba(255,255,255,0.06)' } },
                                   },
                                 },
@@ -1763,7 +1768,7 @@ export function dashboardAssets() {
                                     x: {
                                       stacked: true,
                                       grid: { color: 'rgba(255,255,255,0.04)' },
-                                      ticks: { color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" }, maxRotation: 45 },
+                                      ticks: { color: '#9e9e9e', font: { size: 10, family: "'DM Sans', sans-serif" }, maxRotation: 45, callback: chartXAxisTickCallback(bucketKeysArr, labels, self.tokenRange === '7d') },
                                       border: { color: 'rgba(255,255,255,0.06)' },
                                     },
                                     y: {
