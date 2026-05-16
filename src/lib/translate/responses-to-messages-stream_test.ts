@@ -383,3 +383,56 @@ Deno.test("Responses stream keeps later text deferred until earlier tool block i
     },
   ]);
 });
+
+Deno.test("reasoning stream with neither summary nor encrypted_content emits no block", () => {
+  const state = createResponsesToMessagesStreamState();
+
+  const events = translateResponsesStreamEventToMessagesEvents({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: { type: "reasoning", id: "rs_empty", summary: [] },
+  }, state);
+
+  assertEquals(events, []);
+});
+
+Deno.test("reasoning stream with explicit undefined encrypted_content emits no block", () => {
+  const state = createResponsesToMessagesStreamState();
+
+  const events = translateResponsesStreamEventToMessagesEvents({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: {
+      type: "reasoning",
+      id: "rs_undef",
+      summary: [],
+      encrypted_content: undefined,
+    },
+  }, state);
+
+  assertEquals(events, []);
+});
+
+Deno.test("reasoning stream with whitespace-only summary and encrypted_content becomes redacted_thinking", () => {
+  const state = createResponsesToMessagesStreamState();
+
+  const events = translateResponsesStreamEventToMessagesEvents({
+    type: "response.output_item.done",
+    output_index: 0,
+    item: {
+      type: "reasoning",
+      id: "rs_ws",
+      summary: [{ type: "summary_text", text: "   \n  " }],
+      encrypted_content: "opaque_sig",
+    },
+  }, state);
+
+  assertEquals(events, [{
+    type: "content_block_start",
+    index: 0,
+    content_block: {
+      type: "redacted_thinking",
+      data: "opaque_sig",
+    },
+  }]);
+});

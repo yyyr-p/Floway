@@ -1,5 +1,3 @@
-export const MESSAGES_THINKING_PLACEHOLDER = "Thinking...";
-
 /**
  * Messages requires `max_tokens`, but the Chat Completions, Responses, and
  * Gemini sources may omit their output-token cap. When we translate one of

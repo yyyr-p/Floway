@@ -1,5 +1,4 @@
 import {
-  MESSAGES_THINKING_PLACEHOLDER,
   type MessagesAssistantMessage,
   type MessagesClientTool,
   type MessagesMessage,
@@ -158,15 +157,11 @@ const translateAssistantMessage = (
 
     if (block.type === "thinking") {
       flushPendingContent(pendingContent, input, "assistant");
-      const summaryText = block.thinking === MESSAGES_THINKING_PLACEHOLDER
-        ? ""
-        : block.thinking;
-
       input.push({
         type: "reasoning",
         id: makeResponsesReasoningId(input.length),
-        summary: summaryText
-          ? [{ type: "summary_text", text: summaryText }]
+        summary: block.thinking
+          ? [{ type: "summary_text", text: block.thinking }]
           : [],
         ...(Object.hasOwn(block, "signature")
           ? { encrypted_content: block.signature }
@@ -313,15 +308,11 @@ export const translateMessagesToResponsesResult = (
   for (const block of response.content) {
     switch (block.type) {
       case "thinking": {
-        const summaryText = block.thinking === MESSAGES_THINKING_PLACEHOLDER
-          ? ""
-          : block.thinking;
-
         output.push({
           type: "reasoning",
           id: makeResponsesReasoningId(output.length),
-          summary: summaryText
-            ? [{ type: "summary_text", text: summaryText }]
+          summary: block.thinking
+            ? [{ type: "summary_text", text: block.thinking }]
             : [],
           ...(Object.hasOwn(block, "signature")
             ? { encrypted_content: block.signature }

@@ -1,12 +1,11 @@
-import {
-  MESSAGES_THINKING_PLACEHOLDER,
-  type MessagesContentBlockDeltaEvent,
-  type MessagesContentBlockStartEvent,
-  type MessagesContentBlockStopEvent,
-  type MessagesErrorEvent,
-  type MessagesMessageDeltaEvent,
-  type MessagesMessageStartEvent,
-  type MessagesStreamEventData,
+import type {
+  MessagesContentBlockDeltaEvent,
+  MessagesContentBlockStartEvent,
+  MessagesContentBlockStopEvent,
+  MessagesErrorEvent,
+  MessagesMessageDeltaEvent,
+  MessagesMessageStartEvent,
+  MessagesStreamEventData,
 } from "../messages-types.ts";
 import { makeResponsesReasoningId } from "../reasoning.ts";
 import type {
@@ -298,9 +297,7 @@ const handleContentBlockStop = (
   state.blockMap.delete(event.index);
 
   if (info.type === "thinking") {
-    const summaryText = info.thinkingText === MESSAGES_THINKING_PLACEHOLDER
-      ? ""
-      : info.thinkingText;
+    const summaryText = info.thinkingText;
 
     const item: ResponseOutputReasoning = {
       type: "reasoning",

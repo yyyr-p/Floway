@@ -1,6 +1,5 @@
 import {
   MESSAGES_FALLBACK_MAX_TOKENS,
-  MESSAGES_THINKING_PLACEHOLDER,
   type MessagesAssistantContentBlock,
   type MessagesAssistantMessage,
   type MessagesMessage,
@@ -75,24 +74,32 @@ const mapOutputToMessagesContent = (
         const thinking = item.summary?.length
           ? item.summary.map((part) => part.text).join("").trim()
           : "";
+        const encryptedContent = item.encrypted_content;
+        const hasEncryptedContent =
+          Object.hasOwn(item, "encrypted_content") &&
+          encryptedContent !== undefined;
 
-        if (!thinking && Object.hasOwn(item, "encrypted_content")) {
-          content.push({
-            type: "redacted_thinking",
-            data: item.encrypted_content ?? "",
-          });
+        // Copilot's /v1/messages rejects `thinking: null` and missing
+        // `thinking` (Pydantic: "Input should be a valid string" /
+        // "Field required"), so an opaque-only reasoning item must round-trip
+        // as `redacted_thinking{data}` — the schema-sanctioned signature-only
+        // shape — rather than a `thinking` block with no text. A reasoning
+        // item with neither summary nor encrypted_content has no valid
+        // Anthropic shape (both alternates 400 upstream), so we drop it.
+        if (!thinking) {
+          if (hasEncryptedContent) {
+            content.push({
+              type: "redacted_thinking",
+              data: encryptedContent,
+            });
+          }
           break;
         }
 
-        const finalThinking = thinking || MESSAGES_THINKING_PLACEHOLDER;
-        if (finalThinking.length === 0) break;
-
         content.push({
           type: "thinking",
-          thinking: finalThinking,
-          ...(Object.hasOwn(item, "encrypted_content")
-            ? { signature: item.encrypted_content }
-            : {}),
+          thinking,
+          ...(hasEncryptedContent ? { signature: encryptedContent } : {}),
         });
         break;
       }
@@ -269,25 +276,38 @@ const translateResponsesInput = async (
           is_error: item.status === "incomplete" ? true : undefined,
         });
         break;
-      case "reasoning":
-        appendAssistantBlock(
-          messages,
-          item.summary.length === 0 &&
-            Object.hasOwn(item, "encrypted_content")
-            ? {
+      case "reasoning": {
+        // Same opaque-only handling as mapOutputToMessagesContent above: emit
+        // `redacted_thinking{data}` when there is no plaintext summary, so the
+        // Anthropic-compatible target receives a valid signature-only block
+        // instead of a `thinking` block with empty/missing text. A reasoning
+        // item with neither summary nor encrypted_content carries nothing the
+        // target can verify, so we drop it.
+        const thinking = item.summary?.length
+          ? item.summary.map((part) => part.text).join("").trim()
+          : "";
+        const encryptedContent = item.encrypted_content;
+        const hasEncryptedContent =
+          Object.hasOwn(item, "encrypted_content") &&
+          encryptedContent !== undefined;
+
+        if (!thinking) {
+          if (hasEncryptedContent) {
+            appendAssistantBlock(messages, {
               type: "redacted_thinking",
-              data: item.encrypted_content ?? "",
-            }
-            : {
-              type: "thinking",
-              thinking: item.summary?.map((part) => part.text).join("") ||
-                MESSAGES_THINKING_PLACEHOLDER,
-              ...(Object.hasOwn(item, "encrypted_content")
-                ? { signature: item.encrypted_content }
-                : {}),
-            },
-        );
+              data: encryptedContent,
+            });
+          }
+          break;
+        }
+
+        appendAssistantBlock(messages, {
+          type: "thinking",
+          thinking,
+          ...(hasEncryptedContent ? { signature: encryptedContent } : {}),
+        });
         break;
+      }
     }
   }
 

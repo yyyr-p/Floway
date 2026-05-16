@@ -317,8 +317,6 @@ Current placement:
     part so clients can echo it next turn
 - `src/data-plane/llm/sources/gemini/respond.ts`
   - translate source errors into Google RPC Status envelopes
-- `src/data-plane/llm/targets/messages/interceptors/filter-invalid-thinking-blocks.ts`
-  - filter invalid thinking blocks
 - `src/data-plane/llm/targets/messages/interceptors/fix-beta-header.ts`
   - whitelist `anthropic-beta`
   - auto-add `interleaved-thinking-2025-05-14` when required

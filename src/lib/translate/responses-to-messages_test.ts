@@ -238,3 +238,102 @@ Deno.test("translateResponsesToMessagesResponse maps opaque-only reasoning to re
     data: "opaque_sig",
   }]);
 });
+
+Deno.test("translateResponsesToMessagesResponse drops reasoning with neither summary nor encrypted_content", () => {
+  const result = translateResponsesToMessagesResponse({
+    id: "resp_drop",
+    object: "response",
+    model: "gpt-test",
+    output: [
+      { type: "reasoning", id: "rs_empty", summary: [] },
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: "hello" }],
+      },
+    ],
+    output_text: "hello",
+    status: "completed",
+    usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
+  });
+
+  assertEquals(result.content, [{ type: "text", text: "hello" }]);
+});
+
+Deno.test("translateResponsesToMessagesResponse drops reasoning with explicit undefined encrypted_content", () => {
+  const result = translateResponsesToMessagesResponse({
+    id: "resp_undef",
+    object: "response",
+    model: "gpt-test",
+    output: [{
+      type: "reasoning",
+      id: "rs_undef",
+      summary: [],
+      encrypted_content: undefined,
+    }],
+    output_text: "",
+    status: "completed",
+    usage: { input_tokens: 5, output_tokens: 0, total_tokens: 5 },
+  });
+
+  assertEquals(result.content, []);
+});
+
+Deno.test("translateResponsesToMessagesResponse treats whitespace-only summary as opaque-only reasoning", () => {
+  const result = translateResponsesToMessagesResponse({
+    id: "resp_ws",
+    object: "response",
+    model: "gpt-test",
+    output: [{
+      type: "reasoning",
+      id: "rs_ws",
+      summary: [{ type: "summary_text", text: "   \n  " }],
+      encrypted_content: "opaque_sig",
+    }],
+    output_text: "",
+    status: "completed",
+    usage: { input_tokens: 5, output_tokens: 0, total_tokens: 5 },
+  });
+
+  assertEquals(result.content, [{
+    type: "redacted_thinking",
+    data: "opaque_sig",
+  }]);
+});
+
+Deno.test("translateResponsesToMessages drops opaque-only reasoning input with explicit undefined encrypted_content", async () => {
+  const result = await translateResponsesToMessages({
+    model: "gpt-test",
+    input: [
+      { type: "message", role: "user", content: "hi" },
+      {
+        type: "reasoning",
+        id: "rs_undef",
+        summary: [],
+        encrypted_content: undefined,
+      },
+      { type: "message", role: "user", content: "follow up" },
+    ],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: 256,
+    tools: null,
+    tool_choice: "auto",
+    metadata: null,
+    stream: null,
+    store: false,
+    parallel_tool_calls: true,
+  });
+
+  // The undefined-encrypted_content reasoning item is dropped, so the two
+  // adjacent user messages remain side-by-side without an injected assistant
+  // turn.
+  assertEquals(
+    result.messages.map((m) => ({ role: m.role, content: m.content })),
+    [
+      { role: "user", content: "hi" },
+      { role: "user", content: "follow up" },
+    ],
+  );
+});

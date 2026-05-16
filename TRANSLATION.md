@@ -98,7 +98,6 @@ Gemini source boundary:
 Native Messages target:
 
 - strips unsupported `service_tier`
-- filters invalid thinking blocks before native forwarding
 - whitelists supported `anthropic-beta` values
 - auto-adds `interleaved-thinking-2025-05-14` when budget thinking requires it
 - rewrites native `web_search` tools through the gateway shim

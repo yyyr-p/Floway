@@ -1,7 +1,4 @@
-import {
-  MESSAGES_THINKING_PLACEHOLDER,
-  type MessagesStreamEventData,
-} from "../messages-types.ts";
+import type { MessagesStreamEventData } from "../messages-types.ts";
 import type {
   ResponseOutputItem,
   ResponsesResult,
@@ -274,22 +271,35 @@ const handleOutputItemDone = (
 ): MessagesStreamEventData[] => {
   if (event.item.type !== "reasoning") return flushDeferredEvents(state);
 
-  if (
-    event.item.summary.length === 0 &&
+  const encryptedContent = event.item.encrypted_content;
+  const hasEncryptedContent =
     Object.hasOwn(event.item, "encrypted_content") &&
-    !hasResponsePartForOutput(
-      state.emittedReasoningSummaryKeys,
-      event.output_index,
-    )
-  ) {
-    const events: MessagesStreamEventData[] = [];
-    openRedactedThinkingBlock(
-      state,
-      event.output_index,
-      event.item.encrypted_content ?? "",
-      events,
-    );
-    return [...events, ...flushDeferredEvents(state)];
+    encryptedContent !== undefined;
+  const hasEmittedSummary = hasResponsePartForOutput(
+    state.emittedReasoningSummaryKeys,
+    event.output_index,
+  );
+  const trimmedSummary = event.item.summary
+    .map((part) => part.text)
+    .join("")
+    .trim();
+
+  // No prior summary delta and no usable summary text: either round-trip the
+  // opaque blob as `redacted_thinking{data}` (Copilot rejects empty/null/missing
+  // `thinking` text on a regular thinking block) or drop entirely when there is
+  // nothing the target can verify.
+  if (!hasEmittedSummary && trimmedSummary === "") {
+    if (hasEncryptedContent) {
+      const events: MessagesStreamEventData[] = [];
+      openRedactedThinkingBlock(
+        state,
+        event.output_index,
+        encryptedContent,
+        events,
+      );
+      return [...events, ...flushDeferredEvents(state)];
+    }
+    return flushDeferredEvents(state);
   }
 
   const events: MessagesStreamEventData[] = [];
@@ -309,32 +319,7 @@ const handleOutputItemDone = (
     state.emittedReasoningSummaryKeys.add(key);
   }
 
-  if (
-    event.item.summary.length === 0 &&
-    !hasResponsePartForOutput(
-      state.emittedReasoningSummaryKeys,
-      event.output_index,
-    )
-  ) {
-    events.push({
-      type: "content_block_delta",
-      index: blockIndex,
-      delta: {
-        type: "thinking_delta",
-        thinking: MESSAGES_THINKING_PLACEHOLDER,
-      },
-    });
-    emittedDelta = true;
-    state.emittedReasoningSummaryKeys.add(
-      responsePartKey(event.output_index, 0),
-    );
-  }
-
-  const encryptedContent = event.item.encrypted_content;
-  if (
-    Object.hasOwn(event.item, "encrypted_content") &&
-    encryptedContent !== undefined
-  ) {
+  if (hasEncryptedContent) {
     events.push({
       type: "content_block_delta",
       index: blockIndex,

@@ -584,10 +584,14 @@ Deno.test("/v1/messages uses native endpoint and applies native request workarou
             content: [
               {
                 type: "thinking",
-                thinking: "Thinking...",
-                signature: "opaque@reasoning",
+                thinking: "first thought",
+                signature: "sig_first",
               },
-              { type: "thinking", thinking: "kept", signature: "sig_ok" },
+              {
+                type: "redacted_thinking",
+                data: "opaque_blob",
+              },
+              { type: "thinking", thinking: "second thought", signature: "sig_second" },
               { type: "text", text: "previous reply" },
             ],
           },
@@ -623,10 +627,14 @@ Deno.test("/v1/messages uses native endpoint and applies native request workarou
   const assistantContent = assistantMessage.content as Array<
     Record<string, unknown>
   >;
-  assertEquals(assistantContent.length, 2);
+  assertEquals(assistantContent.length, 4);
   assertEquals(assistantContent[0].type, "thinking");
-  assertEquals(assistantContent[0].thinking, "kept");
-  assertEquals(assistantContent[1].type, "text");
+  assertEquals(assistantContent[0].thinking, "first thought");
+  assertEquals(assistantContent[1].type, "redacted_thinking");
+  assertEquals(assistantContent[1].data, "opaque_blob");
+  assertEquals(assistantContent[2].type, "thinking");
+  assertEquals(assistantContent[2].thinking, "second thought");
+  assertEquals(assistantContent[3].type, "text");
   assertEquals(
     upstreamBeta,
     "context-management-2025-06-27,interleaved-thinking-2025-05-14",
