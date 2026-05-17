@@ -352,3 +352,6 @@ export const translateMessagesToChatCompletions = (
     tool_choice: translateMessagesToolChoice(payload.tool_choice, clientTools),
   };
 };
+
+export const buildTargetRequest = (payload: MessagesPayload) =>
+  translateMessagesToChatCompletions(payload);

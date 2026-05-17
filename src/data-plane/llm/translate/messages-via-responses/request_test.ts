@@ -1,5 +1,5 @@
 import { assertEquals, assertFalse } from "@std/assert";
-import { translateMessagesToResponsesResult } from "../responses-via-messages/source-result.ts";
+import { translateMessagesToResponsesResult } from "../responses-via-messages/result.ts";
 import { translateMessagesToResponses } from "./request.ts";
 import { getMessagesRequestedReasoningEffort } from "../../../../lib/reasoning.ts";
 import type {

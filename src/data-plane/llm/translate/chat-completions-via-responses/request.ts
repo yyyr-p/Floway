@@ -259,3 +259,6 @@ export const translateChatCompletionsToResponses = (
     include: ["reasoning.encrypted_content"],
   };
 };
+
+export const buildTargetRequest = (payload: ChatCompletionsPayload) =>
+  translateChatCompletionsToResponses(payload);

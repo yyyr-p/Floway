@@ -25,7 +25,8 @@ import {
   type RemoteImageLoader,
   resolveImageUrlToMessagesImage,
 } from "../shared/remote-images.ts";
-import { safeJsonParse } from "../shared/utils.ts";
+import { safeJsonParse } from "../shared/json.ts";
+import type { ModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
 
 interface TranslateResponsesToMessagesOptions {
   loadRemoteImage?: RemoteImageLoader;
@@ -172,7 +173,7 @@ const translateResponsesInput = async (
         });
         break;
       case "reasoning": {
-        // Same opaque-only handling as source-result translation: emit
+        // Same opaque-only handling as result translation: emit
         // `redacted_thinking{data}` when there is no plaintext summary, so the
         // Anthropic-compatible target receives a valid signature-only block
         // instead of a `thinking` block with empty/missing text. A reasoning
@@ -299,3 +300,11 @@ export const translateResponsesToMessages = async (
       : {}),
   };
 };
+
+export const buildTargetRequest = (
+  payload: ResponsesPayload,
+  capabilities: ModelCapabilities,
+): Promise<MessagesPayload> =>
+  translateResponsesToMessages(payload, {
+    fallbackMaxOutputTokens: capabilities.maxOutputTokens,
+  });

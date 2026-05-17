@@ -21,12 +21,12 @@ import { withAccountFallback } from "../../../shared/account-pool/fallback.ts";
 import { emitToMessages } from "../../targets/messages/emit.ts";
 import { emitToResponses } from "../../targets/responses/emit.ts";
 import { emitToChatCompletions } from "../../targets/chat-completions/emit.ts";
-import { buildTargetRequest as buildMessagesTargetRequest } from "../../translate/gemini-via-messages/build-target-request.ts";
-import { buildTargetRequest as buildResponsesTargetRequest } from "../../translate/gemini-via-responses/build-target-request.ts";
-import { buildTargetRequest as buildChatCompletionsTargetRequest } from "../../translate/gemini-via-chat-completions/build-target-request.ts";
-import { translateToSourceEvents as translateMessagesToSourceEvents } from "../../translate/gemini-via-messages/translate-to-source-events.ts";
-import { translateToSourceEvents as translateResponsesToSourceEvents } from "../../translate/gemini-via-responses/translate-to-source-events.ts";
-import { translateToSourceEvents as translateChatCompletionsToSourceEvents } from "../../translate/gemini-via-chat-completions/translate-to-source-events.ts";
+import { buildTargetRequest as buildMessagesTargetRequest } from "../../translate/gemini-via-messages/request.ts";
+import { buildTargetRequest as buildResponsesTargetRequest } from "../../translate/gemini-via-responses/request.ts";
+import { buildTargetRequest as buildChatCompletionsTargetRequest } from "../../translate/gemini-via-chat-completions/request.ts";
+import { translateToSourceEvents as translateMessagesToSourceEvents } from "../../translate/gemini-via-messages/events.ts";
+import { translateToSourceEvents as translateResponsesToSourceEvents } from "../../translate/gemini-via-responses/events.ts";
+import { translateToSourceEvents as translateChatCompletionsToSourceEvents } from "../../translate/gemini-via-chat-completions/events.ts";
 import {
   internalErrorResult,
   type StreamExecuteResult,

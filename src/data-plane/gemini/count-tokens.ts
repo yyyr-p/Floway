@@ -8,7 +8,7 @@ import { toInternalDebugError } from "../llm/shared/errors/internal-debug-error.
 import { stripUnsupportedPartFieldsFromPayload } from "../llm/sources/gemini/interceptors/strip-unsupported-part-fields.ts";
 import { stripUnsupportedToolsFromPayload } from "../llm/sources/gemini/interceptors/strip-unsupported-tools.ts";
 import { geminiModelResolutionIntent } from "../llm/sources/gemini/plan.ts";
-import { buildTargetRequest as buildMessagesTargetRequest } from "../llm/translate/gemini-via-messages/build-target-request.ts";
+import { buildTargetRequest as buildMessagesTargetRequest } from "../llm/translate/gemini-via-messages/request.ts";
 import { getModelCapabilities } from "../llm/shared/models/get-model-capabilities.ts";
 import { resolveModelForRequest } from "../llm/shared/models/resolve-model.ts";
 import { withAccountFallback } from "../shared/account-pool/fallback.ts";

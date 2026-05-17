@@ -100,12 +100,33 @@ The LLM subtree is role-organized:
 
 `src/data-plane/llm/translate/` is organized by source API and selected target
 API, using `<source>-via-<target>` directories such as `messages-via-responses`
-and `gemini-via-chat-completions`. Each pair directory owns the public
-`build-target-request.ts` and `translate-to-source-events.ts` entries for that
-route, plus local `request.ts`, `source-result.ts`, `source-events.ts`, and
-their tests when those helpers are needed. Only cross-pair primitives such as
-reasoning-signature packing, remote image loading, Responses output ordering,
-and tool-argument guards belong in `src/data-plane/llm/translate/shared/`.
+and `gemini-via-chat-completions`. Each pair directory uses the same production
+layout:
+
+- `request.ts`: source request -> selected target request; this file exports
+  `buildTargetRequest` for source pipelines.
+- `result.ts`: selected target complete result or terminal result helper ->
+  source result shape.
+- `events.ts`: selected target protocol event stream -> source protocol event
+  stream; this file exports `translateToSourceEvents` and may import `result.ts`
+  for terminal JSON fallback.
+- optional `utils.ts`: pair-local helpers only when `request.ts` and `result.ts`
+  / `events.ts` both need the same rule.
+
+Only cross-pair primitives belong in `src/data-plane/llm/translate/shared/`.
+Current shared modules are intentionally narrow:
+
+- `chat-responses-reasoning.ts`: Chat Completions <-> Responses reasoning-item
+  projection, used only by those two pair directions.
+- `messages-responses-signature.ts`: Messages <-> Responses reasoning signature
+  packing and unpacking.
+- `remote-images.ts`: remote image loading and conversion to Messages image
+  blocks, used by source APIs that target Messages.
+- `responses-stream-order.ts`: Responses output-order tracking for sources that
+  consume Responses streams.
+- `json.ts`: safe JSON-object parsing for tool-call arguments.
+- `tool-arguments.ts`: shared tool-argument stream guards such as whitespace
+  overflow detection.
 
 `sources`, `targets`, and `translate` under `src/data-plane/llm/` are only for
 Messages, Responses, Chat Completions, and Gemini LLM generation routing. Do not
@@ -321,7 +342,7 @@ Current placement:
   - strip `safetySettings`
   - hide `thought: true` summary parts by default; only expose Gemini thought
     summaries when `generationConfig.thinkingConfig.includeThoughts === true`
-- `src/data-plane/llm/translate/gemini-via-chat-completions/translate-to-source-events.ts`
+- `src/data-plane/llm/translate/gemini-via-chat-completions/events.ts`
   - preserve `thoughtSignature` on the next visible text or function-call action
     part so clients can echo it next turn
 - `src/data-plane/llm/translate/shared/messages-responses-signature.ts`
@@ -350,7 +371,7 @@ Current placement:
   - strip unsupported `service_tier`
 - `src/data-plane/llm/targets/chat-completions/interceptors/include-usage-stream-options.ts`
   - ensure streaming usage options needed by native chat handling
-- shared translation event helpers
+- `src/data-plane/llm/translate/shared/tool-arguments.ts`
   - guard against infinite whitespace in tool/function arguments
 
 Do not spread the same workaround across route handlers, target emitters, and
@@ -537,9 +558,8 @@ These rules apply project-wide, not only to the data plane.
   directory's `index.ts`.
 - Pairwise translators belong in
   `src/data-plane/llm/translate/<source>-via-<target>/`.
-- Pair directories should expose `build-target-request.ts` and
-  `translate-to-source-events.ts`; pair-local `request.ts`, `source-result.ts`,
-  `source-events.ts`, and tests should stay in the same directory.
+- Pair directories should expose `request.ts`, `result.ts`, and `events.ts` as
+  their production modules; tests should stay in the same directory.
 - Shared translation primitives belong in `src/data-plane/llm/translate/shared/`
   only when more than one pair needs the same boundary rule.
 - Models endpoint work belongs in `src/data-plane/models/`.

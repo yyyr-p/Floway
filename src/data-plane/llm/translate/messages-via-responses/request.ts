@@ -296,3 +296,6 @@ export const translateMessagesToResponses = (
       : {}),
   };
 };
+
+export const buildTargetRequest = (payload: MessagesPayload) =>
+  translateMessagesToResponses(payload);

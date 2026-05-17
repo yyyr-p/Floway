@@ -11,13 +11,13 @@ import {
   resolveModelForRequest,
   responsesModelResolutionIntent,
 } from "../../shared/models/resolve-model.ts";
-import { buildTargetRequest as buildMessagesTargetRequest } from "../../translate/responses-via-messages/build-target-request.ts";
-import { buildTargetRequest as buildChatCompletionsTargetRequest } from "../../translate/responses-via-chat-completions/build-target-request.ts";
+import { buildTargetRequest as buildMessagesTargetRequest } from "../../translate/responses-via-messages/request.ts";
+import { buildTargetRequest as buildChatCompletionsTargetRequest } from "../../translate/responses-via-chat-completions/request.ts";
 import { emitToResponses } from "../../targets/responses/emit.ts";
 import { emitToMessages } from "../../targets/messages/emit.ts";
 import { emitToChatCompletions } from "../../targets/chat-completions/emit.ts";
-import { translateToSourceEvents } from "../../translate/responses-via-messages/translate-to-source-events.ts";
-import { translateToSourceEvents as translateChatCompletionsToSourceEvents } from "../../translate/responses-via-chat-completions/translate-to-source-events.ts";
+import { translateToSourceEvents } from "../../translate/responses-via-messages/events.ts";
+import { translateToSourceEvents as translateChatCompletionsToSourceEvents } from "../../translate/responses-via-chat-completions/events.ts";
 import { respondResponses } from "./respond.ts";
 import {
   internalErrorResult,

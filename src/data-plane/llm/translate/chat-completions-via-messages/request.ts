@@ -19,7 +19,8 @@ import {
   type RemoteImageLoader,
   resolveImageUrlToMessagesImage,
 } from "../shared/remote-images.ts";
-import { safeJsonParse } from "../shared/utils.ts";
+import { safeJsonParse } from "../shared/json.ts";
+import type { ModelCapabilities } from "../../shared/models/get-model-capabilities.ts";
 
 export type { RemoteImageLoader } from "../shared/remote-images.ts";
 
@@ -285,3 +286,12 @@ export const translateChatCompletionsToMessages = async (
       : {}),
   };
 };
+
+export const buildTargetRequest = async (
+  payload: ChatCompletionsPayload,
+  capabilities: ModelCapabilities,
+): Promise<MessagesPayload> =>
+  await translateChatCompletionsToMessages(payload, {
+    loadRemoteImage: fetchRemoteImage,
+    fallbackMaxOutputTokens: capabilities.maxOutputTokens,
+  });

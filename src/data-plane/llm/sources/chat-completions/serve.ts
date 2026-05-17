@@ -14,13 +14,13 @@ import {
   chatModelResolutionIntent,
   resolveModelForRequest,
 } from "../../shared/models/resolve-model.ts";
-import { buildTargetRequest as buildMessagesTargetRequest } from "../../translate/chat-completions-via-messages/build-target-request.ts";
-import { buildTargetRequest as buildResponsesTargetRequest } from "../../translate/chat-completions-via-responses/build-target-request.ts";
+import { buildTargetRequest as buildMessagesTargetRequest } from "../../translate/chat-completions-via-messages/request.ts";
+import { buildTargetRequest as buildResponsesTargetRequest } from "../../translate/chat-completions-via-responses/request.ts";
 import { emitToMessages } from "../../targets/messages/emit.ts";
 import { emitToResponses } from "../../targets/responses/emit.ts";
 import { emitToChatCompletions } from "../../targets/chat-completions/emit.ts";
-import { translateToSourceEvents as translateMessagesToSourceEvents } from "../../translate/chat-completions-via-messages/translate-to-source-events.ts";
-import { translateToSourceEvents as translateResponsesToSourceEvents } from "../../translate/chat-completions-via-responses/translate-to-source-events.ts";
+import { translateToSourceEvents as translateMessagesToSourceEvents } from "../../translate/chat-completions-via-messages/events.ts";
+import { translateToSourceEvents as translateResponsesToSourceEvents } from "../../translate/chat-completions-via-responses/events.ts";
 import { respondChatCompletions } from "./respond.ts";
 import {
   internalErrorResult,
