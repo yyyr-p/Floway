@@ -591,7 +591,11 @@ Deno.test("/v1/messages uses native endpoint and applies native request workarou
                 type: "redacted_thinking",
                 data: "opaque_blob",
               },
-              { type: "thinking", thinking: "second thought", signature: "sig_second" },
+              {
+                type: "thinking",
+                thinking: "second thought",
+                signature: "sig_second",
+              },
               { type: "text", text: "previous reply" },
             ],
           },
@@ -1604,7 +1608,11 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
     assertEquals(body.usage.input_tokens, 25);
     assertEquals(body.usage.cache_read_input_tokens, 5);
     assertEquals(body.content[0].type, "thinking");
-    assertEquals(body.content[0].signature, "enc_abc");
+    // Packed `${encrypted_content}@${id}` smuggles the Responses item id
+    // through the Anthropic signature slot so a next-turn submission survives
+    // Copilot's per-item signature verification. See
+    // `src/lib/translate/messages-responses-signature.ts`.
+    assertEquals(body.content[0].signature, "enc_abc@rs_1");
     assertEquals(body.content[1].text, "Answer text");
   });
 
@@ -2748,8 +2756,9 @@ Deno.test("/v1/messages routes native web search through translated /responses t
   assertExists(upstreamResponsesBody);
   // Shim rewrote the native tool into an ordinary client function tool before
   // the translator turned it into a Responses function tool.
-  const upstreamTools =
-    upstreamResponsesBody!.tools as Array<Record<string, unknown>>;
+  const upstreamTools = upstreamResponsesBody!.tools as Array<
+    Record<string, unknown>
+  >;
   assertEquals(upstreamTools.length, 1);
   assertEquals(upstreamTools[0].type, "function");
   assertEquals(upstreamTools[0].name, "web_search");
@@ -2854,8 +2863,9 @@ Deno.test("/v1/messages routes native web search through translated /chat/comple
   });
 
   assertExists(upstreamChatBody);
-  const upstreamTools =
-    upstreamChatBody!.tools as Array<Record<string, unknown>>;
+  const upstreamTools = upstreamChatBody!.tools as Array<
+    Record<string, unknown>
+  >;
   assertEquals(upstreamTools.length, 1);
   assertEquals(upstreamTools[0].type, "function");
   assertEquals(

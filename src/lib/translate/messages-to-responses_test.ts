@@ -9,7 +9,7 @@ import type {
   ResponseOutputReasoning,
 } from "../responses-types.ts";
 
-Deno.test("translateMessagesToResponses uses rs-prefixed ids for reasoning input items", () => {
+Deno.test("translateMessagesToResponses synthesizes an rs-prefixed id when the signature is not packed", () => {
   const result = translateMessagesToResponses({
     model: "gpt-test",
     max_tokens: 256,
@@ -23,6 +23,27 @@ Deno.test("translateMessagesToResponses uses rs-prefixed ids for reasoning input
   const reasoning = result.input[0] as ResponseInputReasoning;
   assertEquals(reasoning.type, "reasoning");
   assertEquals(reasoning.id, "rs_0");
+  assertEquals(reasoning.encrypted_content, "sig");
+});
+
+Deno.test("translateMessagesToResponses recovers the upstream id from a packed thinking.signature", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "assistant",
+      content: [{
+        type: "thinking",
+        thinking: "trace",
+        signature: "enc_abc@rs_42",
+      }],
+    }],
+  });
+
+  if (!Array.isArray(result.input)) throw new Error("expected input array");
+  const reasoning = result.input[0] as ResponseInputReasoning;
+  assertEquals(reasoning.id, "rs_42");
+  assertEquals(reasoning.encrypted_content, "enc_abc");
 });
 
 Deno.test("translateMessagesToResponses drops filtered-native tool_choice and rewrites assistant native web-search history as function-call history", () => {
@@ -186,6 +207,25 @@ Deno.test("translateMessagesToResponses preserves redacted_thinking as opaque re
   });
 });
 
+Deno.test("translateMessagesToResponses recovers the upstream id from packed redacted_thinking.data", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    messages: [{
+      role: "assistant",
+      content: [{ type: "redacted_thinking", data: "opaque_sig@rs_99" }],
+    }],
+  });
+
+  if (!Array.isArray(result.input)) throw new Error("expected input array");
+  assertEquals(result.input[0], {
+    type: "reasoning",
+    id: "rs_99",
+    summary: [],
+    encrypted_content: "opaque_sig",
+  });
+});
+
 Deno.test("translateMessagesToResponses omits encrypted_content for text-only thinking input", () => {
   const result = translateMessagesToResponses({
     model: "gpt-test",
@@ -255,7 +295,7 @@ Deno.test("getMessagesRequestedReasoningEffort ignores bare enabled thinking wit
   );
 });
 
-Deno.test("translateMessagesToResponsesResult uses rs-prefixed ids for reasoning output items", () => {
+Deno.test("translateMessagesToResponsesResult synthesizes an rs-prefixed id when the signature is not packed", () => {
   const result = translateMessagesToResponsesResult({
     id: "msg_123",
     type: "message",
@@ -270,6 +310,28 @@ Deno.test("translateMessagesToResponsesResult uses rs-prefixed ids for reasoning
   const reasoning = result.output[0] as ResponseOutputReasoning;
   assertEquals(reasoning.type, "reasoning");
   assertEquals(reasoning.id, "rs_0");
+  assertEquals(reasoning.encrypted_content, "sig");
+});
+
+Deno.test("translateMessagesToResponsesResult recovers the upstream id from a packed thinking.signature", () => {
+  const result = translateMessagesToResponsesResult({
+    id: "msg_123",
+    type: "message",
+    role: "assistant",
+    model: "claude-test",
+    content: [{
+      type: "thinking",
+      thinking: "trace",
+      signature: "enc_abc@rs_77",
+    }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 3 },
+  });
+
+  const reasoning = result.output[0] as ResponseOutputReasoning;
+  assertEquals(reasoning.id, "rs_77");
+  assertEquals(reasoning.encrypted_content, "enc_abc");
 });
 
 Deno.test("translateMessagesToResponsesResult preserves assistant block order", () => {
@@ -325,6 +387,26 @@ Deno.test("translateMessagesToResponsesResult preserves redacted_thinking as opa
   assertEquals(result.output, [{
     type: "reasoning",
     id: "rs_0",
+    summary: [],
+    encrypted_content: "opaque_sig",
+  }]);
+});
+
+Deno.test("translateMessagesToResponsesResult recovers the upstream id from packed redacted_thinking.data", () => {
+  const result = translateMessagesToResponsesResult({
+    id: "msg_123",
+    type: "message",
+    role: "assistant",
+    model: "claude-test",
+    content: [{ type: "redacted_thinking", data: "opaque_sig@rs_55" }],
+    stop_reason: "end_turn",
+    stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 3 },
+  });
+
+  assertEquals(result.output, [{
+    type: "reasoning",
+    id: "rs_55",
     summary: [],
     encrypted_content: "opaque_sig",
   }]);

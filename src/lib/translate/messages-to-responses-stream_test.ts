@@ -159,6 +159,65 @@ Deno.test("redacted_thinking stream block becomes opaque Responses reasoning", (
   }]);
 });
 
+Deno.test("redacted_thinking stream block recovers the upstream id from packed data", () => {
+  const state = createMessagesToResponsesStreamState(
+    "resp_test",
+    "claude-test",
+  );
+
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "redacted_thinking", data: "opaque_sig@rs_88" },
+  } as MessagesStreamEventData, state);
+
+  translateMessagesEventToResponsesEvents(
+    { type: "content_block_stop", index: 0 } as MessagesStreamEventData,
+    state,
+  );
+
+  assertEquals(state.completedItems, [{
+    type: "reasoning",
+    id: "rs_88",
+    summary: [],
+    encrypted_content: "opaque_sig",
+  }]);
+});
+
+Deno.test("thinking stream block recovers the upstream id from a packed signature_delta", () => {
+  const state = createMessagesToResponsesStreamState(
+    "resp_test",
+    "claude-test",
+  );
+
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_start",
+    index: 0,
+    content_block: { type: "thinking", thinking: "" },
+  } as MessagesStreamEventData, state);
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "thinking_delta", thinking: "trace" },
+  } as MessagesStreamEventData, state);
+  translateMessagesEventToResponsesEvents({
+    type: "content_block_delta",
+    index: 0,
+    delta: { type: "signature_delta", signature: "enc_xyz@rs_33" },
+  } as MessagesStreamEventData, state);
+  translateMessagesEventToResponsesEvents(
+    { type: "content_block_stop", index: 0 } as MessagesStreamEventData,
+    state,
+  );
+
+  assertEquals(state.completedItems, [{
+    type: "reasoning",
+    id: "rs_33",
+    summary: [{ type: "summary_text", text: "trace" }],
+    encrypted_content: "enc_xyz",
+  }]);
+});
+
 Deno.test("thinking stream block start omits undefined encrypted_content", () => {
   const state = createMessagesToResponsesStreamState(
     "resp_test",

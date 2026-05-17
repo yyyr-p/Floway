@@ -1,4 +1,5 @@
 import type { MessagesStreamEventData } from "../messages-types.ts";
+import { packReasoningSignature } from "./messages-responses-signature.ts";
 import type {
   ResponseOutputItem,
   ResponsesResult,
@@ -272,8 +273,7 @@ const handleOutputItemDone = (
   if (event.item.type !== "reasoning") return flushDeferredEvents(state);
 
   const encryptedContent = event.item.encrypted_content;
-  const hasEncryptedContent =
-    Object.hasOwn(event.item, "encrypted_content") &&
+  const hasEncryptedContent = Object.hasOwn(event.item, "encrypted_content") &&
     encryptedContent !== undefined;
   const hasEmittedSummary = hasResponsePartForOutput(
     state.emittedReasoningSummaryKeys,
@@ -287,14 +287,16 @@ const handleOutputItemDone = (
   // No prior summary delta and no usable summary text: either round-trip the
   // opaque blob as `redacted_thinking{data}` (Copilot rejects empty/null/missing
   // `thinking` text on a regular thinking block) or drop entirely when there is
-  // nothing the target can verify.
+  // nothing the target can verify. The Responses item id is packed into the
+  // signature/data slot so the upstream signature check passes on the next
+  // turn; see `./messages-responses-signature.ts`.
   if (!hasEmittedSummary && trimmedSummary === "") {
     if (hasEncryptedContent) {
       const events: MessagesStreamEventData[] = [];
       openRedactedThinkingBlock(
         state,
         event.output_index,
-        encryptedContent,
+        packReasoningSignature(event.item.id, encryptedContent),
         events,
       );
       return [...events, ...flushDeferredEvents(state)];
@@ -325,7 +327,7 @@ const handleOutputItemDone = (
       index: blockIndex,
       delta: {
         type: "signature_delta",
-        signature: encryptedContent,
+        signature: packReasoningSignature(event.item.id, encryptedContent),
       },
     });
     emittedDelta = true;

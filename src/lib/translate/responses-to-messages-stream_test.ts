@@ -4,7 +4,7 @@ import {
   translateResponsesStreamEventToMessagesEvents,
 } from "./responses-to-messages-stream.ts";
 
-Deno.test("opaque-only Responses reasoning stream becomes redacted_thinking instead of placeholder thinking", () => {
+Deno.test("opaque-only Responses reasoning stream becomes redacted_thinking with packed id", () => {
   const state = createResponsesToMessagesStreamState();
 
   const events = translateResponsesStreamEventToMessagesEvents({
@@ -23,7 +23,7 @@ Deno.test("opaque-only Responses reasoning stream becomes redacted_thinking inst
     index: 0,
     content_block: {
       type: "redacted_thinking",
-      data: "opaque_sig",
+      data: "opaque_sig@rs_0",
     },
   }]);
 });
@@ -68,7 +68,7 @@ Deno.test("text-only Responses reasoning stream omits signature deltas", () => {
   ));
 });
 
-Deno.test("Responses reasoning stream preserves signature when done summary is empty after text delta", () => {
+Deno.test("Responses reasoning stream packs id into signature when done summary is empty after text delta", () => {
   const state = createResponsesToMessagesStreamState();
 
   const events = [
@@ -105,7 +105,7 @@ Deno.test("Responses reasoning stream preserves signature when done summary is e
     {
       type: "content_block_delta",
       index: 0,
-      delta: { type: "signature_delta", signature: "sig" },
+      delta: { type: "signature_delta", signature: "sig@rs_0" },
     },
   ]);
 });
@@ -220,7 +220,7 @@ Deno.test("opaque-only Responses reasoning stream preserves source order when op
     {
       type: "content_block_start",
       index: 0,
-      content_block: { type: "redacted_thinking", data: "opaque_sig" },
+      content_block: { type: "redacted_thinking", data: "opaque_sig@rs_0" },
     },
     { type: "content_block_stop", index: 0 },
     {
@@ -286,7 +286,7 @@ Deno.test("Responses reasoning stream preserves source order when later reasonin
     {
       type: "content_block_delta",
       index: 0,
-      delta: { type: "signature_delta", signature: "enc_first" },
+      delta: { type: "signature_delta", signature: "enc_first@rs_0" },
     },
     { type: "content_block_stop", index: 0 },
     {
@@ -302,7 +302,7 @@ Deno.test("Responses reasoning stream preserves source order when later reasonin
     {
       type: "content_block_delta",
       index: 1,
-      delta: { type: "signature_delta", signature: "enc_second" },
+      delta: { type: "signature_delta", signature: "enc_second@rs_1" },
     },
   ]);
 });
@@ -413,7 +413,7 @@ Deno.test("reasoning stream with explicit undefined encrypted_content emits no b
   assertEquals(events, []);
 });
 
-Deno.test("reasoning stream with whitespace-only summary and encrypted_content becomes redacted_thinking", () => {
+Deno.test("reasoning stream with whitespace-only summary and encrypted_content becomes redacted_thinking with packed id", () => {
   const state = createResponsesToMessagesStreamState();
 
   const events = translateResponsesStreamEventToMessagesEvents({
@@ -432,7 +432,7 @@ Deno.test("reasoning stream with whitespace-only summary and encrypted_content b
     index: 0,
     content_block: {
       type: "redacted_thinking",
-      data: "opaque_sig",
+      data: "opaque_sig@rs_ws",
     },
   }]);
 });

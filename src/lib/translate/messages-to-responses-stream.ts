@@ -8,6 +8,7 @@ import type {
   MessagesStreamEventData,
 } from "../messages-types.ts";
 import { makeResponsesReasoningId } from "../reasoning.ts";
+import { unpackReasoningSignature } from "./messages-responses-signature.ts";
 import type {
   ResponseOutputFunctionCall,
   ResponseOutputItem,
@@ -161,12 +162,16 @@ const handleContentBlockStart = (
   }
 
   if (event.content_block.type === "redacted_thinking") {
-    const itemId = makeResponsesReasoningId(outputIndex);
+    // Unpack `${encrypted_content}@${id}` so the Responses-shape stream we
+    // fabricate carries the original upstream item id. See
+    // `./messages-responses-signature.ts` for the why.
+    const unpacked = unpackReasoningSignature(event.content_block.data);
+    const itemId = unpacked.id ?? makeResponsesReasoningId(outputIndex);
     state.blockMap.set(event.index, {
       type: "redacted_thinking",
       outputIndex,
       itemId,
-      signature: event.content_block.data,
+      signature: unpacked.encryptedContent,
     });
 
     const item: ResponseOutputReasoning = {
@@ -298,12 +303,19 @@ const handleContentBlockStop = (
 
   if (info.type === "thinking") {
     const summaryText = info.thinkingText;
+    // Unpack `${encrypted_content}@${id}` so the materialized reasoning item
+    // carries the original upstream id (and a clean encrypted_content blob).
+    // See `./messages-responses-signature.ts` for why.
+    const unpacked = info.hasSignature
+      ? unpackReasoningSignature(info.signature)
+      : null;
+    const itemId = unpacked?.id ?? info.itemId;
 
     const item: ResponseOutputReasoning = {
       type: "reasoning",
-      id: info.itemId,
+      id: itemId,
       summary: summaryText ? [{ type: "summary_text", text: summaryText }] : [],
-      ...(info.hasSignature ? { encrypted_content: info.signature } : {}),
+      ...(unpacked ? { encrypted_content: unpacked.encryptedContent } : {}),
     };
 
     state.completedItems.push(item);
@@ -312,7 +324,7 @@ const handleContentBlockStop = (
       ...(summaryText
         ? [{
           type: "response.reasoning_summary_text.done" as const,
-          item_id: info.itemId,
+          item_id: itemId,
           output_index: info.outputIndex,
           summary_index: 0,
           text: summaryText,
@@ -320,7 +332,7 @@ const handleContentBlockStop = (
         : []),
       {
         type: "response.reasoning_summary_part.done",
-        item_id: info.itemId,
+        item_id: itemId,
         output_index: info.outputIndex,
         summary_index: 0,
         part: { type: "summary_text", text: summaryText },

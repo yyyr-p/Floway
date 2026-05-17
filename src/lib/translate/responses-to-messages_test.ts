@@ -90,7 +90,7 @@ Deno.test("translateResponsesToMessages uses fallbackMaxOutputTokens over the ga
   assertEquals(result.max_tokens, 4096);
 });
 
-Deno.test("translateResponsesToMessages preserves reasoning.encrypted_content without encoding the reasoning id", async () => {
+Deno.test("translateResponsesToMessages packs reasoning id into the Anthropic signature", async () => {
   const result = await translateResponsesToMessages({
     model: "claude-test",
     input: [{
@@ -119,7 +119,7 @@ Deno.test("translateResponsesToMessages preserves reasoning.encrypted_content wi
   assertEquals(assistant.content[0], {
     type: "thinking",
     thinking: "trace",
-    signature: "enc_abc",
+    signature: "enc_abc@rs_42",
   });
 });
 
@@ -213,7 +213,7 @@ Deno.test("translateResponsesToMessages resolves remote input images through the
   }]);
 });
 
-Deno.test("translateResponsesToMessagesResponse maps opaque-only reasoning to redacted_thinking", () => {
+Deno.test("translateResponsesToMessagesResponse packs reasoning id into opaque-only redacted_thinking data", () => {
   const result = translateResponsesToMessagesResponse({
     id: "resp_123",
     object: "response",
@@ -235,7 +235,7 @@ Deno.test("translateResponsesToMessagesResponse maps opaque-only reasoning to re
 
   assertEquals(result.content, [{
     type: "redacted_thinking",
-    data: "opaque_sig",
+    data: "opaque_sig@rs_1",
   }]);
 });
 
@@ -279,7 +279,7 @@ Deno.test("translateResponsesToMessagesResponse drops reasoning with explicit un
   assertEquals(result.content, []);
 });
 
-Deno.test("translateResponsesToMessagesResponse treats whitespace-only summary as opaque-only reasoning", () => {
+Deno.test("translateResponsesToMessagesResponse treats whitespace-only summary as opaque-only reasoning and packs id", () => {
   const result = translateResponsesToMessagesResponse({
     id: "resp_ws",
     object: "response",
@@ -297,7 +297,7 @@ Deno.test("translateResponsesToMessagesResponse treats whitespace-only summary a
 
   assertEquals(result.content, [{
     type: "redacted_thinking",
-    data: "opaque_sig",
+    data: "opaque_sig@rs_ws",
   }]);
 });
 

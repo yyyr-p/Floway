@@ -16,6 +16,7 @@ import {
   getMessagesRequestedReasoningEffort,
   makeResponsesReasoningId,
 } from "../reasoning.ts";
+import { unpackReasoningSignature } from "./messages-responses-signature.ts";
 import type {
   ResponseInputContent,
   ResponseInputItem,
@@ -157,26 +158,37 @@ const translateAssistantMessage = (
 
     if (block.type === "thinking") {
       flushPendingContent(pendingContent, input, "assistant");
+      // Recover the original Responses item id when the signature was issued
+      // by this gateway (packed as `${encrypted_content}@${id}`). Without the
+      // packed id, Copilot rejects the next-turn submission because the
+      // encrypted blob was signed against a different item id. Unpacked
+      // signatures (native Anthropic sessions resumed against the gateway, or
+      // stored sessions predating the packing change) fall back to a
+      // synthesized id; the upstream signature check will still fail for
+      // those, matching pre-packing behavior. See
+      // `./messages-responses-signature.ts`.
+      const unpacked = typeof block.signature === "string"
+        ? unpackReasoningSignature(block.signature)
+        : null;
       input.push({
         type: "reasoning",
-        id: makeResponsesReasoningId(input.length),
+        id: unpacked?.id ?? makeResponsesReasoningId(input.length),
         summary: block.thinking
           ? [{ type: "summary_text", text: block.thinking }]
           : [],
-        ...(Object.hasOwn(block, "signature")
-          ? { encrypted_content: block.signature }
-          : {}),
+        ...(unpacked ? { encrypted_content: unpacked.encryptedContent } : {}),
       });
       continue;
     }
 
     if (block.type === "redacted_thinking") {
       flushPendingContent(pendingContent, input, "assistant");
+      const unpacked = unpackReasoningSignature(block.data);
       input.push({
         type: "reasoning",
-        id: makeResponsesReasoningId(input.length),
+        id: unpacked.id ?? makeResponsesReasoningId(input.length),
         summary: [],
-        encrypted_content: block.data,
+        encrypted_content: unpacked.encryptedContent,
       });
       continue;
     }
@@ -308,26 +320,31 @@ export const translateMessagesToResponsesResult = (
   for (const block of response.content) {
     switch (block.type) {
       case "thinking": {
+        // Same pack/unpack rationale as the request-side path above; see
+        // `./messages-responses-signature.ts`.
+        const unpacked = typeof block.signature === "string"
+          ? unpackReasoningSignature(block.signature)
+          : null;
         output.push({
           type: "reasoning",
-          id: makeResponsesReasoningId(output.length),
+          id: unpacked?.id ?? makeResponsesReasoningId(output.length),
           summary: block.thinking
             ? [{ type: "summary_text", text: block.thinking }]
             : [],
-          ...(Object.hasOwn(block, "signature")
-            ? { encrypted_content: block.signature }
-            : {}),
+          ...(unpacked ? { encrypted_content: unpacked.encryptedContent } : {}),
         } as ResponseOutputReasoning);
         break;
       }
-      case "redacted_thinking":
+      case "redacted_thinking": {
+        const unpacked = unpackReasoningSignature(block.data);
         output.push({
           type: "reasoning",
-          id: makeResponsesReasoningId(output.length),
+          id: unpacked.id ?? makeResponsesReasoningId(output.length),
           summary: [],
-          encrypted_content: block.data,
+          encrypted_content: unpacked.encryptedContent,
         } as ResponseOutputReasoning);
         break;
+      }
       case "text":
         outputText += block.text;
         output.push({

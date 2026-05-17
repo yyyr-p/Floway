@@ -11,18 +11,19 @@ import {
   type MessagesUserMessage,
 } from "../messages-types.ts";
 import type {
+  ResponseFunctionTool,
   ResponseInputImage,
   ResponseInputItem,
   ResponseInputMessage,
   ResponseInputText,
   ResponseOutputContentBlock,
   ResponseOutputItem,
-  ResponseFunctionTool,
   ResponsesPayload,
   ResponsesResult,
   ResponseTool,
   ResponseToolChoice,
 } from "../responses-types.ts";
+import { packReasoningSignature } from "./messages-responses-signature.ts";
 import {
   fetchRemoteImage,
   type RemoteImageLoader,
@@ -64,19 +65,18 @@ const mapOutputToMessagesContent = (
   for (const item of output) {
     switch (item.type) {
       case "reasoning": {
-        // Keep `encrypted_content` as raw Anthropic opaque data. Another
-        // Copilot gateway packs `encrypted_content@id` into `signature` to keep
-        // Responses IDs cache-stable, but that mutates the Anthropic signature
-        // surface; this gateway accepts possible Responses cache misses instead.
-        // References:
-        // - https://github.com/caozhiyuan/copilot-api/issues/63
-        // - https://github.com/caozhiyuan/copilot-api/issues/73
+        // Pack `${encrypted_content}@${id}` into the Anthropic signature/data
+        // slot so the original Responses item id survives the Messages
+        // round-trip. Without this, the resynthesized `rs_${index}` id we
+        // would otherwise send back next turn fails Copilot's signature
+        // verification with `400 invalid_request_body: "Encrypted content
+        // item_id did not match the target item id."`. See packing rationale
+        // and permalinks in `./messages-responses-signature.ts`.
         const thinking = item.summary?.length
           ? item.summary.map((part) => part.text).join("").trim()
           : "";
         const encryptedContent = item.encrypted_content;
-        const hasEncryptedContent =
-          Object.hasOwn(item, "encrypted_content") &&
+        const hasEncryptedContent = Object.hasOwn(item, "encrypted_content") &&
           encryptedContent !== undefined;
 
         // Copilot's /v1/messages rejects `thinking: null` and missing
@@ -90,7 +90,7 @@ const mapOutputToMessagesContent = (
           if (hasEncryptedContent) {
             content.push({
               type: "redacted_thinking",
-              data: encryptedContent,
+              data: packReasoningSignature(item.id, encryptedContent),
             });
           }
           break;
@@ -99,7 +99,9 @@ const mapOutputToMessagesContent = (
         content.push({
           type: "thinking",
           thinking,
-          ...(hasEncryptedContent ? { signature: encryptedContent } : {}),
+          ...(hasEncryptedContent
+            ? { signature: packReasoningSignature(item.id, encryptedContent) }
+            : {}),
         });
         break;
       }
@@ -282,20 +284,21 @@ const translateResponsesInput = async (
         // Anthropic-compatible target receives a valid signature-only block
         // instead of a `thinking` block with empty/missing text. A reasoning
         // item with neither summary nor encrypted_content carries nothing the
-        // target can verify, so we drop it.
+        // target can verify, so we drop it. The Responses item id is packed
+        // into the signature/data slot so it survives the round-trip back to
+        // the upstream signature check; see `./messages-responses-signature.ts`.
         const thinking = item.summary?.length
           ? item.summary.map((part) => part.text).join("").trim()
           : "";
         const encryptedContent = item.encrypted_content;
-        const hasEncryptedContent =
-          Object.hasOwn(item, "encrypted_content") &&
+        const hasEncryptedContent = Object.hasOwn(item, "encrypted_content") &&
           encryptedContent !== undefined;
 
         if (!thinking) {
           if (hasEncryptedContent) {
             appendAssistantBlock(messages, {
               type: "redacted_thinking",
-              data: encryptedContent,
+              data: packReasoningSignature(item.id, encryptedContent),
             });
           }
           break;
@@ -304,7 +307,9 @@ const translateResponsesInput = async (
         appendAssistantBlock(messages, {
           type: "thinking",
           thinking,
-          ...(hasEncryptedContent ? { signature: encryptedContent } : {}),
+          ...(hasEncryptedContent
+            ? { signature: packReasoningSignature(item.id, encryptedContent) }
+            : {}),
         });
         break;
       }

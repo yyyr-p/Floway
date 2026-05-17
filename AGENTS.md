@@ -291,10 +291,10 @@ Current placement:
   - resolve Claude compatibility aliases and variants before account fallback
   - keep account fallback model-fixed after one final upstream ID is selected
 - `src/data-plane/llm/sources/messages/interceptors/`
-  - rewrite native Anthropic `web_search_*` server tools into a
-    gateway-executed shim that runs once at the source layer, so every
-    Messages routing path (native messages, via responses, via
-    chat-completions) sees the same gateway-executed search behavior
+  - rewrite native Anthropic `web_search_*` server tools into a gateway-executed
+    shim that runs once at the source layer, so every Messages routing path
+    (native messages, via responses, via chat-completions) sees the same
+    gateway-executed search behavior
   - replay shim-owned search history back upstream as `search_result` blocks
   - rewrite upstream tool use, tool results, and citations back into native
     `web_search` blocks for downstream Messages clients
@@ -315,6 +315,11 @@ Current placement:
 - `src/data-plane/llm/translate/gemini-via-chat-completions/translate-to-source-events.ts`
   - preserve `thoughtSignature` on the next visible text or function-call action
     part so clients can echo it next turn
+- `src/lib/translate/messages-responses-signature.ts`
+  - pack Responses reasoning item ids into Anthropic `thinking.signature` /
+    `redacted_thinking.data` for Messages <-> Responses translation, and unpack
+    them on the reverse path so Copilot encrypted-content verification sees the
+    original item id
 - `src/data-plane/llm/sources/gemini/respond.ts`
   - translate source errors into Google RPC Status envelopes
 - `src/data-plane/llm/targets/messages/interceptors/fix-beta-header.ts`

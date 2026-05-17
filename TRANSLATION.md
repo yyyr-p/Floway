@@ -207,7 +207,9 @@ Request mapping:
 - assistant text becomes `message` items with `output_text` content.
 - assistant `tool_use` blocks become `function_call` items.
 - assistant `thinking` and `redacted_thinking` blocks become `reasoning` input
-  items; `signature` / redacted data maps to `encrypted_content`.
+  items; `signature` / redacted data maps to `encrypted_content`. When the
+  opaque payload is packed as `${encrypted_content}@${id}`, the original
+  Responses reasoning item id is recovered.
 - `max_tokens`, `temperature`, `top_p`, `metadata`, and `stream` pass through
   when present.
 - `output_config.effort` maps directly to `reasoning.effort`; disabled thinking
@@ -223,7 +225,8 @@ Request mapping:
 Response mapping:
 
 - assistant `thinking` / `redacted_thinking` output becomes Responses
-  `reasoning` output items.
+  `reasoning` output items; packed `${encrypted_content}@${id}` payloads recover
+  the original Responses item id.
 - assistant text becomes `message` output items and contributes to
   `output_text`.
 - assistant `tool_use` becomes `function_call` output items.
@@ -236,9 +239,10 @@ Known losses:
 
 - `stop_sequences`, `top_k`, and Messages `service_tier` have no Responses
   request counterpart and are omitted.
-- Responses reasoning IDs are regenerated; they are not packed into Anthropic
-  signatures. This may reduce prompt-cache fidelity but keeps opaque signatures
-  semantically clean.
+- unpacked Anthropic signatures have no Responses item id slot, so the gateway
+  synthesizes `rs_*` ids for them. If such a payload was originally signed by
+  Copilot against a different Responses item id, upstream verification may still
+  fail; packed gateway-issued payloads avoid that loss.
 - Anthropic `thinking: { type: "enabled" }` without explicit effort has no
   Responses request-side equivalent and is not emulated.
 
@@ -257,7 +261,9 @@ Request mapping:
 - `function_call_output` becomes user `tool_result`; incomplete status marks the
   tool result as an error.
 - `reasoning` with readable summary becomes `thinking`; opaque-only reasoning
-  becomes `redacted_thinking`; `encrypted_content` maps to `signature` / data.
+  becomes `redacted_thinking`; `encrypted_content` maps to `signature` / data as
+  `${encrypted_content}@${id}` so the Responses reasoning item id survives the
+  Messages round-trip.
 - `max_output_tokens`, `temperature`, `top_p`, and `stream` pass through when
   present.
 - `reasoning.effort: "none"` maps to disabled thinking; any other explicit
@@ -269,7 +275,8 @@ Request mapping:
 Response mapping:
 
 - Responses output items are converted in output order.
-- `reasoning` maps to `thinking` or `redacted_thinking`.
+- `reasoning` maps to `thinking` or `redacted_thinking`, packing
+  `${encrypted_content}@${id}` when opaque reasoning is present.
 - `message` content maps to text. `refusal` content is kept visible as text
   because Messages has no local refusal block.
 - `function_call` maps to `tool_use`.
@@ -475,7 +482,10 @@ Known losses:
 - Anthropic `redacted_thinking`, Responses `encrypted_content`, and Chat
   `reasoning_opaque` carry the same opaque model-side payload where the target
   API can represent it.
-- Responses reasoning IDs are not encoded into Anthropic signatures.
+- Messages <-> Responses is the exception that also preserves Responses
+  reasoning item ids by packing `${encrypted_content}@${id}` into Anthropic
+  `thinking.signature` / `redacted_thinking.data`, then unpacking that shape
+  when translating back to Responses.
 
 ## Standard OpenAI Field Policy
 
