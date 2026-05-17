@@ -2,9 +2,12 @@ import { assertEquals } from "@std/assert";
 import {
   createMessagesToChatCompletionsStreamState,
   translateMessagesEventToChatCompletionsChunks,
-} from "./messages-to-chat-completions-stream.ts";
-import type { MessagesStreamEventData } from "../messages-types.ts";
-import type { ChatCompletionChunk, Delta } from "../chat-completions-types.ts";
+} from "./source-events.ts";
+import type { MessagesStreamEventData } from "../../../../lib/messages-types.ts";
+import type {
+  ChatCompletionChunk,
+  Delta,
+} from "../../../../lib/chat-completions-types.ts";
 
 // ── Helpers ──
 

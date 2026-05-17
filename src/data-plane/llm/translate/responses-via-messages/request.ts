@@ -4,32 +4,28 @@ import {
   type MessagesAssistantMessage,
   type MessagesMessage,
   type MessagesPayload,
-  type MessagesResponse,
   type MessagesTool,
   type MessagesToolResultBlock,
   type MessagesUserContentBlock,
   type MessagesUserMessage,
-} from "../messages-types.ts";
+} from "../../../../lib/messages-types.ts";
 import type {
   ResponseFunctionTool,
   ResponseInputImage,
   ResponseInputItem,
   ResponseInputMessage,
   ResponseInputText,
-  ResponseOutputContentBlock,
-  ResponseOutputItem,
   ResponsesPayload,
-  ResponsesResult,
   ResponseTool,
   ResponseToolChoice,
-} from "../responses-types.ts";
-import { packReasoningSignature } from "./messages-responses-signature.ts";
+} from "../../../../lib/responses-types.ts";
+import { packReasoningSignature } from "../shared/messages-responses-signature.ts";
 import {
   fetchRemoteImage,
   type RemoteImageLoader,
   resolveImageUrlToMessagesImage,
-} from "./remote-images.ts";
-import { safeJsonParse } from "./utils.ts";
+} from "../shared/remote-images.ts";
+import { safeJsonParse } from "../shared/utils.ts";
 
 interface TranslateResponsesToMessagesOptions {
   loadRemoteImage?: RemoteImageLoader;
@@ -41,109 +37,6 @@ interface TranslateResponsesToMessagesOptions {
    */
   fallbackMaxOutputTokens?: number;
 }
-
-const combineMessageTextContent = (
-  content: ResponseOutputContentBlock[] | undefined,
-): string => {
-  if (!Array.isArray(content)) return "";
-
-  // Compromise: our local Messages/Chat shapes have no dedicated refusal block,
-  // so keep Responses refusal text visible rather than inventing extra
-  // translated semantics at this boundary.
-  return content.map((block) => {
-    if (block.type === "output_text") return block.text;
-    if (block.type === "refusal") return block.refusal;
-    return "";
-  }).join("");
-};
-
-const mapOutputToMessagesContent = (
-  output: ResponseOutputItem[],
-): MessagesAssistantContentBlock[] => {
-  const content: MessagesAssistantContentBlock[] = [];
-
-  for (const item of output) {
-    switch (item.type) {
-      case "reasoning": {
-        // Pack `${encrypted_content}@${id}` into the Anthropic signature/data
-        // slot so the original Responses item id survives the Messages
-        // round-trip. Without this, the resynthesized `rs_${index}` id we
-        // would otherwise send back next turn fails Copilot's signature
-        // verification with `400 invalid_request_body: "Encrypted content
-        // item_id did not match the target item id."`. See packing rationale
-        // and permalinks in `./messages-responses-signature.ts`.
-        const thinking = item.summary?.length
-          ? item.summary.map((part) => part.text).join("").trim()
-          : "";
-        const encryptedContent = item.encrypted_content;
-        const hasEncryptedContent = Object.hasOwn(item, "encrypted_content") &&
-          encryptedContent !== undefined;
-
-        // Copilot's /v1/messages rejects `thinking: null` and missing
-        // `thinking` (Pydantic: "Input should be a valid string" /
-        // "Field required"), so an opaque-only reasoning item must round-trip
-        // as `redacted_thinking{data}` — the schema-sanctioned signature-only
-        // shape — rather than a `thinking` block with no text. A reasoning
-        // item with neither summary nor encrypted_content has no valid
-        // Anthropic shape (both alternates 400 upstream), so we drop it.
-        if (!thinking) {
-          if (hasEncryptedContent) {
-            content.push({
-              type: "redacted_thinking",
-              data: packReasoningSignature(item.id, encryptedContent),
-            });
-          }
-          break;
-        }
-
-        content.push({
-          type: "thinking",
-          thinking,
-          ...(hasEncryptedContent
-            ? { signature: packReasoningSignature(item.id, encryptedContent) }
-            : {}),
-        });
-        break;
-      }
-      case "function_call":
-        if (item.name && item.call_id) {
-          content.push({
-            type: "tool_use",
-            id: item.call_id,
-            name: item.name,
-            input: safeJsonParse(item.arguments),
-          });
-        }
-        break;
-      case "message": {
-        const text = combineMessageTextContent(item.content);
-        if (text.length > 0) content.push({ type: "text", text });
-        break;
-      }
-    }
-  }
-
-  return content;
-};
-
-const mapResponsesStopReason = (
-  response: ResponsesResult,
-): MessagesResponse["stop_reason"] => {
-  if (response.status === "completed") {
-    return response.output.some((item) => item.type === "function_call")
-      ? "tool_use"
-      : "end_turn";
-  }
-
-  if (
-    response.status === "incomplete" &&
-    response.incomplete_details?.reason === "max_output_tokens"
-  ) {
-    return "max_tokens";
-  }
-
-  return null;
-};
 
 const extractSystemText = (
   message: ResponseInputMessage,
@@ -279,14 +172,14 @@ const translateResponsesInput = async (
         });
         break;
       case "reasoning": {
-        // Same opaque-only handling as mapOutputToMessagesContent above: emit
+        // Same opaque-only handling as source-result translation: emit
         // `redacted_thinking{data}` when there is no plaintext summary, so the
         // Anthropic-compatible target receives a valid signature-only block
         // instead of a `thinking` block with empty/missing text. A reasoning
         // item with neither summary nor encrypted_content carries nothing the
         // target can verify, so we drop it. The Responses item id is packed
         // into the signature/data slot so it survives the round-trip back to
-        // the upstream signature check; see `./messages-responses-signature.ts`.
+        // the upstream signature check; see `../shared/messages-responses-signature.ts`.
         const thinking = item.summary?.length
           ? item.summary.map((part) => part.text).join("").trim()
           : "";
@@ -367,37 +260,6 @@ const translateToolChoice = (
   return toolChoice.type === "function" && toolChoice.name
     ? { type: "tool", name: toolChoice.name }
     : undefined;
-};
-
-export const translateResponsesToMessagesResponse = (
-  response: ResponsesResult,
-): MessagesResponse => {
-  const content = mapOutputToMessagesContent(response.output);
-  const finalContent = content.length > 0
-    ? content
-    : response.output_text
-    ? [{ type: "text" as const, text: response.output_text }]
-    : [];
-
-  const inputTokens = response.usage?.input_tokens ?? 0;
-  const cachedTokens = response.usage?.input_tokens_details?.cached_tokens;
-
-  return {
-    id: response.id,
-    type: "message",
-    role: "assistant",
-    content: finalContent,
-    model: response.model,
-    stop_reason: mapResponsesStopReason(response),
-    stop_sequence: null,
-    usage: {
-      input_tokens: inputTokens - (cachedTokens ?? 0),
-      output_tokens: response.usage?.output_tokens ?? 0,
-      ...(cachedTokens !== undefined
-        ? { cache_read_input_tokens: cachedTokens }
-        : {}),
-    },
-  };
 };
 
 export const translateResponsesToMessages = async (

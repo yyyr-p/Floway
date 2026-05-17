@@ -5,7 +5,7 @@ import type { ChatCompletionChunk } from "../../../../lib/chat-completions-types
 import {
   createMessagesToChatCompletionsStreamState,
   translateMessagesEventToChatCompletionsChunks,
-} from "../../../../lib/translate/messages-to-chat-completions-stream.ts";
+} from "./source-events.ts";
 import {
   doneFrame,
   eventFrame,

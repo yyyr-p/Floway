@@ -6,9 +6,9 @@ import type {
   MessagesMessageDeltaEvent,
   MessagesMessageStartEvent,
   MessagesStreamEventData,
-} from "../messages-types.ts";
-import { makeResponsesReasoningId } from "../reasoning.ts";
-import { unpackReasoningSignature } from "./messages-responses-signature.ts";
+} from "../../../../lib/messages-types.ts";
+import { makeResponsesReasoningId } from "../../../../lib/reasoning.ts";
+import { unpackReasoningSignature } from "../shared/messages-responses-signature.ts";
 import type {
   ResponseOutputFunctionCall,
   ResponseOutputItem,
@@ -16,7 +16,7 @@ import type {
   ResponseOutputReasoning,
   ResponsesResult,
   ResponseStreamEvent,
-} from "../responses-types.ts";
+} from "../../../../lib/responses-types.ts";
 
 type OutputBlockInfo =
   | {
@@ -164,7 +164,7 @@ const handleContentBlockStart = (
   if (event.content_block.type === "redacted_thinking") {
     // Unpack `${encrypted_content}@${id}` so the Responses-shape stream we
     // fabricate carries the original upstream item id. See
-    // `./messages-responses-signature.ts` for the why.
+    // `../shared/messages-responses-signature.ts` for the why.
     const unpacked = unpackReasoningSignature(event.content_block.data);
     const itemId = unpacked.id ?? makeResponsesReasoningId(outputIndex);
     state.blockMap.set(event.index, {
@@ -305,7 +305,7 @@ const handleContentBlockStop = (
     const summaryText = info.thinkingText;
     // Unpack `${encrypted_content}@${id}` so the materialized reasoning item
     // carries the original upstream id (and a clean encrypted_content blob).
-    // See `./messages-responses-signature.ts` for why.
+    // See `../shared/messages-responses-signature.ts` for why.
     const unpacked = info.hasSignature
       ? unpackReasoningSignature(info.signature)
       : null;

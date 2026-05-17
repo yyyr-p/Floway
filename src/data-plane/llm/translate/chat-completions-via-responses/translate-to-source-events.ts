@@ -6,8 +6,8 @@ import type {
 import {
   createResponsesToChatCompletionsStreamState,
   translateResponsesEventToChatCompletionsChunks,
-  translateResponsesToChatCompletion,
-} from "../../../../lib/translate/responses-to-chat-completions.ts";
+} from "./source-events.ts";
+import { translateResponsesToChatCompletion } from "./source-result.ts";
 import {
   doneFrame,
   type EventFrame,

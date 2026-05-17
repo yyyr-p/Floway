@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { translateMessagesToChatCompletions } from "./messages-to-chat-completions.ts";
+import { translateMessagesToChatCompletions } from "./request.ts";
 
 Deno.test("translateMessagesToChatCompletions keeps tool_result and user text as separate chat messages", () => {
   const result = translateMessagesToChatCompletions({

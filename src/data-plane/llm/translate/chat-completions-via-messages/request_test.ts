@@ -2,8 +2,8 @@ import { assertEquals, assertExists, assertRejects } from "@std/assert";
 import {
   type RemoteImageLoader,
   translateChatCompletionsToMessages,
-} from "./chat-completions-to-messages.ts";
-import type { ChatCompletionsPayload } from "../chat-completions-types.ts";
+} from "./request.ts";
+import type { ChatCompletionsPayload } from "../../../../lib/chat-completions-types.ts";
 import {
   MESSAGES_FALLBACK_MAX_TOKENS,
   type MessagesAssistantContentBlock,
@@ -15,7 +15,7 @@ import {
   type MessagesToolResultBlock,
   type MessagesToolUseBlock,
   type MessagesUserContentBlock,
-} from "../messages-types.ts";
+} from "../../../../lib/messages-types.ts";
 
 // ── Helpers ──
 

@@ -1,9 +1,9 @@
 import { assertEquals, assertExists } from "@std/assert";
-import { translateMessagesToChatCompletionsResponse } from "./messages-to-chat-completions.ts";
+import { translateMessagesToChatCompletionsResponse } from "./source-result.ts";
 import type {
   MessagesAssistantContentBlock,
   MessagesResponse,
-} from "../messages-types.ts";
+} from "../../../../lib/messages-types.ts";
 
 // ── Helpers ──
 

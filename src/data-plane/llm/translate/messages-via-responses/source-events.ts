@@ -1,10 +1,10 @@
-import type { MessagesStreamEventData } from "../messages-types.ts";
-import { packReasoningSignature } from "./messages-responses-signature.ts";
+import type { MessagesStreamEventData } from "../../../../lib/messages-types.ts";
+import { packReasoningSignature } from "../shared/messages-responses-signature.ts";
 import type {
   ResponseOutputItem,
   ResponsesResult,
   ResponseStreamEvent,
-} from "../responses-types.ts";
+} from "../../../../lib/responses-types.ts";
 import {
   createResponsesOutputOrderState,
   hasResponsePartForOutput,
@@ -12,9 +12,9 @@ import {
   responsePartKey,
   type ResponsesOutputOrderState,
   shouldDeferForEarlierResponseOutput,
-} from "./responses-stream-order.ts";
-import { translateResponsesToMessagesResponse } from "./responses-to-messages.ts";
-import { checkWhitespaceOverflow } from "./utils.ts";
+} from "../shared/responses-stream-order.ts";
+import { translateResponsesToMessagesResponse } from "./source-result.ts";
+import { checkWhitespaceOverflow } from "../shared/utils.ts";
 
 type ResponseCreatedEvent = Extract<
   ResponseStreamEvent,
@@ -289,7 +289,7 @@ const handleOutputItemDone = (
   // `thinking` text on a regular thinking block) or drop entirely when there is
   // nothing the target can verify. The Responses item id is packed into the
   // signature/data slot so the upstream signature check passes on the next
-  // turn; see `./messages-responses-signature.ts`.
+  // turn; see `../shared/messages-responses-signature.ts`.
   if (!hasEmittedSummary && trimmedSummary === "") {
     if (hasEncryptedContent) {
       const events: MessagesStreamEventData[] = [];

@@ -1,7 +1,7 @@
 import type {
   ResponseOutputItem,
   ResponseStreamEvent,
-} from "../responses-types.ts";
+} from "../../../../lib/responses-types.ts";
 
 export interface ResponsesOutputOrderState {
   pendingOutputIndexes: Set<number>;

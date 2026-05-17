@@ -2,7 +2,7 @@ import { assertEquals, assertFalse } from "@std/assert";
 import {
   createResponsesToMessagesStreamState,
   translateResponsesStreamEventToMessagesEvents,
-} from "./responses-to-messages-stream.ts";
+} from "./source-events.ts";
 
 Deno.test("opaque-only Responses reasoning stream becomes redacted_thinking with packed id", () => {
   const state = createResponsesToMessagesStreamState();

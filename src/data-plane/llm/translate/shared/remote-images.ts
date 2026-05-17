@@ -1,4 +1,4 @@
-import type { MessagesImageBlock } from "../messages-types.ts";
+import type { MessagesImageBlock } from "../../../../lib/messages-types.ts";
 
 const ALLOWED_IMAGE_TYPES = new Set([
   "image/jpeg",

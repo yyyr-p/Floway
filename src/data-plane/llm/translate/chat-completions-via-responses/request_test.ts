@@ -1,16 +1,16 @@
 import { assertEquals, assertFalse, assertThrows } from "@std/assert";
+import { translateChatCompletionsToResponses } from "./request.ts";
+import { translateChatCompletionToResponsesResult } from "../responses-via-chat-completions/source-result.ts";
 import {
   createChatCompletionsToResponsesStreamState,
   flushChatCompletionsToResponsesEvents,
   translateChatCompletionsChunkToResponsesEvents,
-  translateChatCompletionsToResponses,
-  translateChatCompletionToResponsesResult,
-} from "./chat-completions-to-responses.ts";
-import type { ChatCompletionChunk } from "../chat-completions-types.ts";
+} from "../responses-via-chat-completions/source-events.ts";
+import type { ChatCompletionChunk } from "../../../../lib/chat-completions-types.ts";
 import type {
   ResponseInputReasoning,
   ResponseStreamEvent,
-} from "../responses-types.ts";
+} from "../../../../lib/responses-types.ts";
 
 type ResponseOutputItemDoneEvent = Extract<
   ResponseStreamEvent,

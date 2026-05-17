@@ -5,7 +5,7 @@ import {
   createChatCompletionsToResponsesStreamState,
   flushChatCompletionsToResponsesEvents,
   translateChatCompletionsChunkToResponsesEvents,
-} from "../../../../lib/translate/chat-completions-to-responses.ts";
+} from "./source-events.ts";
 import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
 import type { SourceResponseStreamEvent } from "../../sources/responses/events/protocol.ts";

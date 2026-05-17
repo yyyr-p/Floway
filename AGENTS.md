@@ -98,6 +98,15 @@ The LLM subtree is role-organized:
 - `src/data-plane/llm/translate/`
 - `src/data-plane/llm/shared/`
 
+`src/data-plane/llm/translate/` is organized by source API and selected target
+API, using `<source>-via-<target>` directories such as `messages-via-responses`
+and `gemini-via-chat-completions`. Each pair directory owns the public
+`build-target-request.ts` and `translate-to-source-events.ts` entries for that
+route, plus local `request.ts`, `source-result.ts`, `source-events.ts`, and
+their tests when those helpers are needed. Only cross-pair primitives such as
+reasoning-signature packing, remote image loading, Responses output ordering,
+and tool-argument guards belong in `src/data-plane/llm/translate/shared/`.
+
 `sources`, `targets`, and `translate` under `src/data-plane/llm/` are only for
 Messages, Responses, Chat Completions, and Gemini LLM generation routing. Do not
 place `models`, `embeddings`, data-plane tools, Gemini model listing, or Gemini
@@ -315,7 +324,7 @@ Current placement:
 - `src/data-plane/llm/translate/gemini-via-chat-completions/translate-to-source-events.ts`
   - preserve `thoughtSignature` on the next visible text or function-call action
     part so clients can echo it next turn
-- `src/lib/translate/messages-responses-signature.ts`
+- `src/data-plane/llm/translate/shared/messages-responses-signature.ts`
   - pack Responses reasoning item ids into Anthropic `thinking.signature` /
     `redacted_thinking.data` for Messages <-> Responses translation, and unpack
     them on the reverse path so Copilot encrypted-content verification sees the
@@ -526,7 +535,13 @@ These rules apply project-wide, not only to the data plane.
 - Target-owned request/response/retry fixes belong in
   `src/data-plane/llm/targets/<target>/interceptors/` and are registered in that
   directory's `index.ts`.
-- Pairwise translators belong in `src/data-plane/llm/translate/`.
+- Pairwise translators belong in
+  `src/data-plane/llm/translate/<source>-via-<target>/`.
+- Pair directories should expose `build-target-request.ts` and
+  `translate-to-source-events.ts`; pair-local `request.ts`, `source-result.ts`,
+  `source-events.ts`, and tests should stay in the same directory.
+- Shared translation primitives belong in `src/data-plane/llm/translate/shared/`
+  only when more than one pair needs the same boundary rule.
 - Models endpoint work belongs in `src/data-plane/models/`.
 - Embeddings endpoint work belongs in `src/data-plane/embeddings/`.
 - Gemini model listing and count-token endpoints belong in
@@ -539,9 +554,8 @@ These rules apply project-wide, not only to the data plane.
 - Source-specific request cleanup, planning, response assembly, and
   orchestration belong under that source API's subtree.
 - Keep final source protocol collection and response shaping source-local.
-- If you are reorganizing pair modules, prefer
-  `src/data-plane/llm/translate/<source>-via-<target>/` over split request/event
-  directories.
+- Do not reintroduce flat `src/lib/translate` translator modules or split
+  request/event directory trees outside the source-via-target pair directories.
 
 When in doubt, prefer the location that matches the boundary where the logic is
 true.

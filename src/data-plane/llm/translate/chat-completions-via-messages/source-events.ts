@@ -1,6 +1,9 @@
-import type { ChatCompletionChunk, Delta } from "../chat-completions-types.ts";
-import type { MessagesStreamEventData } from "../messages-types.ts";
-import { mapMessagesStopReasonToChatCompletionsFinishReason } from "./messages-to-chat-completions.ts";
+import type {
+  ChatCompletionChunk,
+  Delta,
+} from "../../../../lib/chat-completions-types.ts";
+import type { MessagesStreamEventData } from "../../../../lib/messages-types.ts";
+import { mapMessagesStopReasonToChatCompletionsFinishReason } from "./source-result.ts";
 
 interface MessagesToChatCompletionsStreamState {
   messageId: string;

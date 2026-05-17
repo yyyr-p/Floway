@@ -1,10 +1,10 @@
 import type { MessagesStreamEventData } from "../../../../lib/messages-types.ts";
 import type { ResponsesResult } from "../../../../lib/responses-types.ts";
-import { translateResponsesToMessagesResponse } from "../../../../lib/translate/responses-to-messages.ts";
+import { translateResponsesToMessagesResponse } from "./source-result.ts";
 import {
   createResponsesToMessagesStreamState,
   translateResponsesStreamEventToMessagesEvents,
-} from "../../../../lib/translate/responses-to-messages-stream.ts";
+} from "./source-events.ts";
 import {
   type EventFrame,
   eventFrame,

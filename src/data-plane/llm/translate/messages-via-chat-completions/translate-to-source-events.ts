@@ -6,7 +6,7 @@ import {
   createChatCompletionsToMessagesStreamState,
   flushChatCompletionsToMessagesEvents,
   translateChatCompletionsChunkToMessagesEvents,
-} from "../../../../lib/translate/chat-completions-to-messages-stream.ts";
+} from "./source-events.ts";
 import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
 import { upstreamChatCompletionStreamAlgebra } from "../upstream-protocol.ts";

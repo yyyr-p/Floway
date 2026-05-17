@@ -1611,7 +1611,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
     // Packed `${encrypted_content}@${id}` smuggles the Responses item id
     // through the Anthropic signature slot so a next-turn submission survives
     // Copilot's per-item signature verification. See
-    // `src/lib/translate/messages-responses-signature.ts`.
+    // `src/data-plane/llm/translate/shared/messages-responses-signature.ts`.
     assertEquals(body.content[0].signature, "enc_abc@rs_1");
     assertEquals(body.content[1].text, "Answer text");
   });

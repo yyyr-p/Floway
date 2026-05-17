@@ -1,9 +1,7 @@
 import { assertEquals, assertFalse } from "@std/assert";
-import { MESSAGES_FALLBACK_MAX_TOKENS } from "../messages-types.ts";
-import {
-  translateResponsesToMessages,
-  translateResponsesToMessagesResponse,
-} from "./responses-to-messages.ts";
+import { MESSAGES_FALLBACK_MAX_TOKENS } from "../../../../lib/messages-types.ts";
+import { translateResponsesToMessagesResponse } from "../messages-via-responses/source-result.ts";
+import { translateResponsesToMessages } from "./request.ts";
 
 const stubRemoteImageLoader = (
   result: { mediaType: string | null; data: Uint8Array } | null,

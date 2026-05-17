@@ -1,10 +1,10 @@
 import { assertEquals } from "@std/assert";
+import { translateResponsesToChatCompletions } from "./request.ts";
+import { translateResponsesToChatCompletion } from "../chat-completions-via-responses/source-result.ts";
 import {
   createResponsesToChatCompletionsStreamState,
   translateResponsesEventToChatCompletionsChunks,
-  translateResponsesToChatCompletion,
-  translateResponsesToChatCompletions,
-} from "./responses-to-chat-completions.ts";
+} from "../chat-completions-via-responses/source-events.ts";
 
 Deno.test("translateResponsesToChatCompletions merges adjacent assistant reasoning text and tool calls", () => {
   const result = translateResponsesToChatCompletions({

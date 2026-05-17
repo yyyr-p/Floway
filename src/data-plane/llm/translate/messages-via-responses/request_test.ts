@@ -1,13 +1,11 @@
 import { assertEquals, assertFalse } from "@std/assert";
-import {
-  translateMessagesToResponses,
-  translateMessagesToResponsesResult,
-} from "./messages-to-responses.ts";
-import { getMessagesRequestedReasoningEffort } from "../reasoning.ts";
+import { translateMessagesToResponsesResult } from "../responses-via-messages/source-result.ts";
+import { translateMessagesToResponses } from "./request.ts";
+import { getMessagesRequestedReasoningEffort } from "../../../../lib/reasoning.ts";
 import type {
   ResponseInputReasoning,
   ResponseOutputReasoning,
-} from "../responses-types.ts";
+} from "../../../../lib/responses-types.ts";
 
 Deno.test("translateMessagesToResponses synthesizes an rs-prefixed id when the signature is not packed", () => {
   const result = translateMessagesToResponses({

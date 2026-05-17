@@ -1,10 +1,10 @@
 import { assertEquals, assertFalse } from "@std/assert";
-import type { ChatCompletionChunk } from "../chat-completions-types.ts";
+import type { ChatCompletionChunk } from "../../../../lib/chat-completions-types.ts";
 import {
   createChatCompletionsToMessagesStreamState,
   flushChatCompletionsToMessagesEvents,
   translateChatCompletionsChunkToMessagesEvents,
-} from "./chat-completions-to-messages-stream.ts";
+} from "./source-events.ts";
 
 const chunk = (
   delta: ChatCompletionChunk["choices"][0]["delta"],

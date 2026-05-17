@@ -2,12 +2,12 @@ import { assertEquals, assertFalse } from "@std/assert";
 import {
   createMessagesToResponsesStreamState,
   translateMessagesEventToResponsesEvents,
-} from "./messages-to-responses-stream.ts";
-import type { MessagesStreamEventData } from "../messages-types.ts";
+} from "./source-events.ts";
+import type { MessagesStreamEventData } from "../../../../lib/messages-types.ts";
 import type {
   ResponsesResult,
   ResponseStreamEvent,
-} from "../responses-types.ts";
+} from "../../../../lib/responses-types.ts";
 
 type ResponseOutputItemAddedEvent = Extract<
   ResponseStreamEvent,

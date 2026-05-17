@@ -1,11 +1,11 @@
-import type { ChatCompletionChunk } from "../chat-completions-types.ts";
-import type { MessagesStreamEventData } from "../messages-types.ts";
+import type { ChatCompletionChunk } from "../../../../lib/chat-completions-types.ts";
+import type { MessagesStreamEventData } from "../../../../lib/messages-types.ts";
 import {
   mapChatCompletionsFinishReasonToMessagesStopReason,
   mapChatCompletionsUsageToMessagesUsage,
   toMessagesId,
-} from "./chat-completions-to-messages.ts";
-import { checkWhitespaceOverflow } from "./utils.ts";
+} from "./source-result.ts";
+import { checkWhitespaceOverflow } from "../shared/utils.ts";
 
 type ChatStreamDelta = ChatCompletionChunk["choices"][0]["delta"];
 type ChatStreamToolCalls = NonNullable<ChatStreamDelta["tool_calls"]>;
