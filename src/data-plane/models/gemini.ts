@@ -1,5 +1,6 @@
 import type { Context } from "hono";
 import { isCopilotTokenFetchError } from "../../shared/copilot.ts";
+import { copilotSupportsGeneration } from "../llm/shared/models/get-model-capabilities.ts";
 import { type ModelInfo, ModelsFetchError } from "./cache.ts";
 import { loadMergedModels } from "./load.ts";
 
@@ -20,15 +21,8 @@ interface GeminiModel {
   topK?: number;
 }
 
-const LLM_ENDPOINTS = new Set([
-  "/v1/messages",
-  "/responses",
-  "/chat/completions",
-]);
-
 const supportsLlmGeneration = (model: ModelInfo): boolean =>
-  model.supported_endpoints?.some((endpoint) => LLM_ENDPOINTS.has(endpoint)) ===
-    true;
+  copilotSupportsGeneration(model);
 
 const displayNameForModel = (model: ModelInfo): string =>
   model.name || model.id;

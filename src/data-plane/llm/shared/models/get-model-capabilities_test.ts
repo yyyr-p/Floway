@@ -1,5 +1,8 @@
 import { assertEquals } from "@std/assert";
-import { modelCapabilitiesFromModel } from "./get-model-capabilities.ts";
+import {
+  copilotSupportsGeneration,
+  modelCapabilitiesFromModel,
+} from "./get-model-capabilities.ts";
 import type { ModelInfo } from "../../../models/types.ts";
 
 const baseModel = (overrides: Partial<ModelInfo> = {}): ModelInfo => ({
@@ -86,3 +89,34 @@ Deno.test(
     assertEquals(caps.hasExplicitCapabilities, true);
   },
 );
+
+Deno.test("copilotSupportsGeneration follows planning rules for missing supported_endpoints", () => {
+  assertEquals(copilotSupportsGeneration(baseModel()), true);
+  assertEquals(
+    copilotSupportsGeneration(baseModel({
+      supported_endpoints: [
+        "/v1/messages",
+      ],
+    })),
+    true,
+  );
+  assertEquals(
+    copilotSupportsGeneration(baseModel({
+      supported_endpoints: [
+        "/embeddings",
+      ],
+    })),
+    false,
+  );
+  assertEquals(
+    copilotSupportsGeneration(baseModel({
+      capabilities: {
+        family: "embedding",
+        type: "embeddings",
+        limits: {},
+        supports: {},
+      },
+    })),
+    false,
+  );
+});

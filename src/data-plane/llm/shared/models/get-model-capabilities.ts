@@ -33,6 +33,17 @@ const inferredChatCompletionsSupport = (
   model.supported_endpoints === undefined &&
   model.capabilities?.type === "chat";
 
+const LLM_ENDPOINTS = new Set([
+  "/v1/messages",
+  "/responses",
+  "/chat/completions",
+]);
+
+export const copilotSupportsGeneration = (model: ModelInfo): boolean =>
+  model.supported_endpoints
+    ? model.supported_endpoints.some((endpoint) => LLM_ENDPOINTS.has(endpoint))
+    : inferredChatCompletionsSupport(model);
+
 export const modelCapabilitiesFromModel = (
   model: ModelInfo | undefined,
 ): ModelCapabilities => {

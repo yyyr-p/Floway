@@ -24,15 +24,36 @@ Deno.test("/v1beta/models lists Copilot LLM models in Gemini model shape", async
       });
     }
     if (url.pathname === "/models") {
-      return jsonResponse(copilotModels([
-        {
+      return jsonResponse({
+        object: "list",
+        data: [{
           id: "gpt-gemini-list",
-          supported_endpoints: ["/chat/completions"],
-          maxPromptTokens: 12345,
-          maxOutputTokens: 678,
-        },
-        { id: "embedding-only", supported_endpoints: ["/embeddings"] },
-      ]));
+          name: "gpt-gemini-list",
+          version: "1",
+          object: "model",
+          capabilities: {
+            family: "test",
+            type: "chat",
+            limits: {
+              max_prompt_tokens: 12345,
+              max_output_tokens: 678,
+            },
+            supports: {},
+          },
+        }, {
+          id: "embedding-only",
+          name: "embedding-only",
+          version: "1",
+          object: "model",
+          supported_endpoints: ["/embeddings"],
+          capabilities: {
+            family: "test",
+            type: "embeddings",
+            limits: {},
+            supports: {},
+          },
+        }],
+      });
     }
 
     throw new Error(`Unhandled fetch ${request.url}`);
