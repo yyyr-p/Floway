@@ -382,6 +382,18 @@ Deno.test("DashboardPage renders performance model selector for percentile view"
   assertStringIncludes(html, "performanceModelOptions()");
 });
 
+Deno.test("DashboardPage styles existing select controls", () => {
+  const html = DashboardPage().toString();
+
+  assertStringIncludes(
+    html,
+    'input[type="text"], input[type="password"], textarea, select',
+  );
+  assertStringIncludes(html, "input:focus, textarea:focus, select:focus");
+  assertStringIncludes(html, "appearance: none;");
+  assertStringIncludes(html, "background-position: right 16px center;");
+});
+
 Deno.test("DashboardPage renders performance chart view switcher", () => {
   const html = DashboardPage().toString();
 
