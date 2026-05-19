@@ -220,7 +220,7 @@ Deno.test("buildTargetRequest maps generation config and reasoning effort", () =
   });
 });
 
-Deno.test("buildTargetRequest maps structured output schema and omits zero thinking budget", () => {
+Deno.test("buildTargetRequest maps structured output schema and zero thinking budget", () => {
   const schema = {
     type: "object",
     properties: { answer: { type: "string" } },
@@ -243,6 +243,7 @@ Deno.test("buildTargetRequest maps structured output schema and omits zero think
       model: "gpt-test",
       stream: false,
       messages: [],
+      reasoning_effort: "none",
       response_format: {
         type: "json_schema",
         json_schema: { name: "gemini_response", schema },
@@ -375,6 +376,22 @@ Deno.test("buildTargetRequest filters tools to allowed function names for ANY mo
 });
 
 Deno.test("buildTargetRequest maps thinking budget thresholds", () => {
+  assertEquals(
+    buildTargetRequest(
+      { generationConfig: { thinkingConfig: { thinkingBudget: 0 } } },
+      "gpt-test",
+      false,
+    ).reasoning_effort,
+    "none",
+  );
+  assertEquals(
+    buildTargetRequest(
+      { generationConfig: { thinkingConfig: { thinkingBudget: -1 } } },
+      "gpt-test",
+      false,
+    ).reasoning_effort,
+    undefined,
+  );
   assertEquals(
     buildTargetRequest(
       { generationConfig: { thinkingConfig: { thinkingBudget: 2048 } } },

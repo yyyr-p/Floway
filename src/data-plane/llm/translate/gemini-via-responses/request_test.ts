@@ -232,7 +232,23 @@ Deno.test("buildTargetRequest filters tools to allowed function names for ANY mo
   assertEquals(result.tool_choice, "required");
 });
 
-Deno.test("buildTargetRequest maps thinking budget thresholds without inventing zero-budget reasoning", () => {
+Deno.test("buildTargetRequest maps thinking budget thresholds and zero-budget disable", () => {
+  assertEquals(
+    buildTargetRequest(
+      { generationConfig: { thinkingConfig: { thinkingBudget: 0 } } },
+      "gpt-test",
+      false,
+    ).reasoning,
+    { effort: "none" },
+  );
+  assertEquals(
+    buildTargetRequest(
+      { generationConfig: { thinkingConfig: { thinkingBudget: -1 } } },
+      "gpt-test",
+      false,
+    ).reasoning,
+    undefined,
+  );
   assertEquals(
     buildTargetRequest(
       { generationConfig: { thinkingConfig: { thinkingBudget: 2048 } } },
@@ -267,7 +283,7 @@ Deno.test("buildTargetRequest maps thinking budget thresholds without inventing 
       "gpt-test",
       false,
     ).reasoning,
-    undefined,
+    { effort: "none" },
   );
 });
 

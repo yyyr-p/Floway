@@ -233,11 +233,12 @@ const buildAssistantInputItems = (
 
 const mapReasoningEffort = (
   thinkingConfig?: GeminiThinkingConfig,
-): "low" | "medium" | "high" | null => {
+): "none" | "low" | "medium" | "high" | null => {
   if (!thinkingConfig) return null;
 
   if (thinkingConfig.thinkingBudget !== undefined) {
-    if (thinkingConfig.thinkingBudget <= 0) return null;
+    if (thinkingConfig.thinkingBudget === 0) return "none";
+    if (thinkingConfig.thinkingBudget < 0) return null;
     if (thinkingConfig.thinkingBudget <= 2048) return "low";
     if (thinkingConfig.thinkingBudget <= 8192) return "medium";
     return "high";
@@ -291,7 +292,8 @@ const applyGenerationConfig = (
 
   request.reasoning = {
     effort,
-    ...(generationConfig.thinkingConfig?.includeThoughts === true
+    ...(effort !== "none" &&
+        generationConfig.thinkingConfig?.includeThoughts === true
       ? { summary: "detailed" as const }
       : {}),
   };
