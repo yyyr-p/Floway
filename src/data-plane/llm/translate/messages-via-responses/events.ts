@@ -318,11 +318,11 @@ const handleOutputItemDone = (
     .trim();
 
   // No prior summary delta and no usable summary text: either round-trip the
-  // opaque blob as `redacted_thinking{data}` (Copilot rejects empty/null/missing
-  // `thinking` text on a regular thinking block) or drop entirely when there is
-  // nothing the target can verify. The Responses item id is packed into the
-  // signature/data slot so the upstream signature check passes on the next
-  // turn; see `../shared/messages-responses-signature.ts`.
+  // opaque blob as `redacted_thinking{data}` (the valid signature-only Messages
+  // shape) or drop entirely when there is nothing the target can verify. The
+  // Responses item id is packed into the signature/data slot so upstream
+  // reasoning-continuity checks can pass on the next turn; see
+  // `../shared/messages-responses-signature.ts`.
   if (!hasEmittedSummary && trimmedSummary === "") {
     if (hasEncryptedContent) {
       const events: MessagesStreamEventData[] = [];

@@ -3,7 +3,6 @@ import type {
   ContentPart,
   Tool,
 } from "../../shared/protocol/chat-completions.ts";
-import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 import type {
   ResponseInputContent,
   ResponseInputItem,
@@ -16,6 +15,7 @@ import {
   scalarToResponseReasoningItem,
   translateChatReasoningItems,
 } from "../shared/chat-responses-reasoning.ts";
+import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 
 const extractTextContent = (
   content: string | ContentPart[] | null,

@@ -8,7 +8,9 @@ import type { PerformanceRepo } from "./types.ts";
 const baseSample = {
   hour: "2026-04-30T10",
   keyId: "key_a",
-  model: "claude-opus-4.7-xhigh",
+  model: "claude-opus-4-7",
+  upstream: "copilot:1",
+  modelKey: "claude-opus-4.7-xhigh",
   sourceApi: "messages" as const,
   targetApi: "responses" as const,
   stream: true,
@@ -125,6 +127,155 @@ Deno.test("Deno KV performance repo records, queries, and clears telemetry", asy
   }
 });
 
+Deno.test("Deno KV migrates old accounting identity keys before reading", async () => {
+  const kv = await Deno.openKv();
+  try {
+    for (
+      const prefix of [
+        ["usage"],
+        ["performance"],
+        ["account_model_backoffs"],
+        ["migrations"],
+      ]
+    ) {
+      for await (const entry of kv.list({ prefix })) await kv.delete(entry.key);
+    }
+
+    await kv.set(
+      ["usage", "key_a", "claude-opus-4.7-xhigh", "2026-04-30T10", "r"],
+      new Deno.KvU64(2n),
+    );
+    await kv.set(
+      ["usage", "key_a", "claude-opus-4.7-xhigh", "2026-04-30T10", "i"],
+      new Deno.KvU64(100n),
+    );
+    await kv.set(
+      ["usage", "key_b", "codex-auto-review", "2026-04-30T11", "r"],
+      new Deno.KvU64(1n),
+    );
+    await kv.set(
+      [
+        "performance",
+        "summary",
+        "2026-04-30T10",
+        "request_total",
+        "key_a",
+        "claude-opus-4.7-xhigh",
+        "messages",
+        "responses",
+        "1",
+        "unknown",
+        "requests",
+      ],
+      new Deno.KvU64(1n),
+    );
+    await kv.set(
+      [
+        "performance",
+        "bucket",
+        "2026-04-30T10",
+        "request_total",
+        "key_a",
+        "claude-opus-4.7-xhigh",
+        "messages",
+        "responses",
+        "1",
+        "unknown",
+        100,
+        142,
+      ],
+      new Deno.KvU64(1n),
+    );
+    await kv.set(
+      ["account_model_backoffs", 1, "claude-opus-4.7-xhigh"],
+      { accountId: 1 },
+    );
+
+    const repo = new DenoKvRepo(kv);
+    const migratedUsage = await repo.usage.listAll();
+    assertEquals(migratedUsage.find((r) => r.keyId === "key_a"), {
+      keyId: "key_a",
+      model: "claude-opus-4-7",
+      upstream: null,
+      modelKey: "claude-opus-4.7-xhigh",
+      hour: "2026-04-30T10",
+      requests: 2,
+      inputTokens: 100,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+    assertEquals(migratedUsage.find((r) => r.keyId === "key_b"), {
+      keyId: "key_b",
+      model: "gpt-5.4",
+      upstream: null,
+      modelKey: "codex-auto-review",
+      hour: "2026-04-30T11",
+      requests: 1,
+      inputTokens: 0,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    });
+    await kv.set(
+      ["usage", "key_c", "claude-sonnet-4.5", "2026-04-30T12", "r"],
+      new Deno.KvU64(1n),
+    );
+    assertEquals(
+      (await repo.usage.query({
+        start: "2026-04-30T12",
+        end: "2026-04-30T13",
+      })).find((r) => r.keyId === "key_c"),
+      {
+        keyId: "key_c",
+        model: "claude-sonnet-4-5",
+        upstream: null,
+        modelKey: "claude-sonnet-4.5",
+        hour: "2026-04-30T12",
+        requests: 1,
+        inputTokens: 0,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheCreationTokens: 0,
+      },
+    );
+    assertEquals(await repo.performance.listAll(), [{
+      hour: "2026-04-30T10",
+      metricScope: "request_total",
+      keyId: "key_a",
+      model: "claude-opus-4-7",
+      upstream: null,
+      modelKey: "claude-opus-4.7-xhigh",
+      sourceApi: "messages",
+      targetApi: "responses",
+      stream: true,
+      runtimeLocation: "unknown",
+      requests: 1,
+      errors: 0,
+      totalMsSum: 0,
+      buckets: [{ lowerMs: 100, upperMs: 142, count: 1 }],
+    }]);
+    const backoff = await kv.get([
+      "account_model_backoffs",
+      1,
+      "claude-opus-4.7-xhigh",
+    ]);
+    assertEquals(backoff.value, null);
+  } finally {
+    for (
+      const prefix of [
+        ["usage"],
+        ["performance"],
+        ["account_model_backoffs"],
+        ["migrations"],
+      ]
+    ) {
+      for await (const entry of kv.list({ prefix })) await kv.delete(entry.key);
+    }
+    kv.close();
+  }
+});
+
 class FakePerformanceD1PreparedStatement {
   private binds: unknown[] = [];
 
@@ -202,6 +353,8 @@ type FakePerformanceDimensionsRow = {
   metric_scope: string;
   key_id: string;
   model: string;
+  upstream: string | null;
+  model_key: string;
   source_api: string;
   target_api: string;
   stream: number;
@@ -300,6 +453,8 @@ function summaryRowFromBinds(binds: unknown[]): FakePerformanceSummaryRow {
     metricScope,
     keyId,
     model,
+    upstream,
+    modelKey,
     sourceApi,
     targetApi,
     stream,
@@ -311,6 +466,8 @@ function summaryRowFromBinds(binds: unknown[]): FakePerformanceSummaryRow {
     string,
     string,
     string,
+    string,
+    string | null,
     string,
     string,
     string,
@@ -325,6 +482,8 @@ function summaryRowFromBinds(binds: unknown[]): FakePerformanceSummaryRow {
     metric_scope: metricScope,
     key_id: keyId,
     model,
+    upstream,
+    model_key: modelKey,
     source_api: sourceApi,
     target_api: targetApi,
     stream,
@@ -343,16 +502,31 @@ function dimensionsRowFromBinds(
     metricScope,
     keyId,
     model,
+    upstream,
+    modelKey,
     sourceApi,
     targetApi,
     stream,
     runtimeLocation,
-  ] = binds as [string, string, string, string, string, string, number, string];
+  ] = binds as [
+    string,
+    string,
+    string,
+    string,
+    string | null,
+    string,
+    string,
+    string,
+    number,
+    string,
+  ];
   return {
     hour,
     metric_scope: metricScope,
     key_id: keyId,
     model,
+    upstream,
+    model_key: modelKey,
     source_api: sourceApi,
     target_api: targetApi,
     stream,
@@ -366,6 +540,8 @@ function bucketRowFromBinds(binds: unknown[]): FakePerformanceBucketRow {
     metricScope,
     keyId,
     model,
+    upstream,
+    modelKey,
     sourceApi,
     targetApi,
     stream,
@@ -377,6 +553,8 @@ function bucketRowFromBinds(binds: unknown[]): FakePerformanceBucketRow {
     string,
     string,
     string,
+    string,
+    string | null,
     string,
     string,
     string,
@@ -391,6 +569,8 @@ function bucketRowFromBinds(binds: unknown[]): FakePerformanceBucketRow {
     metric_scope: metricScope,
     key_id: keyId,
     model,
+    upstream,
+    model_key: modelKey,
     source_api: sourceApi,
     target_api: targetApi,
     stream,
@@ -407,6 +587,7 @@ function sameDimensions(
 ): boolean {
   return a.hour === b.hour && a.metric_scope === b.metric_scope &&
     a.key_id === b.key_id && a.model === b.model &&
+    a.upstream === b.upstream && a.model_key === b.model_key &&
     a.source_api === b.source_api && a.target_api === b.target_api &&
     a.stream === b.stream && a.runtime_location === b.runtime_location;
 }
@@ -441,6 +622,8 @@ function compareFakePerformanceRows(
     a.metric_scope.localeCompare(b.metric_scope) ||
     a.key_id.localeCompare(b.key_id) ||
     a.model.localeCompare(b.model) ||
+    (a.upstream ?? "").localeCompare(b.upstream ?? "") ||
+    a.model_key.localeCompare(b.model_key) ||
     a.source_api.localeCompare(b.source_api) ||
     a.target_api.localeCompare(b.target_api) ||
     a.stream - b.stream ||

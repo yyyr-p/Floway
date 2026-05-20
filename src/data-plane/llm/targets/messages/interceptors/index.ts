@@ -1,15 +1,34 @@
 import type { MessagesResponse } from "../../../shared/protocol/messages.ts";
+import type { OptionalInterceptor } from "../../optional-fix.ts";
 import type { TargetInterceptor } from "../../run-interceptors.ts";
 import type { EmitToMessagesInput } from "../emit.ts";
-import { withBetaHeaderFixed } from "./fix-beta-header.ts";
-import { withThinkingDisplayPromoted } from "./promote-thinking-display.ts";
-import { withEagerInputStreamingStripped } from "./strip-eager-input-streaming.ts";
+import { withReasoningDisabledOnForcedToolChoice } from "./disable-reasoning-on-forced-tool-choice.ts";
 
-export const messagesTargetInterceptors = [
-  withThinkingDisplayPromoted,
-  withBetaHeaderFixed,
-  withEagerInputStreamingStripped,
-] satisfies readonly TargetInterceptor<
+const baseInterceptors: readonly TargetInterceptor<
+  EmitToMessagesInput,
+  MessagesResponse
+>[] = [];
+
+export const messagesOptionalInterceptors = [
+  {
+    fixId: "disable-reasoning-on-forced-tool-choice",
+    run: withReasoningDisabledOnForcedToolChoice,
+  },
+] as const satisfies readonly OptionalInterceptor<
   EmitToMessagesInput,
   MessagesResponse
 >[];
+
+export const interceptorsForMessages = (
+  provider: Pick<EmitToMessagesInput, "enabledFixes" | "targetInterceptors">,
+): readonly TargetInterceptor<EmitToMessagesInput, MessagesResponse>[] => [
+  ...baseInterceptors,
+  ...((provider.targetInterceptors?.messages ??
+    []) as readonly TargetInterceptor<
+      EmitToMessagesInput,
+      MessagesResponse
+    >[]),
+  ...messagesOptionalInterceptors
+    .filter(({ fixId }) => provider.enabledFixes.has(fixId))
+    .map(({ run }) => run),
+];

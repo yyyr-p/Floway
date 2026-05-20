@@ -1,8 +1,11 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import type { ChatCompletionResponse } from "../../../shared/protocol/chat-completions.ts";
+import type {
+  ChatCompletionChunk,
+  ChatCompletionResponse,
+} from "../../../shared/protocol/chat-completions.ts";
 import { reassembleChatCompletionChunks } from "./reassemble.ts";
 
-function makeEvents<T = any>(
+function makeEvents<T = ChatCompletionChunk>(
   chunks: Array<{ event?: string; data: unknown }>,
 ): AsyncIterable<T> {
   return (async function* () {

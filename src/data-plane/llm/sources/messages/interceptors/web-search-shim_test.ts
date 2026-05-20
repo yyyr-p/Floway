@@ -33,6 +33,14 @@ import {
   withMessagesWebSearchShim,
 } from "./web-search-shim.ts";
 
+const testAccounting = {
+  model: "test-model",
+  upstream: "test-upstream",
+  modelKey: "test-model-key",
+};
+
+const ignoreUsage = { onUsage: () => {} };
+
 const encodeUnsignedPayload = (payload: unknown): string =>
   `cgws1.${
     btoa(JSON.stringify(payload)).replace(/\+/g, "-").replace(/\//g, "_")
@@ -922,6 +930,7 @@ Deno.test("withMessagesWebSearchShim allows replay-only history when the search 
             }],
           }],
         })),
+        accounting: testAccounting,
       }),
   );
 
@@ -969,6 +978,7 @@ Deno.test("withMessagesWebSearchShim emits native-like citation deltas for repla
             }],
           }],
         })),
+        accounting: testAccounting,
       }),
   );
 
@@ -976,7 +986,7 @@ Deno.test("withMessagesWebSearchShim emits native-like citation deltas for repla
   if (result.type !== "events") throw new Error("expected events result");
 
   const frames = await collect(
-    messagesProtocolEventsToSSEFrames(result.events),
+    messagesProtocolEventsToSSEFrames(result.events, ignoreUsage),
   );
   const citationFrame = frames.find((frame) => {
     if (frame.type !== "sse" || frame.event !== "content_block_delta") {

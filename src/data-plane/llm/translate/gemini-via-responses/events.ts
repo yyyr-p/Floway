@@ -5,7 +5,6 @@ import type {
 import type {
   ResponseOutputFunctionCall,
   ResponseOutputReasoning,
-  ResponsesResult,
   ResponseStreamEvent,
 } from "../../shared/protocol/responses.ts";
 import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
@@ -121,7 +120,7 @@ const attachPendingThoughtSignature = (
 };
 
 const parseFunctionArgs = (
-  item: ResponseOutputFunctionCall,
+  _item: ResponseOutputFunctionCall,
   args: string,
 ): Record<string, unknown> => {
   if (!args) return {};

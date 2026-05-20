@@ -1,0 +1,87 @@
+import { assertEquals } from "@std/assert";
+import type { ResponsesPayload } from "../../../shared/protocol/responses.ts";
+import {
+  stubProvider,
+  stubUpstreamModel,
+  testAccounting,
+} from "../../../../../test-helpers.ts";
+import type { EmitInput } from "../../emit-types.ts";
+import { eventResult } from "../../../shared/errors/result.ts";
+import { withReasoningDisabledOnForcedToolChoice } from "./disable-reasoning-on-forced-tool-choice.ts";
+
+const okEvents = () =>
+  Promise.resolve(eventResult((async function* () {})(), testAccounting));
+
+const emitInput = (
+  payload: ResponsesPayload,
+  enabledFixes: ReadonlySet<string> = new Set(),
+): EmitInput<ResponsesPayload> => ({
+  sourceApi: "responses",
+  model: payload.model,
+  upstream: "test-upstream",
+  payload,
+  provider: stubProvider(),
+  upstreamModel: stubUpstreamModel(),
+  enabledFixes,
+});
+
+Deno.test("responses required tool_choice strips reasoning", async () => {
+  const input = emitInput({
+    model: "m",
+    input: "hi",
+    reasoning: { effort: "high" },
+    tool_choice: "required",
+  });
+
+  await withReasoningDisabledOnForcedToolChoice(input, okEvents);
+
+  assertEquals(input.payload.reasoning, undefined);
+  const out = input.payload as unknown as Record<string, unknown>;
+  assertEquals(out.thinking, undefined);
+  assertEquals(out.enable_thinking, undefined);
+});
+
+Deno.test("responses object tool_choice is forced", async () => {
+  const input = emitInput({
+    model: "m",
+    input: "hi",
+    reasoning: { effort: "high" },
+    tool_choice: { type: "custom", name: "x" },
+  });
+
+  await withReasoningDisabledOnForcedToolChoice(input, okEvents);
+
+  assertEquals(input.payload.reasoning, undefined);
+});
+
+Deno.test("responses vendor flags add explicit disable fields", async () => {
+  const input = emitInput({
+    model: "m",
+    input: "hi",
+    reasoning: { effort: "high" },
+    tool_choice: "required",
+  }, new Set(["vendor-deepseek", "vendor-qwen"]));
+
+  await withReasoningDisabledOnForcedToolChoice(input, okEvents);
+
+  const out = input.payload as unknown as Record<string, unknown>;
+  assertEquals(out.thinking, { type: "disabled" });
+  assertEquals(out.enable_thinking, false);
+});
+
+Deno.test("responses non-forced tool_choice leaves reasoning untouched", async () => {
+  for (const tool_choice of ["auto", "none"] as const) {
+    const input = emitInput({
+      model: "m",
+      input: "hi",
+      reasoning: { effort: "high" },
+      tool_choice,
+    }, new Set(["vendor-deepseek"]));
+
+    await withReasoningDisabledOnForcedToolChoice(input, okEvents);
+
+    assertEquals(input.payload.reasoning, { effort: "high" });
+    const out = input.payload as unknown as Record<string, unknown>;
+    assertEquals(out.thinking, undefined);
+  }
+});

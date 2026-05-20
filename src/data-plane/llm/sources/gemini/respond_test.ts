@@ -8,11 +8,27 @@ import { respondGemini } from "./respond.ts";
 
 const encoder = new TextEncoder();
 
+const testAccounting = {
+  model: "test-model",
+  upstream: "test-upstream",
+  modelKey: "test-model-key",
+};
+const recordUsage = () => Promise.resolve();
+const recordRequestPerformance = () => {};
+
 const requestGeminiResponse = async (
   result: StreamExecuteResult<GeminiErrorResponse>,
 ): Promise<Response> => {
   const app = new Hono();
-  app.get("/", (c) => respondGemini(c, result, false));
+  app.get("/", (c) =>
+    respondGemini(
+      c,
+      result,
+      false,
+      recordUsage,
+      recordRequestPerformance,
+      performance.now(),
+    ));
   return await app.request("/");
 };
 
@@ -30,6 +46,7 @@ Deno.test("respondGemini preserves non-stream Gemini error event HTTP code", asy
     events: (async function* () {
       yield eventFrame(errorEvent);
     })(),
+    accounting: testAccounting,
   });
 
   assertEquals(response.status, 504);

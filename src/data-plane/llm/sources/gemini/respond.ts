@@ -5,9 +5,13 @@ import type {
 } from "../../shared/protocol/gemini.ts";
 import type { InternalDebugError } from "../../shared/errors/internal-debug-error.ts";
 import {
-  type PerformanceFailureCapture,
-  setUsageResponseMetadata,
-} from "../../../../middleware/usage-response-metadata.ts";
+  type RecordRequestPerformance,
+  type RecordUsage,
+  recordUsageIfPresent,
+  type SourceStreamOutcome,
+  tokenUsageFromGeminiResponse,
+  trackSourceStreamOutcome,
+} from "../accounting.ts";
 import type {
   StreamExecuteResult,
   UpstreamErrorResult,
@@ -19,7 +23,6 @@ import {
   sseCommentFrame,
   sseFrame,
 } from "../../shared/stream/types.ts";
-import { trackPerformanceOutcome } from "../performance.ts";
 import {
   isGeminiErrorEvent,
   isGeminiFinishedEvent,
@@ -196,13 +199,24 @@ export const respondGemini = async (
   c: Context,
   result: StreamExecuteResult<GeminiStreamEvent>,
   wantsStream: boolean,
+  recordUsage: RecordUsage,
+  recordRequestPerformance: RecordRequestPerformance,
+  requestStartedAt: number,
   downstreamAbortController?: AbortController,
 ): Promise<Response> => {
+  const recordPerformance = (failed: boolean): void => {
+    recordRequestPerformance(
+      result.performance,
+      failed,
+      performance.now() - requestStartedAt,
+    );
+  };
+
   if (result.type === "upstream-error") {
     const googleRpcResponse = upstreamGoogleRpcErrorResponse(result);
     const response = googleRpcResponse ??
       geminiErrorResponse(result.status, upstreamErrorMessage(result));
-    setUsageResponseMetadata(c, { performance: result.performance });
+    recordPerformance(true);
     return response;
   }
 
@@ -212,14 +226,17 @@ export const respondGemini = async (
       result.error.message,
       internalDebugFields(result.error),
     );
-    setUsageResponseMetadata(c, { performance: result.performance });
+    recordPerformance(true);
     return response;
   }
 
-  const performanceFailureCapture: PerformanceFailureCapture = {};
-  const events = trackPerformanceOutcome(
+  const streamOutcome: SourceStreamOutcome = {
+    failed: false,
+    completed: false,
+  };
+  const events = trackSourceStreamOutcome(
     result.events,
-    performanceFailureCapture,
+    streamOutcome,
     isGeminiFailureEvent,
     isGeminiCompletionFrame,
   );
@@ -227,14 +244,15 @@ export const respondGemini = async (
   if (!wantsStream) {
     try {
       const response = await collectGeminiProtocolEventsToResponse(events);
-      setUsageResponseMetadata(c, {
-        usageModel: result.usageModel,
-        performance: result.performance,
-        performanceFailureCapture,
-      });
+      await recordUsageIfPresent(
+        result.accounting,
+        tokenUsageFromGeminiResponse(response),
+        recordUsage,
+      );
+      recordPerformance(streamOutcome.failed);
       return Response.json(response);
     } catch (error) {
-      performanceFailureCapture.failed = true;
+      streamOutcome.failed = true;
       const geminiError = caughtGeminiErrorEvent(error);
       const response = geminiError
         ? geminiErrorEventResponse(geminiError)
@@ -244,23 +262,21 @@ export const respondGemini = async (
           unknownInternalDebugFields(error),
         );
 
-      setUsageResponseMetadata(c, {
-        usageModel: result.usageModel,
-        performance: result.performance,
-        performanceFailureCapture,
-      });
+      recordPerformance(true);
       return response;
     }
   }
 
   const response = proxySSE(
     c,
-    geminiProtocolEventsToSSEFrames(events),
+    geminiProtocolEventsToSSEFrames(events, {
+      onUsage: (usage) => recordUsage(result.accounting, usage),
+    }),
     {
       keepAlive: { frame: downstreamSSECommentKeepAliveFrame },
       downstreamAbortController,
       onError: (error) => {
-        performanceFailureCapture.failed = true;
+        streamOutcome.failed = true;
         return geminiErrorEventFrame(
           caughtGeminiErrorEvent(error) ??
             geminiErrorPayload(
@@ -270,13 +286,13 @@ export const respondGemini = async (
             ),
         );
       },
+      onComplete: (completion) => {
+        recordPerformance(
+          completion === "error" || streamOutcome.failed ||
+            (completion === "cancel" && !streamOutcome.completed),
+        );
+      },
     },
   );
-
-  setUsageResponseMetadata(c, {
-    usageModel: result.usageModel,
-    performance: result.performance,
-    performanceFailureCapture,
-  });
   return response;
 };

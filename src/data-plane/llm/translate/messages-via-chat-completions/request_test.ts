@@ -12,6 +12,18 @@ Deno.test("translateMessagesToChatCompletions maps thinking.disabled to reasonin
   assertEquals(result.reasoning_effort, "none");
 });
 
+Deno.test("translateMessagesToChatCompletions prefers output_config.effort over thinking.disabled", () => {
+  const result = translateMessagesToChatCompletions({
+    model: "gpt-test",
+    max_tokens: 256,
+    output_config: { effort: "high" },
+    thinking: { type: "disabled" },
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assertEquals(result.reasoning_effort, "high");
+});
+
 Deno.test("translateMessagesToChatCompletions keeps tool_result and user text as separate chat messages", () => {
   const result = translateMessagesToChatCompletions({
     model: "gpt-test",

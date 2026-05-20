@@ -4,6 +4,7 @@ import type { Context } from "hono";
 import { normalizeSearchConfig } from "../../data-plane/tools/web-search/search-config.ts";
 import type { SearchConfig } from "../../data-plane/tools/web-search/types.ts";
 import { isWebSearchProviderName } from "../../shared/web-search-providers.ts";
+import { invalidateUpstreamModels } from "../../data-plane/models/cache.ts";
 import { getRepo } from "../../repo/index.ts";
 import type {
   ApiKey,
@@ -12,6 +13,7 @@ import type {
   PerformanceMetricScope,
   PerformanceTelemetryRecord,
   SearchUsageRecord,
+  UpstreamConfig,
   UsageRecord,
 } from "../../repo/types.ts";
 
@@ -26,6 +28,7 @@ interface ExportPayload {
     performance?: PerformanceTelemetryRecord[];
     performanceIncluded?: boolean;
     searchConfig: SearchConfig;
+    upstreamConfigs: UpstreamConfig[];
   };
 }
 
@@ -110,6 +113,9 @@ const parsePerformanceRecords = (
       item.keyId.length === 0 ||
       typeof item.model !== "string" ||
       item.model.length === 0 ||
+      (item.upstream !== null && typeof item.upstream !== "string") ||
+      typeof item.modelKey !== "string" ||
+      item.modelKey.length === 0 ||
       !isPerformanceApiName(item.sourceApi) ||
       !isPerformanceApiName(item.targetApi) ||
       typeof item.stream !== "boolean" ||
@@ -149,6 +155,8 @@ const parsePerformanceRecords = (
       metricScope: item.metricScope,
       keyId: item.keyId,
       model: item.model,
+      upstream: item.upstream as string | null,
+      modelKey: item.modelKey,
       sourceApi: item.sourceApi,
       targetApi: item.targetApi,
       stream: item.stream,
@@ -188,6 +196,7 @@ export const exportData = async (c: Context) => {
     searchUsage,
     performance,
     rawSearchConfig,
+    upstreamConfigs,
   ] = await Promise.all([
     repo.apiKeys.list(),
     repo.github.listAccounts(),
@@ -195,6 +204,7 @@ export const exportData = async (c: Context) => {
     repo.searchUsage.listAll(),
     includePerformance ? repo.performance.listAll() : Promise.resolve([]),
     repo.searchConfig.get(),
+    repo.upstreamConfigs.list(),
   ]);
 
   const payload: ExportPayload = {
@@ -207,6 +217,7 @@ export const exportData = async (c: Context) => {
       searchUsage,
       performanceIncluded: includePerformance,
       searchConfig: normalizeSearchConfig(rawSearchConfig),
+      upstreamConfigs,
     },
   };
   if (includePerformance) payload.data.performance = performance;
@@ -233,6 +244,9 @@ export const importData = async (c: Context) => {
     ? data.githubAccounts
     : [];
   const usage: UsageRecord[] = Array.isArray(data.usage) ? data.usage : [];
+  const upstreamConfigs: UpstreamConfig[] = Array.isArray(data.upstreamConfigs)
+    ? data.upstreamConfigs
+    : [];
   const searchUsageResult = parseSearchUsageRecords(data.searchUsage);
   if (searchUsageResult.type === "invalid") {
     return c.json({
@@ -251,16 +265,25 @@ export const importData = async (c: Context) => {
   }
   const performance = performanceResult.records;
   if (mode === "replace") {
+    // Collect existing upstream IDs before deletion so their stale model caches
+    // can be invalidated — otherwise the L1/L2 models:<id> entries linger up to
+    // HARD_TTL and feed routing and /v1/models with data from the old config.
+    const existingUpstreams = await repo.upstreamConfigs.list();
     const deletes = [
       repo.apiKeys.deleteAll(),
       repo.github.deleteAllAccounts(),
       repo.usage.deleteAll(),
       repo.searchUsage.deleteAll(),
-      repo.accountModelBackoffs.deleteAll(),
+      repo.upstreamConfigs.deleteAll(),
     ];
     if (performanceIncluded) deletes.push(repo.performance.deleteAll());
     await Promise.all(deletes);
-    await repo.searchConfig.save(normalizeSearchConfig(data.searchConfig));
+    await Promise.all(
+      existingUpstreams.map((cfg) => invalidateUpstreamModels(cfg.id)),
+    );
+    await Promise.all([
+      repo.searchConfig.save(normalizeSearchConfig(data.searchConfig)),
+    ]);
   }
 
   // Import API keys
@@ -283,6 +306,12 @@ export const importData = async (c: Context) => {
     await repo.searchUsage.set(record);
   }
 
+  // Import upstream configs
+  for (const config of upstreamConfigs) {
+    await repo.upstreamConfigs.save(config);
+    await invalidateUpstreamModels(config.id);
+  }
+
   // Import performance telemetry records
   for (const record of performance) {
     await repo.performance.set(record);
@@ -303,6 +332,7 @@ export const importData = async (c: Context) => {
       githubAccounts: githubAccounts.length,
       usage: usage.length,
       searchUsage: searchUsage.length,
+      upstreamConfigs: upstreamConfigs.length,
       performance: performance.length,
     },
   });

@@ -35,6 +35,11 @@ const toProtocolFrame = (
 ): ProtocolFrame<UpstreamResponseStreamEvent> =>
   eventFrame({ ...event, sequence_number: 0 });
 
+const ignoreUsage = {
+  includeUsageChunk: true,
+  onUsage: () => {},
+};
+
 const countDoneSentinels = async (
   frames: ProtocolFrame<UpstreamResponseStreamEvent>[],
 ): Promise<number> => {
@@ -47,6 +52,7 @@ const countDoneSentinels = async (
   for await (
     const frame of chatProtocolEventsToSSEFrames(
       translateToSourceEvents(stream()),
+      ignoreUsage,
     )
   ) {
     if (frame.data === "[DONE]") doneCount++;
@@ -68,6 +74,7 @@ const countAssistantStartChunksAndDone = async (
   for await (
     const frame of chatProtocolEventsToSSEFrames(
       translateToSourceEvents(stream()),
+      ignoreUsage,
     )
   ) {
     if (frame.data === "[DONE]") {

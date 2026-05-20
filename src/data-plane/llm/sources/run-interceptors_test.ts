@@ -12,6 +12,12 @@ const collectFrames = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
   return frames;
 };
 
+const testAccounting = {
+  model: "test-model",
+  upstream: "test-upstream",
+  modelKey: "test-model-key",
+};
+
 Deno.test("runSourceInterceptors lets one interceptor patch payload before run and patch the result after run", async () => {
   const ctx = { payload: { value: "original" } };
 
@@ -24,22 +30,28 @@ Deno.test("runSourceInterceptors lets one interceptor patch payload before run a
     const result = await run();
     if (result.type !== "events") return result;
 
-    return eventResult((async function* () {
-      for await (const frame of result.events) {
-        yield frame.type === "event"
-          ? eventFrame(`${frame.event}:${patched}`)
-          : frame;
-      }
-    })());
+    return {
+      ...result,
+      events: (async function* () {
+        for await (const frame of result.events) {
+          yield frame.type === "event"
+            ? eventFrame(`${frame.event}:${patched}`)
+            : frame;
+        }
+      })(),
+    };
   };
 
   const result = await runSourceInterceptors(
     ctx,
     [interceptor],
     () =>
-      Promise.resolve(eventResult((async function* () {
-        yield eventFrame(ctx.payload.value);
-      })())),
+      Promise.resolve(eventResult(
+        (async function* () {
+          yield eventFrame(ctx.payload.value);
+        })(),
+        testAccounting,
+      )),
   );
 
   assertEquals(result.type, "events");
@@ -75,9 +87,12 @@ Deno.test("runSourceInterceptors lets one interceptor inspect an upstream error,
           headers: new Headers(),
           body: new TextEncoder().encode('{"error":{"message":"broken"}}'),
         }
-        : eventResult((async function* () {
-          yield eventFrame(ctx.payload.value);
-        })()),
+        : eventResult(
+          (async function* () {
+            yield eventFrame(ctx.payload.value);
+          })(),
+          testAccounting,
+        ),
     );
   });
 

@@ -6,6 +6,8 @@ import {
 } from "../../../shared/stream/types.ts";
 import { protocolFramesUntilTerminal } from "../../../shared/stream/protocol-algebra.ts";
 import { chatCompletionSourceStreamAlgebra } from "./protocol.ts";
+import type { TokenUsage } from "../../../../../repo/types.ts";
+import { tokenUsageFromChatUsage } from "../../accounting.ts";
 
 export const chatProtocolEventToSSEFrame = (
   frame: ProtocolFrame<ChatCompletionChunk>,
@@ -15,8 +17,8 @@ export const chatProtocolEventToSSEFrame = (
     : sseFrame(JSON.stringify(frame.event));
 
 interface ChatProtocolEventsToSSEFramesOptions {
-  includeUsageChunk?: boolean;
-  onUsageChunk?: (usage: NonNullable<ChatCompletionChunk["usage"]>) => void;
+  includeUsageChunk: boolean;
+  onUsage: (usage: TokenUsage) => Promise<void> | void;
 }
 
 const readUsage = (
@@ -33,10 +35,8 @@ const readUsage = (
 
 export const chatProtocolEventsToSSEFrames = async function* (
   frames: AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
-  options: ChatProtocolEventsToSSEFramesOptions = {},
+  options: ChatProtocolEventsToSSEFramesOptions,
 ): AsyncGenerator<SseFrame> {
-  const includeUsageChunk = options.includeUsageChunk ?? true;
-
   for await (
     const frame of protocolFramesUntilTerminal(
       frames,
@@ -44,8 +44,8 @@ export const chatProtocolEventsToSSEFrames = async function* (
     )
   ) {
     const usage = readUsage(frame);
-    if (usage) options.onUsageChunk?.(usage);
-    if (!includeUsageChunk && usage) continue;
+    if (usage) await options.onUsage(tokenUsageFromChatUsage(usage));
+    if (!options.includeUsageChunk && usage) continue;
 
     yield chatProtocolEventToSSEFrame(frame);
   }

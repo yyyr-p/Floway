@@ -11,6 +11,7 @@ interface ProxySSEKeepAliveOptions {
 
 interface ProxySSEOptions {
   onError?: (error: unknown) => SseFrame;
+  onComplete?: (completion: StreamCompletion) => void | Promise<void>;
   keepAlive?: ProxySSEKeepAliveOptions;
   downstreamAbortController?: AbortController;
 }
@@ -22,6 +23,8 @@ type NextFrameResult =
   | { type: "next-error"; error: unknown }
   | { type: "keep-alive" }
   | { type: "abort" };
+
+export type StreamCompletion = "eof" | "error" | "cancel";
 
 const resolveKeepAliveOptions = (
   keepAlive: ProxySSEKeepAliveOptions | undefined,
@@ -100,7 +103,7 @@ const writeSSEFrames = async (
   events: AsyncIterable<SseFrame>,
   keepAlive: ResolvedProxySSEKeepAliveOptions | undefined,
   downstreamAbortController: AbortController | undefined,
-): Promise<void> => {
+): Promise<StreamCompletion> => {
   const iterator = events[Symbol.asyncIterator]();
   const abortDownstream = () => {
     if (!downstreamAbortController?.signal.aborted) {
@@ -124,7 +127,7 @@ const writeSSEFrames = async (
     while (true) {
       if (stream.aborted || stream.closed) {
         stopForDownstream();
-        return;
+        return "cancel";
       }
 
       const next = await nextFrameOrKeepAlive(
@@ -135,7 +138,7 @@ const writeSSEFrames = async (
 
       if (next.type === "abort") {
         stopForDownstream();
-        return;
+        return "cancel";
       }
       if (next.type === "keep-alive") {
         if (!keepAlive) continue;
@@ -145,14 +148,14 @@ const writeSSEFrames = async (
       if (next.type === "next-error") {
         if (stream.aborted || stream.closed) {
           stopForDownstream();
-          return;
+          return "cancel";
         }
         throw next.error;
       }
 
       if (next.result.done) {
         completed = true;
-        return;
+        return "eof";
       }
 
       await writeSSEFrame(stream, next.result.value);
@@ -174,18 +177,22 @@ export const proxySSE = (
 ): Response =>
   streamSSE(c, async (stream) => {
     const keepAlive = resolveKeepAliveOptions(options.keepAlive);
+    let completion: StreamCompletion = "eof";
 
     try {
-      await writeSSEFrames(
+      completion = await writeSSEFrames(
         stream,
         events,
         keepAlive,
         options.downstreamAbortController,
       );
     } catch (error) {
+      completion = "error";
       if (!options.onError) throw error;
 
       const event = options.onError(error);
       await writeSSEFrame(stream, event);
+    } finally {
+      await options.onComplete?.(completion);
     }
   });

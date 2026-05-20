@@ -1,18 +1,16 @@
 import type { Context } from "hono";
-import { copilotFetch } from "../../../../../shared/copilot.ts";
+import { ModelsFetchError } from "../../../../models/cache.ts";
 import type {
   GeminiContent,
   GeminiGenerateContentRequest,
 } from "../../../shared/protocol/gemini.ts";
 import { toInternalDebugError } from "../../../shared/errors/internal-debug-error.ts";
-import { thrownUpstreamError } from "../../../shared/errors/upstream-error.ts";
 import { stripUnsupportedPartFieldsFromPayload } from "../interceptors/strip-unsupported-part-fields.ts";
 import { stripUnsupportedToolsFromPayload } from "../interceptors/strip-unsupported-tools.ts";
-import { geminiModelResolutionIntent } from "../plan.ts";
 import { buildTargetRequest as buildMessagesTargetRequest } from "../../../translate/gemini-via-messages/request.ts";
 import { getModelCapabilities } from "../../../shared/models/get-model-capabilities.ts";
-import { resolveModelForRequest } from "../../../shared/models/resolve-model.ts";
-import { withAccountFallback } from "../../../../shared/account-pool/fallback.ts";
+import { resolveModelForRequest } from "../../../../providers/registry.ts";
+import { runOnModel, skipProvider } from "../../../../providers/run.ts";
 
 interface GeminiCountTokensRequest {
   contents?: GeminiContent[];
@@ -66,6 +64,11 @@ const geminiInternalError = (status: number, error: unknown): Response => {
   }, { status: code });
 };
 
+const countTokensRequestToGenerateContentRequest = (
+  request: GeminiCountTokensRequest,
+): GeminiGenerateContentRequest =>
+  request.generateContentRequest ?? { contents: request.contents };
+
 // count_tokens reuses Gemini source request normalization, but cannot run the
 // full streaming source-interceptor pipeline. Apply the same payload mutations
 // directly so its translated request shape matches `generateContent`.
@@ -91,36 +94,44 @@ export const countGeminiTokens = async (
 ): Promise<Response> => {
   try {
     const request = await c.req.json<GeminiCountTokensRequest>();
-    const generateContentRequest = request.generateContentRequest ?? {
-      contents: request.contents,
-    };
+    const generateContentRequest = countTokensRequestToGenerateContentRequest(
+      request,
+    );
     normalizeCountTokensRequest(generateContentRequest);
 
-    const modelId = await resolveModelForRequest(
+    const { id: modelId, model: resolvedModel } = await resolveModelForRequest(
       model,
-      geminiModelResolutionIntent(generateContentRequest),
     );
 
-    const response = await withAccountFallback(
-      modelId,
-      async ({ account }) => {
-        const capabilities = await getModelCapabilities(
-          modelId,
-          account.token,
-          account.accountType,
-        );
+    if (!resolvedModel) {
+      return geminiError(
+        404,
+        `Model ${modelId} is not available on any configured upstream.`,
+      );
+    }
+
+    const response = await runOnModel(
+      resolvedModel,
+      async (binding) => {
+        const capabilities = getModelCapabilities(binding.upstreamModel);
+        if (!capabilities.supportsMessagesCountTokens) {
+          return skipProvider(geminiError(
+            400,
+            `Model ${modelId} does not support countTokens.`,
+          ));
+        }
         const messagesPayload = buildMessagesTargetRequest(
           generateContentRequest,
           modelId,
           false,
           capabilities,
         );
-        return copilotFetch(
-          "/v1/messages/count_tokens",
-          { method: "POST", body: JSON.stringify(messagesPayload) },
-          account.token,
-          account.accountType,
+        const { model: _model, ...body } = messagesPayload;
+        const { response } = await binding.provider.callMessagesCountTokens(
+          binding.upstreamModel,
+          body,
         );
+        return response;
       },
     );
 
@@ -143,9 +154,8 @@ export const countGeminiTokens = async (
 
     return Response.json({ totalTokens });
   } catch (error) {
-    const upstreamError = thrownUpstreamError(error);
-    if (upstreamError) {
-      return geminiError(upstreamError.status, upstreamError.body);
+    if (error instanceof ModelsFetchError) {
+      return geminiError(error.status, error.body);
     }
 
     return geminiInternalError(500, error);

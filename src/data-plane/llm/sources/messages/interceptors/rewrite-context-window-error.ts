@@ -7,9 +7,9 @@ const isContextWindowError = (text: string): boolean =>
   text.includes("context_length_exceeded");
 
 /**
- * Copilot reports context-window failures using its own strings (for example
- * `Request body is too large for model context window`), but Messages clients
- * expect a Messages-shaped `invalid_request_error` and Claude Code in
+ * Some upstreams report context-window failures using non-Messages strings
+ * (for example `Request body is too large for model context window`), but
+ * Messages clients expect a Messages-shaped `invalid_request_error` and Claude Code in
  * particular uses that shape to trigger compaction instead of surfacing a raw
  * upstream error.
  *

@@ -23,7 +23,7 @@ const doneTerminalAlgebra = {
 } satisfies ProtocolTerminalAlgebra<TestEvent>;
 
 // @ts-expect-error ProtocolTerminalAlgebra requires a terminal rule.
-const invalidTerminalAlgebra: ProtocolTerminalAlgebra<TestEvent> = {
+const _invalidTerminalAlgebra: ProtocolTerminalAlgebra<TestEvent> = {
   missingTerminalMessage: "missing terminal event",
 };
 

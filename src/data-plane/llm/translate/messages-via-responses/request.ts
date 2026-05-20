@@ -1,5 +1,4 @@
 import {
-  getMessagesRequestedReasoningEffort,
   type MessagesAssistantMessage,
   type MessagesClientTool,
   type MessagesMessage,
@@ -12,8 +11,8 @@ import {
   type MessagesUserMessage,
   type MessagesWebSearchToolResultBlock,
 } from "../../shared/protocol/messages.ts";
-import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 import { unpackReasoningSignature } from "../shared/messages-responses-signature.ts";
+import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 import type {
   ResponseInputContent,
   ResponseInputItem,
@@ -152,12 +151,11 @@ const translateAssistantMessage = (
       flushPendingContent(pendingContent, input, "assistant");
       // Recover the original Responses item id when the signature was issued
       // by this gateway (packed as `${encrypted_content}@${id}`). Without the
-      // packed id, Copilot rejects the next-turn submission because the
-      // encrypted blob was signed against a different item id. Unpacked
-      // signatures (native Anthropic sessions resumed against the gateway, or
-      // stored sessions predating the packing change) fall back to a
-      // synthesized id; the upstream signature check will still fail for
-      // those, matching pre-packing behavior. See
+      // packed id, upstreams that verify reasoning continuity can reject the
+      // next-turn submission because the encrypted blob was signed against a
+      // different item id. Unpacked signatures fall back to a synthesized id;
+      // the upstream signature check may still fail for those, matching
+      // pre-packing behavior. See
       // `../shared/messages-responses-signature.ts`.
       const unpacked = typeof block.signature === "string"
         ? unpackReasoningSignature(block.signature)
@@ -255,13 +253,21 @@ const translateToolChoice = (
   }
 };
 
+const translateMessagesReasoningEffort = (
+  payload: MessagesPayload,
+): string | undefined => {
+  if (payload.output_config?.effort) return payload.output_config.effort;
+  if (payload.thinking?.type === "disabled") return "none";
+  return undefined;
+};
+
 export const translateMessagesToResponses = (
   payload: MessagesPayload,
 ): ResponsesPayload => {
   // Preserve the source `output_config.effort` value as-is, even if the chosen
   // Responses upstream may reject it. Translation stays pairwise and leaves
   // target-side validation to the selected upstream endpoint.
-  const effort = getMessagesRequestedReasoningEffort(payload);
+  const effort = translateMessagesReasoningEffort(payload);
   const reasoning = effort ? { effort } : undefined;
   const clientTools = getClientTools(payload.tools);
   const instructions = translateSystemPrompt(payload.system);

@@ -1,28 +1,79 @@
-// Per-account Copilot model cache. Soft expiry drives refresh attempts; hard
-// expiry bounds how long switchable upstream failures may silently reuse stale
-// model metadata for account-pool routing.
+// Per-upstream model list cache. Each upstream adapter gets its own /models
+// cache key; provider code decides how those upstream adapters map to accounts
+// or configured custom providers.
+//
+// Tiers:
+//   L1 in-process (120s)            — avoids repeated repo reads on hot isolates
+//   L2 repo-backed soft expiry      — refresh attempts after 600s
+//   L2 repo-backed hard expiry      — configured model-load failures may reuse
+//                                     stale data for up to 2h so transient
+//                                     provider failures do not empty listings
 
-import {
-  copilotFetch,
-  isAccountSwitchableStatus,
-  isCopilotTokenFetchError,
-} from "../../shared/copilot.ts";
-import { dateSuffixedClaudeModelAliasTarget } from "../../shared/model-name.ts";
 import { getRepo } from "../../repo/index.ts";
-import type { GitHubAccount } from "../../repo/types.ts";
-import type { ModelInfo, ModelsResponse } from "./types.ts";
+import type { Upstream } from "../../shared/upstream/types.ts";
 
-export type { ModelInfo, ModelsResponse } from "./types.ts";
+export interface CachedModelInfo {
+  id: string;
+  object?: string;
+  name?: string;
+  version?: string;
+  owned_by?: string;
+  created?: number;
+  display_name?: string;
+  created_at?: string;
+  description?: string;
+  supported_endpoints?: string[];
+  capabilities?: {
+    family?: string;
+    type?: string;
+    limits?: {
+      max_context_window_tokens?: number;
+      max_non_streaming_output_tokens?: number;
+      max_prompt_tokens?: number;
+      max_output_tokens?: number;
+    };
+    supports?: {
+      tool_calls?: boolean;
+      parallel_tool_calls?: boolean;
+      streaming?: boolean;
+      vision?: boolean;
+      adaptive_thinking?: boolean;
+      reasoning_effort?: string[];
+    };
+  };
+  supports_generation?: boolean;
+  model_picker_enabled?: boolean;
+  billing?: {
+    is_premium?: boolean;
+    multiplier?: number;
+    restricted_to?: string[];
+  };
+  policy?: {
+    state?: string;
+    terms?: string;
+  };
+}
+
+export interface CachedModelsResponse<
+  TModel extends CachedModelInfo = CachedModelInfo,
+> {
+  object: string;
+  data: TModel[];
+}
+
+export interface LoadModelsOptions {
+  canReuseStaleOnModelLoadStatus?: (status: number) => boolean;
+}
 
 interface ModelsCacheEntry {
   fetchedAt: number;
   hardExpiresAt: number;
-  data: ModelsResponse;
+  data: CachedModelsResponse;
 }
 
 export interface ModelsLoadSuccess {
   type: "models";
-  data: ModelsResponse;
+  data: CachedModelsResponse;
   stale: boolean;
 }
 
@@ -39,8 +90,15 @@ export class ModelsFetchError extends Error {
     readonly body: string,
     readonly headers: Headers,
   ) {
-    super(`Copilot models fetch failed: ${status} ${body}`);
+    super(`Models fetch failed: ${status} ${body}`);
     this.name = "ModelsFetchError";
+  }
+}
+
+export class ModelsRequestError extends Error {
+  constructor(cause: unknown) {
+    super("Upstream model listing failed", { cause });
+    this.name = "ModelsRequestError";
   }
 }
 
@@ -54,22 +112,28 @@ const inProcessCache = new Map<string, {
   cachedAt: number;
 }>();
 
-export function clearModelsCache(): void {
+export const clearModelsCache = (): void => {
   inProcessCache.clear();
-}
+};
 
-async function modelsCacheKey(
-  githubToken: string,
-  accountType: string,
-): Promise<string> {
-  const bytes = new TextEncoder().encode(`${accountType}:${githubToken}`);
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  const hash = Array.from(
-    new Uint8Array(digest),
-    (byte) => byte.toString(16).padStart(2, "0"),
-  ).join("");
-  return `${MODELS_CACHE_KEY_PREFIX}:${hash}`;
-}
+const cacheKeyForUpstream = (upstream: Upstream): string =>
+  `${MODELS_CACHE_KEY_PREFIX}:${upstream.id}`;
+
+// Drop both L1 and L2 cache entries for a single upstream id. Use when an
+// upstream's config (base URL, bearer, supported endpoints) changes — the
+// stored model list belongs to the old credentials and would otherwise
+// linger up to HARD_TTL_MS.
+export const invalidateUpstreamModels = async (
+  upstreamId: string,
+): Promise<void> => {
+  const cacheKey = `${MODELS_CACHE_KEY_PREFIX}:${upstreamId}`;
+  inProcessCache.delete(cacheKey);
+  try {
+    await getRepo().cache.delete(cacheKey);
+  } catch {
+    // Best-effort; the in-process drop alone still forces a refresh on this isolate.
+  }
+};
 
 const isSoftFresh = (entry: ModelsCacheEntry, now: number): boolean =>
   now - entry.fetchedAt < SOFT_TTL_MS;
@@ -81,18 +145,19 @@ const isCacheEntry = (value: unknown): value is ModelsCacheEntry => {
   const entry = value as ModelsCacheEntry;
   return typeof entry?.fetchedAt === "number" &&
     typeof entry.hardExpiresAt === "number" &&
-    Boolean(entry.data) &&
-    Array.isArray(entry.data.data);
+    isModelsResponse(entry.data);
 };
 
-const isModelsResponse = (value: unknown): value is ModelsResponse => {
-  const response = value as ModelsResponse;
-  return response?.object === "list" && Array.isArray(response.data);
+const isModelsResponse = (value: unknown): value is CachedModelsResponse => {
+  const response = value as CachedModelsResponse;
+  return typeof response?.object === "string" &&
+    Array.isArray(response.data) &&
+    response.data.every((model) => typeof model?.id === "string");
 };
 
-async function readRepoCache(
+const readRepoCache = async (
   cacheKey: string,
-): Promise<ModelsCacheEntry | null> {
+): Promise<ModelsCacheEntry | null> => {
   try {
     const raw = await getRepo().cache.get(cacheKey);
     if (!raw) return null;
@@ -101,37 +166,46 @@ async function readRepoCache(
   } catch {
     return null;
   }
-}
+};
 
-async function writeRepoCache(
+const writeRepoCache = async (
   cacheKey: string,
   entry: ModelsCacheEntry,
-): Promise<void> {
+): Promise<void> => {
   try {
     await getRepo().cache.set(cacheKey, JSON.stringify(entry));
   } catch {
     // Repo cache is an optimization; fetch result is still usable without persisting it.
   }
-}
-
-export const isSwitchableModelsLoadError = (error: unknown): boolean => {
-  if (error instanceof ModelsFetchError) {
-    return isAccountSwitchableStatus(error.status);
-  }
-  return isCopilotTokenFetchError(error) &&
-    isAccountSwitchableStatus(error.status);
 };
 
-async function fetchModels(
-  githubToken: string,
-  accountType: string,
-): Promise<ModelsResponse> {
-  const resp = await copilotFetch(
-    "/models",
-    { method: "GET" },
-    githubToken,
-    accountType,
-  );
+const canReuseStaleForStatus = (
+  status: number,
+  options: LoadModelsOptions,
+): boolean =>
+  options.canReuseStaleOnModelLoadStatus
+    ? options.canReuseStaleOnModelLoadStatus(status)
+    : status === 429;
+
+export const canReuseStaleForModelsLoadError = (
+  error: unknown,
+  options: LoadModelsOptions = {},
+): boolean => {
+  if (error instanceof ModelsFetchError) {
+    return canReuseStaleForStatus(error.status, options);
+  }
+  return false;
+};
+
+const fetchUpstreamModels = async (
+  upstream: Upstream,
+): Promise<CachedModelsResponse> => {
+  let resp: Response;
+  try {
+    resp = await upstream.fetch("models", { method: "GET" });
+  } catch (error) {
+    throw new ModelsRequestError(error);
+  }
 
   if (!resp.ok) {
     throw new ModelsFetchError(
@@ -141,20 +215,31 @@ async function fetchModels(
     );
   }
 
-  const data = await resp.json() as unknown;
-  if (!isModelsResponse(data)) {
-    throw new Error("Invalid Copilot models response");
+  let data: unknown;
+  try {
+    data = await resp.json();
+  } catch {
+    throw new Error("Invalid upstream /models response");
   }
-
+  if (!isModelsResponse(data)) {
+    throw new Error("Invalid upstream /models response");
+  }
   return data;
-}
+};
 
-export async function loadModels(
-  githubToken: string,
-  accountType: string,
-): Promise<ModelsLoadResult> {
+/**
+ * Load models for an upstream with discriminated success/failure result.
+ *
+ * Used by provider model listing so it can classify transient upstream
+ * failures: configured model-load errors may reuse stale cache, while everything
+ * else propagates to the caller.
+ */
+export const loadModels = async (
+  upstream: Upstream,
+  options: LoadModelsOptions = {},
+): Promise<ModelsLoadResult> => {
   const now = Date.now();
-  const cacheKey = await modelsCacheKey(githubToken, accountType);
+  const cacheKey = cacheKeyForUpstream(upstream);
   const cached = inProcessCache.get(cacheKey);
 
   if (
@@ -176,7 +261,7 @@ export async function loadModels(
   }
 
   try {
-    const data = await fetchModels(githubToken, accountType);
+    const data = await fetchUpstreamModels(upstream);
     const entry = {
       fetchedAt: now,
       hardExpiresAt: now + HARD_TTL_MS,
@@ -189,7 +274,7 @@ export async function loadModels(
     if (
       repoEntry &&
       isHardFresh(repoEntry, now) &&
-      isSwitchableModelsLoadError(error)
+      canReuseStaleForModelsLoadError(error, options)
     ) {
       inProcessCache.set(cacheKey, { entry: repoEntry, cachedAt: now });
       return { type: "models", data: repoEntry.data, stale: true };
@@ -198,30 +283,31 @@ export async function loadModels(
     if (
       cached &&
       isHardFresh(cached.entry, now) &&
-      isSwitchableModelsLoadError(error)
+      canReuseStaleForModelsLoadError(error, options)
     ) {
       return { type: "models", data: cached.entry.data, stale: true };
     }
 
     return { type: "error", error };
   }
-}
+};
 
-export const loadModelsForAccount = (
-  account: GitHubAccount,
-): Promise<ModelsLoadResult> => loadModels(account.token, account.accountType);
-
-export const findModelInModels = (
-  models: ModelsResponse,
-  modelId: string,
-): ModelInfo | undefined => {
-  const exact = models.data.find((model) => model.id === modelId);
-  if (exact) return exact;
-
-  // Date-suffixed Claude IDs are client aliases for the same Copilot model,
-  // but exact /models IDs must win first so future upstream dated releases are
-  // not rewritten to their base model.
-  const aliasTarget = dateSuffixedClaudeModelAliasTarget(modelId);
-  if (!aliasTarget) return undefined;
-  return models.data.find((model) => model.id === aliasTarget);
+/**
+ * Get cached model list for the given upstream, refreshing after soft expiry.
+ *
+ * Convenience wrapper for callers that don't need success/failure
+ * discrimination — returns an empty list on hard failure so non-critical
+ * paths (dashboard pickers, capability lookups) don't have to branch on
+ * errors.
+ */
+export const getModelsForUpstream = async (
+  upstream: Upstream,
+): Promise<CachedModelsResponse> => {
+  const result = await loadModels(upstream);
+  if (result.type === "models") return result.data;
+  console.warn(
+    `Failed to load models for upstream ${upstream.id}:`,
+    result.error,
+  );
+  return { object: "list", data: [] };
 };

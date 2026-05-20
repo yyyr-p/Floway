@@ -1,7 +1,6 @@
 import { assertEquals, assertFalse } from "@std/assert";
 import { translateMessagesToResponsesResult } from "../responses-via-messages/result.ts";
 import { translateMessagesToResponses } from "./request.ts";
-import { getMessagesRequestedReasoningEffort } from "../../shared/protocol/messages.ts";
 import type {
   ResponseInputReasoning,
   ResponseOutputReasoning,
@@ -103,6 +102,18 @@ Deno.test("translateMessagesToResponses maps output_config.effort directly to re
 
   assertEquals(result.reasoning, { effort: "xhigh" });
   assertEquals(result.include, ["reasoning.encrypted_content"]);
+});
+
+Deno.test("translateMessagesToResponses prefers output_config.effort over thinking.disabled", () => {
+  const result = translateMessagesToResponses({
+    model: "gpt-test",
+    max_tokens: 256,
+    output_config: { effort: "high" },
+    thinking: { type: "disabled" },
+    messages: [{ role: "user", content: "hi" }],
+  });
+
+  assertEquals(result.reasoning, { effort: "high" });
 });
 
 Deno.test("translateMessagesToResponses preserves output_config.effort max at the translation boundary", () => {
@@ -242,55 +253,6 @@ Deno.test("translateMessagesToResponses omits encrypted_content for text-only th
     summary: [{ type: "summary_text", text: "trace" }],
   });
   assertFalse("encrypted_content" in reasoning);
-});
-
-Deno.test("getMessagesRequestedReasoningEffort prefers output_config.effort over thinking.disabled", () => {
-  assertEquals(
-    getMessagesRequestedReasoningEffort({
-      model: "claude-test",
-      max_tokens: 256,
-      output_config: { effort: "high" },
-      thinking: { type: "disabled" },
-      messages: [{ role: "user", content: "hi" }],
-    }),
-    "high",
-  );
-});
-
-Deno.test("getMessagesRequestedReasoningEffort maps thinking.disabled to none", () => {
-  assertEquals(
-    getMessagesRequestedReasoningEffort({
-      model: "claude-test",
-      max_tokens: 256,
-      thinking: { type: "disabled" },
-      messages: [{ role: "user", content: "hi" }],
-    }),
-    "none",
-  );
-});
-
-Deno.test("getMessagesRequestedReasoningEffort ignores enabled thinking without output_config.effort", () => {
-  assertEquals(
-    getMessagesRequestedReasoningEffort({
-      model: "claude-test",
-      max_tokens: 256,
-      thinking: { type: "enabled", budget_tokens: 8192 },
-      messages: [{ role: "user", content: "hi" }],
-    }),
-    null,
-  );
-});
-
-Deno.test("getMessagesRequestedReasoningEffort ignores bare enabled thinking without budget_tokens", () => {
-  assertEquals(
-    getMessagesRequestedReasoningEffort({
-      model: "claude-test",
-      max_tokens: 256,
-      thinking: { type: "enabled" },
-      messages: [{ role: "user", content: "hi" }],
-    }),
-    null,
-  );
 });
 
 Deno.test("translateMessagesToResponsesResult synthesizes an rs-prefixed id when the signature is not packed", () => {

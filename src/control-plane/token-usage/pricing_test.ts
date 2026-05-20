@@ -1,19 +1,13 @@
 import { assertAlmostEquals, assertEquals } from "@std/assert";
 import { getModelPricing, recordCostUsd } from "./pricing.ts";
 
-Deno.test("getModelPricing matches by displayed (merged) Claude id", () => {
-  // Raw upstream id with dotted version + variant suffix collapses to the
-  // dashed base id for pricing lookup.
-  const xhigh = getModelPricing("claude-opus-4.7-xhigh");
-  assertEquals(xhigh, {
+Deno.test("getModelPricing matches public Claude id", () => {
+  assertEquals(getModelPricing("claude-opus-4-7"), {
     input: 5,
     cacheRead: 0.5,
     cacheWrite: 6.25,
     output: 25,
   });
-
-  const onem = getModelPricing("claude-opus-4.7-1m-internal");
-  assertEquals(onem, xhigh);
 });
 
 Deno.test("getModelPricing covers gpt-5 family by exact id and regex", () => {
@@ -43,7 +37,7 @@ Deno.test("recordCostUsd splits prefill/cache-read/cache-write/output", () => {
   //   output:     50000 * 25    = 1250000
   // total = 1492500 / 1e6 = 1.4925
   const cost = recordCostUsd(
-    "claude-opus-4.7",
+    "claude-opus-4-7",
     100_000,
     50_000,
     60_000,

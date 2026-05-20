@@ -4,6 +4,8 @@ import {
   assertFalse,
   assertStringIncludes,
 } from "@std/assert";
+import { clearCopilotTokenCache } from "../../../../shared/copilot.ts";
+import { clearModelsCache } from "../../../models/cache.ts";
 import type { ResponsesResult } from "../../shared/protocol/responses.ts";
 import type { SearchConfig } from "../../../tools/web-search/types.ts";
 import {
@@ -322,48 +324,50 @@ Deno.test("/v1/messages malformed JSON returns structured internal debug error",
   assertExists(body.error.stack);
 });
 
-Deno.test("/v1/messages preserves upstream model-list failures", async () => {
+Deno.test("/v1/messages rejects body anthropic_beta", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
-    const url = new URL(request.url);
-
-    if (url.hostname === "update.code.visualstudio.com") {
-      return jsonResponse(["1.110.1"]);
-    }
-    if (url.pathname === "/copilot_internal/v2/token") {
-      return jsonResponse({
-        token: "copilot-access-token",
-        expires_at: 4102444800,
-        refresh_in: 3600,
-      });
-    }
-    if (url.pathname === "/models") {
-      return new Response("models unavailable", {
-        status: 503,
-        headers: { "x-copilot-models-error": "1" },
-      });
-    }
-
-    throw new Error(`Unhandled fetch ${request.url}`);
-  }, async () => {
-    const response = await requestApp("/v1/messages", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-api-key": apiKey.key,
-      },
-      body: JSON.stringify({
-        model: "claude-models-down",
-        max_tokens: 10,
-        messages: [{ role: "user", content: "hello" }],
-      }),
-    });
-
-    assertEquals(response.status, 503);
-    assertEquals(response.headers.get("x-copilot-models-error"), "1");
-    assertEquals(await response.text(), "models unavailable");
+  const response = await requestApp("/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey.key,
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4",
+      max_tokens: 64,
+      anthropic_beta: ["context-1m-2025-08-07"],
+      messages: [{ role: "user", content: "hello" }],
+    }),
   });
+
+  assertEquals(response.status, 400);
+  const body = await response.json();
+  assertEquals(body.error.type, "invalid_request_error");
+  assertEquals(body.error.param, "anthropic_beta");
+});
+
+Deno.test("/v1/messages rejects body betas", async () => {
+  const { apiKey } = await setupAppTest();
+
+  const response = await requestApp("/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": apiKey.key,
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-4",
+      max_tokens: 64,
+      betas: ["context-1m-2025-08-07"],
+      messages: [{ role: "user", content: "hello" }],
+    }),
+  });
+
+  assertEquals(response.status, 400);
+  const body = await response.json();
+  assertEquals(body.error.type, "invalid_request_error");
+  assertEquals(body.error.param, "betas");
 });
 
 Deno.test("/v1/messages rewrites upstream context-window errors to Messages compact form", async () => {
@@ -1654,7 +1658,7 @@ Deno.test("/v1/messages falls back to responses and preserves reasoning round-tr
     assertEquals(body.content[0].type, "thinking");
     // Packed `${encrypted_content}@${id}` smuggles the Responses item id
     // through the Anthropic signature slot so a next-turn submission survives
-    // Copilot's per-item signature verification. See
+    // upstream per-item signature verification. See
     // `src/data-plane/llm/translate/shared/messages-responses-signature.ts`.
     assertEquals(body.content[0].signature, "enc_abc@rs_1");
     assertEquals(body.content[1].text, "Answer text");
@@ -2049,6 +2053,390 @@ Deno.test("stripReservedKeywords removes billing-only system block without 400 e
   assertEquals(sys.length, 1);
   assertEquals(sys[0].text, "You are a helpful assistant.");
   assertExists(sys[0].cache_control);
+});
+
+Deno.test("/v1/messages strips cache_control.scope only for Copilot Messages", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "tok",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(
+        copilotModels([{
+          id: "claude-native",
+          supported_endpoints: ["/v1/messages"],
+        }]),
+      );
+    }
+    if (url.pathname === "/v1/messages") {
+      upstreamBody = await request.json();
+      return sseResponse([
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_cache_scope",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "claude-native",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 5, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "ok" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-api-key": apiKey.key },
+      body: JSON.stringify({
+        model: "claude-native",
+        max_tokens: 10,
+        stream: false,
+        system: [{
+          type: "text",
+          text: "You are helpful.",
+          cache_control: { type: "ephemeral", scope: "tools" },
+        }],
+        messages: [{
+          role: "user",
+          content: [{
+            type: "text",
+            text: "Hi",
+            cache_control: { type: "ephemeral", scope: "tools" },
+          }],
+        }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  const system = upstreamBody.system as Array<Record<string, unknown>>;
+  const messages = upstreamBody.messages as Array<{ content: unknown }>;
+  const content = messages[0].content as Array<Record<string, unknown>>;
+  assertEquals(system[0].cache_control, { type: "ephemeral" });
+  assertEquals(content[0].cache_control, { type: "ephemeral" });
+});
+
+Deno.test("/v1/messages preserves cache_control.scope for custom Messages providers", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_messages",
+    name: "Messages Provider",
+    baseUrl: "https://messages.example.com",
+    bearerToken: "sk-messages",
+    supportedEndpoints: ["/v1/messages"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "messages.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({
+        object: "list",
+        data: [{ id: "custom-claude" }],
+      });
+    }
+    if (
+      url.hostname === "messages.example.com" &&
+      url.pathname === "/v1/messages"
+    ) {
+      upstreamBody = await request.json();
+      return jsonResponse({
+        id: "msg_custom_cache_scope",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        model: "custom-claude",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "custom-claude",
+        max_tokens: 10,
+        stream: false,
+        system: [{
+          type: "text",
+          text: "You are helpful.",
+          cache_control: { type: "ephemeral", scope: "tools" },
+        }],
+        messages: [{
+          role: "user",
+          content: [{
+            type: "text",
+            text: "Hi",
+            cache_control: { type: "ephemeral", scope: "tools" },
+          }],
+        }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  const system = upstreamBody.system as Array<Record<string, unknown>>;
+  const messages = upstreamBody.messages as Array<{ content: unknown }>;
+  const content = messages[0].content as Array<Record<string, unknown>>;
+  assertEquals(system[0].cache_control, {
+    type: "ephemeral",
+    scope: "tools",
+  });
+  assertEquals(content[0].cache_control, {
+    type: "ephemeral",
+    scope: "tools",
+  });
+});
+
+Deno.test("/v1/messages forwards native web search unchanged to custom Messages providers by default", async () => {
+  const { apiKey, repo } = await setupAppTest({
+    searchConfig: ENABLED_SEARCH_CONFIG,
+  });
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_messages_native_search",
+    name: "Messages Native Search Provider",
+    baseUrl: "https://messages-native-search.example.com",
+    bearerToken: "sk-messages",
+    supportedEndpoints: ["/v1/messages"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "messages-native-search.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({
+        object: "list",
+        data: [{ id: "custom-native-search" }],
+      });
+    }
+    if (
+      url.hostname === "messages-native-search.example.com" &&
+      url.pathname === "/v1/messages"
+    ) {
+      upstreamBody = await request.json();
+      return jsonResponse({
+        id: "msg_custom_native_search",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        model: "custom-native-search",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    }
+    if (url.hostname === "api.tavily.com") {
+      throw new Error("search provider should not be called without opt-in");
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "custom-native-search",
+        max_tokens: 64,
+        stream: false,
+        tools: [makeWebSearchTool()],
+        tool_choice: { type: "tool", name: "web_search" },
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  assertEquals(
+    (upstreamBody.tools as Array<Record<string, unknown>>)[0].type,
+    "web_search_20260209",
+  );
+  assertEquals(upstreamBody.tool_choice, {
+    type: "tool",
+    name: "web_search",
+  });
+});
+
+Deno.test("/v1/messages applies native web search shim to custom Messages providers when opted in", async () => {
+  const { apiKey, repo } = await setupAppTest({
+    searchConfig: ENABLED_SEARCH_CONFIG,
+  });
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_messages_shimmed_search",
+    name: "Messages Shimmed Search Provider",
+    baseUrl: "https://messages-shimmed-search.example.com",
+    bearerToken: "sk-messages",
+    supportedEndpoints: ["/v1/messages"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: ["messages-web-search-shim"],
+  });
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "messages-shimmed-search.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({
+        object: "list",
+        data: [{ id: "custom-shimmed-search" }],
+      });
+    }
+    if (
+      url.hostname === "messages-shimmed-search.example.com" &&
+      url.pathname === "/v1/messages"
+    ) {
+      upstreamBody = await request.json();
+      return jsonResponse({
+        id: "msg_custom_shimmed_search",
+        type: "message",
+        role: "assistant",
+        content: [{ type: "text", text: "ok" }],
+        model: "custom-shimmed-search",
+        stop_reason: "end_turn",
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "custom-shimmed-search",
+        max_tokens: 64,
+        stream: false,
+        tools: [makeWebSearchTool()],
+        tool_choice: { type: "tool", name: "web_search" },
+        messages: [{ role: "user", content: "latest React docs" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+  });
+
+  assertExists(upstreamBody);
+  const upstreamTool =
+    (upstreamBody.tools as Array<Record<string, unknown>>)[0];
+  assertEquals(upstreamTool.type, undefined);
+  assertEquals(upstreamTool.name, "web_search");
+  assertEquals(upstreamTool.input_schema, {
+    type: "object",
+    properties: {
+      query: {
+        type: "string",
+        description: "Search query",
+      },
+    },
+    required: ["query"],
+  });
+  assertEquals(upstreamBody.tool_choice, {
+    type: "tool",
+    name: "web_search",
+  });
 });
 
 Deno.test("stripReservedKeywords handles all-billing system blocks by removing system entirely", async () => {
@@ -2917,4 +3305,111 @@ Deno.test("/v1/messages routes native web search through translated /chat/comple
     "web_search",
   );
   assertEquals(searchBody?.query, "latest React docs");
+});
+
+Deno.test("/v1/messages rejects embedding-only custom upstream model instead of legacy chat fallback", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_embed",
+    name: "Embedding Only",
+    baseUrl: "https://embed.example.com",
+    bearerToken: "sk-embed",
+    supportedEndpoints: ["/embeddings"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "embed.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({
+        object: "list",
+        data: [{ id: "embed-model" }],
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "embed-model",
+        max_tokens: 100,
+        stream: false,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 400);
+    const body = await response.json();
+    assertStringIncludes(
+      body.error.message,
+      "does not support the /messages endpoint",
+    );
+  });
+});
+
+Deno.test("/v1/messages preserves custom upstream /models HTTP errors", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_custom",
+    name: "Custom Provider",
+    baseUrl: "https://custom.example.com",
+    bearerToken: "sk-custom",
+    supportedEndpoints: ["/chat/completions"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "custom.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({ error: { message: "bad custom key" } }, 401);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "custom-chat-model",
+        max_tokens: 100,
+        stream: false,
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.json(), {
+      error: { message: "bad custom key" },
+    });
+  });
 });

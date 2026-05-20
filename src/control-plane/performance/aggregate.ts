@@ -2,7 +2,6 @@ import {
   type HistogramBucket,
   percentileFromHistogramBuckets,
 } from "../../shared/performance-histogram.ts";
-import { displayModelName } from "../../shared/model-name.ts";
 import type { PerformanceTelemetryRecord } from "../../repo/types.ts";
 
 export type PerformanceBucketGranularity = "hour" | "4h" | "8h" | "day" | "all";
@@ -106,7 +105,6 @@ function displayGroup(
   groupBy: PerformanceGroupBy,
 ): string {
   if (groupBy === "none") return "all";
-  if (groupBy === "model") return displayModelName(record.model);
   return String(record[groupBy]);
 }
 

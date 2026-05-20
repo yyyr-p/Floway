@@ -1,11 +1,11 @@
 import { app } from "./app.ts";
-import { clearModelsCache } from "./data-plane/models/cache.ts";
 import { clearCopilotTokenCache } from "./shared/copilot.ts";
+import { clearModelsCache } from "./data-plane/models/cache.ts";
 import { initEnv } from "./runtime/env.ts";
 import type { SearchConfig } from "./data-plane/tools/web-search/types.ts";
 import { InMemoryRepo } from "./repo/memory.ts";
 import { initRepo } from "./repo/index.ts";
-import type { ApiKey, GitHubAccount } from "./repo/types.ts";
+import type { ApiKey, GitHubAccount, ModelAccounting } from "./repo/types.ts";
 
 interface SetupOptions {
   adminKey?: string;
@@ -152,12 +152,23 @@ export async function flushAsyncWork(): Promise<void> {
 export function copilotModels(
   models: Array<{
     id: string;
+    display_name?: string;
     supported_endpoints?: string[];
     adaptiveThinking?: boolean;
     reasoningEfforts?: string[];
     maxContextWindowTokens?: number;
     maxPromptTokens?: number;
     maxOutputTokens?: number;
+    billing?: {
+      is_premium?: boolean;
+      multiplier?: number;
+      restricted_to?: string[];
+    };
+    policy?: {
+      state?: string;
+      terms?: string;
+    };
+    model_picker_enabled?: boolean;
   }>,
 ) {
   return {
@@ -165,9 +176,17 @@ export function copilotModels(
     data: models.map((model) => ({
       id: model.id,
       name: model.id,
+      ...(model.display_name !== undefined
+        ? { display_name: model.display_name }
+        : {}),
       version: "1",
       object: "model",
       supported_endpoints: model.supported_endpoints ?? [],
+      ...(model.billing ? { billing: model.billing } : {}),
+      ...(model.policy ? { policy: model.policy } : {}),
+      ...(model.model_picker_enabled !== undefined
+        ? { model_picker_enabled: model.model_picker_enabled }
+        : {}),
       capabilities: {
         family: "test",
         type: "chat",
@@ -192,3 +211,63 @@ export function copilotModels(
     })),
   };
 }
+
+import type { Upstream } from "./shared/upstream/types.ts";
+import type {
+  ModelProvider,
+  UpstreamModel,
+} from "./data-plane/providers/types.ts";
+
+// A throwaway upstream stub for unit tests that exercise the low-level upstream
+// adapter cache without depending on a real network target.
+export const stubUpstream = (overrides: Partial<Upstream> = {}): Upstream => ({
+  id: "test-upstream",
+  name: "Test Upstream",
+  kind: "openai",
+  supportedEndpoints: ["/chat/completions", "/responses", "/v1/messages"],
+  enabledFixes: new Set<string>(),
+  fetch: () => Promise.reject(new Error("stubUpstream.fetch was called")),
+  ...overrides,
+});
+
+export const stubUpstreamModel = (
+  overrides: Partial<UpstreamModel> = {},
+): UpstreamModel => ({
+  id: "test-model",
+  name: "test-model",
+  version: "test-model",
+  object: "model",
+  capabilities: {
+    family: "test-model",
+    type: "chat",
+    limits: {},
+    supports: {},
+  },
+  supportedEndpoints: ["chat_completions", "responses", "messages"],
+  ...overrides,
+});
+
+export const testAccounting: ModelAccounting = {
+  model: "test-model",
+  upstream: "test-upstream",
+  modelKey: "test-model-key",
+};
+
+export const stubProvider = (
+  overrides: Partial<ModelProvider> = {},
+): ModelProvider => ({
+  getProvidedModels: () => Promise.resolve([]),
+  callChatCompletions: () =>
+    Promise.reject(new Error("stubProvider.callChatCompletions was called")),
+  callResponses: () =>
+    Promise.reject(new Error("stubProvider.callResponses was called")),
+  callMessages: () =>
+    Promise.reject(new Error("stubProvider.callMessages was called")),
+  callMessagesCountTokens: () =>
+    Promise.reject(
+      new Error("stubProvider.callMessagesCountTokens was called"),
+    ),
+  callEmbeddings: () =>
+    Promise.reject(new Error("stubProvider.callEmbeddings was called")),
+  ...overrides,
+});

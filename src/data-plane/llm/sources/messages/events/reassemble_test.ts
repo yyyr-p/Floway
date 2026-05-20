@@ -4,6 +4,7 @@ import type {
   MessagesSearchResultBlock,
   MessagesSearchResultLocationCitation,
   MessagesServerToolUseBlock,
+  MessagesStreamEventData,
   MessagesTextBlock,
   MessagesTool,
   MessagesToolResultContentBlock,
@@ -12,7 +13,7 @@ import type {
 } from "../../../shared/protocol/messages.ts";
 import { reassembleMessagesEvents } from "./reassemble.ts";
 
-function makeEvents<T = any>(
+function makeEvents<T = MessagesStreamEventData>(
   chunks: Array<{ event?: string; data: unknown }>,
 ): AsyncIterable<T> {
   return (async function* () {

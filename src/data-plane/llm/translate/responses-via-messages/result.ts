@@ -1,5 +1,4 @@
 import type { MessagesResponse } from "../../shared/protocol/messages.ts";
-import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 import type {
   ResponseOutputFunctionCall,
   ResponseOutputItem,
@@ -8,6 +7,7 @@ import type {
   ResponsesResult,
 } from "../../shared/protocol/responses.ts";
 import { unpackReasoningSignature } from "../shared/messages-responses-signature.ts";
+import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 
 const mapMessagesStatusToResponsesStatus = (
   response: MessagesResponse,

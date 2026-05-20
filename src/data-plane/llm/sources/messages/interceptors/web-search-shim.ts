@@ -1058,18 +1058,22 @@ const resolveActiveMessagesWebSearchProvider = async (
 };
 
 /**
- * Anthropic exposes native `web_search_*` server tools, but Copilot's upstream
- * surfaces (whether `/v1/messages`, `/responses`, or `/chat/completions`) do
- * not run those server tools for us. This source-level shim rewrites the
- * native tool definition into an ordinary client `web_search` tool, executes
- * each search the model issues using the gateway's configured provider, and
- * rewrites the response back to the Anthropic native `server_tool_use` /
- * `web_search_tool_result` / `web_search_result_location` shape.
+ * Anthropic exposes native `web_search_*` server tools, but some upstream
+ * surfaces do not run those server tools for us, or operators may choose to
+ * run search through the gateway's configured provider. This provider-owned
+ * source shim rewrites the native tool definition into an ordinary client
+ * `web_search` tool, executes each search the model issues using the gateway's
+ * configured provider, and rewrites the response back to the Anthropic native
+ * `server_tool_use` / `web_search_tool_result` /
+ * `web_search_result_location` shape.
  *
- * Living at the source means every Messages routing path (native messages,
- * via responses, via chat-completions) sees the same gateway-executed search
- * behavior — the translators below this layer only ever see ordinary client
- * tool turns and `search_result` blocks.
+ * Registration is provider-owned: Copilot providers enable this directly,
+ * while custom OpenAI-compatible providers enable it only through the
+ * `messages-web-search-shim` upstream fix flag. Once registered for a provider,
+ * every Messages routing path for that provider (native messages, via
+ * responses, via chat-completions) sees the same gateway-executed search
+ * behavior, and translators below this layer only ever see ordinary client tool
+ * turns and `search_result` blocks.
  */
 export const withMessagesWebSearchShim: SourceInterceptor<
   MessagesSourceContext,

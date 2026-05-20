@@ -511,7 +511,12 @@ export function renderKeysTab() {
                     class="max-w-full text-xs font-mono bg-surface-800 text-gray-300 border border-white/10 rounded-lg px-2 py-1.5 outline-none focus:border-accent-cyan/50 cursor-pointer"
                   >
                     <template x-for="m in claudeModelsBig" :key="m">
-                      <option :value="m" x-text="m"></option>
+                      <option
+                        :value="m"
+                        x-text="m"
+                        :disabled="m === modelPickerSeparator"
+                      >
+                      </option>
                     </template>
                   </select>
                 </div>
@@ -522,7 +527,12 @@ export function renderKeysTab() {
                     class="max-w-full text-xs font-mono bg-surface-800 text-gray-300 border border-white/10 rounded-lg px-2 py-1.5 outline-none focus:border-accent-cyan/50 cursor-pointer"
                   >
                     <template x-for="m in claudeModelsSonnet" :key="m">
-                      <option :value="m" x-text="m"></option>
+                      <option
+                        :value="m"
+                        x-text="m"
+                        :disabled="m === modelPickerSeparator"
+                      >
+                      </option>
                     </template>
                   </select>
                 </div>
@@ -533,7 +543,12 @@ export function renderKeysTab() {
                     class="max-w-full text-xs font-mono bg-surface-800 text-gray-300 border border-white/10 rounded-lg px-2 py-1.5 outline-none focus:border-accent-cyan/50 cursor-pointer"
                   >
                     <template x-for="m in claudeModelsSmall" :key="m">
-                      <option :value="m" x-text="m"></option>
+                      <option
+                        :value="m"
+                        x-text="m"
+                        :disabled="m === modelPickerSeparator"
+                      >
+                      </option>
                     </template>
                   </select>
                 </div>
@@ -559,7 +574,12 @@ export function renderKeysTab() {
                   class="max-w-full text-xs font-mono bg-surface-800 text-gray-300 border border-white/10 rounded-lg px-2 py-1.5 outline-none focus:border-accent-cyan/50 cursor-pointer"
                 >
                   <template x-for="m in codexModels" :key="m">
-                    <option :value="m" x-text="m"></option>
+                    <option
+                      :value="m"
+                      x-text="m"
+                      :disabled="m === modelPickerSeparator"
+                    >
+                    </option>
                   </template>
                 </select>
               </div>
@@ -1151,6 +1171,389 @@ export function renderSettingsTab() {
           </div>
         </template>
 
+        <template x-if="upstreamModal.open">
+          <div
+            class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 animate-in overflow-y-auto"
+          >
+            <div
+              class="flex min-h-full items-start justify-center p-4 sm:items-center"
+            >
+              <div class="glass-card p-6 sm:p-8 max-w-lg w-full glow-cyan my-auto">
+                <h3
+                  class="text-white text-lg font-semibold mb-4"
+                  x-text="upstreamModal.id ? 'Edit Upstream' : 'Add Upstream'"
+                >
+                </h3>
+
+                <div class="space-y-4">
+                  <div>
+                    <label
+                      class="block text-xs font-medium text-gray-500 uppercase tracking-widest mb-2"
+                    >Name</label>
+                    <input
+                      type="text"
+                      class="w-full"
+                      placeholder="e.g. OpenAI Production"
+                      x-model="upstreamModal.name"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="block text-xs font-medium text-gray-500 uppercase tracking-widest mb-2"
+                    >Base URL</label>
+                    <input
+                      type="text"
+                      class="w-full font-mono text-sm"
+                      placeholder="https://api.openai.com"
+                      x-model="upstreamModal.baseUrl"
+                    />
+                    <p class="text-[11px] text-gray-600 mt-1">
+                      Final URL is base + path. Override individual paths below if
+                      your provider mounts the API under a subpath.
+                    </p>
+                  </div>
+                  <div>
+                    <label
+                      class="block text-xs font-medium text-gray-500 uppercase tracking-widest mb-2"
+                    >
+                      <span
+                        x-text="upstreamModal.id ? 'Bearer Token (leave blank to keep)' : 'Bearer Token'"
+                      ></span>
+                    </label>
+                    <input
+                      type="password"
+                      autocomplete="off"
+                      class="w-full font-mono text-sm"
+                      placeholder="sk-..."
+                      x-model="upstreamModal.bearerToken"
+                    />
+                  </div>
+                  <div>
+                    <label
+                      class="block text-xs font-medium text-gray-500 uppercase tracking-widest mb-2"
+                    >Supported Endpoints</label>
+                    <div class="space-y-2">
+                      <template
+                        x-for="ep in ['/chat/completions','/responses','/v1/messages','/embeddings']"
+                        :key="ep"
+                      >
+                        <label
+                          class="flex items-center gap-2 text-sm text-gray-300"
+                        >
+                          <input
+                            type="checkbox"
+                            class="accent-accent-cyan"
+                            :checked="upstreamModal.supportedEndpoints.includes(ep)"
+                            @change="toggleUpstreamEndpoint(ep)"
+                          />
+                          <span class="font-mono" x-text="ep"></span>
+                        </label>
+                      </template>
+                    </div>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      @click="upstreamModal.enabledFixesOpen = !upstreamModal.enabledFixesOpen"
+                      :aria-expanded="upstreamModal.enabledFixesOpen.toString()"
+                      class="flex w-full items-center justify-between text-left text-xs font-medium text-gray-500 uppercase tracking-widest mb-2 hover:text-gray-300 transition-colors"
+                    >
+                      <span>Enabled Fixes</span>
+                      <span
+                        class="flex items-center gap-2 normal-case tracking-normal text-[10px] text-gray-600"
+                      >
+                        <span
+                          x-show="!upstreamModal.enabledFixesOpen && upstreamModal.enabledFixes.length > 0"
+                          x-text="upstreamModal.enabledFixes.length + ' enabled'"
+                        ></span>
+                        <svg
+                          class="h-3 w-3 transition-transform"
+                          :class="upstreamModal.enabledFixesOpen ? 'rotate-180' : ''"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </span>
+                    </button>
+                    <div x-show="upstreamModal.enabledFixesOpen" x-cloak>
+                      <p
+                        x-show="upstreamFixCatalog.length === 0"
+                        class="text-[11px] text-gray-600"
+                      >
+                        No opt-in upstream behavior flags are registered.
+                      </p>
+                      <div
+                        x-show="upstreamFixCatalog.length > 0"
+                        class="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-surface-700/40 p-3 space-y-2"
+                      >
+                        <template
+                          x-for="fix in upstreamFixCatalog"
+                          :key="fix.id"
+                        >
+                          <label
+                            class="flex items-start gap-2 text-sm text-gray-300"
+                          >
+                            <input
+                              type="checkbox"
+                              class="accent-accent-cyan mt-0.5"
+                              :checked="upstreamModal.enabledFixes.includes(fix.id)"
+                              @change="toggleUpstreamFix(fix.id)"
+                            />
+                            <span class="flex-1">
+                              <span
+                                class="font-mono text-xs text-white"
+                                x-text="fix.label || fix.id"
+                              ></span>
+                              <span
+                                x-show="fix.description"
+                                class="block text-[11px] text-gray-500 mt-0.5"
+                                x-text="fix.description"
+                              ></span>
+                            </span>
+                          </label>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                  <div>
+                    <button
+                      type="button"
+                      @click="upstreamModal.pathOverridesOpen = !upstreamModal.pathOverridesOpen"
+                      :aria-expanded="upstreamModal.pathOverridesOpen.toString()"
+                      class="flex w-full items-center justify-between text-left text-xs font-medium text-gray-500 uppercase tracking-widest mb-2 hover:text-gray-300 transition-colors"
+                    >
+                      <span>Path Overrides</span>
+                      <span
+                        class="flex items-center gap-2 normal-case tracking-normal text-[10px] text-gray-600"
+                      >
+                        <span
+                          x-show="!upstreamModal.pathOverridesOpen && upstreamModalOverrideCount() > 0"
+                          x-text="upstreamModalOverrideCount() + ' set'"
+                        ></span>
+                        <svg
+                          class="h-3 w-3 transition-transform"
+                          :class="upstreamModal.pathOverridesOpen ? 'rotate-180' : ''"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          stroke-width="2"
+                        >
+                          <polyline points="6 9 12 15 18 9" />
+                        </svg>
+                      </span>
+                    </button>
+                    <div x-show="upstreamModal.pathOverridesOpen" x-cloak>
+                      <p class="text-[11px] text-gray-600 mb-2">
+                        Leave blank to use the OpenAI default
+                        <code class="font-mono">/v1/&lt;endpoint&gt;</code>.
+                        <code class="font-mono">/v1/messages/count_tokens</code>
+                        follows the messages path automatically.
+                      </p>
+                      <div class="space-y-2">
+                        <template
+                          x-for="key in ['chat_completions','responses','messages','embeddings','models']"
+                          :key="key"
+                        >
+                          <div class="flex items-center gap-2">
+                            <span
+                              class="font-mono text-xs text-gray-500 w-32 shrink-0"
+                              x-text="key"
+                            ></span>
+                            <input
+                              type="text"
+                              class="flex-1 font-mono text-xs"
+                              :placeholder="'/v1/' + key.replace('_', '/')"
+                              x-model="upstreamModal.pathOverrides[key]"
+                            />
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between gap-3 flex-wrap">
+                    <label class="flex items-center gap-2 text-sm text-gray-300">
+                      <input
+                        type="checkbox"
+                        class="accent-accent-cyan"
+                        x-model="upstreamModal.enabled"
+                      />
+                      Enabled
+                    </label>
+                    <label class="flex items-center gap-2 text-sm text-gray-300">
+                      Order
+                      <input
+                        type="number"
+                        class="w-20"
+                        x-model.number="upstreamModal.sortOrder"
+                      />
+                    </label>
+                  </div>
+                  <template x-if="upstreamModal.error">
+                    <p
+                      class="text-sm text-red-300"
+                      x-text="upstreamModal.error"
+                    >
+                    </p>
+                  </template>
+                </div>
+
+                <div class="flex flex-col sm:flex-row gap-2 mt-6">
+                  <button
+                    @click="saveUpstream()"
+                    class="btn-primary flex-1"
+                    :disabled="upstreamModal.saving"
+                  >
+                    <span x-show="!upstreamModal.saving">Save</span>
+                    <span
+                      x-show="upstreamModal.saving"
+                      class="flex items-center justify-center gap-2"
+                    >
+                      ${spinner("h-4 w-4")} Saving…
+                    </span>
+                  </button>
+                  <button @click="closeUpstreamModal()" class="btn-ghost">
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <div class="glass-card p-5 sm:p-6 mb-5 animate-in delay-3">
+          <div
+            class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between mb-4"
+          >
+            <div class="min-w-0">
+              <h3 class="text-white font-semibold mb-1">Custom Upstreams</h3>
+              <p class="text-sm text-gray-400">
+                Route requests to OpenAI-compatible APIs alongside (or instead of)
+                GitHub Copilot.
+              </p>
+            </div>
+            <button
+              @click="openUpstreamModal()"
+              class="btn-ghost text-xs self-start sm:self-auto"
+            >
+              + Add Upstream
+            </button>
+          </div>
+
+          <template x-if="!upstreamsLoaded">
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div class="h-12 bg-surface-600 rounded animate-pulse"></div>
+              <div class="h-12 bg-surface-600 rounded animate-pulse"></div>
+            </div>
+          </template>
+
+          <template x-if="upstreamsLoaded && upstreams.length === 0">
+            <p class="text-sm text-gray-500">
+              No custom upstreams configured. Requests fall back to GitHub Copilot.
+            </p>
+          </template>
+
+          <template x-if="upstreamsLoaded && upstreams.length > 0">
+            <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <template x-for="up in upstreams" :key="up.id">
+                <div
+                  class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-lg border border-white/5 bg-surface-800 p-3"
+                >
+                  <div class="min-w-0 flex-1">
+                    <div class="flex items-center gap-2 mb-1 flex-wrap">
+                      <span
+                        class="w-2 h-2 rounded-full shrink-0"
+                        :class="up.enabled ? 'bg-accent-emerald' : 'bg-gray-600'"
+                      ></span>
+                      <p
+                        class="text-sm font-medium text-white truncate"
+                        x-text="up.name"
+                      >
+                      </p>
+                      <span
+                        class="text-[10px] text-gray-500 font-mono"
+                        x-text="'sort: ' + up.sort_order"
+                      ></span>
+                      <span
+                        x-show="up.enabled_fixes && up.enabled_fixes.length > 0"
+                        class="text-[10px] uppercase tracking-widest text-accent-amber font-mono"
+                        x-text="up.enabled_fixes.length + ' fix' + (up.enabled_fixes.length === 1 ? '' : 'es')"
+                      ></span>
+                    </div>
+                    <p
+                      class="text-xs text-gray-500 font-mono truncate"
+                      x-text="up.base_url"
+                    >
+                    </p>
+                    <p class="text-[11px] text-gray-600 mt-1">
+                      <span x-text="up.supported_endpoints.join(', ')"></span>
+                    </p>
+                  </div>
+                  <div class="flex shrink-0 items-center gap-2">
+                    <button
+                      @click="testUpstream(up.id)"
+                      class="btn-ghost text-xs"
+                      :disabled="upstreamTestingId === up.id"
+                    >
+                      <span x-show="upstreamTestingId !== up.id">Test</span>
+                      <span
+                        x-show="upstreamTestingId === up.id"
+                        class="flex items-center gap-1"
+                      >
+                        ${spinner("h-3 w-3")} Testing
+                      </span>
+                    </button>
+                    <button
+                      @click="openUpstreamModal(up)"
+                      class="btn-ghost text-xs"
+                    >
+                      Edit
+                    </button>
+                    <button
+                      @click="deleteUpstream(up.id, up.name)"
+                      class="inline-flex min-h-9 min-w-9 items-center justify-center rounded-md text-gray-600 hover:text-accent-rose hover:bg-white/[0.04] transition-colors p-1"
+                      aria-label="Delete upstream"
+                      title="Delete"
+                    >
+                      <svg
+                        class="w-3.5 h-3.5"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <line x1="18" y1="6" x2="6" y2="18" />
+                        <line x1="6" y1="6" x2="18" y2="18" />
+                      </svg>
+                    </button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+
+          <template x-if="upstreamTestResult">
+            <div
+              class="rounded-lg border p-3 mt-3"
+              :class="upstreamTestResult.ok ? 'border-accent-emerald/20 bg-accent-emerald/5' : 'border-red-500/20 bg-red-500/5'"
+            >
+              <p
+                class="text-xs font-medium mb-1"
+                :class="upstreamTestResult.ok ? 'text-accent-emerald' : 'text-red-300'"
+                x-text="upstreamTestResult.ok ? ('OK · ' + upstreamTestResult.model_count + ' models') : ('Error · status ' + (upstreamTestResult.status ?? 'n/a'))"
+              >
+              </p>
+              <p
+                class="text-[11px] text-gray-400 break-all"
+                x-text="upstreamTestResult.ok ? upstreamTestResult.models.slice(0, 8).join(', ') + (upstreamTestResult.models.length > 8 ? '…' : '') : (upstreamTestResult.body ?? upstreamTestResult.error ?? '')"
+              >
+              </p>
+            </div>
+          </template>
+        </div>
+
         <div class="grid grid-cols-1 gap-5 lg:grid-cols-2">
           <div class="flex flex-col gap-5">
             <div class="glass-card p-5 sm:p-6 animate-in">
@@ -1206,7 +1609,9 @@ export function renderSettingsTab() {
                             class="w-9 h-9 shrink-0 rounded-lg ring-1 ring-white/5"
                           />
                           <div class="min-w-0 flex-1">
-                            <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <div
+                              class="flex flex-wrap items-center gap-x-2 gap-y-1"
+                            >
                               <p
                                 class="min-w-0 truncate text-sm text-white font-medium"
                                 x-text="acct.name || acct.login"
@@ -1218,61 +1623,6 @@ export function renderSettingsTab() {
                               x-text="'@' + acct.login"
                             >
                             </p>
-                            <div class="mt-2" x-show="hasUnavailableModels(acct)">
-                              <button
-                                type="button"
-                                @click.stop="toggleUnavailableDetails(acct)"
-                                :aria-expanded="unavailablePanelOpen(acct).toString()"
-                                class="inline-flex min-h-7 items-center gap-1.5 rounded-md bg-accent-amber/10 px-2 text-[10px] font-medium uppercase tracking-widest text-accent-amber ring-1 ring-accent-amber/20 transition-colors hover:bg-accent-amber/15"
-                              >
-                                <span
-                                  class="h-1.5 w-1.5 rounded-full bg-accent-amber status-pulse"
-                                ></span>
-                                <span x-text="unavailableBadgeText(acct)"></span>
-                                <svg
-                                  x-show="hasUnavailableModels(acct)"
-                                  class="h-3 w-3 transition-transform"
-                                  :class="unavailablePanelOpen(acct) ? 'rotate-180' : ''"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2"
-                                >
-                                  <polyline points="6 9 12 15 18 9" />
-                                </svg>
-                              </button>
-                            </div>
-                            <div
-                              x-show="unavailablePanelOpen(acct)"
-                              @click.stop
-                              class="mt-2 space-y-1.5 rounded-lg border border-accent-amber/10 bg-black/15 p-2"
-                            >
-                              <template
-                                x-for="status in unavailableModels(acct)"
-                                :key="status.model + ':' + status.status"
-                              >
-                                <div
-                                  class="flex flex-col gap-1 rounded-md bg-white/[0.03] px-2 py-1.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
-                                >
-                                  <div class="min-w-0">
-                                    <p
-                                      class="break-all font-mono text-[11px] text-white"
-                                      x-text="status.model"
-                                    >
-                                    </p>
-                                    <p
-                                      class="mt-0.5 text-[10px] text-gray-500"
-                                      x-text="'HTTP ' + status.status"
-                                    >
-                                    </p>
-                                  </div>
-                                  <span
-                                    class="w-fit shrink-0 font-mono text-[10px] text-accent-amber"
-                                    x-text="cooldownRecoveryText(status)"
-                                  ></span>
-                                </div>
-                              </template>
-                            </div>
                           </div>
                         </div>
                         <div
@@ -1341,7 +1691,9 @@ export function renderSettingsTab() {
                   class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
                 >
                   <div class="min-w-0">
-                    <h3 class="flex min-w-0 max-w-full items-baseline font-semibold">
+                    <h3
+                      class="flex min-w-0 max-w-full items-baseline font-semibold"
+                    >
                       <span class="shrink-0 text-white">Copilot Quota</span>
                       <span
                         class="ml-1 min-w-0 truncate text-gray-500"
@@ -1385,32 +1737,45 @@ export function renderSettingsTab() {
                       </div>
                     </div>
                     <div class="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <div class="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-                        <p class="text-[11px] uppercase tracking-widest text-gray-500">
+                      <div
+                        class="rounded-lg border border-white/5 bg-white/[0.03] p-3"
+                      >
+                        <p
+                          class="text-[11px] uppercase tracking-widest text-gray-500"
+                        >
                           Premium Remaining
                         </p>
                         <p
                           class="mt-1 font-mono text-sm font-semibold text-white"
                           x-text="usageData.quota_snapshots.premium_interactions.remaining"
-                        ></p>
+                        >
+                        </p>
                       </div>
-                      <div class="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-                        <p class="text-[11px] uppercase tracking-widest text-gray-500">
+                      <div
+                        class="rounded-lg border border-white/5 bg-white/[0.03] p-3"
+                      >
+                        <p
+                          class="text-[11px] uppercase tracking-widest text-gray-500"
+                        >
                           Chat
                         </p>
                         <p class="mt-1 font-mono text-sm font-semibold text-white">
                           <span
-                            x-text="usageData.quota_snapshots.chat.unlimited ? '\u221e unlimited' : usageData.quota_snapshots.chat.remaining"
+                            x-text="usageData.quota_snapshots.chat.unlimited ? '\\u221e unlimited' : usageData.quota_snapshots.chat.remaining"
                           ></span>
                         </p>
                       </div>
-                      <div class="rounded-lg border border-white/5 bg-white/[0.03] p-3">
-                        <p class="text-[11px] uppercase tracking-widest text-gray-500">
+                      <div
+                        class="rounded-lg border border-white/5 bg-white/[0.03] p-3"
+                      >
+                        <p
+                          class="text-[11px] uppercase tracking-widest text-gray-500"
+                        >
                           Completions
                         </p>
                         <p class="mt-1 font-mono text-sm font-semibold text-white">
                           <span
-                            x-text="usageData.quota_snapshots.completions.unlimited ? '\u221e unlimited' : usageData.quota_snapshots.completions.remaining"
+                            x-text="usageData.quota_snapshots.completions.unlimited ? '\\u221e unlimited' : usageData.quota_snapshots.completions.remaining"
                           ></span>
                         </p>
                       </div>
@@ -1421,9 +1786,12 @@ export function renderSettingsTab() {
                   <div class="mt-3 space-y-2">
                     <div class="h-2 bg-surface-600 rounded animate-pulse"></div>
                     <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                      <div class="h-16 bg-surface-600 rounded-lg animate-pulse"></div>
-                      <div class="h-16 bg-surface-600 rounded-lg animate-pulse"></div>
-                      <div class="h-16 bg-surface-600 rounded-lg animate-pulse"></div>
+                      <div class="h-16 bg-surface-600 rounded-lg animate-pulse">
+                      </div>
+                      <div class="h-16 bg-surface-600 rounded-lg animate-pulse">
+                      </div>
+                      <div class="h-16 bg-surface-600 rounded-lg animate-pulse">
+                      </div>
                     </div>
                   </div>
                 </template>
@@ -1437,7 +1805,8 @@ export function renderSettingsTab() {
               <div class="mb-4">
                 <h3 class="text-white font-semibold mb-1">Web Search</h3>
                 <p class="text-sm text-gray-400">
-                  Configure the search provider used by Anthropic Messages web search.
+                  Configure the search provider used by Anthropic Messages web
+                  search.
                 </p>
               </div>
 
@@ -1453,7 +1822,8 @@ export function renderSettingsTab() {
                     <div class="h-20 rounded-xl bg-surface-600 animate-pulse"></div>
                   </div>
                   <div class="space-y-2">
-                    <div class="h-4 w-32 bg-surface-600 rounded animate-pulse"></div>
+                    <div class="h-4 w-32 bg-surface-600 rounded animate-pulse">
+                    </div>
                     <div class="h-11 bg-surface-600 rounded-lg animate-pulse"></div>
                   </div>
                 </div>
@@ -1560,7 +1930,10 @@ export function renderSettingsTab() {
                       :disabled="!searchConfigLoaded || searchConfigSaving"
                     >
                       <span x-show="!searchConfigSaving">Save Search Config</span>
-                      <span x-show="searchConfigSaving" class="flex items-center gap-2">
+                      <span
+                        x-show="searchConfigSaving"
+                        class="flex items-center gap-2"
+                      >
                         ${spinner("h-4 w-4")} Saving...
                       </span>
                     </button>
@@ -1588,7 +1961,9 @@ export function renderSettingsTab() {
                   </div>
 
                   <template x-if="searchConfigTestResult">
-                    <div class="bg-surface-900 rounded-xl border border-white/5 p-4">
+                    <div
+                      class="bg-surface-900 rounded-xl border border-white/5 p-4"
+                    >
                       <div
                         class="flex flex-col gap-3 mb-4 sm:flex-row sm:items-center sm:justify-between"
                       >
@@ -1620,7 +1995,9 @@ export function renderSettingsTab() {
                             <div
                               class="rounded-lg border border-white/5 bg-surface-800 p-3"
                             >
-                              <div class="flex items-start justify-between gap-3 mb-1">
+                              <div
+                                class="flex items-start justify-between gap-3 mb-1"
+                              >
                                 <div>
                                   <a
                                     :href="result.url"
@@ -1682,26 +2059,22 @@ export function renderSettingsTab() {
                   "/v1/messages",
                   "Anthropic Messages",
                   "https://docs.anthropic.com/en/api/messages",
-                )}
-                ${endpointRow(
+                )} ${endpointRow(
                   "POST",
                   "/v1/messages/count_tokens",
                   "Anthropic Count Tokens",
                   "https://docs.anthropic.com/en/api/messages-count-tokens",
-                )}
-                ${endpointRow(
+                )} ${endpointRow(
                   "POST",
                   "/v1/responses",
                   "OpenAI Responses",
                   "https://platform.openai.com/docs/api-reference/responses/create",
-                )}
-                ${endpointRow(
+                )} ${endpointRow(
                   "POST",
                   "/v1/chat/completions",
                   "OpenAI Chat Completions",
                   "https://platform.openai.com/docs/api-reference/chat/create",
-                )}
-                ${endpointRow(
+                )} ${endpointRow(
                   "POST",
                   "/v1/embeddings",
                   "OpenAI Embeddings",
@@ -1719,7 +2092,8 @@ export function renderSettingsTab() {
             <div class="glass-card p-5 sm:p-6 animate-in delay-2">
               <h3 class="text-white font-semibold mb-1">Export Data</h3>
               <p class="text-sm text-gray-400 mb-4">
-                Download all API keys, GitHub accounts, and usage data as a JSON file.
+                Download all API keys, GitHub accounts, and usage data as a JSON
+                file.
               </p>
               <label
                 class="mb-4 flex items-start gap-3 rounded-md border border-white/5 bg-surface-800/50 p-3"
@@ -1812,7 +2186,10 @@ export function renderSettingsTab() {
                         />
                         <polyline points="14 2 14 8 20 8" />
                       </svg>
-                      <p class="text-sm text-white break-all" x-text="importFile.name">
+                      <p
+                        class="text-sm text-white break-all"
+                        x-text="importFile.name"
+                      >
                       </p>
                       <p
                         class="text-xs text-gray-500 mt-1"
@@ -1909,8 +2286,8 @@ export function renderSettingsTab() {
                       class="bg-red-500/10 border border-red-500/20 rounded-lg p-3 mb-4"
                     >
                       <p class="text-sm text-red-400">
-                        This will permanently delete all existing data before importing.
-                        This cannot be undone.
+                        This will permanently delete all existing data before
+                        importing. This cannot be undone.
                       </p>
                     </div>
                   </template>

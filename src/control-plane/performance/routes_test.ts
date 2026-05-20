@@ -8,6 +8,7 @@ Deno.test("/api/performance returns backend-aggregated base-model percentiles", 
     hour: "2026-04-30T10",
     metricScope: "request_total" as const,
     keyId: apiKey.id,
+    upstream: "copilot:1",
     sourceApi: "messages" as const,
     targetApi: "responses" as const,
     stream: true,
@@ -17,14 +18,16 @@ Deno.test("/api/performance returns backend-aggregated base-model percentiles", 
   for (let i = 0; i < 90; i++) {
     await repo.performance.recordLatency({
       ...sample,
-      model: "claude-opus-4.7",
+      model: "claude-opus-4-7",
+      modelKey: "claude-opus-4.7",
       durationMs: 100,
     });
   }
   for (let i = 0; i < 10; i++) {
     await repo.performance.recordLatency({
       ...sample,
-      model: "claude-opus-4.7-xhigh",
+      model: "claude-opus-4-7",
+      modelKey: "claude-opus-4.7-xhigh",
       durationMs: 300,
     });
   }
@@ -57,6 +60,8 @@ Deno.test("/api/performance can include key metadata", async () => {
     metricScope: "request_total",
     keyId: apiKey.id,
     model: "gpt-5",
+    upstream: null,
+    modelKey: "gpt-5",
     sourceApi: "responses",
     targetApi: "responses",
     stream: false,
@@ -91,7 +96,9 @@ Deno.test("/api/performance/overview returns dashboard aggregates from one repo 
     hour: "2026-04-30T10",
     metricScope: "request_total",
     keyId: apiKey.id,
-    model: "claude-sonnet-4.5-xhigh",
+    model: "claude-sonnet-4-5",
+    upstream: "copilot:1",
+    modelKey: "claude-sonnet-4.5-xhigh",
     sourceApi: "messages",
     targetApi: "responses",
     stream: true,

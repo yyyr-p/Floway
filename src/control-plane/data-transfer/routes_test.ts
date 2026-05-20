@@ -56,7 +56,9 @@ const ACCOUNT_Y: GitHubAccount = {
 
 const USAGE_1: UsageRecord = {
   keyId: "key-aaa",
-  model: "claude-opus-4.6",
+  model: "claude-opus-4-6",
+  upstream: "copilot:100",
+  modelKey: "claude-opus-4.6",
   hour: "2026-01-01T10",
   requests: 5,
   inputTokens: 1000,
@@ -68,6 +70,8 @@ const USAGE_1: UsageRecord = {
 const USAGE_2: UsageRecord = {
   keyId: "key-bbb",
   model: "gpt-5.4",
+  upstream: "openai:custom",
+  modelKey: "gpt-5.4",
   hour: "2026-01-01T11",
   requests: 3,
   inputTokens: 2000,
@@ -94,7 +98,9 @@ const PERFORMANCE_1: PerformanceTelemetryRecord = {
   hour: "2026-01-01T10",
   metricScope: "request_total",
   keyId: "key-aaa",
-  model: "claude-opus-4.7-xhigh",
+  model: "claude-opus-4-7",
+  upstream: "copilot:100",
+  modelKey: "claude-opus-4.7-xhigh",
   sourceApi: "messages",
   targetApi: "responses",
   stream: true,
@@ -110,6 +116,8 @@ const PERFORMANCE_2: PerformanceTelemetryRecord = {
   metricScope: "upstream_success",
   keyId: "key-bbb",
   model: "gpt-5.3-codex",
+  upstream: "openai:custom",
+  modelKey: "gpt-5.3-codex",
   sourceApi: "responses",
   targetApi: "chat-completions",
   stream: false,
@@ -124,7 +132,9 @@ const PERFORMANCE_GEMINI: PerformanceTelemetryRecord = {
   hour: "2026-01-01T12",
   metricScope: "request_total",
   keyId: "key-aaa",
-  model: "claude-sonnet-4.5",
+  model: "claude-sonnet-4-5",
+  upstream: "copilot:100",
+  modelKey: "claude-sonnet-4.5",
   sourceApi: "gemini",
   targetApi: "messages",
   stream: true,
@@ -338,6 +348,7 @@ Deno.test("round-trip — replace import then export yields equivalent data", as
     githubAccounts: 2,
     usage: 2,
     searchUsage: 2,
+    upstreamConfigs: 0,
     performance: 2,
   });
 
@@ -800,6 +811,7 @@ Deno.test("import — handles missing optional arrays gracefully", async () => {
     githubAccounts: 0,
     usage: 0,
     searchUsage: 0,
+    upstreamConfigs: 0,
     performance: 0,
   });
 });

@@ -133,30 +133,73 @@ const assertSourceKeepAlive = async <TEvent>(
   }
 };
 
+const testAccounting = {
+  model: "test-model",
+  upstream: "test-upstream",
+  modelKey: "test-model-key",
+};
+
+const recordUsage = () => Promise.resolve();
+const recordRequestPerformance = () => {};
+const requestStartedAt = performance.now();
+
 Deno.test("Messages streaming keepalive uses Anthropic ping events", async () => {
   await assertSourceKeepAlive<MessagesStreamEventData>(
-    (c, events) => respondMessages(c, eventResult(events), true),
+    (c, events) =>
+      respondMessages(
+        c,
+        eventResult(events, testAccounting),
+        true,
+        recordUsage,
+        recordRequestPerformance,
+        requestStartedAt,
+      ),
     'event: ping\ndata: {"type":"ping"}\n\n',
   );
 });
 
 Deno.test("Responses streaming keepalive uses SSE comments", async () => {
   await assertSourceKeepAlive<SourceResponseStreamEvent>(
-    (c, events) => respondResponses(c, eventResult(events), true),
+    (c, events) =>
+      respondResponses(
+        c,
+        eventResult(events, testAccounting),
+        true,
+        recordUsage,
+        recordRequestPerformance,
+        requestStartedAt,
+      ),
     ": keepalive\n\n",
   );
 });
 
 Deno.test("Chat Completions streaming keepalive uses SSE comments", async () => {
   await assertSourceKeepAlive<ChatCompletionChunk>(
-    (c, events) => respondChatCompletions(c, eventResult(events), true, true),
+    (c, events) =>
+      respondChatCompletions(
+        c,
+        eventResult(events, testAccounting),
+        true,
+        true,
+        recordUsage,
+        recordRequestPerformance,
+        requestStartedAt,
+      ),
     ": keepalive\n\n",
   );
 });
 
 Deno.test("Gemini streaming keepalive uses SSE comments", async () => {
   await assertSourceKeepAlive<GeminiStreamEvent>(
-    (c, events) => respondGemini(c, eventResult(events), true),
+    (c, events) =>
+      respondGemini(
+        c,
+        eventResult(events, testAccounting),
+        true,
+        recordUsage,
+        recordRequestPerformance,
+        requestStartedAt,
+      ),
     ": keepalive\n\n",
   );
 });

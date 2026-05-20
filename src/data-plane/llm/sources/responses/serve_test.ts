@@ -5,6 +5,8 @@ import {
   assertStringIncludes,
 } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
+import { clearCopilotTokenCache } from "../../../../shared/copilot.ts";
+import { clearModelsCache } from "../../../models/cache.ts";
 import {
   copilotModels,
   jsonResponse,
@@ -1292,4 +1294,53 @@ Deno.test("/v1/responses prefers messages over chat completions when both transl
   );
   assertEquals(upstreamBody!.max_tokens, 8192);
   assertEquals(upstreamBody!.stream, true);
+});
+
+Deno.test("/v1/responses preserves custom upstream /models HTTP errors", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_custom",
+    name: "Custom Provider",
+    baseUrl: "https://custom.example.com",
+    bearerToken: "sk-custom",
+    supportedEndpoints: ["/responses"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "custom.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({ error: { message: "bad custom key" } }, 401);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/responses", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "custom-responses-model",
+        input: [{ type: "message", role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.json(), {
+      error: { message: "bad custom key" },
+    });
+  });
 });

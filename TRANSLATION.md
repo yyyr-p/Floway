@@ -10,10 +10,11 @@ client-facing data-plane APIs:
   `POST /v1beta/models/{model}:streamGenerateContent`,
   `POST /v1beta/models/{model}:countTokens`, and `GET /v1beta/models`
 
-Route planning uses model capability data from `supported_endpoints`. Request
-translation is direct and pairwise; there is no canonical internal request IR.
-Target-specific Copilot quirks live at target interceptors rather than inside
-pairwise translators.
+Route planning uses provider-owned model capability data from
+`supported_endpoints`. Request translation is direct and pairwise; there is no
+canonical internal request IR. Provider-specific quirks live in provider-owned
+model projection or target interceptor collections rather than inside pairwise
+translators.
 
 ## Routing
 
@@ -31,24 +32,25 @@ pairwise translators.
 
 `/v1/chat/completions` selects:
 
-1. translated `/v1/messages`
-2. native `/chat/completions`
+1. native `/chat/completions`
+2. translated `/v1/messages`
 3. translated `/responses`
 
-If Chat planning cannot derive capabilities, it keeps the legacy heuristic:
-Claude-prefixed models use the Messages target; other models use the Chat
-Completions target.
+If no provider binding exposes a capability-backed Chat plan, the gateway
+returns a source-shaped unsupported-model error. It does not invent legacy
+model-name routing outside provider capability metadata. Copilot Claude models
+still route through Messages because the Copilot provider does not expose Chat
+support for them.
 
 `/v1beta/models/{model}:generateContent` and
 `/v1beta/models/{model}:streamGenerateContent` select:
 
-1. translated `/v1/messages`
-2. translated `/chat/completions`
+1. translated `/chat/completions`
+2. translated `/v1/messages`
 3. translated `/responses`
 
-If Gemini planning cannot derive capabilities, it uses the same legacy fallback
-shape as Chat Completions: Claude-prefixed models use the Messages target; other
-models use the Chat Completions target.
+If no provider binding exposes a capability-backed Gemini generation plan, the
+gateway returns a Gemini-shaped unsupported-model error.
 
 ## Boundary Rules
 
@@ -71,12 +73,20 @@ models use the Chat Completions target.
 Messages source boundary:
 
 - strips reserved `x-anthropic-billing-header` prompt attribution
-- strips unsupported `cache_control.scope`
+- rejects body-level `anthropic_beta` and `betas`; Anthropic beta flags are
+  accepted only from the `anthropic-beta` HTTP header and passed to Messages
+  providers as a separate parameter
 - rewrites native Anthropic `web_search_*` server tools into a gateway-executed
   client-tool shim before planning/emission, decodes shim-owned replay history
   back into upstream `search_result` blocks, and rewrites shim-owned search
   results/citations back to native Messages shape
 - rewrites upstream context-window errors into the compact Messages error shape
+
+Copilot Messages target boundary:
+
+- strips unsupported `cache_control.scope` before calling Copilot native
+  Messages. Custom Messages providers receive the caller's `cache_control`
+  object unchanged.
 
 Responses source boundary:
 
@@ -99,13 +109,16 @@ Gemini source boundary:
 - shapes errors as Google RPC Status payloads while preserving internal debug
   fields for gateway failures
 
-Native Messages target:
+Copilot Messages target boundary:
 
 - promotes upstream `thinking.display` during active thinking to avoid Copilot
   Messages idle gaps, then preserves downstream omitted-thinking semantics
 - whitelists supported `anthropic-beta` values
 - auto-adds `interleaved-thinking-2025-05-14` when budget thinking requires it
 - strips unsupported per-tool `eager_input_streaming`
+
+Native Messages target:
+
 - strips stray `[DONE]` sentinels from Anthropic-shaped streams
 
 Native Responses target:
@@ -148,9 +161,10 @@ Request mapping shared by the Gemini source translation pairs:
   Messages `signature` or `redacted_thinking`, Responses `encrypted_content`,
   and Chat `reasoning_opaque`.
 - `thinkingBudget` and `thinkingLevel` map to the target's closest reasoning or
-  thinking controls. Budget `0` disables thinking when the target has an
-  explicit disabled state; positive budgets choose low/medium/high effort where
-  the target only supports effort levels.
+  thinking controls. Budget `0` disables thinking via Messages
+  `thinking.disabled`, Responses `reasoning.effort: "none"`, or Chat
+  `reasoning_effort: "none"`; positive budgets choose low/medium/high effort
+  where the target only supports effort levels.
 - `maxOutputTokens`, `temperature`, `topP`, `topK`, `stopSequences`,
   `presencePenalty`, `frequencyPenalty`, `seed`, `responseMimeType`, and
   `responseSchema` are passed through when the selected target has a natural
@@ -178,8 +192,8 @@ Response mapping shared by the Gemini source translation pairs:
 
 Gemini models and token counting:
 
-- `GET /v1beta/models` and `GET /v1beta/models/{model}` translate the Copilot
-  model list to Gemini model objects with `generateContent`,
+- `GET /v1beta/models` and `GET /v1beta/models/{model}` translate the merged
+  provider model list to Gemini model objects with `generateContent`,
   `streamGenerateContent`, and `countTokens` generation methods.
 - `POST /v1beta/models/{model}:countTokens` translates the Gemini request shape
   through the Messages count-tokens path.
@@ -244,8 +258,8 @@ Known losses:
 - `stop_sequences`, `top_k`, and Messages `service_tier` have no Responses
   request counterpart and are omitted.
 - unpacked Anthropic signatures have no Responses item id slot, so the gateway
-  synthesizes `rs_*` ids for them. If such a payload was originally signed by
-  Copilot against a different Responses item id, upstream verification may still
+  synthesizes `rs_*` ids for them. If such a payload was originally bound by an
+  upstream to a different Responses item id, upstream verification may still
   fail; packed gateway-issued payloads avoid that loss.
 - Anthropic `thinking: { type: "enabled" }` without explicit effort has no
   Responses request-side equivalent and is not emulated.
@@ -313,6 +327,9 @@ Request mapping:
   `reasoning_opaque`.
 - `max_tokens`, `stop_sequences` -> `stop`, `stream`, `temperature`, and `top_p`
   pass through when present.
+- `output_config.effort` maps directly to `reasoning_effort`; disabled thinking
+  maps to `reasoning_effort: "none"`; enabled thinking without explicit effort
+  is omitted.
 - streaming translated requests force upstream `stream_options.include_usage` so
   gateway accounting can see usage.
 - Messages tools become OpenAI function tools; explicit `strict` is preserved

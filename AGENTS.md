@@ -13,9 +13,10 @@
 
 ## Project
 
-`copilot-gateway` is a Cloudflare Workers GitHub Copilot API proxy. It exposes
-Anthropic Messages, OpenAI Responses, OpenAI Chat Completions, Embeddings, and
-Google Gemini-compatible APIs on top of Copilot upstream APIs.
+`copilot-gateway` is a Cloudflare Workers API proxy. It exposes Anthropic
+Messages, OpenAI Responses, OpenAI Chat Completions, Embeddings, and Google
+Gemini-compatible APIs over GitHub Copilot accounts and optional custom
+OpenAI-compatible upstreams.
 
 Stack: Hono + Web APIs, repository-backed persistence (D1 on Cloudflare Workers,
 Deno KV on Deno runtime, in-memory for tests), TypeScript, and `deno test`.
@@ -26,14 +27,56 @@ Deno KV on Deno runtime, in-memory for tests), TypeScript, and `deno test`.
 - `src/app.ts`: Hono app wiring, middleware, and plane mounting.
 - `src/control-plane/`: dashboard, auth, admin APIs, import/export, usage and
   performance views.
-- `src/data-plane/`: client-facing compatibility APIs and Copilot protocol
-  translation.
+- `src/data-plane/`: client-facing compatibility APIs, model/provider routing,
+  protocol translation, embeddings, and data-plane tools.
+- `src/data-plane/providers/`: provider interface, provider registry, model
+  merge, and concrete provider implementations.
 - `src/repo/`: persistence interfaces and implementations.
 - `src/runtime/`: runtime integration helpers.
 - `src/shared/`: project-wide helpers that are not owned by one plane.
+- `src/shared/upstream/`: low-level HTTP adapters. These know how to call an
+  upstream, but they do not own LLM planning or provider selection.
 
 Keep behavior in the subtree that owns the boundary where it is true. Avoid flat
 shared utility modules unless the rule is genuinely cross-boundary.
+
+## Providers
+
+The data plane treats every Copilot account and every custom upstream config as
+a `ModelProvider`. The LLM pipeline must not branch on provider kind. Provider
+methods receive the exact `UpstreamModel` object previously returned by that
+provider.
+
+Provider API shape:
+
+```text
+getProvidedModels() -> UpstreamModel[]
+callChatCompletions(upstreamModel, bodyWithoutModel, signal?)
+callResponses(upstreamModel, bodyWithoutModel, signal?)
+callMessages(upstreamModel, bodyWithoutModel, signal?, anthropicBeta?)
+callMessagesCountTokens(upstreamModel, bodyWithoutModel, signal?, anthropicBeta?)
+callEmbeddings(upstreamModel, bodyWithoutModel, signal?)
+```
+
+`UpstreamModel.supportedEndpoints` is the source of truth for routing. The
+global `Model` returned by the registry merges public model metadata and keeps a
+list of provider bindings. Request execution tries provider bindings in order
+only until the first binding that can serve the requested source shape; that
+provider's result is final for the request.
+
+Copilot-specific behavior belongs in `src/data-plane/providers/copilot/` or in
+Copilot interceptor collections under target interceptor directories. This
+includes Copilot raw model variant selection, Claude public-name normalization,
+Copilot request-alias resolution, Copilot endpoint projection, `anthropic-beta`
+filtering, and Copilot upstream request fixes. Custom OpenAI-compatible provider
+behavior belongs in `src/data-plane/providers/openai/`.
+
+Messages web-search shim registration is provider-owned: Copilot providers
+enable it directly, while custom OpenAI-compatible providers enable it only
+through the `messages-web-search-shim` upstream fix flag.
+
+Backoff is intentionally disabled for now. Control-plane status returns empty
+temporary-unavailability data until a provider-level backoff design lands.
 
 ## Data Plane
 
@@ -42,16 +85,21 @@ Completions, Gemini generation, and source-owned token counting endpoints.
 Models, embeddings, and data-plane tools live outside that LLM routing graph in
 their capability directories.
 
-Model listing belongs in `src/data-plane/models/`, including Gemini-shaped model
-listing. Gemini generation request/response protocol types and handling belong
-under `src/data-plane/llm/` because Gemini is a source API, not a separate
-data-plane brand boundary.
+Model listing belongs in `src/data-plane/models/`: `/v1/models` is
+OpenAI-shaped, `/models` is Anthropic-shaped, and `/v1beta/models` is
+Gemini-shaped. Public data-plane model APIs must not expose provider bindings,
+raw upstream variants, or UI-only provider metadata; `/api/models` may add
+dashboard-owned compatibility fields. Gemini generation request/response
+protocol types and handling belong under `src/data-plane/llm/` because Gemini is
+a source API, not a separate data-plane brand boundary.
 
 The LLM pipeline is:
 
 ```text
-serve -> source interceptors -> resolve model -> account fallback -> plan
-  -> build target request -> emit to target -> translate events -> respond
+serve -> source interceptors -> resolve model -> provider attempt loop
+  -> plan from the attempted provider's UpstreamModel capabilities
+  -> build target request -> emit through provider method
+  -> translate events -> respond
 ```
 
 Use those terms. Planning is the only layer that chooses a target. Successful
@@ -68,6 +116,8 @@ Workarounds belong at the owning boundary:
   under `src/data-plane/llm/sources/<source>/`.
 - target upstream request fixes, upstream retries, and target event fixes stay
   under `src/data-plane/llm/targets/<target>/`.
+- provider-specific target fixes are registered by the provider and live in the
+  target interceptor subtree that owns the upstream protocol boundary.
 - shared translation primitives belong in `src/data-plane/llm/translate/shared/`
   only when multiple pair directions need the same protocol rule.
 
@@ -77,21 +127,19 @@ Target preferences:
 
 - Messages: native Messages, then Responses, then Chat Completions.
 - Responses: native Responses, then Messages, then Chat Completions.
-- Chat Completions: Messages, then native Chat Completions, then Responses.
-- Gemini generation uses the same preference as Chat Completions.
+- Chat Completions: native Chat Completions, then Messages, then Responses.
+- Gemini generation has no native upstream target in the provider API; it uses
+  Chat Completions, then Messages, then Responses.
 
-If no capability-backed target is available, Chat Completions and Gemini keep
-the legacy model-name fallback: `claude*` goes through Messages, everything else
-goes through native Chat Completions.
+If no provider binding can produce a plan for the requested source API, return a
+source-shaped unsupported-model error. Do not invent legacy model-name routing
+outside provider capability metadata.
 
-Model resolution happens before account fallback and returns one final upstream
-model ID. Account fallback must not re-resolve the model per account. Claude
-compatibility aliases and variants live in
-`src/data-plane/llm/shared/models/resolve-model.ts`.
-
-Until there is a general model-alias feature, Responses rewrites
+Claude compatibility aliases and Copilot raw variant selection live in the
+provider layer. Until there is a general model-alias feature, Responses rewrites
 `codex-auto-review` to `gpt-5.4` with reasoning effort `low` at the Responses
-source entry, before model resolution and usage/performance metadata.
+source entry, before model resolution and usage/performance metadata. Historical
+accounting rows are converted to the public model id only in migrations.
 
 ## Contracts
 

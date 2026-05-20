@@ -1,8 +1,16 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import type { ResponsesResult } from "../../../shared/protocol/responses.ts";
+import type {
+  ResponsesResult,
+  ResponseStreamEvent,
+} from "../../../shared/protocol/responses.ts";
 import { reassembleResponsesEvents } from "./reassemble.ts";
 
-function makeEvents<T = any>(
+type ResponsesReassembleEvent = ResponseStreamEvent | {
+  type: "error";
+  message?: string;
+};
+
+function makeEvents<T = ResponsesReassembleEvent>(
   chunks: Array<{ event?: string; data: unknown }>,
 ): AsyncIterable<T> {
   return (async function* () {

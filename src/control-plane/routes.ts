@@ -25,10 +25,18 @@ import {
 import { searchUsage } from "./search-usage/routes.ts";
 import { tokenUsage } from "./token-usage/routes.ts";
 import {
+  createUpstream,
+  deleteUpstream,
+  listOptionalFixes,
+  listUpstreams,
+  testUpstream,
+  updateUpstream,
+} from "./upstreams/routes.ts";
+import {
   performanceOverview,
   performanceTelemetry,
 } from "./performance/routes.ts";
-import { models } from "../data-plane/models/serve.ts";
+import { controlPlaneModels } from "./models/routes.ts";
 import { DashboardPage } from "../ui/dashboard.tsx";
 import { LoginPage } from "../ui/login.tsx";
 
@@ -67,7 +75,7 @@ export const mountControlPlane = (app: Hono) => {
   app.get("/api/search-usage", searchUsage);
   app.get("/api/performance", performanceTelemetry);
   app.get("/api/performance/overview", performanceOverview);
-  app.get("/api/models", models);
+  app.get("/api/models", controlPlaneModels);
 
   const adminApi = new Hono();
   adminApi.use("*", adminOnlyMiddleware);
@@ -76,6 +84,12 @@ export const mountControlPlane = (app: Hono) => {
   adminApi.post("/keys/:id/rotate", rotateKey);
   adminApi.patch("/keys/:id", renameKey);
   adminApi.delete("/keys/:id", deleteKey);
+  adminApi.get("/upstreams", listUpstreams);
+  adminApi.get("/upstream-fixes", listOptionalFixes);
+  adminApi.post("/upstreams", createUpstream);
+  adminApi.patch("/upstreams/:id", updateUpstream);
+  adminApi.delete("/upstreams/:id", deleteUpstream);
+  adminApi.post("/upstreams/:id/test", testUpstream);
   adminApi.get("/search-config", getSearchConfigRoute);
   adminApi.put("/search-config", putSearchConfigRoute);
   adminApi.post("/search-config/test", testSearchConfigRoute);

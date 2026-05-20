@@ -1,9 +1,6 @@
-import {
-  assertEquals,
-  assertExists,
-  assertFalse,
-  assertStringIncludes,
-} from "@std/assert";
+import { assertEquals, assertExists, assertStringIncludes } from "@std/assert";
+import { clearCopilotTokenCache } from "../../../../shared/copilot.ts";
+import { clearModelsCache } from "../../../models/cache.ts";
 import {
   copilotModels,
   jsonResponse,
@@ -191,7 +188,7 @@ Deno.test("/v1/chat/completions rejects upstream Chat SSE error payloads in non-
   });
 });
 
-Deno.test("/v1/chat/completions prefers the native chat path on dual-endpoint models", async () => {
+Deno.test("/v1/chat/completions uses the native chat path on chat-only models", async () => {
   const { apiKey } = await setupAppTest();
 
   let upstreamBody: Record<string, unknown> | undefined;
@@ -212,8 +209,8 @@ Deno.test("/v1/chat/completions prefers the native chat path on dual-endpoint mo
     if (url.pathname === "/models") {
       return jsonResponse(copilotModels([
         {
-          id: "gpt-chat-dual",
-          supported_endpoints: ["/responses", "/chat/completions"],
+          id: "gpt-chat-native",
+          supported_endpoints: ["/chat/completions"],
         },
       ]));
     }
@@ -231,7 +228,7 @@ Deno.test("/v1/chat/completions prefers the native chat path on dual-endpoint mo
         id: "chatcmpl_dual",
         object: "chat.completion",
         created: 1,
-        model: "gpt-chat-dual",
+        model: "gpt-chat-native",
         choices: [{
           index: 0,
           message: { role: "assistant", content: "ok" },
@@ -249,7 +246,7 @@ Deno.test("/v1/chat/completions prefers the native chat path on dual-endpoint mo
         "x-api-key": apiKey.key,
       },
       body: JSON.stringify({
-        model: "gpt-chat-dual",
+        model: "gpt-chat-native",
         max_tokens: 256,
         stream: false,
         service_tier: "auto",
@@ -266,6 +263,260 @@ Deno.test("/v1/chat/completions prefers the native chat path on dual-endpoint mo
   const messages = upstreamBody!.messages as Array<Record<string, unknown>>;
   assertEquals(messages[0].role, "user");
   assertEquals(upstreamBody!.service_tier, "auto");
+});
+
+Deno.test("/v1/chat/completions uses Copilot's provider-projected Responses endpoint on dual-endpoint models", async () => {
+  const { apiKey } = await setupAppTest();
+
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (url.pathname === "/models") {
+      return jsonResponse(copilotModels([
+        {
+          id: "gpt-dual-chat",
+          supported_endpoints: [
+            "/responses",
+            "/v1/messages",
+            "/chat/completions",
+          ],
+        },
+      ]));
+    }
+    if (
+      url.pathname === "/chat/completions" || url.pathname === "/v1/messages"
+    ) {
+      throw new Error(
+        "Copilot provider should expose only Responses for this model",
+      );
+    }
+    if (url.pathname === "/responses") {
+      upstreamBody = JSON.parse(await request.text()) as Record<
+        string,
+        unknown
+      >;
+      return sseResponse([
+        {
+          event: "response.created",
+          data: {
+            type: "response.created",
+            response: {
+              id: "resp_dual_projected",
+              object: "response",
+              model: "gpt-dual-chat",
+              status: "in_progress",
+              output: [],
+              output_text: "",
+            },
+          },
+        },
+        {
+          event: "response.output_text.delta",
+          data: {
+            type: "response.output_text.delta",
+            item_id: "msg_0",
+            output_index: 0,
+            content_index: 0,
+            delta: "ok",
+          },
+        },
+        {
+          event: "response.completed",
+          data: {
+            type: "response.completed",
+            response: {
+              id: "resp_dual_projected",
+              object: "response",
+              model: "gpt-dual-chat",
+              status: "completed",
+              output: [],
+              output_text: "ok",
+              usage: {
+                input_tokens: 1,
+                output_tokens: 1,
+                total_tokens: 2,
+              },
+            },
+          },
+        },
+      ]);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "gpt-dual-chat",
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.choices[0].message.content, "ok");
+  });
+
+  assertEquals(upstreamBody?.model, "gpt-dual-chat");
+  assertEquals(upstreamBody?.stream, true);
+});
+
+Deno.test("/v1/chat/completions plans per provider without letting a later native provider preempt provider order", async () => {
+  const { apiKey, repo } = await setupAppTest();
+
+  await repo.upstreamConfigs.save({
+    id: "up_native_chat",
+    name: "Native Chat Provider",
+    baseUrl: "https://chat.example.com",
+    bearerToken: "sk-chat",
+    supportedEndpoints: ["/chat/completions"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  let upstreamPath = "";
+  let upstreamBody: Record<string, unknown> | undefined;
+
+  await withMockedFetch(async (request) => {
+    const url = new URL(request.url);
+
+    if (url.hostname === "update.code.visualstudio.com") {
+      return jsonResponse(["1.110.1"]);
+    }
+    if (url.pathname === "/copilot_internal/v2/token") {
+      return jsonResponse({
+        token: "copilot-access-token",
+        expires_at: 4102444800,
+        refresh_in: 3600,
+      });
+    }
+    if (
+      url.hostname === "api.githubcopilot.com" && url.pathname === "/models"
+    ) {
+      return jsonResponse(copilotModels([
+        {
+          id: "shared-chat-model",
+          supported_endpoints: ["/v1/messages"],
+        },
+      ]));
+    }
+    if (
+      url.hostname === "api.githubcopilot.com" &&
+      url.pathname === "/v1/messages"
+    ) {
+      upstreamPath = url.pathname;
+      upstreamBody = await request.json() as Record<string, unknown>;
+      return sseResponse([
+        {
+          event: "message_start",
+          data: {
+            type: "message_start",
+            message: {
+              id: "msg_provider_order",
+              type: "message",
+              role: "assistant",
+              content: [],
+              model: "shared-chat-model",
+              stop_reason: null,
+              stop_sequence: null,
+              usage: { input_tokens: 1, output_tokens: 0 },
+            },
+          },
+        },
+        {
+          event: "content_block_start",
+          data: {
+            type: "content_block_start",
+            index: 0,
+            content_block: { type: "text", text: "" },
+          },
+        },
+        {
+          event: "content_block_delta",
+          data: {
+            type: "content_block_delta",
+            index: 0,
+            delta: { type: "text_delta", text: "messages first" },
+          },
+        },
+        {
+          event: "content_block_stop",
+          data: { type: "content_block_stop", index: 0 },
+        },
+        {
+          event: "message_delta",
+          data: {
+            type: "message_delta",
+            delta: { stop_reason: "end_turn", stop_sequence: null },
+            usage: { output_tokens: 1 },
+          },
+        },
+        { event: "message_stop", data: { type: "message_stop" } },
+      ]);
+    }
+    if (url.hostname === "chat.example.com" && url.pathname === "/v1/models") {
+      return jsonResponse({
+        object: "list",
+        data: [{ id: "shared-chat-model" }],
+      });
+    }
+    if (
+      url.hostname === "chat.example.com" &&
+      url.pathname === "/v1/chat/completions"
+    ) {
+      upstreamBody = await request.json() as Record<string, unknown>;
+      return jsonResponse({
+        id: "chatcmpl_shared_native",
+        object: "chat.completion",
+        created: 1,
+        model: "shared-chat-model",
+        choices: [{
+          index: 0,
+          message: { role: "assistant", content: "ok" },
+          finish_reason: "stop",
+        }],
+      });
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "shared-chat-model",
+        messages: [{ role: "user", content: "Hi" }],
+      }),
+    });
+
+    assertEquals(response.status, 200);
+    const body = await response.json();
+    assertEquals(body.choices[0].message.content, "messages first");
+  });
+
+  assertEquals(upstreamPath, "/v1/messages");
+  assertEquals(upstreamBody?.model, "shared-chat-model");
 });
 
 Deno.test("/v1/chat/completions strips dated Claude aliases before model routing", async () => {
@@ -1487,4 +1738,53 @@ Deno.test("/v1/chat/completions fills missing max_tokens from model limits on th
 
   assertExists(upstreamBody);
   assertEquals(upstreamBody!.max_tokens, 6144);
+});
+
+Deno.test("/v1/chat/completions preserves custom upstream /models HTTP errors", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_custom",
+    name: "Custom Provider",
+    baseUrl: "https://custom.example.com",
+    bearerToken: "sk-custom",
+    supportedEndpoints: ["/chat/completions"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "custom.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({ error: { message: "bad custom key" } }, 401);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp("/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-api-key": apiKey.key,
+      },
+      body: JSON.stringify({
+        model: "custom-chat-model",
+        messages: [{ role: "user", content: "hello" }],
+      }),
+    });
+
+    assertEquals(response.status, 401);
+    assertEquals(await response.json(), {
+      error: { message: "bad custom key" },
+    });
+  });
 });

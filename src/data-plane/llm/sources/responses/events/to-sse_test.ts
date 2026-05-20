@@ -9,6 +9,8 @@ const collect = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
   return collected;
 };
 
+const ignoreUsage = { onUsage: () => {} };
+
 Deno.test("responsesProtocolEventsToSSEFrames stops at terminal events", async () => {
   const terminal = {
     type: "response.completed",
@@ -24,19 +26,22 @@ Deno.test("responsesProtocolEventsToSSEFrames stops at terminal events", async (
   } satisfies SourceResponseStreamEvent;
 
   const frames = await collect(
-    responsesProtocolEventsToSSEFrames((async function* () {
-      yield eventFrame(terminal);
-      yield eventFrame(
-        {
-          type: "response.output_text.delta",
-          sequence_number: 1,
-          item_id: "msg_1",
-          output_index: 0,
-          content_index: 0,
-          delta: "ignored",
-        } satisfies SourceResponseStreamEvent,
-      );
-    })()),
+    responsesProtocolEventsToSSEFrames(
+      (async function* () {
+        yield eventFrame(terminal);
+        yield eventFrame(
+          {
+            type: "response.output_text.delta",
+            sequence_number: 1,
+            item_id: "msg_1",
+            output_index: 0,
+            content_index: 0,
+            delta: "ignored",
+          } satisfies SourceResponseStreamEvent,
+        );
+      })(),
+      ignoreUsage,
+    ),
   );
 
   assertEquals(frames.map((frame) => frame.event), ["response.completed"]);
@@ -45,22 +50,25 @@ Deno.test("responsesProtocolEventsToSSEFrames stops at terminal events", async (
 Deno.test("responsesProtocolEventsToSSEFrames rejects streams without terminal events", async () => {
   await assertRejects(
     async () => {
-      await collect(responsesProtocolEventsToSSEFrames((async function* () {
-        yield eventFrame(
-          {
-            type: "response.created",
-            sequence_number: 0,
-            response: {
-              id: "resp_truncated",
-              object: "response",
-              model: "gpt-test",
-              status: "in_progress",
-              output: [],
-              output_text: "",
-            },
-          } satisfies SourceResponseStreamEvent,
-        );
-      })()));
+      await collect(responsesProtocolEventsToSSEFrames(
+        (async function* () {
+          yield eventFrame(
+            {
+              type: "response.created",
+              sequence_number: 0,
+              response: {
+                id: "resp_truncated",
+                object: "response",
+                model: "gpt-test",
+                status: "in_progress",
+                output: [],
+                output_text: "",
+              },
+            } satisfies SourceResponseStreamEvent,
+          );
+        })(),
+        ignoreUsage,
+      ));
     },
     Error,
     "Responses stream ended without a terminal event.",

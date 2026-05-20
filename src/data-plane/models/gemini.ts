@@ -1,8 +1,13 @@
 import type { Context } from "hono";
-import { isCopilotTokenFetchError } from "../../shared/copilot.ts";
-import { copilotSupportsGeneration } from "../llm/shared/models/get-model-capabilities.ts";
-import { type ModelInfo, ModelsFetchError } from "./cache.ts";
-import { loadMergedModels } from "./load.ts";
+import { ModelsFetchError, ModelsRequestError } from "./cache.ts";
+import { endpointsIncludeLlmGeneration } from "../providers/endpoints.ts";
+import { getModels } from "../providers/registry.ts";
+import type { Model } from "../providers/types.ts";
+
+type GeminiGenerationMethod =
+  | "generateContent"
+  | "streamGenerateContent"
+  | "countTokens";
 
 interface GeminiModel {
   name: string;
@@ -10,9 +15,7 @@ interface GeminiModel {
   version?: string;
   displayName?: string;
   description?: string;
-  supportedGenerationMethods?: Array<
-    "generateContent" | "streamGenerateContent" | "countTokens"
-  >;
+  supportedGenerationMethods?: GeminiGenerationMethod[];
   inputTokenLimit?: number;
   outputTokenLimit?: number;
   temperature?: number;
@@ -21,40 +24,45 @@ interface GeminiModel {
   topK?: number;
 }
 
-const supportsLlmGeneration = (model: ModelInfo): boolean =>
-  copilotSupportsGeneration(model);
+const supportsLlmGeneration = (model: Model): boolean =>
+  endpointsIncludeLlmGeneration(model.supportedEndpoints);
 
-const displayNameForModel = (model: ModelInfo): string =>
-  model.name || model.id;
+const displayNameForModel = (model: Model): string =>
+  model.display_name ?? model.name ?? model.id;
 
-const inputLimitForModel = (model: ModelInfo): number | undefined => {
+const inputLimitForModel = (model: Model): number | undefined => {
   const limits = model.capabilities?.limits;
   return limits?.max_prompt_tokens ?? limits?.max_context_window_tokens;
 };
 
-const outputLimitForModel = (model: ModelInfo): number | undefined =>
+const outputLimitForModel = (model: Model): number | undefined =>
   model.capabilities?.limits?.max_output_tokens ??
     model.capabilities?.limits?.max_non_streaming_output_tokens;
 
-const toGeminiModel = (model: ModelInfo): GeminiModel => ({
-  name: `models/${model.id}`,
-  baseModelId: model.id,
-  displayName: displayNameForModel(model),
-  supportedGenerationMethods: [
+const toGeminiModel = (model: Model): GeminiModel => {
+  const methods: GeminiGenerationMethod[] = [
     "generateContent",
     "streamGenerateContent",
-    "countTokens",
-  ],
-  ...(inputLimitForModel(model) !== undefined
-    ? { inputTokenLimit: inputLimitForModel(model) }
-    : {}),
-  ...(outputLimitForModel(model) !== undefined
-    ? { outputTokenLimit: outputLimitForModel(model) }
-    : {}),
-  temperature: 1,
-  topP: 0.95,
-  topK: 40,
-});
+  ];
+  if (model.supportedEndpoints.includes("messages_count_tokens")) {
+    methods.push("countTokens");
+  }
+  return {
+    name: `models/${model.id}`,
+    baseModelId: model.id,
+    displayName: displayNameForModel(model),
+    supportedGenerationMethods: methods,
+    ...(inputLimitForModel(model) !== undefined
+      ? { inputTokenLimit: inputLimitForModel(model) }
+      : {}),
+    ...(outputLimitForModel(model) !== undefined
+      ? { outputTokenLimit: outputLimitForModel(model) }
+      : {}),
+    temperature: 1,
+    topP: 0.95,
+    topK: 40,
+  };
+};
 
 const geminiStatusForHttpStatus = (status: number): string => {
   switch (status) {
@@ -81,13 +89,14 @@ const geminiError = (status: number, message: string): Response => {
   }, { status: code });
 };
 
+const modelListingFailureMessage = "Upstream model listing failed";
+
 const geminiModelLoadError = (error: unknown): Response => {
   if (error instanceof ModelsFetchError) {
-    return geminiError(error.status, error.body);
+    return geminiError(error.status, modelListingFailureMessage);
   }
-
-  if (isCopilotTokenFetchError(error)) {
-    return geminiError(error.status, error.body);
+  if (error instanceof ModelsRequestError) {
+    return geminiError(502, modelListingFailureMessage);
   }
 
   return geminiError(
@@ -97,8 +106,8 @@ const geminiModelLoadError = (error: unknown): Response => {
 };
 
 const loadGeminiModels = async (): Promise<GeminiModel[]> => {
-  const models = await loadMergedModels();
-  return models.data.filter(supportsLlmGeneration).map(toGeminiModel);
+  const models = await getModels();
+  return models.filter(supportsLlmGeneration).map(toGeminiModel);
 };
 
 export const serveGeminiModels = async (_c: Context): Promise<Response> => {

@@ -1,4 +1,6 @@
 import { assertEquals, assertExists } from "@std/assert";
+import { clearModelsCache } from "../../../../models/cache.ts";
+import { clearCopilotTokenCache } from "../../../../../shared/copilot.ts";
 import {
   copilotModels,
   jsonResponse,
@@ -74,7 +76,7 @@ Deno.test("/v1beta/models/:model:countTokens translates Gemini request to Messag
 Deno.test("/v1beta/models/:model:countTokens supports top-level contents", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -120,7 +122,7 @@ Deno.test("/v1beta/models/:model:countTokens supports top-level contents", async
 Deno.test("/v1beta/models/:model:countTokens internal failures include debug fields", async () => {
   const { apiKey } = await setupAppTest();
 
-  await withMockedFetch(async (request) => {
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
     if (url.hostname === "update.code.visualstudio.com") {
@@ -169,30 +171,41 @@ Deno.test("/v1beta/models/:model:countTokens internal failures include debug fie
   });
 });
 
-Deno.test("/v1beta/models/:model:countTokens maps model-list failures to Google RPC errors", async () => {
-  const { apiKey } = await setupAppTest();
+Deno.test("/v1beta/models/:model:countTokens rejects custom-upstream-only models", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
 
-  await withMockedFetch(async (request) => {
+  await repo.upstreamConfigs.save({
+    id: "up_custom",
+    name: "Custom Provider",
+    baseUrl: "https://custom.example.com",
+    bearerToken: "sk-custom",
+    supportedEndpoints: ["/chat/completions"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  await withMockedFetch((request) => {
     const url = new URL(request.url);
 
-    if (url.hostname === "update.code.visualstudio.com") {
-      return jsonResponse(["1.110.1"]);
-    }
-    if (url.pathname === "/copilot_internal/v2/token") {
+    if (
+      url.hostname === "custom.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
       return jsonResponse({
-        token: "copilot-access-token",
-        expires_at: 4102444800,
-        refresh_in: 3600,
+        object: "list",
+        data: [{ id: "custom-chat-model" }],
       });
-    }
-    if (url.pathname === "/models") {
-      return new Response("models unavailable", { status: 503 });
     }
 
     throw new Error(`Unhandled fetch ${request.url}`);
   }, async () => {
     const response = await requestApp(
-      "/v1beta/models/claude-count-models-down:countTokens",
+      "/v1beta/models/custom-chat-model:countTokens",
       {
         method: "POST",
         headers: {
@@ -205,13 +218,65 @@ Deno.test("/v1beta/models/:model:countTokens maps model-list failures to Google 
       },
     );
 
-    assertEquals(response.status, 503);
-    assertEquals(await response.json(), {
-      error: {
-        code: 503,
-        message: "models unavailable",
-        status: "UNAVAILABLE",
+    assertEquals(response.status, 400);
+    const body = await response.json();
+    assertEquals(body.error.code, 400);
+    assertEquals(body.error.status, "INVALID_ARGUMENT");
+    assertEquals(
+      body.error.message.includes("does not support countTokens"),
+      true,
+    );
+  });
+});
+
+Deno.test("/v1beta/models/:model:countTokens preserves custom upstream /models HTTP errors", async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await repo.github.deleteAllAccounts();
+  clearModelsCache();
+  await clearCopilotTokenCache();
+
+  await repo.upstreamConfigs.save({
+    id: "up_custom",
+    name: "Custom Provider",
+    baseUrl: "https://custom.example.com",
+    bearerToken: "sk-custom",
+    supportedEndpoints: ["/chat/completions"],
+    enabled: true,
+    sortOrder: 100,
+    createdAt: "2026-05-01T00:00:00.000Z",
+    enabledFixes: [],
+  });
+
+  await withMockedFetch((request) => {
+    const url = new URL(request.url);
+
+    if (
+      url.hostname === "custom.example.com" &&
+      url.pathname === "/v1/models"
+    ) {
+      return jsonResponse({ error: { message: "bad custom key" } }, 401);
+    }
+
+    throw new Error(`Unhandled fetch ${request.url}`);
+  }, async () => {
+    const response = await requestApp(
+      "/v1beta/models/custom-chat-model:countTokens",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey.key,
+        },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: "hello" }] }],
+        }),
       },
-    });
+    );
+
+    assertEquals(response.status, 401);
+    const body = await response.json();
+    assertEquals(body.error.code, 401);
+    assertEquals(body.error.status, "UNAUTHENTICATED");
+    assertEquals(body.error.message.includes("bad custom key"), true);
   });
 });

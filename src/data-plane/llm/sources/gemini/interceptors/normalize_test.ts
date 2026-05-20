@@ -4,6 +4,12 @@ import { stripSafetySettings } from "./strip-safety-settings.ts";
 import { stripUnsupportedPartFieldsFromPayload } from "./strip-unsupported-part-fields.ts";
 import { stripUnsupportedToolsFromPayload } from "./strip-unsupported-tools.ts";
 
+const testAccounting = {
+  model: "test-model",
+  upstream: "test-upstream",
+  modelKey: "test-model-key",
+};
+
 const runStripSafetySettings = async (
   payload: GeminiGenerateContentRequest,
 ): Promise<void> => {
@@ -11,6 +17,7 @@ const runStripSafetySettings = async (
     Promise.resolve({
       type: "events" as const,
       events: (async function* () {})(),
+      accounting: testAccounting,
     }));
 };
 

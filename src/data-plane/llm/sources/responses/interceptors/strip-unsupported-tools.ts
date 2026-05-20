@@ -3,13 +3,13 @@ import type { SourceInterceptor } from "../../run-interceptors.ts";
 import type { SourceResponseStreamEvent } from "../events/protocol.ts";
 import type { ResponsesSourceContext } from "./index.ts";
 
-// Hosted Responses tool entries Copilot upstream cannot serve and Freeform
-// `custom` tools the gateway has no shim for. Codex emits `web_search`,
+// Hosted Responses tool entries and Freeform `custom` tools the gateway has no
+// source-level execution or translation shim for. Codex emits `web_search`,
 // `image_generation`, `tool_search`, `namespace`, and `custom` entries under
 // `type` alongside ordinary `function` tools — none of those carry a
-// translator-friendly `name`/`parameters` pair, so leaking them into
-// translation produces malformed Anthropic Messages tool entries
-// (`tools.N.custom.name: Field required` is the upstream symptom).
+// translator-friendly `name`/`parameters` pair, so leaking them into translated
+// targets produces malformed tool entries (`tools.N.custom.name: Field
+// required` is the common upstream symptom).
 //
 // `apply_patch` is the only custom tool the gateway shims, and
 // fix-apply-patch-tools rewrites it into a function tool BEFORE this
@@ -57,11 +57,11 @@ const stripToolChoice = (
 };
 
 /**
- * Strip hosted Responses tool entries Copilot's upstream cannot serve before
- * planning sees the request. This keeps every translation target (native
- * `/responses`, `/v1/messages`, `/chat/completions`) on the same cleaned tools
- * list, and prevents leaking tool entries that lack a `name`/`parameters`
- * pair into translation paths that assume function-shaped tools.
+ * Strip hosted Responses tool entries the gateway cannot yet execute or
+ * translate before planning sees the request. This keeps every target path on
+ * the same cleaned tools list and prevents leaking tool entries that lack a
+ * `name`/`parameters` pair into translation paths that assume function-shaped
+ * tools.
  *
  * Forced tool choices that target a removed entry are dropped along with it.
  * If every tool was removed and the caller forced `required`, drop the choice

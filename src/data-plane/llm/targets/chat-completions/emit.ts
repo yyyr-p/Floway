@@ -1,7 +1,3 @@
-import {
-  copilotFetch,
-  isCopilotTokenFetchError,
-} from "../../../../shared/copilot.ts";
 import type {
   ChatCompletionChunk,
   ChatCompletionResponse,
@@ -16,44 +12,69 @@ import { toInternalDebugError } from "../../shared/errors/internal-debug-error.t
 import { parseSSEStream } from "../../shared/stream/parse-sse.ts";
 import { jsonFrame } from "../../shared/stream/types.ts";
 import { runTargetInterceptors } from "../run-interceptors.ts";
-import type { EmitInput, EmitResult } from "../emit-types.ts";
+import type { EmitInput, EmitResult, RawEmitResult } from "../emit-types.ts";
 import {
   recordUpstreamHttpFailure,
+  targetPerformanceContext,
   withUpstreamTelemetry,
 } from "../telemetry.ts";
 import { chatCompletionsStreamFramesToEvents } from "./events/from-stream.ts";
-import { chatCompletionsTargetInterceptors } from "./interceptors/index.ts";
+import { interceptorsForChatCompletions } from "./interceptors/index.ts";
+import type { ModelAccounting } from "../../../../repo/types.ts";
 
 const isSSEResponse = (response: Response): boolean =>
   (response.headers.get("content-type") ?? "").includes("text/event-stream");
 
+export interface EmitToChatCompletionsInput
+  extends EmitInput<ChatCompletionsPayload> {}
+
+const chatCompletionsRawResultToProtocolResult = (
+  result: RawEmitResult<ChatCompletionResponse>,
+): EmitResult<ChatCompletionChunk> =>
+  result.type === "events"
+    ? eventResult(
+      chatCompletionsStreamFramesToEvents(result.events),
+      result.accounting,
+      result.performance,
+    )
+    : result;
+
 export const emitToChatCompletions = async (
-  input: EmitInput<ChatCompletionsPayload>,
+  input: EmitToChatCompletionsInput,
 ): Promise<EmitResult<ChatCompletionChunk>> => {
+  let accounting: ModelAccounting | undefined;
   try {
     const result = await runTargetInterceptors<
-      EmitInput<ChatCompletionsPayload>,
+      EmitToChatCompletionsInput,
       ChatCompletionResponse
     >(
       input,
-      chatCompletionsTargetInterceptors,
+      interceptorsForChatCompletions(input),
       async () => {
         const upstreamStartedAt = performance.now();
-        const response = await copilotFetch(
-          "/chat/completions",
-          {
-            method: "POST",
-            body: JSON.stringify(input.payload),
-            signal: input.downstreamAbortSignal,
-          },
-          input.githubToken,
-          input.accountType,
-          input.fetchOptions,
+        const { model: _model, ...body } = input.payload;
+        const { response, modelKey } = await input.provider.callChatCompletions(
+          input.upstreamModel,
+          body,
+          input.downstreamAbortSignal,
+        );
+        accounting = {
+          model: input.model,
+          upstream: input.upstream,
+          modelKey,
+        };
+        const perfContext = targetPerformanceContext(
+          input,
+          "chat-completions",
+          accounting,
         );
 
         if (!response.ok) {
-          recordUpstreamHttpFailure(input, "chat-completions");
-          return await readUpstreamError(response);
+          recordUpstreamHttpFailure(input, "chat-completions", accounting);
+          return {
+            ...(await readUpstreamError(response)),
+            performance: perfContext,
+          };
         }
         if (!response.body) {
           return internalErrorResult(
@@ -63,47 +84,50 @@ export const emitToChatCompletions = async (
               input.sourceApi,
               "chat-completions",
             ),
+            perfContext,
           );
         }
 
         if (isSSEResponse(response)) {
-          return eventResult(withUpstreamTelemetry(
-            parseSSEStream(response.body, {
-              signal: input.downstreamAbortSignal,
-            }),
+          return eventResult(
+            withUpstreamTelemetry(
+              parseSSEStream(response.body, {
+                signal: input.downstreamAbortSignal,
+              }),
+              input,
+              "chat-completions",
+              upstreamStartedAt,
+              accounting,
+            ),
+            accounting,
+            perfContext,
+          );
+        }
+
+        return eventResult(
+          withUpstreamTelemetry(
+            (async function* () {
+              yield jsonFrame(await response.json() as ChatCompletionResponse);
+            })(),
             input,
             "chat-completions",
             upstreamStartedAt,
-          ));
-        }
-
-        return eventResult(withUpstreamTelemetry(
-          (async function* () {
-            yield jsonFrame(await response.json() as ChatCompletionResponse);
-          })(),
-          input,
-          "chat-completions",
-          upstreamStartedAt,
-        ));
+            accounting,
+          ),
+          accounting,
+          perfContext,
+        );
       },
     );
 
-    return result.type === "events"
-      ? eventResult(chatCompletionsStreamFramesToEvents(result.events))
-      : result;
+    return chatCompletionsRawResultToProtocolResult(result);
   } catch (error) {
-    if (isCopilotTokenFetchError(error)) {
-      return {
-        type: "upstream-error",
-        status: error.status,
-        headers: new Headers(error.headers),
-        body: new TextEncoder().encode(error.body),
-      };
-    }
-
     return internalErrorResult(
       502,
       toInternalDebugError(error, input.sourceApi, "chat-completions"),
+      accounting
+        ? targetPerformanceContext(input, "chat-completions", accounting)
+        : undefined,
     );
   }
 };

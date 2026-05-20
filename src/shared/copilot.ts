@@ -12,6 +12,9 @@ const USER_AGENT = `GitHubCopilotChat/${COPILOT_VERSION}`;
 const FALLBACK_EDITOR_VERSION = "vscode/1.110.1";
 const API_VERSION = "2025-10-01";
 
+const isCopilotTokenFetchTerminalStatus = (status: number): boolean =>
+  status === 403 || status === 429 || status === 500;
+
 const VSCODE_VERSION_TTL_MS = 24 * 60 * 60 * 1000; // 1 day
 let cachedVSCodeVersion: string | null = null;
 let vscodeVersionExpiresAt = 0;
@@ -45,12 +48,6 @@ export class CopilotTokenFetchError extends Error {
 export const isCopilotTokenFetchError = (
   error: unknown,
 ): error is CopilotTokenFetchError => error instanceof CopilotTokenFetchError;
-
-export const isAccountSwitchableStatus = (status: number): boolean =>
-  // 500 is included for account fallback because Copilot has been observed to
-  // return account-sensitive upstream failures, primarily with gpt-5.3-codex.
-  // Keeping it model-agnostic prepares for the same failure mode on other models.
-  status === 429 || status === 403 || status === 500;
 
 /** Clear the cached Copilot token from both in-process and KV storage */
 export async function clearCopilotTokenCache(): Promise<void> {
@@ -114,7 +111,10 @@ async function withRetry<T>(
       return await fn();
     } catch (e) {
       // Don't retry client errors (4xx) — they won't change on retry
-      if (isCopilotTokenFetchError(e) && isAccountSwitchableStatus(e.status)) {
+      if (
+        isCopilotTokenFetchError(e) &&
+        isCopilotTokenFetchTerminalStatus(e.status)
+      ) {
         throw e;
       }
       if (e instanceof Error && /failed: 4\d{2} /.test(e.message)) throw e;

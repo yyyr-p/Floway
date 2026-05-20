@@ -8,7 +8,11 @@ import type {
 
 export interface PerformanceTelemetryContext {
   keyId: string;
+  // Public gateway model id. Provider raw selection stays encapsulated; only
+  // the provider-owned opaque modelKey crosses this boundary.
   model: string;
+  upstream: string | null;
+  modelKey: string;
   sourceApi: PerformanceApiName;
   targetApi: PerformanceApiName;
   stream: boolean;
@@ -31,6 +35,8 @@ const performanceDimensions = (
   metricScope,
   keyId: context.keyId,
   model: context.model,
+  upstream: context.upstream,
+  modelKey: context.modelKey,
   sourceApi: context.sourceApi,
   targetApi: context.targetApi,
   stream: context.stream,

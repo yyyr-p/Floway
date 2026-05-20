@@ -1,11 +1,12 @@
 import type { InternalDebugError } from "./internal-debug-error.ts";
 import type { ProtocolFrame } from "../stream/types.ts";
 import type { PerformanceTelemetryContext } from "../../../shared/performance/telemetry.ts";
+import type { ModelAccounting } from "../../../../repo/types.ts";
 
 export interface EventResult<T> {
   type: "events";
   events: AsyncIterable<T>;
-  usageModel?: string;
+  accounting: ModelAccounting;
   performance?: PerformanceTelemetryContext;
 }
 
@@ -33,13 +34,12 @@ export type StreamExecuteResult<TEvent> = ExecuteResult<ProtocolFrame<TEvent>>;
 
 export const eventResult = <T>(
   events: AsyncIterable<T>,
-  options: { usageModel?: string; performance?: PerformanceTelemetryContext } =
-    {},
+  accounting: ModelAccounting,
+  performance?: PerformanceTelemetryContext,
 ): EventResult<T> => {
-  const result: EventResult<T> = { type: "events", events };
-  if (options.usageModel !== undefined) result.usageModel = options.usageModel;
-  if (options.performance !== undefined) {
-    result.performance = options.performance;
+  const result: EventResult<T> = { type: "events", events, accounting };
+  if (performance !== undefined) {
+    result.performance = performance;
   }
   return result;
 };

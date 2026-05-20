@@ -1,14 +1,6 @@
-// Per-model pricing table and per-record cost computation.
-//
-// Keys match displayModelName(rawModel) output (Claude variants/dates/dotted
-// versions are normalized to a single dashed base id; non-Claude models are
-// passed through unchanged). Prices are USD per 1M tokens.
-//
-// Pricing is intentionally backend-owned: the dashboard renders cost as a
-// pre-computed number on each usage record, so the frontend has no model-name
-// parsing or pricing logic. Storage and export/import remain raw-model.
-
-import { displayModelName } from "../../shared/model-name.ts";
+// Per-public-model pricing table and per-record cost computation. Historical
+// raw model ids are migrated into public model names in SQL; runtime pricing
+// must not repeat model-name canonicalization.
 
 export interface ModelPricing {
   input: number;
@@ -79,17 +71,17 @@ const matchPricing = (displayName: string): ModelPricing | null => {
   return null;
 };
 
-export const getModelPricing = (rawModel: string): ModelPricing | null =>
-  matchPricing(displayModelName(rawModel));
+export const getModelPricing = (model: string): ModelPricing | null =>
+  matchPricing(model);
 
 export const recordCostUsd = (
-  rawModel: string,
+  model: string,
   inputTokens: number,
   outputTokens: number,
   cacheReadTokens: number,
   cacheCreationTokens: number,
 ): number => {
-  const pricing = getModelPricing(rawModel);
+  const pricing = getModelPricing(model);
   if (!pricing) return 0;
   const prefillInput = inputTokens - cacheReadTokens - cacheCreationTokens;
   const inputCost = prefillInput * pricing.input;

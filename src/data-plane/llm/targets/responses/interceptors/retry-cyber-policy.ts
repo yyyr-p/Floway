@@ -248,14 +248,33 @@ type EventsResult = Extract<RawEmitResult<ResponsesResult>, { type: "events" }>;
 const isDownstreamAborted = (ctx: EmitInput<ResponsesPayload>): boolean =>
   ctx.downstreamAbortSignal?.aborted === true;
 
+const updateStreamingResultIdentity = (
+  returned: EventsResult,
+  latest: RawEmitResult<ResponsesResult>,
+): void => {
+  if (latest.performance) {
+    returned.performance = latest.performance;
+  } else {
+    delete returned.performance;
+  }
+
+  if (latest.type !== "events") return;
+  returned.accounting.model = latest.accounting.model;
+  returned.accounting.upstream = latest.accounting.upstream;
+  returned.accounting.modelKey = latest.accounting.modelKey;
+};
+
 const retryCyberPolicyEvents = async function* (
   ctx: EmitInput<ResponsesPayload>,
   run: () => Promise<RawEmitResult<ResponsesResult>>,
   initialResult: EventsResult,
+  returned: EventsResult,
 ): AsyncGenerator<StreamFrame<ResponsesResult>> {
   let result: RawEmitResult<ResponsesResult> = initialResult;
 
   for (let attempt = 0; attempt <= MAX_CYBER_POLICY_RETRIES; attempt++) {
+    updateStreamingResultIdentity(returned, result);
+
     if (result.type !== "events") {
       if (
         isCyberPolicyUpstreamError(result) &&
@@ -296,11 +315,11 @@ const retryCyberPolicyEvents = async function* (
 };
 
 /**
- * OpenAI's GPT-5.x Responses path is prone to intermittent false-positive
- * `cyber_policy` failures for Codex traffic. Copilot upstream does not support
- * the Trusted Access for Cyber program named in OpenAI's client-facing text, so
- * this gateway cannot resolve those failures through account verification and
- * can only retry the upstream attempt.
+ * Some OpenAI-compatible GPT-5.x Responses paths are prone to intermittent
+ * false-positive `cyber_policy` failures for Codex traffic. The Copilot
+ * provider enables this by default because that upstream cannot be enrolled in
+ * the Trusted Access for Cyber program named in OpenAI's client-facing text;
+ * custom upstreams only run it when an admin explicitly enables the flag.
  *
  * Keep this at the `/responses` target boundary because both HTTP error bodies
  * and streaming `response.failed` payloads are upstream protocol details. The
@@ -326,10 +345,12 @@ export const withCyberPolicyRetried: TargetInterceptor<
     finalResult = current;
 
     if (current.type === "events") {
-      return {
+      const returned: EventsResult = {
         ...current,
-        events: retryCyberPolicyEvents(ctx, run, current),
+        accounting: { ...current.accounting },
       };
+      returned.events = retryCyberPolicyEvents(ctx, run, current, returned);
+      return returned;
     }
 
     if (!isCyberPolicyUpstreamError(current) || isDownstreamAborted(ctx)) {

@@ -9,10 +9,6 @@ import { clearCopilotTokenCache } from "../../shared/copilot.ts";
 import { getEnv } from "../../runtime/env.ts";
 import { clearModelsCache } from "../../data-plane/models/cache.ts";
 import {
-  clearAccountModelBackoffs,
-  listAccountModelBackoffs,
-} from "../../data-plane/shared/account-pool/backoffs.ts";
-import {
   detectAccountType,
   fetchGitHubUser,
   pollGitHubDeviceFlow,
@@ -116,15 +112,6 @@ export const authGithubPoll = async (c: Context) => {
 /** GET /auth/me — get all GitHub accounts in priority order */
 export const authMe = async (c: Context) => {
   const accounts = await getRepo().github.listAccounts();
-  const unavailableStatuses = await listAccountModelBackoffs(
-    accounts.map((account) => account.user.id),
-  );
-  const unavailableByAccount = new Map<number, typeof unavailableStatuses>();
-  for (const status of unavailableStatuses) {
-    const accountStatuses = unavailableByAccount.get(status.accountId) ?? [];
-    accountStatuses.push(status);
-    unavailableByAccount.set(status.accountId, accountStatuses);
-  }
 
   const refreshedAccounts = await Promise.all(accounts.map(async (account) => {
     if (account.user.login) return account;
@@ -159,13 +146,10 @@ export const authMe = async (c: Context) => {
       name: a.user.name,
       avatar_url: a.user.avatar_url,
       account_type: a.accountType,
-      temporarily_unavailable_models:
-        (unavailableByAccount.get(a.user.id) ?? [])
-          .map((status) => ({
-            model: status.model,
-            status: status.status,
-            expires_at: new Date(status.expiresAt).toISOString(),
-          })),
+      // TODO: Return provider backoff state after the new provider-level
+      // backoff design lands. The old account/model backoff storage was
+      // intentionally removed during the provider refactor.
+      temporarily_unavailable_models: [],
     })),
   });
 };
@@ -177,7 +161,6 @@ export const authGithubDisconnect = async (c: Context) => {
     return c.json({ error: "Invalid user ID" }, 400);
   }
   await getRepo().github.deleteAccount(userId);
-  await clearAccountModelBackoffs(userId);
   await clearCopilotTokenCache();
   clearModelsCache();
   return c.json({ ok: true });

@@ -5,20 +5,19 @@ import type {
   Tool,
   ToolCall,
 } from "../../shared/protocol/chat-completions.ts";
-import {
-  getMessagesRequestedReasoningEffort,
-  type MessagesAssistantContentBlock,
-  type MessagesAssistantMessage,
-  type MessagesClientTool,
-  type MessagesMessage,
-  type MessagesPayload,
-  type MessagesServerToolUseBlock,
-  type MessagesTextBlock,
-  type MessagesToolResultBlock,
-  type MessagesToolUseBlock,
-  type MessagesUserContentBlock,
-  type MessagesUserMessage,
-  type MessagesWebSearchToolResultBlock,
+import type {
+  MessagesAssistantContentBlock,
+  MessagesAssistantMessage,
+  MessagesClientTool,
+  MessagesMessage,
+  MessagesPayload,
+  MessagesServerToolUseBlock,
+  MessagesTextBlock,
+  MessagesToolResultBlock,
+  MessagesToolUseBlock,
+  MessagesUserContentBlock,
+  MessagesUserMessage,
+  MessagesWebSearchToolResultBlock,
 } from "../../shared/protocol/messages.ts";
 
 const toChatCompletionsContent = (
@@ -335,14 +334,21 @@ const translateMessagesToolChoice = (
   }
 };
 
+const translateMessagesReasoningEffort = (
+  payload: MessagesPayload,
+): string | undefined => {
+  if (payload.output_config?.effort) return payload.output_config.effort;
+  if (payload.thinking?.type === "disabled") return "none";
+  return undefined;
+};
+
 export const translateMessagesToChatCompletions = (
   payload: MessagesPayload,
 ): ChatCompletionsPayload => {
   const clientTools = getClientTools(payload.tools);
-  const effort = getMessagesRequestedReasoningEffort(payload);
   // Pass effort through verbatim; per-upstream enum acceptance (e.g. some
   // backends rejecting `xhigh`/`max`) is the target interceptor's concern.
-  const reasoningEffort = effort ?? undefined;
+  const reasoningEffort = translateMessagesReasoningEffort(payload);
 
   return {
     model: payload.model,

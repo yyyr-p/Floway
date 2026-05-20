@@ -5,11 +5,11 @@ import type { ModelCapabilities } from "../../shared/models/get-model-capabiliti
 import { buildTargetRequest } from "./request.ts";
 
 const noCapabilities: ModelCapabilities = {
+  supportedEndpoints: ["messages"],
   supportsMessages: true,
   supportsResponses: false,
   supportsChatCompletions: false,
   supportsAdaptiveThinking: false,
-  hasExplicitCapabilities: true,
 };
 
 const withMaxOutputTokens = (maxOutputTokens: number): ModelCapabilities => ({

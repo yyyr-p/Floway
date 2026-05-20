@@ -284,6 +284,9 @@ export const translateChatCompletionsToMessages = async (
     ...(payload.tool_choice != null
       ? { tool_choice: translateChatCompletionsToolChoice(payload.tool_choice) }
       : {}),
+    ...(payload.reasoning_effort && payload.reasoning_effort !== "none"
+      ? { output_config: { effort: payload.reasoning_effort } }
+      : {}),
   };
 };
 

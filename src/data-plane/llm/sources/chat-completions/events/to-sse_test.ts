@@ -9,15 +9,23 @@ const collect = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
   return collected;
 };
 
+const ignoreUsage = {
+  includeUsageChunk: true,
+  onUsage: () => {},
+};
+
 Deno.test("chatProtocolEventsToSSEFrames passes through non-chunk JSON payloads", async () => {
   const payload = {
     error: { message: "boom" },
   } as unknown as ChatCompletionChunk;
 
   const frames = await collect(
-    chatProtocolEventsToSSEFrames((async function* () {
-      yield eventFrame(payload);
-    })()),
+    chatProtocolEventsToSSEFrames(
+      (async function* () {
+        yield eventFrame(payload);
+      })(),
+      ignoreUsage,
+    ),
   );
 
   assertEquals(frames, [{
@@ -41,19 +49,22 @@ Deno.test("chatProtocolEventsToSSEFrames stops at DONE", async () => {
   } satisfies ChatCompletionChunk;
 
   const frames = await collect(
-    chatProtocolEventsToSSEFrames((async function* () {
-      yield eventFrame(chunk);
-      yield doneFrame();
-      yield eventFrame({
-        ...chunk,
-        id: "chatcmpl_after_done",
-        choices: [{
-          index: 0,
-          delta: { content: "ignored" },
-          finish_reason: null,
-        }],
-      });
-    })()),
+    chatProtocolEventsToSSEFrames(
+      (async function* () {
+        yield eventFrame(chunk);
+        yield doneFrame();
+        yield eventFrame({
+          ...chunk,
+          id: "chatcmpl_after_done",
+          choices: [{
+            index: 0,
+            delta: { content: "ignored" },
+            finish_reason: null,
+          }],
+        });
+      })(),
+      ignoreUsage,
+    ),
   );
 
   assertEquals(frames.map((frame) => frame.data), [
@@ -65,21 +76,24 @@ Deno.test("chatProtocolEventsToSSEFrames stops at DONE", async () => {
 Deno.test("chatProtocolEventsToSSEFrames rejects streams without DONE", async () => {
   await assertRejects(
     async () => {
-      await collect(chatProtocolEventsToSSEFrames((async function* () {
-        yield eventFrame(
-          {
-            id: "chatcmpl_truncated",
-            object: "chat.completion.chunk",
-            created: 123,
-            model: "gpt-test",
-            choices: [{
-              index: 0,
-              delta: { role: "assistant", content: "partial" },
-              finish_reason: null,
-            }],
-          } satisfies ChatCompletionChunk,
-        );
-      })()));
+      await collect(chatProtocolEventsToSSEFrames(
+        (async function* () {
+          yield eventFrame(
+            {
+              id: "chatcmpl_truncated",
+              object: "chat.completion.chunk",
+              created: 123,
+              model: "gpt-test",
+              choices: [{
+                index: 0,
+                delta: { role: "assistant", content: "partial" },
+                finish_reason: null,
+              }],
+            } satisfies ChatCompletionChunk,
+          );
+        })(),
+        ignoreUsage,
+      ));
     },
     Error,
     "Chat Completions stream ended without a DONE sentinel.",

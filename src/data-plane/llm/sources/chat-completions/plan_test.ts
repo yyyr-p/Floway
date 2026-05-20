@@ -5,28 +5,34 @@ import { planChatRequest } from "./plan.ts";
 const capabilities = (
   overrides: Partial<ModelCapabilities> = {},
 ): ModelCapabilities => ({
+  supportedEndpoints: [],
   supportsMessages: false,
   supportsResponses: false,
   supportsChatCompletions: false,
   supportsAdaptiveThinking: false,
-  hasExplicitCapabilities: false,
   ...overrides,
 });
 
-Deno.test("planChatRequest rejects explicit capability misses instead of legacy fallback", () => {
-  const plan = planChatRequest(
-    { model: "text-embedding-3-small", messages: [] },
-    capabilities({ hasExplicitCapabilities: true }),
-  );
+Deno.test("planChatRequest rejects capability misses instead of legacy fallback", () => {
+  const plan = planChatRequest(capabilities());
 
   assertEquals(plan, null);
 });
 
-Deno.test("planChatRequest keeps legacy fallback when capabilities were not explicit", () => {
+Deno.test("planChatRequest prefers native Chat when both Chat and Messages are available", () => {
   const plan = planChatRequest(
-    { model: "gpt-legacy-chat", messages: [] },
-    capabilities(),
+    capabilities({
+      supportedEndpoints: ["messages", "chat_completions"],
+      supportsMessages: true,
+      supportsChatCompletions: true,
+    }),
   );
 
   assertEquals(plan?.target, "chat-completions");
+});
+
+Deno.test("planChatRequest does not invent legacy fallback without provider endpoints", () => {
+  const plan = planChatRequest(capabilities());
+
+  assertEquals(plan, null);
 });

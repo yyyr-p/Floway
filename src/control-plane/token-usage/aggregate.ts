@@ -1,17 +1,15 @@
-// Aggregate raw usage records for the dashboard.
-//
-// Cost is computed per raw record before grouping (so per-variant pricing
-// stays accurate even when display ids merge variants), then summed alongside
-// tokens. The frontend reads cost as a precomputed number on each record and
-// has no model-name parsing or pricing logic.
-//
-// Storage and export/import remain raw-model — see /api/data-transfer.
-
-import { displayModelName } from "../../shared/model-name.ts";
 import { recordCostUsd } from "./pricing.ts";
 import type { UsageRecord } from "../../repo/types.ts";
 
-export interface DisplayUsageRecord extends UsageRecord {
+export interface DisplayUsageRecord {
+  keyId: string;
+  model: string;
+  hour: string;
+  requests: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheCreationTokens: number;
   cost: number;
 }
 
@@ -35,8 +33,12 @@ export function aggregateUsageForDisplay(
     );
 
     const displayRecord: DisplayUsageRecord = {
-      ...record,
-      model: displayModelName(record.model),
+      keyId: record.keyId,
+      model: record.model,
+      hour: record.hour,
+      requests: record.requests,
+      inputTokens: record.inputTokens,
+      outputTokens: record.outputTokens,
       cacheReadTokens: cacheRead,
       cacheCreationTokens: cacheCreation,
       cost,

@@ -198,6 +198,8 @@ Deno.test("/api/token-usage is visible to any authenticated user and includes al
   await repo.usage.set({
     keyId: apiKey.id,
     model: "claude-sonnet-4",
+    upstream: null,
+    modelKey: "claude-sonnet-4",
     hour: "2026-03-15T10",
     requests: 2,
     inputTokens: 10,
@@ -208,6 +210,8 @@ Deno.test("/api/token-usage is visible to any authenticated user and includes al
   await repo.usage.set({
     keyId: "key_other",
     model: "gpt-5",
+    upstream: null,
+    modelKey: "gpt-5",
     hour: "2026-03-15T11",
     requests: 1,
     inputTokens: 20,
@@ -255,6 +259,8 @@ Deno.test("/api/token-usage can include all key metadata for stable dashboard co
   await repo.usage.set({
     keyId: "key_other",
     model: "gpt-5",
+    upstream: null,
+    modelKey: "gpt-5",
     hour: "2026-03-16T10",
     requests: 1,
     inputTokens: 20,
@@ -302,6 +308,7 @@ Deno.test("/api/token-usage merges Claude variants into backend base model recor
   const shared = {
     keyId: apiKey.id,
     hour: "2026-03-17T10",
+    upstream: "copilot:1",
     requests: 1,
     inputTokens: 10,
     outputTokens: 5,
@@ -309,12 +316,25 @@ Deno.test("/api/token-usage merges Claude variants into backend base model recor
     cacheCreationTokens: 1,
   };
 
-  await repo.usage.set({ ...shared, model: "claude-opus-4.7" });
-  await repo.usage.set({ ...shared, model: "claude-opus-4.7-xhigh" });
-  await repo.usage.set({ ...shared, model: "claude-opus-4.7-1m-internal" });
+  await repo.usage.set({
+    ...shared,
+    model: "claude-opus-4-7",
+    modelKey: "claude-opus-4.7",
+  });
+  await repo.usage.set({
+    ...shared,
+    model: "claude-opus-4-7",
+    modelKey: "claude-opus-4.7-xhigh",
+  });
+  await repo.usage.set({
+    ...shared,
+    model: "claude-opus-4-7",
+    modelKey: "claude-opus-4.7-1m-internal",
+  });
   await repo.usage.set({
     ...shared,
     model: "gpt-5.3-codex",
+    modelKey: "gpt-5.3-codex",
     inputTokens: 3,
     outputTokens: 4,
     cacheReadTokens: 0,

@@ -5,30 +5,34 @@ import { planGeminiRequest } from "./plan.ts";
 const capabilities = (
   overrides: Partial<ModelCapabilities> = {},
 ): ModelCapabilities => ({
+  supportedEndpoints: [],
   supportsMessages: false,
   supportsResponses: false,
   supportsChatCompletions: false,
   supportsAdaptiveThinking: false,
-  hasExplicitCapabilities: false,
   ...overrides,
 });
 
-Deno.test("planGeminiRequest rejects explicit capability misses instead of legacy fallback", () => {
-  const plan = planGeminiRequest(
-    { contents: [{ role: "user", parts: [{ text: "hello" }] }] },
-    "text-embedding-3-small",
-    capabilities({ hasExplicitCapabilities: true }),
-  );
+Deno.test("planGeminiRequest rejects capability misses instead of legacy fallback", () => {
+  const plan = planGeminiRequest(capabilities());
 
   assertEquals(plan, null);
 });
 
-Deno.test("planGeminiRequest keeps legacy fallback when capabilities were not explicit", () => {
+Deno.test("planGeminiRequest follows Chat Completions native preference", () => {
   const plan = planGeminiRequest(
-    { contents: [{ role: "user", parts: [{ text: "hello" }] }] },
-    "gpt-legacy-chat",
-    capabilities(),
+    capabilities({
+      supportedEndpoints: ["messages", "chat_completions"],
+      supportsMessages: true,
+      supportsChatCompletions: true,
+    }),
   );
 
   assertEquals(plan?.target, "chat-completions");
+});
+
+Deno.test("planGeminiRequest does not invent legacy fallback without provider endpoints", () => {
+  const plan = planGeminiRequest(capabilities());
+
+  assertEquals(plan, null);
 });

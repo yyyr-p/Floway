@@ -9,6 +9,8 @@ const collect = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
   return collected;
 };
 
+const ignoreUsage = { onUsage: () => {} };
+
 Deno.test("geminiProtocolEventsToSSEFrames emits data-only JSON chunks", async () => {
   const chunk = {
     candidates: [{
@@ -19,10 +21,13 @@ Deno.test("geminiProtocolEventsToSSEFrames emits data-only JSON chunks", async (
   } satisfies GeminiStreamEvent;
 
   const frames = await collect(
-    geminiProtocolEventsToSSEFrames((async function* () {
-      yield eventFrame(chunk);
-      yield doneFrame();
-    })()),
+    geminiProtocolEventsToSSEFrames(
+      (async function* () {
+        yield eventFrame(chunk);
+        yield doneFrame();
+      })(),
+      ignoreUsage,
+    ),
   );
 
   assertEquals(frames, [{
@@ -54,11 +59,14 @@ Deno.test("geminiProtocolEventsToSSEFrames stops at finishReason without DONE", 
   } satisfies GeminiStreamEvent;
 
   const frames = await collect(
-    geminiProtocolEventsToSSEFrames((async function* () {
-      yield eventFrame(first);
-      yield eventFrame(terminal);
-      yield eventFrame(afterTerminal);
-    })()),
+    geminiProtocolEventsToSSEFrames(
+      (async function* () {
+        yield eventFrame(first);
+        yield eventFrame(terminal);
+        yield eventFrame(afterTerminal);
+      })(),
+      ignoreUsage,
+    ),
   );
 
   assertEquals(frames.map((frame) => frame.data), [

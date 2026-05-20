@@ -8,7 +8,9 @@ const record = (
   hour: "2026-04-30T10",
   metricScope: "request_total",
   keyId: "key_a",
-  model: "claude-opus-4.7",
+  model: "claude-opus-4-7",
+  upstream: "copilot:1",
+  modelKey: "claude-opus-4.7",
   sourceApi: "messages",
   targetApi: "responses",
   stream: true,
@@ -20,16 +22,15 @@ const record = (
   ...overrides,
 });
 
-Deno.test("aggregatePerformanceForDisplay merges Claude variants before percentile calculation", () => {
+Deno.test("aggregatePerformanceForDisplay groups provider model keys by public model", () => {
   const rows = aggregatePerformanceForDisplay([
     record({
-      model: "claude-opus-4.7",
       requests: 90,
       totalMsSum: 9000,
       buckets: [{ lowerMs: 0, upperMs: 100, count: 90 }],
     }),
     record({
-      model: "claude-opus-4.7-xhigh",
+      modelKey: "claude-opus-4.7-xhigh",
       requests: 10,
       totalMsSum: 3000,
       buckets: [{ lowerMs: 100, upperMs: 300, count: 10 }],

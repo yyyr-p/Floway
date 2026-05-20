@@ -36,7 +36,7 @@ const mapOutputToMessagesContent = (
         // Pack `${encrypted_content}@${id}` into the Anthropic signature/data
         // slot so the original Responses item id survives the Messages
         // round-trip. Without this, the resynthesized `rs_${index}` id we
-        // would otherwise send back next turn fails Copilot's signature
+        // would otherwise send back next turn can fail upstream signature
         // verification with `400 invalid_request_body: "Encrypted content
         // item_id did not match the target item id."`. See packing rationale
         // and permalinks in `../shared/messages-responses-signature.ts`.
@@ -47,13 +47,12 @@ const mapOutputToMessagesContent = (
         const hasEncryptedContent = Object.hasOwn(item, "encrypted_content") &&
           encryptedContent !== undefined;
 
-        // Copilot's /v1/messages rejects `thinking: null` and missing
-        // `thinking` (Pydantic: "Input should be a valid string" /
-        // "Field required"), so an opaque-only reasoning item must round-trip
-        // as `redacted_thinking{data}` — the schema-sanctioned signature-only
+        // Messages-compatible targets can reject `thinking: null` and missing
+        // `thinking`, so an opaque-only reasoning item must round-trip as
+        // `redacted_thinking{data}` — the schema-sanctioned signature-only
         // shape — rather than a `thinking` block with no text. A reasoning
         // item with neither summary nor encrypted_content has no valid
-        // Anthropic shape (both alternates 400 upstream), so we drop it.
+        // Anthropic shape, so we drop it.
         if (!thinking) {
           if (hasEncryptedContent) {
             content.push({

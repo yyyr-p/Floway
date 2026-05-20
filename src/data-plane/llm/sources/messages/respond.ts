@@ -13,10 +13,13 @@ import type { StreamExecuteResult } from "../../shared/errors/result.ts";
 import { upstreamErrorToResponse } from "../../shared/errors/upstream-error.ts";
 import { type ProtocolFrame, sseFrame } from "../../shared/stream/types.ts";
 import {
-  type PerformanceFailureCapture,
-  setUsageResponseMetadata,
-} from "../../../../middleware/usage-response-metadata.ts";
-import { trackPerformanceOutcome } from "../performance.ts";
+  type RecordRequestPerformance,
+  type RecordUsage,
+  recordUsageIfPresent,
+  type SourceStreamOutcome,
+  tokenUsageFromMessagesResponse,
+  trackSourceStreamOutcome,
+} from "../accounting.ts";
 
 const internalMessagesErrorPayload = (error: InternalDebugError) => ({
   type: "error",
@@ -60,75 +63,85 @@ export const respondMessages = async (
   c: Context,
   result: StreamExecuteResult<MessagesStreamEventData>,
   wantsStream: boolean,
+  recordUsage: RecordUsage,
+  recordRequestPerformance: RecordRequestPerformance,
+  requestStartedAt: number,
   downstreamAbortController?: AbortController,
 ): Promise<Response> => {
+  const recordPerformance = (failed: boolean): void => {
+    recordRequestPerformance(
+      result.performance,
+      failed,
+      performance.now() - requestStartedAt,
+    );
+  };
+
   if (result.type === "upstream-error") {
     const response = upstreamErrorToResponse(result);
-    setUsageResponseMetadata(c, {
-      performance: result.performance,
-    });
+    recordPerformance(true);
     return response;
   }
 
   if (result.type === "internal-error") {
     const response = internalMessagesErrorResponse(result.status, result.error);
-    setUsageResponseMetadata(c, { performance: result.performance });
+    recordPerformance(true);
     return response;
   }
 
   if (!wantsStream) {
-    const performanceFailureCapture: PerformanceFailureCapture = {};
     try {
       const response = await collectMessagesProtocolEventsToResponse(
         result.events,
       );
+      await recordUsageIfPresent(
+        result.accounting,
+        tokenUsageFromMessagesResponse(response),
+        recordUsage,
+      );
 
-      setUsageResponseMetadata(c, {
-        usageModel: result.usageModel,
-        performance: result.performance,
-        performanceFailureCapture,
-      });
+      recordPerformance(false);
       return Response.json(response);
     } catch (error) {
-      performanceFailureCapture.failed = true;
-
       const response = internalMessagesErrorResponse(
         502,
         toInternalDebugError(error, "messages"),
       );
-      setUsageResponseMetadata(c, {
-        performance: result.performance,
-        performanceFailureCapture,
-      });
+      recordPerformance(true);
       return response;
     }
   }
 
-  const performanceFailureCapture: PerformanceFailureCapture = {};
+  const streamOutcome: SourceStreamOutcome = {
+    failed: false,
+    completed: false,
+  };
   const response = proxySSE(
     c,
     messagesProtocolEventsToSSEFrames(
-      trackPerformanceOutcome(
+      trackSourceStreamOutcome(
         result.events,
-        performanceFailureCapture,
+        streamOutcome,
         isMessagesFailureEvent,
         isMessagesCompletionFrame,
       ),
+      {
+        onUsage: (usage) => recordUsage(result.accounting, usage),
+      },
     ),
     {
       keepAlive: { frame: downstreamMessagesPingKeepAliveFrame },
       downstreamAbortController,
       onError: (error) => {
-        performanceFailureCapture.failed = true;
+        streamOutcome.failed = true;
         return internalMessagesStreamErrorFrame(error);
+      },
+      onComplete: (completion) => {
+        recordPerformance(
+          completion === "error" || streamOutcome.failed ||
+            (completion === "cancel" && !streamOutcome.completed),
+        );
       },
     },
   );
-
-  setUsageResponseMetadata(c, {
-    usageModel: result.usageModel,
-    performance: result.performance,
-    performanceFailureCapture,
-  });
   return response;
 };

@@ -6,6 +6,11 @@ import type {
 import type { EmitInput } from "../../emit-types.ts";
 import { eventResult } from "../../../shared/errors/result.ts";
 import { jsonFrame, sseFrame } from "../../../shared/stream/types.ts";
+import {
+  stubProvider,
+  stubUpstreamModel,
+  testAccounting,
+} from "../../../../../test-helpers.ts";
 import { withCyberPolicyRetried } from "./retry-cyber-policy.ts";
 
 const makePayload = (): ResponsesPayload => ({
@@ -25,9 +30,12 @@ const makePayload = (): ResponsesPayload => ({
 
 const makeInput = (payload: ResponsesPayload): EmitInput<ResponsesPayload> => ({
   sourceApi: "responses",
+  model: payload.model,
+  upstream: "test-upstream",
   payload,
-  githubToken: "github-token",
-  accountType: "individual",
+  provider: stubProvider(),
+  upstreamModel: stubUpstreamModel(),
+  enabledFixes: new Set<string>(),
 });
 
 type PromiseState<T> =
@@ -64,6 +72,22 @@ const completedResponse = (): ResponsesResult => ({
   output_text: "ok",
   output: [],
   usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+});
+
+const accountingFor = (modelKey: string) => ({
+  ...testAccounting,
+  modelKey,
+});
+
+const performanceFor = (modelKey: string) => ({
+  keyId: "key_test",
+  model: "gpt-test",
+  upstream: "test-upstream",
+  modelKey,
+  sourceApi: "responses" as const,
+  targetApi: "responses" as const,
+  stream: true,
+  runtimeLocation: "test",
 });
 
 const upstreamCyberPolicyError = (message: string) => ({
@@ -107,9 +131,12 @@ Deno.test("withCyberPolicyRetried retries fatal upstream cyber policy errors fiv
       return Promise.resolve(upstreamCyberPolicyError(`blocked ${attempts}`));
     }
 
-    return Promise.resolve(eventResult((async function* () {
-      yield jsonFrame(completedResponse());
-    })()));
+    return Promise.resolve(eventResult(
+      (async function* () {
+        yield jsonFrame(completedResponse());
+      })(),
+      testAccounting,
+    ));
   });
 
   assertEquals(attempts, 6);
@@ -124,40 +151,46 @@ Deno.test("withCyberPolicyRetried retries fatal Responses SSE cyber policy failu
     attempts += 1;
 
     if (attempts < 3) {
-      return Promise.resolve(eventResult((async function* () {
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.failed",
-            sequence_number: 1,
-            response: {
-              id: `resp_blocked_${attempts}`,
-              object: "response",
-              model: "gpt-test",
-              status: "failed",
-              output: [],
-              output_text: "",
-              error: {
-                message: "This request was flagged for cyber policy.",
-                type: "invalid_request_error",
-                code: "cyber_policy",
+      return Promise.resolve(eventResult(
+        (async function* () {
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.failed",
+              sequence_number: 1,
+              response: {
+                id: `resp_blocked_${attempts}`,
+                object: "response",
+                model: "gpt-test",
+                status: "failed",
+                output: [],
+                output_text: "",
+                error: {
+                  message: "This request was flagged for cyber policy.",
+                  type: "invalid_request_error",
+                  code: "cyber_policy",
+                },
               },
-            },
-          }),
-          "response.failed",
-        );
-      })()));
+            }),
+            "response.failed",
+          );
+        })(),
+        testAccounting,
+      ));
     }
 
-    return Promise.resolve(eventResult((async function* () {
-      yield sseFrame(
-        JSON.stringify({
-          type: "response.completed",
-          sequence_number: 1,
-          response: completedResponse(),
-        }),
-        "response.completed",
-      );
-    })()));
+    return Promise.resolve(eventResult(
+      (async function* () {
+        yield sseFrame(
+          JSON.stringify({
+            type: "response.completed",
+            sequence_number: 1,
+            response: completedResponse(),
+          }),
+          "response.completed",
+        );
+      })(),
+      testAccounting,
+    ));
   });
 
   assertEquals(attempts, 1);
@@ -181,6 +214,70 @@ Deno.test("withCyberPolicyRetried retries fatal Responses SSE cyber policy failu
   );
 });
 
+Deno.test("withCyberPolicyRetried attributes streaming retries to the final provider call", async () => {
+  const payload = makePayload();
+  let attempts = 0;
+
+  const result = await withCyberPolicyRetried(makeInput(payload), () => {
+    attempts += 1;
+
+    if (attempts === 1) {
+      return Promise.resolve(eventResult(
+        (async function* () {
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.failed",
+              sequence_number: 1,
+              response: {
+                id: "resp_blocked_first_model_key",
+                object: "response",
+                model: "gpt-test",
+                status: "failed",
+                output: [],
+                output_text: "",
+                error: {
+                  message: "This request was flagged for cyber policy.",
+                  type: "invalid_request_error",
+                  code: "cyber_policy",
+                },
+              },
+            }),
+            "response.failed",
+          );
+        })(),
+        accountingFor("first-model-key"),
+        performanceFor("first-model-key"),
+      ));
+    }
+
+    return Promise.resolve(eventResult(
+      (async function* () {
+        yield sseFrame(
+          JSON.stringify({
+            type: "response.completed",
+            sequence_number: 1,
+            response: completedResponse(),
+          }),
+          "response.completed",
+        );
+      })(),
+      accountingFor("final-model-key"),
+      performanceFor("final-model-key"),
+    ));
+  });
+
+  assertEquals(result.type, "events");
+  if (result.type !== "events") throw new Error("expected events result");
+  assertEquals(result.accounting.modelKey, "first-model-key");
+
+  const frames = [];
+  for await (const frame of result.events) frames.push(frame);
+
+  assertEquals(frames.length, 1);
+  assertEquals(result.accounting.modelKey, "final-model-key");
+  assertEquals(result.performance?.modelKey, "final-model-key");
+});
+
 Deno.test("withCyberPolicyRetried returns successful streams without draining them", async () => {
   const payload = makePayload();
   let release!: () => void;
@@ -193,27 +290,30 @@ Deno.test("withCyberPolicyRetried returns successful streams without draining th
   const resultPromise = withCyberPolicyRetried(
     makeInput(payload),
     () =>
-      Promise.resolve(eventResult((async function* () {
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.output_text.delta",
-            sequence_number: 1,
-            delta: "ok",
-          }),
-          "response.output_text.delta",
-        );
+      Promise.resolve(eventResult(
+        (async function* () {
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.output_text.delta",
+              sequence_number: 1,
+              delta: "ok",
+            }),
+            "response.output_text.delta",
+          );
 
-        markStreamDrained();
-        await untilRelease;
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.completed",
-            sequence_number: 2,
-            response: completedResponse(),
-          }),
-          "response.completed",
-        );
-      })())),
+          markStreamDrained();
+          await untilRelease;
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.completed",
+              sequence_number: 2,
+              response: completedResponse(),
+            }),
+            "response.completed",
+          );
+        })(),
+        testAccounting,
+      )),
   );
 
   const firstAction = await Promise.race([
@@ -242,17 +342,20 @@ Deno.test("withCyberPolicyRetried returns streaming results before the first ups
   const resultPromise = withCyberPolicyRetried(
     makeInput(payload),
     () =>
-      Promise.resolve(eventResult((async function* () {
-        await firstFrameReady;
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.completed",
-            sequence_number: 1,
-            response: completedResponse(),
-          }),
-          "response.completed",
-        );
-      })())),
+      Promise.resolve(eventResult(
+        (async function* () {
+          await firstFrameReady;
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.completed",
+              sequence_number: 1,
+              response: completedResponse(),
+            }),
+            "response.completed",
+          );
+        })(),
+        testAccounting,
+      )),
   );
 
   const state = await promiseStateAfterMicrotasks(resultPromise);
@@ -295,10 +398,13 @@ Deno.test("withCyberPolicyRetried does not start another streaming retry after d
     },
     () => {
       attempts += 1;
-      return Promise.resolve(eventResult((async function* () {
-        downstreamAbortController.abort();
-        yield cyberPolicyFrame;
-      })()));
+      return Promise.resolve(eventResult(
+        (async function* () {
+          downstreamAbortController.abort();
+          yield cyberPolicyFrame;
+        })(),
+        testAccounting,
+      ));
     },
   );
 
@@ -320,28 +426,31 @@ Deno.test("withCyberPolicyRetried streams the final HTTP cyber policy failure af
     attempts += 1;
 
     if (attempts === 1) {
-      return Promise.resolve(eventResult((async function* () {
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.failed",
-            sequence_number: 1,
-            response: {
-              id: "resp_stream_policy_failure",
-              object: "response",
-              model: "gpt-test",
-              status: "failed",
-              output: [],
-              output_text: "",
-              error: {
-                message: "This request was flagged for cyber policy.",
-                type: "invalid_request_error",
-                code: "cyber_policy",
+      return Promise.resolve(eventResult(
+        (async function* () {
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.failed",
+              sequence_number: 1,
+              response: {
+                id: "resp_stream_policy_failure",
+                object: "response",
+                model: "gpt-test",
+                status: "failed",
+                output: [],
+                output_text: "",
+                error: {
+                  message: "This request was flagged for cyber policy.",
+                  type: "invalid_request_error",
+                  code: "cyber_policy",
+                },
               },
-            },
-          }),
-          "response.failed",
-        );
-      })()));
+            }),
+            "response.failed",
+          );
+        })(),
+        testAccounting,
+      ));
     }
 
     return Promise.resolve(upstreamCyberPolicyError(`blocked ${attempts}`));
@@ -378,28 +487,31 @@ Deno.test("withCyberPolicyRetried streams a later HTTP upstream failure after a 
     attempts += 1;
 
     if (attempts === 1) {
-      return Promise.resolve(eventResult((async function* () {
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.failed",
-            sequence_number: 1,
-            response: {
-              id: "resp_stream_policy_failure",
-              object: "response",
-              model: "gpt-test",
-              status: "failed",
-              output: [],
-              output_text: "",
-              error: {
-                message: "This request was flagged for cyber policy.",
-                type: "invalid_request_error",
-                code: "cyber_policy",
+      return Promise.resolve(eventResult(
+        (async function* () {
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.failed",
+              sequence_number: 1,
+              response: {
+                id: "resp_stream_policy_failure",
+                object: "response",
+                model: "gpt-test",
+                status: "failed",
+                output: [],
+                output_text: "",
+                error: {
+                  message: "This request was flagged for cyber policy.",
+                  type: "invalid_request_error",
+                  code: "cyber_policy",
+                },
               },
-            },
-          }),
-          "response.failed",
-        );
-      })()));
+            }),
+            "response.failed",
+          );
+        })(),
+        testAccounting,
+      ));
     }
 
     return Promise.resolve(upstreamServerError("upstream failed after retry"));
@@ -434,28 +546,31 @@ Deno.test("withCyberPolicyRetried preserves debug fields for later internal fail
     attempts += 1;
 
     if (attempts === 1) {
-      return Promise.resolve(eventResult((async function* () {
-        yield sseFrame(
-          JSON.stringify({
-            type: "response.failed",
-            sequence_number: 1,
-            response: {
-              id: "resp_stream_policy_failure",
-              object: "response",
-              model: "gpt-test",
-              status: "failed",
-              output: [],
-              output_text: "",
-              error: {
-                message: "This request was flagged for cyber policy.",
-                type: "invalid_request_error",
-                code: "cyber_policy",
+      return Promise.resolve(eventResult(
+        (async function* () {
+          yield sseFrame(
+            JSON.stringify({
+              type: "response.failed",
+              sequence_number: 1,
+              response: {
+                id: "resp_stream_policy_failure",
+                object: "response",
+                model: "gpt-test",
+                status: "failed",
+                output: [],
+                output_text: "",
+                error: {
+                  message: "This request was flagged for cyber policy.",
+                  type: "invalid_request_error",
+                  code: "cyber_policy",
+                },
               },
-            },
-          }),
-          "response.failed",
-        );
-      })()));
+            }),
+            "response.failed",
+          );
+        })(),
+        testAccounting,
+      ));
     }
 
     return Promise.resolve({

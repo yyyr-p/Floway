@@ -5,55 +5,33 @@ import { planMessagesRequest } from "./plan.ts";
 const capabilities = (
   overrides: Partial<ModelCapabilities> = {},
 ): ModelCapabilities => ({
+  supportedEndpoints: [],
   supportsMessages: false,
   supportsResponses: false,
   supportsChatCompletions: false,
   supportsAdaptiveThinking: false,
-  hasExplicitCapabilities: false,
   ...overrides,
 });
 
-Deno.test("planMessagesRequest rejects explicit capability misses instead of chat fallback", () => {
-  const plan = planMessagesRequest(
-    {
-      model: "text-embedding-3-small",
-      max_tokens: 128,
-      messages: [{ role: "user", content: "hello" }],
-    },
-    capabilities({ hasExplicitCapabilities: true }),
-    undefined,
-  );
+Deno.test("planMessagesRequest rejects capability misses instead of chat fallback", () => {
+  const plan = planMessagesRequest(capabilities());
 
   assertEquals(plan, null);
 });
 
 Deno.test("planMessagesRequest honors explicit Chat Completions support", () => {
   const plan = planMessagesRequest(
-    {
-      model: "gpt-chat-only",
-      max_tokens: 128,
-      messages: [{ role: "user", content: "hello" }],
-    },
     capabilities({
+      supportedEndpoints: ["chat_completions"],
       supportsChatCompletions: true,
-      hasExplicitCapabilities: true,
     }),
-    undefined,
   );
 
   assertEquals(plan?.target, "chat-completions");
 });
 
-Deno.test("planMessagesRequest keeps legacy chat fallback when capabilities were not explicit", () => {
-  const plan = planMessagesRequest(
-    {
-      model: "gpt-legacy-chat",
-      max_tokens: 128,
-      messages: [{ role: "user", content: "hello" }],
-    },
-    capabilities(),
-    undefined,
-  );
+Deno.test("planMessagesRequest does not invent legacy fallback without provider endpoints", () => {
+  const plan = planMessagesRequest(capabilities());
 
-  assertEquals(plan?.target, "chat-completions");
+  assertEquals(plan, null);
 });

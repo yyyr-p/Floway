@@ -1,30 +1,53 @@
-import { getRepo } from "../../repo/index.ts";
-import { loadModels, type ModelsResponse } from "./cache.ts";
-import { mergeClaudeVariants } from "./merge.ts";
+import { endpointsIncludeLlmGeneration } from "../providers/endpoints.ts";
+import { getModels } from "../providers/registry.ts";
+import type { Model } from "../providers/types.ts";
+import type {
+  AnthropicModelInfo,
+  AnthropicModelsResponse,
+  ModelInfo,
+  ModelsResponse,
+} from "./types.ts";
+
+export const toPublicModelInfo = (model: Model): ModelInfo => {
+  return {
+    id: model.id,
+    object: model.object,
+    ...(model.owned_by !== undefined ? { owned_by: model.owned_by } : {}),
+    ...(model.created !== undefined ? { created: model.created } : {}),
+  };
+};
+
+export const toAnthropicModelInfo = (model: Model): AnthropicModelInfo => {
+  const createdAt = model.created_at ??
+    (model.created !== undefined
+      ? new Date(model.created * 1000).toISOString()
+      : undefined);
+  return {
+    id: model.id,
+    type: "model",
+    display_name: model.display_name ?? model.name ?? model.id,
+    ...(createdAt !== undefined ? { created_at: createdAt } : {}),
+  };
+};
 
 export const loadMergedModels = async (): Promise<ModelsResponse> => {
-  const accounts = await getRepo().github.listAccounts();
-  const byId = new Map<string, ModelsResponse["data"][number]>();
-  let sawSuccess = false;
-  let lastError: unknown = null;
+  const models = await getModels();
+  return {
+    object: "list",
+    data: models.map(toPublicModelInfo),
+  };
+};
 
-  for (const account of accounts) {
-    const result = await loadModels(account.token, account.accountType);
-    if (result.type === "error") {
-      lastError = result.error;
-      continue;
-    }
-
-    sawSuccess = true;
-    for (const model of result.data.data) {
-      if (!byId.has(model.id)) byId.set(model.id, model);
-    }
-  }
-
-  if (sawSuccess) {
-    return mergeClaudeVariants({ object: "list", data: [...byId.values()] });
-  }
-
-  if (lastError) throw lastError;
-  throw new Error("No GitHub account connected — add one via the dashboard");
+export const loadAnthropicModels = async (): Promise<
+  AnthropicModelsResponse
+> => {
+  const data = (await getModels())
+    .filter((model) => endpointsIncludeLlmGeneration(model.supportedEndpoints))
+    .map(toAnthropicModelInfo);
+  return {
+    data,
+    has_more: false,
+    first_id: data[0]?.id ?? null,
+    last_id: data[data.length - 1]?.id ?? null,
+  };
 };

@@ -1,6 +1,4 @@
 import type {
-  AccountModelBackoffRecord,
-  AccountModelBackoffRepo,
   ApiKey,
   ApiKeyRepo,
   CacheRepo,
@@ -16,6 +14,8 @@ import type {
   SearchConfigRepo,
   SearchUsageRecord,
   SearchUsageRepo,
+  UpstreamConfig,
+  UpstreamConfigRepo,
   UsageRecord,
   UsageRepo,
 } from "./types.ts";
@@ -312,6 +312,8 @@ class D1UsageRepo implements UsageRepo {
   async record(
     keyId: string,
     model: string,
+    upstream: string | null,
+    modelKey: string,
     hour: string,
     requests: number,
     inputTokens: number,
@@ -321,8 +323,8 @@ class D1UsageRepo implements UsageRepo {
   ): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (key_id, model, hour) DO UPDATE SET
+        `INSERT INTO usage (key_id, model, upstream, model_key, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO UPDATE SET
            requests = requests + excluded.requests,
            input_tokens = input_tokens + excluded.input_tokens,
            output_tokens = output_tokens + excluded.output_tokens,
@@ -332,6 +334,8 @@ class D1UsageRepo implements UsageRepo {
       .bind(
         keyId,
         model,
+        upstream,
+        modelKey,
         hour,
         requests,
         inputTokens,
@@ -346,8 +350,8 @@ class D1UsageRepo implements UsageRepo {
     opts: { keyId?: string; start: string; end: string },
   ): Promise<UsageRecord[]> {
     const sql = opts.keyId
-      ? "SELECT key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage WHERE key_id = ? AND hour >= ? AND hour < ? ORDER BY hour"
-      : "SELECT key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage WHERE hour >= ? AND hour < ? ORDER BY hour";
+      ? "SELECT key_id, model, upstream, model_key, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage WHERE key_id = ? AND hour >= ? AND hour < ? ORDER BY hour"
+      : "SELECT key_id, model, upstream, model_key, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage WHERE hour >= ? AND hour < ? ORDER BY hour";
     const binds = opts.keyId
       ? [opts.keyId, opts.start, opts.end]
       : [opts.start, opts.end];
@@ -358,6 +362,8 @@ class D1UsageRepo implements UsageRepo {
         {
           key_id: string;
           model: string;
+          upstream: string | null;
+          model_key: string;
           hour: string;
           requests: number;
           input_tokens: number;
@@ -366,27 +372,20 @@ class D1UsageRepo implements UsageRepo {
           cache_creation_tokens: number;
         }
       >();
-    return results.map((r) => ({
-      keyId: r.key_id,
-      model: r.model,
-      hour: r.hour,
-      requests: r.requests,
-      inputTokens: r.input_tokens,
-      outputTokens: r.output_tokens,
-      cacheReadTokens: r.cache_read_tokens ?? 0,
-      cacheCreationTokens: r.cache_creation_tokens ?? 0,
-    }));
+    return results.map(toUsageRecord);
   }
 
   async listAll(): Promise<UsageRecord[]> {
     const { results } = await this.db
       .prepare(
-        "SELECT key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage ORDER BY hour",
+        "SELECT key_id, model, upstream, model_key, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens FROM usage ORDER BY hour",
       )
       .all<
         {
           key_id: string;
           model: string;
+          upstream: string | null;
+          model_key: string;
           hour: string;
           requests: number;
           input_tokens: number;
@@ -395,23 +394,15 @@ class D1UsageRepo implements UsageRepo {
           cache_creation_tokens: number;
         }
       >();
-    return results.map((r) => ({
-      keyId: r.key_id,
-      model: r.model,
-      hour: r.hour,
-      requests: r.requests,
-      inputTokens: r.input_tokens,
-      outputTokens: r.output_tokens,
-      cacheReadTokens: r.cache_read_tokens ?? 0,
-      cacheCreationTokens: r.cache_creation_tokens ?? 0,
-    }));
+    return results.map(toUsageRecord);
   }
 
   async set(record: UsageRecord): Promise<void> {
+    const normalized = normalizeUsageRecord(record);
     await this.db
       .prepare(
-        `INSERT INTO usage (key_id, model, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (key_id, model, hour) DO UPDATE SET
+        `INSERT INTO usage (key_id, model, upstream, model_key, hour, requests, input_tokens, output_tokens, cache_read_tokens, cache_creation_tokens) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO UPDATE SET
            requests = excluded.requests,
            input_tokens = excluded.input_tokens,
            output_tokens = excluded.output_tokens,
@@ -419,14 +410,16 @@ class D1UsageRepo implements UsageRepo {
            cache_creation_tokens = excluded.cache_creation_tokens`,
       )
       .bind(
-        record.keyId,
-        record.model,
-        record.hour,
-        record.requests,
-        record.inputTokens,
-        record.outputTokens,
-        record.cacheReadTokens ?? 0,
-        record.cacheCreationTokens ?? 0,
+        normalized.keyId,
+        normalized.model,
+        normalized.upstream,
+        normalized.modelKey,
+        normalized.hour,
+        normalized.requests,
+        normalized.inputTokens,
+        normalized.outputTokens,
+        normalized.cacheReadTokens ?? 0,
+        normalized.cacheCreationTokens ?? 0,
       )
       .run();
   }
@@ -435,6 +428,39 @@ class D1UsageRepo implements UsageRepo {
     await this.db.prepare("DELETE FROM usage").run();
   }
 }
+
+type UsageRow = {
+  key_id: string;
+  model: string;
+  upstream: string | null;
+  model_key: string;
+  hour: string;
+  requests: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+};
+
+const normalizeUsageRecord = (record: UsageRecord): UsageRecord => ({
+  ...record,
+  upstream: record.upstream ?? null,
+  cacheReadTokens: record.cacheReadTokens ?? 0,
+  cacheCreationTokens: record.cacheCreationTokens ?? 0,
+});
+
+const toUsageRecord = (row: UsageRow): UsageRecord => ({
+  keyId: row.key_id,
+  model: row.model,
+  upstream: row.upstream ?? null,
+  modelKey: row.model_key,
+  hour: row.hour,
+  requests: row.requests,
+  inputTokens: row.input_tokens,
+  outputTokens: row.output_tokens,
+  cacheReadTokens: row.cache_read_tokens ?? 0,
+  cacheCreationTokens: row.cache_creation_tokens ?? 0,
+});
 
 class D1SearchUsageRepo implements SearchUsageRepo {
   constructor(private db: D1Database) {}
@@ -590,7 +616,7 @@ class D1PerformanceRepo implements PerformanceRepo {
 
     const { results: summaries } = await this.db
       .prepare(
-        `SELECT hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location, requests, errors, total_ms_sum
+        `SELECT hour, metric_scope, key_id, model, upstream, model_key, source_api, target_api, stream, runtime_location, requests, errors, total_ms_sum
          FROM performance_summary WHERE ${where} ORDER BY hour`,
       )
       .bind(...binds)
@@ -608,7 +634,7 @@ class D1PerformanceRepo implements PerformanceRepo {
 
     const { results: buckets } = await this.db
       .prepare(
-        `SELECT hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location, lower_ms, upper_ms, count
+        `SELECT hour, metric_scope, key_id, model, upstream, model_key, source_api, target_api, stream, runtime_location, lower_ms, upper_ms, count
          FROM performance_latency_buckets WHERE ${where} ORDER BY hour, upper_ms`,
       )
       .bind(...binds)
@@ -655,9 +681,9 @@ class D1PerformanceRepo implements PerformanceRepo {
   ): D1PreparedStatement {
     return this.db
       .prepare(
-        `INSERT INTO performance_summary (hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location, requests, errors, total_ms_sum)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location) DO UPDATE SET
+        `INSERT INTO performance_summary (hour, metric_scope, key_id, model, upstream, model_key, source_api, target_api, stream, runtime_location, requests, errors, total_ms_sum)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO UPDATE SET
            requests = requests + excluded.requests,
            errors = errors + excluded.errors,
            total_ms_sum = total_ms_sum + excluded.total_ms_sum`,
@@ -667,6 +693,8 @@ class D1PerformanceRepo implements PerformanceRepo {
         sample.metricScope,
         sample.keyId,
         sample.model,
+        sample.upstream,
+        sample.modelKey,
         sample.sourceApi,
         sample.targetApi,
         sample.stream ? 1 : 0,
@@ -682,9 +710,9 @@ class D1PerformanceRepo implements PerformanceRepo {
   ): D1PreparedStatement {
     return this.db
       .prepare(
-        `INSERT INTO performance_summary (hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location, requests, errors, total_ms_sum)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location) DO UPDATE SET
+        `INSERT INTO performance_summary (hour, metric_scope, key_id, model, upstream, model_key, source_api, target_api, stream, runtime_location, requests, errors, total_ms_sum)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO UPDATE SET
            requests = excluded.requests,
            errors = excluded.errors,
            total_ms_sum = excluded.total_ms_sum`,
@@ -694,6 +722,8 @@ class D1PerformanceRepo implements PerformanceRepo {
         record.metricScope,
         record.keyId,
         record.model,
+        record.upstream,
+        record.modelKey,
         record.sourceApi,
         record.targetApi,
         record.stream ? 1 : 0,
@@ -710,7 +740,7 @@ class D1PerformanceRepo implements PerformanceRepo {
     return this.db
       .prepare(
         `DELETE FROM performance_latency_buckets
-         WHERE hour = ? AND metric_scope = ? AND key_id = ? AND model = ? AND source_api = ? AND target_api = ? AND stream = ? AND runtime_location = ?`,
+         WHERE hour = ? AND metric_scope = ? AND key_id = ? AND model = ? AND upstream IS ? AND model_key = ? AND source_api = ? AND target_api = ? AND stream = ? AND runtime_location = ?`,
       )
       .bind(...performanceDimensionBinds(record));
   }
@@ -742,9 +772,9 @@ class D1PerformanceRepo implements PerformanceRepo {
   ): D1PreparedStatement {
     return this.db
       .prepare(
-        `INSERT INTO performance_latency_buckets (hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location, lower_ms, upper_ms, count)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-         ON CONFLICT (hour, metric_scope, key_id, model, source_api, target_api, stream, runtime_location, lower_ms, upper_ms) DO UPDATE SET
+        `INSERT INTO performance_latency_buckets (hour, metric_scope, key_id, model, upstream, model_key, source_api, target_api, stream, runtime_location, lower_ms, upper_ms, count)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT DO UPDATE SET
            count = ${
           mode === "add" ? "count + excluded.count" : "excluded.count"
         }`,
@@ -754,6 +784,8 @@ class D1PerformanceRepo implements PerformanceRepo {
         sample.metricScope,
         sample.keyId,
         sample.model,
+        sample.upstream,
+        sample.modelKey,
         sample.sourceApi,
         sample.targetApi,
         sample.stream ? 1 : 0,
@@ -770,6 +802,8 @@ type PerformanceDimensionRow = {
   metric_scope: string;
   key_id: string;
   model: string;
+  upstream: string | null;
+  model_key: string;
   source_api: string;
   target_api: string;
   stream: number;
@@ -796,6 +830,8 @@ function performanceDimensionsFromRow(
     metricScope: row.metric_scope as PerformanceMetricScope,
     keyId: row.key_id,
     model: row.model,
+    upstream: row.upstream ?? null,
+    modelKey: row.model_key,
     sourceApi: row.source_api as PerformanceTelemetryRecord["sourceApi"],
     targetApi: row.target_api as PerformanceTelemetryRecord["targetApi"],
     stream: row.stream === 1,
@@ -809,6 +845,8 @@ function performanceRecordKey(record: PerformanceDimensions): string {
     record.metricScope,
     record.keyId,
     record.model,
+    record.upstream,
+    record.modelKey,
     record.sourceApi,
     record.targetApi,
     record.stream ? "1" : "0",
@@ -822,6 +860,8 @@ function performanceDimensionBinds(record: PerformanceDimensions): unknown[] {
     record.metricScope,
     record.keyId,
     record.model,
+    record.upstream,
+    record.modelKey,
     record.sourceApi,
     record.targetApi,
     record.stream ? 1 : 0,
@@ -837,6 +877,8 @@ function comparePerformanceTelemetryRecords(
     a.metricScope.localeCompare(b.metricScope) ||
     a.keyId.localeCompare(b.keyId) ||
     a.model.localeCompare(b.model) ||
+    (a.upstream ?? "").localeCompare(b.upstream ?? "") ||
+    a.modelKey.localeCompare(b.modelKey) ||
     a.sourceApi.localeCompare(b.sourceApi) ||
     a.targetApi.localeCompare(b.targetApi) ||
     Number(a.stream) - Number(b.stream) ||
@@ -888,96 +930,6 @@ class D1CacheRepo implements CacheRepo {
   }
 }
 
-class D1AccountModelBackoffRepo implements AccountModelBackoffRepo {
-  constructor(private db: D1Database) {}
-
-  async get(
-    accountId: number,
-    model: string,
-  ): Promise<AccountModelBackoffRecord | null> {
-    const row = await this.db.prepare(
-      "SELECT account_id, model, status, expires_at FROM account_model_backoffs WHERE account_id = ? AND model = ?",
-    )
-      .bind(accountId, model)
-      .first<{
-        account_id: number;
-        model: string;
-        status: number;
-        expires_at: number;
-      }>();
-    return row
-      ? {
-        accountId: row.account_id,
-        model: row.model,
-        status: row.status,
-        expiresAt: row.expires_at,
-      }
-      : null;
-  }
-
-  async list(accountIds: number[]): Promise<AccountModelBackoffRecord[]> {
-    if (accountIds.length === 0) return [];
-
-    const placeholders = accountIds.map(() => "?").join(", ");
-    const { results } = await this.db.prepare(
-      `SELECT account_id, model, status, expires_at FROM account_model_backoffs WHERE account_id IN (${placeholders}) ORDER BY account_id, model`,
-    )
-      .bind(...accountIds)
-      .all<{
-        account_id: number;
-        model: string;
-        status: number;
-        expires_at: number;
-      }>();
-    return results.map((row) => ({
-      accountId: row.account_id,
-      model: row.model,
-      status: row.status,
-      expiresAt: row.expires_at,
-    }));
-  }
-
-  async mark(record: AccountModelBackoffRecord): Promise<void> {
-    await this.db.prepare(
-      `INSERT INTO account_model_backoffs (account_id, model, status, expires_at) VALUES (?, ?, ?, ?)
-       ON CONFLICT (account_id, model) DO UPDATE SET status = excluded.status, expires_at = excluded.expires_at`,
-    )
-      .bind(record.accountId, record.model, record.status, record.expiresAt)
-      .run();
-  }
-
-  async clear(accountId: number, model: string): Promise<void> {
-    await this.db.prepare(
-      "DELETE FROM account_model_backoffs WHERE account_id = ? AND model = ?",
-    )
-      .bind(accountId, model)
-      .run();
-  }
-
-  async clearModel(accountIds: number[], model: string): Promise<void> {
-    if (accountIds.length === 0) return;
-
-    const placeholders = accountIds.map(() => "?").join(", ");
-    await this.db.prepare(
-      `DELETE FROM account_model_backoffs WHERE model = ? AND account_id IN (${placeholders})`,
-    )
-      .bind(model, ...accountIds)
-      .run();
-  }
-
-  async clearAccount(accountId: number): Promise<void> {
-    await this.db.prepare(
-      "DELETE FROM account_model_backoffs WHERE account_id = ?",
-    )
-      .bind(accountId)
-      .run();
-  }
-
-  async deleteAll(): Promise<void> {
-    await this.db.prepare("DELETE FROM account_model_backoffs").run();
-  }
-}
-
 class D1SearchConfigRepo implements SearchConfigRepo {
   constructor(private db: D1Database) {}
 
@@ -1009,6 +961,153 @@ class D1SearchConfigRepo implements SearchConfigRepo {
   }
 }
 
+class D1UpstreamConfigRepo implements UpstreamConfigRepo {
+  constructor(private db: D1Database) {}
+
+  async list(): Promise<UpstreamConfig[]> {
+    const { results } = await this.db
+      .prepare(
+        "SELECT id, name, base_url, bearer_token, supported_endpoints, enabled, sort_order, created_at, enabled_fixes, path_overrides FROM upstream_configs ORDER BY sort_order, created_at",
+      )
+      .all<UpstreamConfigRow>();
+    return results.map(toUpstreamConfig);
+  }
+
+  async getById(id: string): Promise<UpstreamConfig | null> {
+    const row = await this.db
+      .prepare(
+        "SELECT id, name, base_url, bearer_token, supported_endpoints, enabled, sort_order, created_at, enabled_fixes, path_overrides FROM upstream_configs WHERE id = ?",
+      )
+      .bind(id)
+      .first<UpstreamConfigRow>();
+    return row ? toUpstreamConfig(row) : null;
+  }
+
+  async save(config: UpstreamConfig): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO upstream_configs (id, name, base_url, bearer_token, supported_endpoints, enabled, sort_order, created_at, enabled_fixes, path_overrides) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (id) DO UPDATE SET
+           name = excluded.name,
+           base_url = excluded.base_url,
+           bearer_token = excluded.bearer_token,
+           supported_endpoints = excluded.supported_endpoints,
+           enabled = excluded.enabled,
+           sort_order = excluded.sort_order,
+           enabled_fixes = excluded.enabled_fixes,
+           path_overrides = excluded.path_overrides`,
+      )
+      .bind(
+        config.id,
+        config.name,
+        config.baseUrl,
+        config.bearerToken,
+        JSON.stringify(config.supportedEndpoints),
+        config.enabled ? 1 : 0,
+        config.sortOrder,
+        config.createdAt,
+        JSON.stringify(config.enabledFixes),
+        config.pathOverrides ? JSON.stringify(config.pathOverrides) : null,
+      )
+      .run();
+  }
+
+  async delete(id: string): Promise<boolean> {
+    const result = await this.db
+      .prepare("DELETE FROM upstream_configs WHERE id = ?")
+      .bind(id)
+      .run();
+    return (result.meta.changes as number ?? 0) > 0;
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare("DELETE FROM upstream_configs").run();
+  }
+}
+
+interface UpstreamConfigRow {
+  id: string;
+  name: string;
+  base_url: string;
+  bearer_token: string;
+  supported_endpoints: string;
+  enabled: number;
+  sort_order: number;
+  created_at: string;
+  enabled_fixes: string | null;
+  path_overrides: string | null;
+}
+
+function toUpstreamConfig(row: UpstreamConfigRow): UpstreamConfig {
+  let supportedEndpoints: string[] = [];
+  try {
+    const parsed = JSON.parse(row.supported_endpoints);
+    if (Array.isArray(parsed)) {
+      supportedEndpoints = parsed.filter((v): v is string =>
+        typeof v === "string"
+      );
+    }
+  } catch {
+    // Stored value is malformed; treat as empty so upstream is not picked.
+  }
+
+  let pathOverrides: UpstreamConfig["pathOverrides"];
+  if (row.path_overrides) {
+    try {
+      const parsed = JSON.parse(row.path_overrides);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        const result: Record<string, string> = {};
+        for (
+          const [k, v] of Object.entries(parsed as Record<string, unknown>)
+        ) {
+          if (typeof v === "string") result[k] = v;
+        }
+        if (Object.keys(result).length > 0) {
+          pathOverrides = result as UpstreamConfig["pathOverrides"];
+        }
+      }
+    } catch {
+      // Malformed override JSON falls back to defaults rather than blocking
+      // the upstream from being used.
+    }
+  }
+
+  // Parse enabled_fixes JSON: keep all string entries, dedupe + sort.
+  // The repo intentionally does not check ids against the fix catalog —
+  // that's the control plane's job on write. Unknown ids surviving on
+  // read (e.g. from an older snapshot) are inert: the per-target
+  // interceptor assembler only matches registered fixIds.
+  let enabledFixes: string[] = [];
+  if (row.enabled_fixes) {
+    try {
+      const parsed = JSON.parse(row.enabled_fixes);
+      if (Array.isArray(parsed)) {
+        const seen = new Set<string>();
+        for (const v of parsed) {
+          if (typeof v === "string") seen.add(v);
+        }
+        enabledFixes = [...seen].sort();
+      }
+    } catch {
+      // Malformed JSON falls back to empty — the upstream still works,
+      // just without any opt-in fixes until the admin re-saves.
+    }
+  }
+
+  return {
+    id: row.id,
+    name: row.name,
+    baseUrl: row.base_url,
+    bearerToken: row.bearer_token,
+    supportedEndpoints,
+    enabled: row.enabled !== 0,
+    sortOrder: row.sort_order,
+    createdAt: row.created_at,
+    enabledFixes,
+    ...(pathOverrides ? { pathOverrides } : {}),
+  };
+}
+
 export class D1Repo implements Repo {
   apiKeys: ApiKeyRepo;
   github: GitHubRepo;
@@ -1016,8 +1115,8 @@ export class D1Repo implements Repo {
   searchUsage: SearchUsageRepo;
   performance: PerformanceRepo;
   cache: CacheRepo;
-  accountModelBackoffs: AccountModelBackoffRepo;
   searchConfig: SearchConfigRepo;
+  upstreamConfigs: UpstreamConfigRepo;
 
   constructor(db: D1Database) {
     this.apiKeys = new D1ApiKeyRepo(db);
@@ -1026,7 +1125,7 @@ export class D1Repo implements Repo {
     this.searchUsage = new D1SearchUsageRepo(db);
     this.performance = new D1PerformanceRepo(db);
     this.cache = new D1CacheRepo(db);
-    this.accountModelBackoffs = new D1AccountModelBackoffRepo(db);
     this.searchConfig = new D1SearchConfigRepo(db);
+    this.upstreamConfigs = new D1UpstreamConfigRepo(db);
   }
 }

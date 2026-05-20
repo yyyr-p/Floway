@@ -4,8 +4,9 @@ import type { MessagesSourceContext } from "./index.ts";
 
 /**
  * Claude Code injects `x-anthropic-billing-header` lines containing a per-turn
- * `cch=` hash. Copilot treats that metadata as ordinary prompt text, so prompt
- * caching stops hitting even when the real prompt did not change.
+ * `cch=` hash. Messages-compatible upstreams that do not understand this
+ * metadata treat it as ordinary prompt text, so prompt caching stops hitting
+ * even when the real prompt did not change.
  *
  * Strip the whole metadata line and any orphaned `cch=` hashes before routing.
  * This is source-local normalization because every `/v1/messages` path should

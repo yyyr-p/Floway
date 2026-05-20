@@ -3,16 +3,15 @@
  * Anthropic `thinking.signature` / `redacted_thinking.data` string using
  * `${encrypted_content}@${id}`.
  *
- * Why: Copilot's Responses upstream signs `encrypted_content` against
- * `(account, item_id)` and rejects a next-turn submission whose `id` does not
- * match the id baked into the blob with
+ * Why: Responses reasoning `encrypted_content` is tied to its item id, and
+ * upstreams that verify reasoning continuity reject a next-turn submission
+ * whose `id` does not match the id baked into the blob with
  * `400 invalid_request_body: "Encrypted content item_id did not match the
  * target item id."`. Anthropic `thinking` / `redacted_thinking` blocks have no
  * id slot, so when we translate Responses output to Messages we must smuggle
  * the original Responses id alongside the blob, then recover it on the way
- * back up. We adopt caozhiyuan/copilot-api's `${encrypted_content}@${id}`
- * layout verbatim so signatures remain interchangeable if a user switches
- * gateways mid-session.
+ * back up. The `${encrypted_content}@${id}` layout keeps this bridge compact
+ * and remains compatible with existing gateway-issued transcripts.
  *
  * Scope: this helper is exclusive to the Messages<->Responses translation
  * pair. The packed signature is the bridge contract that downstream Messages
@@ -37,9 +36,9 @@ export const packReasoningSignature = (
  * Returns `{ id, encryptedContent }` when the input matches the packed
  * `${encrypted_content}@${id}` shape, and `{ id: null, encryptedContent }`
  * otherwise — so signatures not issued by this gateway (e.g. native Anthropic
- * sessions resumed against a Copilot-backed gateway, or stored sessions
- * predating the packing change) round-trip as-is and the caller falls back to
- * a synthesized id. Splits on the last `@`: base64 `encrypted_content` cannot
+ * sessions resumed through this translation path, or stored sessions predating
+ * the packing change) round-trip as-is and the caller falls back to a
+ * synthesized id. Splits on the last `@`: base64 `encrypted_content` cannot
  * contain `@`, but using `lastIndexOf` matches caozhiyuan's parser and is
  * resilient if the upstream format ever widens.
  */
