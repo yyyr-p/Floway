@@ -1,3 +1,21 @@
+import type {
+  MessagesRedactedThinkingBlock,
+  MessagesThinkingBlock,
+} from "../../../shared/protocol/messages.ts";
+import type {
+  ResponseInputReasoning,
+  ResponseOutputReasoning,
+} from "../../../shared/protocol/responses.ts";
+import { makeResponsesReasoningId } from "./reasoning.ts";
+
+export type MessagesReasoningBlock =
+  | MessagesThinkingBlock
+  | MessagesRedactedThinkingBlock;
+
+export type ResponsesReasoningItem =
+  | ResponseInputReasoning
+  | ResponseOutputReasoning;
+
 /**
  * Pack a Responses reasoning item's `id` and `encrypted_content` into an
  * Anthropic `thinking.signature` / `redacted_thinking.data` string using
@@ -52,5 +70,62 @@ export const unpackReasoningSignature = (
   return {
     id: signature.slice(splitIndex + 1),
     encryptedContent: signature.slice(0, splitIndex),
+  };
+};
+
+export const messagesReasoningBlockToResponsesReasoning = (
+  block: MessagesReasoningBlock,
+  index: number,
+): ResponseInputReasoning => {
+  if (block.type === "redacted_thinking") {
+    const unpacked = unpackReasoningSignature(block.data);
+    return {
+      type: "reasoning",
+      id: unpacked.id ?? makeResponsesReasoningId(index),
+      summary: [],
+      encrypted_content: unpacked.encryptedContent,
+    };
+  }
+
+  const unpacked = typeof block.signature === "string"
+    ? unpackReasoningSignature(block.signature)
+    : null;
+
+  return {
+    type: "reasoning",
+    id: unpacked?.id ?? makeResponsesReasoningId(index),
+    summary: block.thinking
+      ? [{ type: "summary_text", text: block.thinking }]
+      : [],
+    ...(unpacked ? { encrypted_content: unpacked.encryptedContent } : {}),
+  };
+};
+
+/**
+ * Materialize Responses reasoning as the only Messages assistant block shapes
+ * that can round-trip it: plaintext summaries as `thinking`, opaque-only blobs
+ * as `redacted_thinking`, and empty reasoning as no block.
+ */
+export const responsesReasoningToMessagesBlock = (
+  item: ResponsesReasoningItem,
+): MessagesReasoningBlock | null => {
+  const thinking = item.summary?.length
+    ? item.summary.map((part) => part.text).join("").trim()
+    : "";
+  const encryptedContent = item.encrypted_content;
+
+  if (!thinking) {
+    return encryptedContent === undefined ? null : {
+      type: "redacted_thinking",
+      data: packReasoningSignature(item.id, encryptedContent),
+    };
+  }
+
+  return {
+    type: "thinking",
+    thinking,
+    ...(encryptedContent !== undefined
+      ? { signature: packReasoningSignature(item.id, encryptedContent) }
+      : {}),
   };
 };

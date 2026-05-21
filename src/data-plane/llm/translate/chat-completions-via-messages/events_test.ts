@@ -56,9 +56,9 @@ Deno.test("initial state has correct defaults", () => {
   const state = createMessagesToChatCompletionsStreamState();
   assertEquals(state.messageId, "");
   assertEquals(state.model, "");
-  assertEquals(state.toolCallIndex, -1);
-  assertEquals(state.inputTokens, 0);
-  assertEquals(state.cacheReadInputTokens, 0);
+  assertEquals(state.nextToolCallIndex, 0);
+  assertEquals(state.promptTokens, 0);
+  assertEquals(state.cachedPromptTokens, 0);
   assertEquals(typeof state.created, "number");
 });
 
@@ -84,8 +84,8 @@ Deno.test("message_start sets state including usage", () => {
   translateMessagesEventToChatCompletionsChunks(MSG_START, state);
   assertEquals(state.messageId, "msg_test");
   assertEquals(state.model, "claude-sonnet-4-20250514");
-  assertEquals(state.inputTokens, 10);
-  assertEquals(state.cacheReadInputTokens, 0);
+  assertEquals(state.promptTokens, 10);
+  assertEquals(state.cachedPromptTokens, 0);
 });
 
 Deno.test("message_start captures cache_read_input_tokens", () => {
@@ -105,8 +105,8 @@ Deno.test("message_start captures cache_read_input_tokens", () => {
       },
     },
   } as MessagesStreamEventData, state);
-  assertEquals(state.inputTokens, 80);
-  assertEquals(state.cacheReadInputTokens, 20);
+  assertEquals(state.promptTokens, 100);
+  assertEquals(state.cachedPromptTokens, 20);
 });
 
 // ── content_block_start: text ──
@@ -864,7 +864,8 @@ Deno.test("message_start captures cache_creation_input_tokens", () => {
       },
     },
   } as MessagesStreamEventData, state);
-  assertEquals(state.cacheCreationInputTokens, 30);
+  assertEquals(state.promptTokens, 130);
+  assertEquals(state.cachedPromptTokens, 20);
 });
 
 Deno.test("message_delta usage includes cache_creation_input_tokens in prompt_tokens", () => {

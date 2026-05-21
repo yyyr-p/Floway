@@ -1,29 +1,34 @@
 import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
 import {
   type InternalDebugError,
   toInternalDebugError,
 } from "../../shared/errors/internal-debug-error.ts";
-import type { MessagesStreamEventData } from "../../../shared/protocol/messages.ts";
-import {
-  collectMessagesProtocolEventsToResponse,
-} from "./events/to-response.ts";
-import { messagesProtocolEventsToSSEFrames } from "./events/to-sse.ts";
-import { proxySSE } from "../../shared/stream/proxy-sse.ts";
 import type { StreamExecuteResult } from "../../shared/errors/result.ts";
 import { upstreamErrorToResponse } from "../../shared/errors/upstream-error.ts";
+import type { MessagesStreamEventData } from "../../../shared/protocol/messages.ts";
+import {
+  type StreamCompletion,
+  writeSSEFrames,
+} from "../../shared/stream/proxy-sse.ts";
 import { type ProtocolFrame, sseFrame } from "../../shared/stream/types.ts";
+import type { SourceExecutionContext } from "../execute.ts";
 import {
-  type RecordRequestPerformance,
-} from "../../../shared/telemetry/performance.ts";
+  createSourceStreamState,
+  eventResultMetadata,
+  recordSourcePerformance,
+  recordSourceUsage,
+  rememberSourceFrameUsage,
+  sourceStreamFailed,
+} from "../respond.ts";
 import {
-  type RecordUsage,
-  recordUsageIfPresent,
-} from "../../../shared/telemetry/usage.ts";
-import {
-  type SourceStreamOutcome,
-  trackSourceStreamOutcome,
-} from "../telemetry.ts";
-import { tokenUsageFromMessagesResponse } from "./usage.ts";
+  createMessagesStreamUsageState,
+  tokenUsageFromMessagesFrame,
+  tokenUsageFromMessagesUsage,
+} from "../usage.ts";
+import { MESSAGES_MISSING_TERMINAL_MESSAGE } from "./events/protocol.ts";
+import { messagesProtocolFrameToSSEFrame } from "./events/to-sse.ts";
+import { collectMessagesProtocolEventsToResponse } from "./events/to-response.ts";
 
 const internalMessagesErrorPayload = (error: InternalDebugError) => ({
   type: "error",
@@ -56,96 +61,124 @@ const internalMessagesStreamErrorFrame = (error: unknown) =>
     "error",
   );
 
-const isMessagesFailureEvent = (event: MessagesStreamEventData): boolean =>
-  event.type === "error";
-
-const isMessagesCompletionFrame = (
+const isMessagesFailureFrame = (
   frame: ProtocolFrame<MessagesStreamEventData>,
-): boolean => frame.type === "event" && frame.event.type === "message_stop";
+) => frame.type === "event" && frame.event.type === "error";
+
+const isMessagesTerminalFrame = (
+  frame: ProtocolFrame<MessagesStreamEventData>,
+) =>
+  frame.type === "event" &&
+  (frame.event.type === "message_stop" || frame.event.type === "error");
+
+const observeMessagesFrames = async function* (
+  frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
+  state: ReturnType<typeof createSourceStreamState>,
+  usageState: ReturnType<typeof createMessagesStreamUsageState>,
+  observeUsage: boolean,
+) {
+  for await (const frame of frames) {
+    const failed = isMessagesFailureFrame(frame);
+    if (failed) state.failed = true;
+    if (observeUsage) {
+      rememberSourceFrameUsage(
+        state,
+        tokenUsageFromMessagesFrame(frame, usageState),
+      );
+    }
+    if (isMessagesTerminalFrame(frame) && !failed) state.completed = true;
+    yield frame;
+    if (isMessagesTerminalFrame(frame)) return;
+  }
+  throw new Error(MESSAGES_MISSING_TERMINAL_MESSAGE);
+};
+
+const messagesSseFrames = async function* (
+  frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
+  state: ReturnType<typeof createSourceStreamState>,
+) {
+  try {
+    for await (const frame of frames) {
+      const sse = messagesProtocolFrameToSSEFrame(frame);
+      if (sse) yield sse;
+    }
+  } catch (error) {
+    state.failed = true;
+    yield internalMessagesStreamErrorFrame(error);
+  }
+};
 
 export const respondMessages = async (
   c: Context,
   result: StreamExecuteResult<MessagesStreamEventData>,
   wantsStream: boolean,
-  recordUsage: RecordUsage,
-  recordRequestPerformance: RecordRequestPerformance,
-  requestStartedAt: number,
-  downstreamAbortController?: AbortController,
+  source: SourceExecutionContext,
 ): Promise<Response> => {
-  const recordPerformance = (failed: boolean): void => {
-    recordRequestPerformance(
-      result.performance,
-      failed,
-      performance.now() - requestStartedAt,
-    );
-  };
-
   if (result.type === "upstream-error") {
-    const response = upstreamErrorToResponse(result);
-    recordPerformance(true);
-    return response;
+    recordSourcePerformance(source, result.performance, true);
+    return upstreamErrorToResponse(result);
   }
 
   if (result.type === "internal-error") {
-    const response = internalMessagesErrorResponse(result.status, result.error);
-    recordPerformance(true);
-    return response;
+    recordSourcePerformance(source, result.performance, true);
+    return internalMessagesErrorResponse(result.status, result.error);
   }
+
+  const state = createSourceStreamState();
+  const usageState = createMessagesStreamUsageState();
+  const frames = observeMessagesFrames(
+    result.events,
+    state,
+    usageState,
+    wantsStream,
+  );
 
   if (!wantsStream) {
     try {
-      const response = await collectMessagesProtocolEventsToResponse(
-        result.events,
+      const response = await collectMessagesProtocolEventsToResponse(frames);
+      const metadata = await eventResultMetadata(result);
+      await recordSourceUsage(
+        metadata.modelIdentity,
+        tokenUsageFromMessagesUsage(response.usage),
+        source.recordUsage,
       );
-      await recordUsageIfPresent(
-        result.modelIdentity,
-        tokenUsageFromMessagesResponse(response),
-        recordUsage,
-      );
-
-      recordPerformance(false);
+      recordSourcePerformance(source, metadata.performance, state.failed);
       return Response.json(response);
     } catch (error) {
-      const response = internalMessagesErrorResponse(
+      recordSourcePerformance(source, result.performance, true);
+      return internalMessagesErrorResponse(
         502,
         toInternalDebugError(error, "messages"),
       );
-      recordPerformance(true);
-      return response;
     }
   }
 
-  const streamOutcome: SourceStreamOutcome = {
-    failed: false,
-    completed: false,
-  };
-  const response = proxySSE(
-    c,
-    messagesProtocolEventsToSSEFrames(
-      trackSourceStreamOutcome(
-        result.events,
-        streamOutcome,
-        isMessagesFailureEvent,
-        isMessagesCompletionFrame,
-      ),
-      {
-        onUsage: (usage) => recordUsage(result.modelIdentity, usage),
-      },
-    ),
-    {
-      keepAlive: { frame: downstreamMessagesPingKeepAliveFrame },
-      downstreamAbortController,
-      onError: (error) => {
-        streamOutcome.failed = true;
-        return internalMessagesStreamErrorFrame(error);
-      },
-      onComplete: (completion) => {
-        recordPerformance(
-          completion === "error" || streamOutcome.failed ||
-            (completion === "cancel" && !streamOutcome.completed),
+  return streamSSE(c, async (stream) => {
+    let completion: StreamCompletion = "error";
+    try {
+      completion = await writeSSEFrames(
+        stream,
+        messagesSseFrames(frames, state),
+        {
+          keepAlive: { frame: downstreamMessagesPingKeepAliveFrame },
+          downstreamAbortController: source.downstreamAbortController,
+        },
+      );
+    } finally {
+      const metadata = await eventResultMetadata(result);
+      try {
+        await recordSourceUsage(
+          metadata.modelIdentity,
+          state.usage,
+          source.recordUsage,
         );
-      },
-    },
-  );
-  return response;
+      } finally {
+        recordSourcePerformance(
+          source,
+          metadata.performance,
+          sourceStreamFailed(completion, state),
+        );
+      }
+    }
+  });
 };

@@ -2,7 +2,9 @@ import type {
   GeminiErrorResponse,
   GeminiStreamEvent,
 } from "../../../../shared/protocol/gemini.ts";
-import type { ProtocolTerminalAlgebra } from "../../../shared/stream/protocol-algebra.ts";
+
+export const GEMINI_MISSING_TERMINAL_MESSAGE =
+  "Gemini stream ended without a terminal event.";
 
 export const isGeminiErrorEvent = (
   event: GeminiStreamEvent,
@@ -17,9 +19,3 @@ export const isGeminiFinishedEvent = (event: GeminiStreamEvent): boolean =>
 
 export const isGeminiTerminalEvent = (event: GeminiStreamEvent): boolean =>
   isGeminiErrorEvent(event) || isGeminiFinishedEvent(event);
-
-export const geminiSourceStreamAlgebra = {
-  doneTerminates: true,
-  isTerminalEvent: isGeminiTerminalEvent,
-  missingTerminalMessage: "Gemini stream ended without a terminal event.",
-} satisfies ProtocolTerminalAlgebra<GeminiStreamEvent>;

@@ -291,23 +291,3 @@ export const loadModels = async (
     return { type: "error", error };
   }
 };
-
-/**
- * Get cached model list for the given upstream, refreshing after soft expiry.
- *
- * Convenience wrapper for callers that don't need success/failure
- * discrimination — returns an empty list on hard failure so non-critical
- * paths (dashboard pickers, capability lookups) don't have to branch on
- * errors.
- */
-export const getModelsForUpstream = async (
-  upstream: Upstream,
-): Promise<CachedModelsResponse> => {
-  const result = await loadModels(upstream);
-  if (result.type === "models") return result.data;
-  console.warn(
-    `Failed to load models for upstream ${upstream.id}:`,
-    result.error,
-  );
-  return { object: "list", data: [] };
-};

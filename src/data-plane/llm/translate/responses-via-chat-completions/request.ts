@@ -1,73 +1,30 @@
 import type {
   ChatCompletionsPayload,
-  ContentPart,
   Message,
   Tool,
   ToolCall,
 } from "../../../shared/protocol/chat-completions.ts";
 import type {
   ResponseFunctionTool,
-  ResponseInputContent,
   ResponseInputItem,
   ResponsesPayload,
   ResponseTool,
   ResponseToolChoice,
 } from "../../../shared/protocol/responses.ts";
-import { toChatReasoningItem } from "../shared/chat-responses-reasoning.ts";
-
-const toChatCompletionsContent = (
-  content: string | ResponseInputContent[],
-): string | ContentPart[] => {
-  if (typeof content === "string") return content;
-
-  const parts: ContentPart[] = [];
-
-  for (const part of content) {
-    if (part.type === "input_text" || part.type === "output_text") {
-      parts.push({ type: "text", text: part.text });
-      continue;
-    }
-
-    if (part.type !== "input_image") continue;
-
-    parts.push({
-      type: "image_url",
-      image_url: {
-        url: part.image_url,
-        detail: part.detail,
-      },
-    });
-  }
-
-  return parts.some((part) => part.type === "image_url") ? parts : parts
-    .filter((part): part is Extract<ContentPart, { type: "text" }> =>
-      part.type === "text"
-    )
-    // Assumption: Responses text parts are transport fragments of one
-    // message, not paragraph-level blocks. Keep the current no-separator
-    // join unless upstream semantics prove otherwise.
-    .map((part) => part.text)
-    .join("");
-};
-
-const toAssistantText = (
-  content: string | ResponseInputContent[],
-): string => {
-  if (typeof content === "string") return content;
-
-  return content
-    .filter((part): part is Extract<ResponseInputContent, { text: string }> =>
-      part.type === "input_text" || part.type === "output_text"
-    )
-    // Same assumption as above: these parts are one message's text fragments,
-    // so we preserve the existing no-separator flattening.
-    .map((part) => part.text)
-    .join("");
-};
+import {
+  responsesContentToChatContent,
+  responsesContentToText,
+} from "../shared/chat-responses-content.ts";
+import {
+  addResponseReasoningToChatProjection,
+  type ChatReasoningProjection,
+  chatReasoningProjectionFields,
+  createChatReasoningProjection,
+} from "../shared/chat-responses-reasoning.ts";
 
 interface AssistantAccumulator {
   message: Message;
-  hasScalarReasoning: boolean;
+  reasoning: ChatReasoningProjection;
 }
 
 const ensureAssistant = (
@@ -75,7 +32,7 @@ const ensureAssistant = (
 ): AssistantAccumulator =>
   assistant ?? {
     message: { role: "assistant", content: null },
-    hasScalarReasoning: false,
+    reasoning: createChatReasoningProjection(),
   };
 
 const appendAssistantText = (
@@ -88,32 +45,6 @@ const appendAssistantText = (
   next.message.content = typeof next.message.content === "string"
     ? next.message.content + text
     : text;
-  return next;
-};
-
-const appendAssistantReasoning = (
-  assistant: AssistantAccumulator | null,
-  item: Extract<ResponseInputItem, { type: "reasoning" }>,
-): AssistantAccumulator => {
-  const next = ensureAssistant(assistant);
-  const reasoningText = item.summary.map((part) => part.text).join("");
-  const reasoningItem = toChatReasoningItem(item);
-  // Preserve item-level reasoning instead of compressing all Responses reasoning
-  // into legacy scalar Chat fields.
-  next.message.reasoning_items = [
-    ...(next.message.reasoning_items ?? []),
-    reasoningItem,
-  ];
-
-  const hasEncryptedContent = Object.hasOwn(item, "encrypted_content");
-  if (!next.hasScalarReasoning && (reasoningText || hasEncryptedContent)) {
-    if (reasoningText) next.message.reasoning_text = reasoningText;
-    if (hasEncryptedContent) {
-      next.message.reasoning_opaque = item.encrypted_content;
-    }
-    next.hasScalarReasoning = true;
-  }
-
   return next;
 };
 
@@ -139,28 +70,27 @@ const appendAssistantToolCall = (
 const translateResponseTools = (
   tools?: ResponseTool[] | null,
 ): Tool[] | undefined => {
-  if (!tools?.length) return undefined;
-
   // Same defense-in-depth as the responses-to-messages translator: the
   // source-level strip-unsupported-tools interceptor drops hosted server tools
   // and fix-apply-patch-tools rewrites Codex's `apply_patch` Freeform tool.
   // Other Freeform tools have no shim today, so anything left without
   // `name`/`parameters` is dropped here rather than forwarded as a malformed
   // function tool.
-  const functionTools = tools.filter(
+  const functionTools = tools?.filter(
     (tool): tool is ResponseFunctionTool => tool.type === "function",
-  );
-  if (functionTools.length === 0) return undefined;
+  ) ?? [];
 
-  return functionTools.map((tool) => ({
-    type: "function",
-    function: {
-      name: tool.name,
-      parameters: tool.parameters,
-      strict: tool.strict,
-      ...(tool.description ? { description: tool.description } : {}),
-    },
-  }));
+  return functionTools.length > 0
+    ? functionTools.map((tool) => ({
+      type: "function",
+      function: {
+        name: tool.name,
+        parameters: tool.parameters,
+        strict: tool.strict,
+        ...(tool.description ? { description: tool.description } : {}),
+      },
+    }))
+    : undefined;
 };
 
 const translateResponseToolChoice = (
@@ -182,9 +112,8 @@ const buildChatResponseFormat = (
   if (text === null) return null;
   // `text: {}` means no explicit format. Keep it omitted instead of converting
   // absence into an explicit Chat `response_format: null`.
-  if (!Object.hasOwn(text, "format")) return undefined;
   const format = text.format;
-  if (format === undefined) return undefined;
+  if (!Object.hasOwn(text, "format") || format === undefined) return undefined;
   if (format === null) return null;
   // Responses API uses a flat json_schema shape
   // ({ type, name, strict, schema }), while Chat Completions wraps the
@@ -217,13 +146,17 @@ export const translateResponsesToChatCompletions = (
     let assistant: AssistantAccumulator | null = null;
     const flushAssistant = () => {
       if (!assistant) return;
-      messages.push(assistant.message);
+      messages.push({
+        ...assistant.message,
+        ...chatReasoningProjectionFields(assistant.reasoning),
+      });
       assistant = null;
     };
 
     for (const item of payload.input) {
       if (item.type === "reasoning") {
-        assistant = appendAssistantReasoning(assistant, item);
+        assistant = ensureAssistant(assistant);
+        addResponseReasoningToChatProjection(assistant.reasoning, item);
         continue;
       }
 
@@ -249,7 +182,7 @@ export const translateResponsesToChatCompletions = (
       if (item.role === "assistant") {
         assistant = appendAssistantText(
           assistant,
-          toAssistantText(item.content),
+          responsesContentToText(item.content),
         );
         continue;
       }
@@ -257,7 +190,7 @@ export const translateResponsesToChatCompletions = (
       flushAssistant();
       messages.push({
         role: item.role,
-        content: toChatCompletionsContent(item.content),
+        content: responsesContentToChatContent(item.content),
       });
     }
 
@@ -304,5 +237,4 @@ export const translateResponsesToChatCompletions = (
   };
 };
 
-export const buildTargetRequest = (payload: ResponsesPayload) =>
-  translateResponsesToChatCompletions(payload);
+export const buildTargetRequest = translateResponsesToChatCompletions;

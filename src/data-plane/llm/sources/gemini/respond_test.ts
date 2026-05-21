@@ -4,6 +4,7 @@ import type { GeminiErrorResponse } from "../../../shared/protocol/gemini.ts";
 import type { InternalDebugError } from "../../shared/errors/internal-debug-error.ts";
 import type { StreamExecuteResult } from "../../shared/errors/result.ts";
 import { eventFrame } from "../../shared/stream/types.ts";
+import type { SourceExecutionContext } from "../execute.ts";
 import { respondGemini } from "./respond.ts";
 
 const encoder = new TextEncoder();
@@ -15,20 +16,20 @@ const testTelemetryModelIdentity = {
 };
 const recordUsage = () => Promise.resolve();
 const recordRequestPerformance = () => {};
+const source = (): SourceExecutionContext => ({
+  requestStartedAt: performance.now(),
+  runtimeLocation: "test",
+  recordUsage,
+  recordRequestPerformance,
+  beginDownstream: () => undefined,
+  rememberPerformance: (result) => result,
+});
 
 const requestGeminiResponse = async (
   result: StreamExecuteResult<GeminiErrorResponse>,
 ): Promise<Response> => {
   const app = new Hono();
-  app.get("/", (c) =>
-    respondGemini(
-      c,
-      result,
-      false,
-      recordUsage,
-      recordRequestPerformance,
-      performance.now(),
-    ));
+  app.get("/", (c) => respondGemini(c, result, false, source()));
   return await app.request("/");
 };
 

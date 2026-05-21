@@ -10,32 +10,42 @@ import type {
   GeminiStreamEvent,
   GeminiUsageMetadata,
 } from "../../../shared/protocol/gemini.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
+import {
+  appendGeminiThoughtSignature,
+  flushGeminiThoughtSignature,
+  type GeminiThoughtSignatureState,
+  parseStrictJsonObject,
+  signGeminiPart,
+} from "../shared/gemini.ts";
 import { mapFinishReason, mapUsage } from "./result.ts";
 
-const upstreamChatCompletionStreamAlgebra = {
-  doneTerminates: true as const,
-  missingTerminalMessage:
-    "Upstream Chat Completions stream ended without a DONE sentinel.",
+const UPSTREAM_CHAT_COMPLETIONS_MISSING_DONE_MESSAGE =
+  "Upstream Chat Completions stream ended without a DONE sentinel.";
+
+const upstreamChatCompletionEventsUntilDone = async function* (
+  frames: AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
+): AsyncGenerator<ChatCompletionChunk> {
+  for await (const frame of frames) {
+    if (frame.type === "done") return;
+    yield frame.event;
+  }
+
+  throw new Error(UPSTREAM_CHAT_COMPLETIONS_MISSING_DONE_MESSAGE);
 };
 
 type ChatStreamChoice = ChatCompletionChunk["choices"][0];
 type ChatToolCallDelta = NonNullable<Delta["tool_calls"]>[0];
 
-interface ToolCallState {
+interface ChatToolCallDraft {
   id?: string;
   name?: string;
-  arguments: string;
+  argsJson: string;
 }
 
-interface ChoiceState {
-  pendingThoughtSignature?: string;
-  toolCalls: Record<number, ToolCallState>;
+interface ChoiceState extends GeminiThoughtSignatureState {
+  toolCalls: Record<number, ChatToolCallDraft>;
 }
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
 
 const getChoiceState = (
   states: Record<number, ChoiceState>,
@@ -45,83 +55,45 @@ const getChoiceState = (
   return states[index];
 };
 
-const appendPendingThoughtSignature = (
-  state: ChoiceState,
-  signature: string,
-): void => {
-  state.pendingThoughtSignature = `${
-    state.pendingThoughtSignature ?? ""
-  }${signature}`;
-};
-
-const attachPendingThoughtSignature = (
-  part: GeminiPart,
-  state: ChoiceState,
-): GeminiPart => {
-  if (state.pendingThoughtSignature === undefined) return part;
-
-  const signedPart = {
-    ...part,
-    thoughtSignature: state.pendingThoughtSignature,
-  };
-  state.pendingThoughtSignature = undefined;
-  return signedPart;
-};
-
-const parseFunctionArgs = (
-  toolCall: ToolCallState,
-): Record<string, unknown> => {
-  if (!toolCall.arguments) return {};
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(toolCall.arguments) as unknown;
-  } catch (error) {
-    throw new Error(
-      "Upstream Chat Completions tool call arguments were not valid JSON.",
-      { cause: error },
-    );
-  }
-
-  if (!isRecord(parsed)) {
-    throw new Error(
-      "Upstream Chat Completions tool call arguments must be a JSON object.",
-    );
-  }
-
-  return parsed;
-};
-
 const accumulateToolCalls = (
   toolCalls: ChatToolCallDelta[],
   state: ChoiceState,
 ): void => {
   for (const toolCall of toolCalls) {
-    const current = state.toolCalls[toolCall.index] ??= { arguments: "" };
+    const current = state.toolCalls[toolCall.index] ??= { argsJson: "" };
     if (toolCall.id !== undefined) current.id = toolCall.id;
     if (toolCall.function?.name !== undefined) {
       current.name = toolCall.function.name;
     }
     if (toolCall.function?.arguments !== undefined) {
-      current.arguments += toolCall.function.arguments;
+      current.argsJson += toolCall.function.arguments;
     }
   }
 };
 
 const flushToolCallParts = (state: ChoiceState): GeminiPart[] => {
-  const parts = Object.entries(state.toolCalls)
-    .sort(([left], [right]) => Number(left) - Number(right))
-    .flatMap(([_index, toolCall]) => {
-      if (!toolCall.name) return [];
+  const parts: GeminiPart[] = [];
 
-      const functionCall: GeminiPart["functionCall"] = {
+  for (
+    const [_index, toolCall] of Object.entries(state.toolCalls).sort(
+      ([left], [right]) => Number(left) - Number(right),
+    )
+  ) {
+    if (!toolCall.name) continue;
+
+    parts.push(signGeminiPart(state, {
+      functionCall: {
         ...(toolCall.id !== undefined ? { id: toolCall.id } : {}),
         name: toolCall.name,
-        args: parseFunctionArgs(toolCall),
-      };
-
-      return [attachPendingThoughtSignature({ functionCall }, state)];
-    });
+        args: toolCall.argsJson
+          ? parseStrictJsonObject(
+            toolCall.argsJson,
+            "Chat Completions tool call arguments",
+          )
+          : {},
+      },
+    }));
+  }
 
   state.toolCalls = {};
   return parts;
@@ -139,11 +111,11 @@ const buildCandidate = (
   }
 
   if (typeof delta.reasoning_opaque === "string") {
-    appendPendingThoughtSignature(state, delta.reasoning_opaque);
+    appendGeminiThoughtSignature(state, delta.reasoning_opaque);
   }
 
   if (typeof delta.content === "string") {
-    parts.push(attachPendingThoughtSignature({ text: delta.content }, state));
+    parts.push(signGeminiPart(state, { text: delta.content }));
   }
 
   if (delta.tool_calls) accumulateToolCalls(delta.tool_calls, state);
@@ -151,9 +123,7 @@ const buildCandidate = (
   const finishReason = mapFinishReason(choice.finish_reason);
   if (finishReason) {
     parts.push(...flushToolCallParts(state));
-    if (state.pendingThoughtSignature !== undefined) {
-      parts.push(attachPendingThoughtSignature({ text: "" }, state));
-    }
+    parts.push(...flushGeminiThoughtSignature(state));
   }
 
   if (!parts.length && !finishReason) return null;
@@ -161,7 +131,7 @@ const buildCandidate = (
   return {
     index: choice.index,
     content: { role: "model", parts },
-    ...(finishReason ? { finishReason } : {}),
+    ...(finishReason !== undefined ? { finishReason } : {}),
   };
 };
 
@@ -169,14 +139,17 @@ const translateChunk = (
   chunk: ChatCompletionChunk,
   states: Record<number, ChoiceState>,
 ): GeminiGenerateContentResponse | null => {
-  const candidates = chunk.choices.flatMap((choice) => {
+  const candidates: GeminiCandidate[] = [];
+
+  for (const choice of chunk.choices) {
     const candidate = buildCandidate(
       choice,
       getChoiceState(states, choice.index),
     );
 
-    return candidate ? [candidate] : [];
-  });
+    if (candidate) candidates.push(candidate);
+  }
+
   const usageMetadata = mapUsage(chunk.usage);
 
   if (!candidates.length && !usageMetadata) return null;
@@ -185,24 +158,6 @@ const translateChunk = (
     ...(candidates.length ? { candidates } : {}),
     ...(usageMetadata ? { usageMetadata } : {}),
   };
-};
-
-const mergeUsageIntoFinal = (
-  finalResponse: GeminiGenerateContentResponse,
-  usageMetadata?: GeminiUsageMetadata,
-): void => {
-  if (usageMetadata) finalResponse.usageMetadata = usageMetadata;
-};
-
-const appendFinalCandidates = (
-  pendingFinalResponse: GeminiGenerateContentResponse | null,
-  candidates: GeminiCandidate[],
-  usageMetadata?: GeminiUsageMetadata,
-): GeminiGenerateContentResponse => {
-  const response = pendingFinalResponse ?? { candidates: [] };
-  response.candidates = [...(response.candidates ?? []), ...candidates];
-  mergeUsageIntoFinal(response, usageMetadata);
-  return response;
 };
 
 const throwOnChatErrorPayload = (chunk: ChatCompletionChunk): void => {
@@ -219,14 +174,9 @@ export const translateToSourceEvents = async function* (
 ): AsyncGenerator<ProtocolFrame<GeminiStreamEvent>> {
   const states: Record<number, ChoiceState> = {};
   let pendingUsageMetadata: GeminiUsageMetadata | undefined;
-  let pendingFinalResponse: GeminiGenerateContentResponse | null = null;
+  const deferredFinalCandidates: GeminiCandidate[] = [];
 
-  for await (
-    const chunk of protocolEventsUntilTerminal(
-      frames,
-      upstreamChatCompletionStreamAlgebra,
-    )
-  ) {
+  for await (const chunk of upstreamChatCompletionEventsUntilDone(frames)) {
     throwOnChatErrorPayload(chunk);
 
     const response = translateChunk(chunk, states);
@@ -234,13 +184,10 @@ export const translateToSourceEvents = async function* (
 
     if (response.usageMetadata) {
       pendingUsageMetadata = response.usageMetadata;
-      if (pendingFinalResponse) {
-        mergeUsageIntoFinal(pendingFinalResponse, pendingUsageMetadata);
-      }
     }
 
     const candidates = response.candidates ?? [];
-    const finalCandidates = candidates.filter((candidate) =>
+    const finishedCandidates = candidates.filter((candidate) =>
       candidate.finishReason !== undefined
     );
     const nonFinalCandidates = candidates.filter((candidate) =>
@@ -251,14 +198,15 @@ export const translateToSourceEvents = async function* (
       yield eventFrame({ candidates: nonFinalCandidates });
     }
 
-    if (finalCandidates.length) {
-      pendingFinalResponse = appendFinalCandidates(
-        pendingFinalResponse,
-        finalCandidates,
-        pendingUsageMetadata,
-      );
+    if (finishedCandidates.length) {
+      deferredFinalCandidates.push(...finishedCandidates);
     }
   }
 
-  if (pendingFinalResponse) yield eventFrame(pendingFinalResponse);
+  if (deferredFinalCandidates.length) {
+    yield eventFrame({
+      candidates: deferredFinalCandidates,
+      ...(pendingUsageMetadata ? { usageMetadata: pendingUsageMetadata } : {}),
+    });
+  }
 };

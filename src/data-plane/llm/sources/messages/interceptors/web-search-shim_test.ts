@@ -13,7 +13,7 @@ import type {
 import {
   collectMessagesProtocolEventsToResponse,
 } from "../events/to-response.ts";
-import { messagesProtocolEventsToSSEFrames } from "../events/to-sse.ts";
+import { messagesProtocolFrameToSSEFrame } from "../events/to-sse.ts";
 import { type WebSearchProvider } from "../../../../tools/web-search/provider.ts";
 import { DEFAULT_SEARCH_CONFIG } from "../../../../tools/web-search/search-config.ts";
 import type { WebSearchProviderResult } from "../../../../tools/web-search/types.ts";
@@ -39,8 +39,6 @@ const testTelemetryModelIdentity = {
   upstream: "test-upstream",
   modelKey: "test-model-key",
 };
-
-const ignoreUsage = { onUsage: () => {} };
 
 const exchangeContext = (
   payload: MessagesPayload,
@@ -1002,9 +1000,9 @@ Deno.test("withMessagesWebSearchShim emits native-like citation deltas for repla
   assertEquals(result.type, "events");
   if (result.type !== "events") throw new Error("expected events result");
 
-  const frames = await collect(
-    messagesProtocolEventsToSSEFrames(result.events, ignoreUsage),
-  );
+  const frames = (await collect(result.events))
+    .map(messagesProtocolFrameToSSEFrame)
+    .filter((frame) => frame !== null);
   const citationFrame = frames.find((frame) => {
     if (frame.type !== "sse" || frame.event !== "content_block_delta") {
       return false;

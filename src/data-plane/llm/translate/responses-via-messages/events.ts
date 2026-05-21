@@ -2,7 +2,6 @@ import type {
   MessagesContentBlockDeltaEvent,
   MessagesContentBlockStartEvent,
   MessagesContentBlockStopEvent,
-  MessagesErrorEvent,
   MessagesMessageDeltaEvent,
   MessagesMessageStartEvent,
   MessagesStreamEventData,
@@ -10,22 +9,30 @@ import type {
 import { unpackReasoningSignature } from "../shared/messages-responses-signature.ts";
 import { makeResponsesReasoningId } from "../shared/reasoning.ts";
 import type {
-  ResponseOutputFunctionCall,
   ResponseOutputItem,
-  ResponseOutputMessage,
-  ResponseOutputReasoning,
   ResponsesResult,
   ResponseStreamEvent,
 } from "../../../shared/protocol/responses.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
+import * as responses from "../shared/responses-event-builder.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
 import type { ResponsesStreamEvent } from "../../shared/protocol/responses.ts";
 
-const upstreamMessagesStreamAlgebra = {
-  isTerminalEvent: (event: Pick<MessagesStreamEventData, "type">): boolean =>
-    event.type === "message_stop" || event.type === "error",
-  missingTerminalMessage:
-    "Upstream Messages stream ended without a message_stop event.",
+const UPSTREAM_MESSAGES_MISSING_TERMINAL_MESSAGE =
+  "Upstream Messages stream ended without a message_stop event.";
+
+const upstreamMessagesEventsUntilTerminal = async function* (
+  frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
+): AsyncGenerator<MessagesStreamEventData> {
+  for await (const frame of frames) {
+    if (frame.type === "done") continue;
+
+    yield frame.event;
+    if (frame.event.type === "message_stop" || frame.event.type === "error") {
+      return;
+    }
+  }
+
+  throw new Error(UPSTREAM_MESSAGES_MISSING_TERMINAL_MESSAGE);
 };
 
 type OutputBlockInfo =
@@ -34,20 +41,18 @@ type OutputBlockInfo =
     outputIndex: number;
     itemId: string;
     thinkingText: string;
-    signature: string;
-    hasSignature: boolean;
+    signature: string | null;
   }
   | {
     type: "redacted_thinking";
     outputIndex: number;
     itemId: string;
-    signature: string;
+    encryptedContent: string;
   }
   | {
     type: "text";
     outputIndex: number;
     itemId: string;
-    contentIndex: number;
     blockText: string;
   }
   | {
@@ -62,28 +67,17 @@ type OutputBlockInfo =
 interface MessagesToResponsesStreamState {
   responseId: string;
   model: string;
-  responseCreated: boolean;
   outputIndex: number;
   sequenceNumber: number;
   blockMap: Map<number, OutputBlockInfo>;
   accumulatedText: string;
   completedItems: ResponseOutputItem[];
-  completed: boolean;
   inputTokens: number;
   outputTokens: number;
   cacheReadInputTokens?: number;
   cacheCreationInputTokens?: number;
   stopReason?: MessagesMessageDeltaEvent["delta"]["stop_reason"];
 }
-
-const withSequenceNumbers = (
-  state: MessagesToResponsesStreamState,
-  events: ResponseStreamEvent[],
-): ResponseStreamEvent[] =>
-  events.map((event) => ({
-    ...event,
-    sequence_number: state.sequenceNumber++,
-  }));
 
 const buildResult = (
   state: MessagesToResponsesStreamState,
@@ -93,47 +87,32 @@ const buildResult = (
     (state.cacheReadInputTokens ?? 0) +
     (state.cacheCreationInputTokens ?? 0);
 
-  return {
+  return responses.result({
     id: state.responseId,
-    object: "response",
     model: state.model,
     output: state.completedItems,
-    output_text: state.accumulatedText,
+    outputText: state.accumulatedText,
     status,
-    ...(status === "incomplete"
-      ? { incomplete_details: { reason: "max_output_tokens" as const } }
-      : {}),
-    usage: {
-      input_tokens: inputTokens,
-      output_tokens: state.outputTokens,
-      total_tokens: inputTokens + state.outputTokens,
-      ...(state.cacheReadInputTokens !== undefined
-        ? {
-          input_tokens_details: { cached_tokens: state.cacheReadInputTokens },
-        }
-        : {}),
-    },
-  };
+    usage: responses.usage(
+      inputTokens,
+      state.outputTokens,
+      state.cacheReadInputTokens,
+    ),
+  });
 };
 
 const handleMessageStart = (
   event: MessagesMessageStartEvent,
   state: MessagesToResponsesStreamState,
 ): ResponseStreamEvent[] => {
-  state.inputTokens = event.message.usage?.input_tokens ?? 0;
-  state.cacheReadInputTokens = event.message.usage?.cache_read_input_tokens;
+  state.inputTokens = event.message.usage.input_tokens;
+  state.cacheReadInputTokens = event.message.usage.cache_read_input_tokens;
   state.cacheCreationInputTokens = event.message.usage
-    ?.cache_creation_input_tokens;
-
-  if (state.responseCreated) return [];
-  state.responseCreated = true;
+    .cache_creation_input_tokens;
 
   const response = buildResult(state, "in_progress");
 
-  return withSequenceNumbers(state, [
-    { type: "response.created", response },
-    { type: "response.in_progress", response },
-  ]);
+  return responses.started(state, response);
 };
 
 const handleContentBlockStart = (
@@ -142,112 +121,83 @@ const handleContentBlockStart = (
 ): ResponseStreamEvent[] => {
   const outputIndex = state.outputIndex++;
 
-  if (event.content_block.type === "thinking") {
-    const itemId = makeResponsesReasoningId(outputIndex);
-    state.blockMap.set(event.index, {
-      type: "thinking",
-      outputIndex,
-      itemId,
-      thinkingText: "",
-      signature: "",
-      hasSignature: false,
-    });
+  switch (event.content_block.type) {
+    case "thinking": {
+      const itemId = makeResponsesReasoningId(outputIndex);
+      state.blockMap.set(event.index, {
+        type: "thinking",
+        outputIndex,
+        itemId,
+        thinkingText: "",
+        signature: null,
+      });
 
-    const item: ResponseOutputReasoning = {
-      type: "reasoning",
-      id: itemId,
-      summary: [],
-    };
+      return responses.reasoningStart(
+        state,
+        outputIndex,
+        itemId,
+      );
+    }
+    case "redacted_thinking": {
+      // Unpack `${encrypted_content}@${id}` so the Responses-shape stream we
+      // fabricate carries the original upstream item id. See
+      // `../shared/messages-responses-signature.ts` for the why.
+      const unpacked = unpackReasoningSignature(event.content_block.data);
+      const itemId = unpacked.id ?? makeResponsesReasoningId(outputIndex);
+      state.blockMap.set(event.index, {
+        type: "redacted_thinking",
+        outputIndex,
+        itemId,
+        encryptedContent: unpacked.encryptedContent,
+      });
 
-    return withSequenceNumbers(state, [
-      { type: "response.output_item.added", output_index: outputIndex, item },
-      {
-        type: "response.reasoning_summary_part.added",
-        item_id: itemId,
-        output_index: outputIndex,
-        summary_index: 0,
-        part: { type: "summary_text", text: "" },
-      },
-    ]);
+      return responses.itemAdded(
+        state,
+        outputIndex,
+        responses.reasoningItem(itemId, ""),
+      );
+    }
+    case "text": {
+      const itemId = `msg_${outputIndex}`;
+      state.blockMap.set(event.index, {
+        type: "text",
+        outputIndex,
+        itemId,
+        blockText: "",
+      });
+
+      return responses.textStart(
+        state,
+        outputIndex,
+        itemId,
+      );
+    }
+    case "tool_use": {
+      const itemId = `fc_${outputIndex}`;
+      const info: OutputBlockInfo = {
+        type: "tool_use",
+        outputIndex,
+        itemId,
+        toolCallId: event.content_block.id,
+        toolName: event.content_block.name,
+        toolArguments: "",
+      };
+      state.blockMap.set(event.index, info);
+
+      return responses.itemAdded(
+        state,
+        outputIndex,
+        responses.functionCallItem(
+          info.toolCallId,
+          info.toolName,
+          info.toolArguments,
+          "in_progress",
+        ),
+      );
+    }
+    default:
+      return [];
   }
-
-  if (event.content_block.type === "redacted_thinking") {
-    // Unpack `${encrypted_content}@${id}` so the Responses-shape stream we
-    // fabricate carries the original upstream item id. See
-    // `../shared/messages-responses-signature.ts` for the why.
-    const unpacked = unpackReasoningSignature(event.content_block.data);
-    const itemId = unpacked.id ?? makeResponsesReasoningId(outputIndex);
-    state.blockMap.set(event.index, {
-      type: "redacted_thinking",
-      outputIndex,
-      itemId,
-      signature: unpacked.encryptedContent,
-    });
-
-    const item: ResponseOutputReasoning = {
-      type: "reasoning",
-      id: itemId,
-      summary: [],
-    };
-
-    return withSequenceNumbers(state, [
-      { type: "response.output_item.added", output_index: outputIndex, item },
-    ]);
-  }
-
-  if (event.content_block.type === "text") {
-    const itemId = `msg_${outputIndex}`;
-    state.blockMap.set(event.index, {
-      type: "text",
-      outputIndex,
-      itemId,
-      contentIndex: 0,
-      blockText: "",
-    });
-
-    const item: ResponseOutputMessage = {
-      type: "message",
-      role: "assistant",
-      content: [{ type: "output_text", text: "" }],
-    };
-
-    return withSequenceNumbers(state, [
-      { type: "response.output_item.added", output_index: outputIndex, item },
-      {
-        type: "response.content_part.added",
-        item_id: itemId,
-        output_index: outputIndex,
-        content_index: 0,
-        part: { type: "output_text", text: "" },
-      },
-    ]);
-  }
-
-  if (event.content_block.type === "tool_use") {
-    const itemId = `fc_${outputIndex}`;
-    state.blockMap.set(event.index, {
-      type: "tool_use",
-      outputIndex,
-      itemId,
-      toolCallId: event.content_block.id,
-      toolName: event.content_block.name,
-      toolArguments: "",
-    });
-
-    const item: ResponseOutputFunctionCall = {
-      type: "function_call",
-      call_id: event.content_block.id,
-      name: event.content_block.name,
-      arguments: "",
-      status: "in_progress",
-    };
-
-    return withSequenceNumbers(state, [
-      { type: "response.output_item.added", output_index: outputIndex, item },
-    ]);
-  }
-
-  return [];
 };
 
 const handleContentBlockDelta = (
@@ -257,49 +207,43 @@ const handleContentBlockDelta = (
   const info = state.blockMap.get(event.index);
   if (!info) return [];
 
-  if (event.delta.type === "thinking_delta" && info.type === "thinking") {
-    info.thinkingText += event.delta.thinking;
-
-    return withSequenceNumbers(state, [{
-      type: "response.reasoning_summary_text.delta",
-      item_id: info.itemId,
-      output_index: info.outputIndex,
-      summary_index: 0,
-      delta: event.delta.thinking,
-    }]);
+  switch (info.type) {
+    case "thinking":
+      if (event.delta.type === "thinking_delta") {
+        info.thinkingText += event.delta.thinking;
+        return responses.reasoningDelta(
+          state,
+          info.outputIndex,
+          info.itemId,
+          event.delta.thinking,
+        );
+      }
+      if (event.delta.type === "signature_delta") {
+        info.signature = (info.signature ?? "") + event.delta.signature;
+      }
+      return [];
+    case "text":
+      if (event.delta.type !== "text_delta") return [];
+      info.blockText += event.delta.text;
+      state.accumulatedText += event.delta.text;
+      return responses.textDelta(
+        state,
+        info.outputIndex,
+        info.itemId,
+        event.delta.text,
+      );
+    case "tool_use":
+      if (event.delta.type !== "input_json_delta") return [];
+      info.toolArguments += event.delta.partial_json;
+      return responses.argumentsDelta(
+        state,
+        info.outputIndex,
+        info.itemId,
+        event.delta.partial_json,
+      );
+    case "redacted_thinking":
+      return [];
   }
-
-  if (event.delta.type === "signature_delta" && info.type === "thinking") {
-    info.signature += event.delta.signature;
-    info.hasSignature = true;
-    return [];
-  }
-
-  if (event.delta.type === "text_delta" && info.type === "text") {
-    info.blockText += event.delta.text;
-    state.accumulatedText += event.delta.text;
-
-    return withSequenceNumbers(state, [{
-      type: "response.output_text.delta",
-      item_id: info.itemId,
-      output_index: info.outputIndex,
-      content_index: info.contentIndex,
-      delta: event.delta.text,
-    }]);
-  }
-
-  if (event.delta.type === "input_json_delta" && info.type === "tool_use") {
-    info.toolArguments += event.delta.partial_json;
-
-    return withSequenceNumbers(state, [{
-      type: "response.function_call_arguments.delta",
-      item_id: info.itemId,
-      output_index: info.outputIndex,
-      delta: event.delta.partial_json,
-    }]);
-  }
-
-  return [];
 };
 
 const handleContentBlockStop = (
@@ -316,56 +260,37 @@ const handleContentBlockStop = (
     // Unpack `${encrypted_content}@${id}` so the materialized reasoning item
     // carries the original upstream id (and a clean encrypted_content blob).
     // See `../shared/messages-responses-signature.ts` for why.
-    const unpacked = info.hasSignature
+    const unpacked = info.signature !== null
       ? unpackReasoningSignature(info.signature)
-      : null;
+      : undefined;
     const itemId = unpacked?.id ?? info.itemId;
-
-    const item: ResponseOutputReasoning = {
-      type: "reasoning",
-      id: itemId,
-      summary: summaryText ? [{ type: "summary_text", text: summaryText }] : [],
-      ...(unpacked ? { encrypted_content: unpacked.encryptedContent } : {}),
-    };
+    const item = responses.reasoningItem(
+      itemId,
+      summaryText,
+      unpacked?.encryptedContent,
+    );
 
     state.completedItems.push(item);
 
-    return withSequenceNumbers(state, [
-      ...(summaryText
-        ? [{
-          type: "response.reasoning_summary_text.done" as const,
-          item_id: itemId,
-          output_index: info.outputIndex,
-          summary_index: 0,
-          text: summaryText,
-        }]
-        : []),
-      {
-        type: "response.reasoning_summary_part.done",
-        item_id: itemId,
-        output_index: info.outputIndex,
-        summary_index: 0,
-        part: { type: "summary_text", text: summaryText },
-      },
-      {
-        type: "response.output_item.done",
-        output_index: info.outputIndex,
-        item,
-      },
-    ]);
+    return responses.reasoningDone(
+      state,
+      info.outputIndex,
+      itemId,
+      summaryText,
+      item,
+    );
   }
 
   if (info.type === "redacted_thinking") {
-    const item: ResponseOutputReasoning = {
-      type: "reasoning",
-      id: info.itemId,
-      summary: [],
-      encrypted_content: info.signature,
-    };
+    const item = responses.reasoningItem(
+      info.itemId,
+      "",
+      info.encryptedContent,
+    );
 
     state.completedItems.push(item);
 
-    return withSequenceNumbers(state, [{
+    return responses.seq(state, [{
       type: "response.output_item.done",
       output_index: info.outputIndex,
       item,
@@ -373,102 +298,35 @@ const handleContentBlockStop = (
   }
 
   if (info.type === "text") {
-    const part = { type: "output_text" as const, text: info.blockText };
-    const item: ResponseOutputMessage = {
-      type: "message",
-      role: "assistant",
-      content: [part],
-    };
+    const item = responses.messageItem(info.blockText);
 
     state.completedItems.push(item);
 
-    return withSequenceNumbers(state, [
-      {
-        type: "response.output_text.done",
-        item_id: info.itemId,
-        output_index: info.outputIndex,
-        content_index: info.contentIndex,
-        text: info.blockText,
-      },
-      {
-        type: "response.content_part.done",
-        item_id: info.itemId,
-        output_index: info.outputIndex,
-        content_index: info.contentIndex,
-        part,
-      },
-      {
-        type: "response.output_item.done",
-        output_index: info.outputIndex,
-        item,
-      },
-    ]);
+    return responses.textDone(
+      state,
+      info.outputIndex,
+      info.itemId,
+      info.blockText,
+      item,
+    );
   }
 
-  const item: ResponseOutputFunctionCall = {
-    type: "function_call",
-    call_id: info.toolCallId,
-    name: info.toolName,
-    arguments: info.toolArguments,
-    status: "completed",
-  };
+  const item = responses.functionCallItem(
+    info.toolCallId,
+    info.toolName,
+    info.toolArguments,
+    "completed",
+  );
 
   state.completedItems.push(item);
 
-  return withSequenceNumbers(state, [
-    {
-      type: "response.function_call_arguments.done",
-      item_id: info.itemId,
-      output_index: info.outputIndex,
-      arguments: info.toolArguments,
-    },
-    { type: "response.output_item.done", output_index: info.outputIndex, item },
-  ]);
-};
-
-const handleMessageDelta = (
-  event: MessagesMessageDeltaEvent,
-  state: MessagesToResponsesStreamState,
-): ResponseStreamEvent[] => {
-  if (event.delta.stop_reason !== undefined) {
-    state.stopReason = event.delta.stop_reason;
-  }
-
-  if (event.usage?.output_tokens != null) {
-    state.outputTokens = event.usage.output_tokens;
-  }
-
-  return [];
-};
-
-const handleMessageStop = (
-  state: MessagesToResponsesStreamState,
-): ResponseStreamEvent[] => {
-  if (state.completed) return [];
-  state.completed = true;
-  const status: ResponsesResult["status"] = state.stopReason === "max_tokens"
-    ? "incomplete"
-    : "completed";
-  const response = buildResult(state, status);
-
-  return withSequenceNumbers(state, [
-    status === "incomplete"
-      ? { type: "response.incomplete", response }
-      : { type: "response.completed", response },
-  ]);
-};
-
-const handleError = (
-  event: MessagesErrorEvent,
-  state: MessagesToResponsesStreamState,
-): ResponseStreamEvent[] => {
-  state.completed = true;
-
-  return withSequenceNumbers(state, [{
-    type: "error",
-    message: event.error?.message ?? "An unexpected error occurred.",
-    code: event.error?.type,
-  }]);
+  return responses.functionCallDone(
+    state,
+    info.outputIndex,
+    info.itemId,
+    info.toolArguments,
+    item,
+  );
 };
 
 export const createMessagesToResponsesStreamState = (
@@ -477,26 +335,19 @@ export const createMessagesToResponsesStreamState = (
 ): MessagesToResponsesStreamState => ({
   responseId,
   model,
-  responseCreated: false,
   outputIndex: 0,
   sequenceNumber: 0,
   blockMap: new Map(),
   accumulatedText: "",
   completedItems: [],
-  completed: false,
   inputTokens: 0,
   outputTokens: 0,
-  cacheReadInputTokens: undefined,
-  cacheCreationInputTokens: undefined,
-  stopReason: undefined,
 });
 
 export const translateMessagesEventToResponsesEvents = (
   event: MessagesStreamEventData,
   state: MessagesToResponsesStreamState,
 ): ResponseStreamEvent[] => {
-  if (state.completed) return [];
-
   switch (event.type) {
     case "message_start":
       return handleMessageStart(event, state);
@@ -506,16 +357,32 @@ export const translateMessagesEventToResponsesEvents = (
       return handleContentBlockDelta(event, state);
     case "content_block_stop":
       return handleContentBlockStop(event, state);
-    case "message_delta":
-      return handleMessageDelta(event, state);
-    case "message_stop":
-      return handleMessageStop(state);
-    case "ping":
-      return withSequenceNumbers(state, [{ type: "ping" }]);
-    case "error":
-      return handleError(event, state);
-    default:
+    case "message_delta": {
+      if (event.delta.stop_reason !== undefined) {
+        state.stopReason = event.delta.stop_reason;
+      }
+      if (event.usage) {
+        state.outputTokens = event.usage.output_tokens;
+      }
       return [];
+    }
+    case "message_stop": {
+      const status: ResponsesResult["status"] = state.stopReason ===
+          "max_tokens"
+        ? "incomplete"
+        : "completed";
+      const response = buildResult(state, status);
+
+      return responses.terminal(state, response);
+    }
+    case "ping":
+      return responses.seq(state, [{ type: "ping" }]);
+    case "error":
+      return responses.seq(state, [{
+        type: "error",
+        message: event.error.message,
+        code: event.error.type,
+      }]);
   }
 };
 
@@ -526,12 +393,7 @@ export const translateToSourceEvents = async function* (
 ): AsyncGenerator<ProtocolFrame<ResponsesStreamEvent>> {
   const state = createMessagesToResponsesStreamState(responseId, model);
 
-  for await (
-    const event of protocolEventsUntilTerminal(
-      frames,
-      upstreamMessagesStreamAlgebra,
-    )
-  ) {
+  for await (const event of upstreamMessagesEventsUntilTerminal(frames)) {
     for (
       const translated of translateMessagesEventToResponsesEvents(
         event,

@@ -7,46 +7,37 @@ import {
   doneFrame,
   eventFrame,
   type ProtocolFrame,
-  type SseFrame,
   type StreamFrame,
 } from "../../../shared/stream/types.ts";
+import { parseTargetStreamFrames } from "../../events/from-stream.ts";
 import { chatCompletionResultToEvents } from "./from-result.ts";
 
-const chatCompletionsSSEFrameToEvent = (
-  frame: SseFrame,
-): ProtocolFrame<ChatCompletionChunk> | null => {
-  const data = frame.data.trim();
-  if (!data) return null;
-  if (data === "[DONE]") return doneFrame();
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(data) as unknown;
-  } catch (error) {
-    throw new Error(
-      `Malformed upstream Chat Completions SSE JSON: ${data}`,
-      { cause: error },
-    );
-  }
-
+const chatCompletionsSseJsonToEvent = (
+  parsed: unknown,
+): ChatCompletionChunk => {
   const errorMessage = chatCompletionsErrorPayloadMessage(parsed);
   if (errorMessage) {
     throw new Error(`Upstream Chat Completions SSE error: ${errorMessage}`);
   }
 
-  return eventFrame(parsed as ChatCompletionChunk);
+  return parsed as ChatCompletionChunk;
 };
 
-export const chatCompletionsStreamFramesToEvents = async function* (
+export const chatCompletionsStreamFramesToEvents = (
   frames: AsyncIterable<StreamFrame<ChatCompletionResponse>>,
-): AsyncGenerator<ProtocolFrame<ChatCompletionChunk>> {
-  for await (const frame of frames) {
-    if (frame.type === "sse") {
-      const event = chatCompletionsSSEFrameToEvent(frame);
-      if (event) yield event;
-      continue;
+): AsyncGenerator<ProtocolFrame<ChatCompletionChunk>> =>
+  (async function* () {
+    for await (
+      const frame of parseTargetStreamFrames<ChatCompletionResponse>(frames, {
+        protocol: "Chat Completions",
+      })
+    ) {
+      if (frame.type === "json") {
+        yield* chatCompletionResultToEvents(frame.data);
+      } else if (frame.type === "done") {
+        yield doneFrame();
+      } else {
+        yield eventFrame(chatCompletionsSseJsonToEvent(frame.data));
+      }
     }
-
-    yield* chatCompletionResultToEvents(frame.data);
-  }
-};
+  })();

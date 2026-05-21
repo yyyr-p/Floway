@@ -1,48 +1,28 @@
 import type {
-  GeminiContent,
-  GeminiFunctionCallingConfig,
   GeminiGenerateContentRequest,
   GeminiGenerationConfig,
   GeminiPart,
-  GeminiThinkingConfig,
 } from "../../../shared/protocol/gemini.ts";
 import type {
   ResponseInputContent,
   ResponseInputItem,
   ResponsesPayload,
   ResponseTool,
-  ResponseToolChoice,
 } from "../../../shared/protocol/responses.ts";
-
-type UnmatchedToolCallIds = Record<string, string[]>;
-
-const supportedImageMimeTypes = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-]);
-
-const deterministicToolCallId = (
-  turnIndex: number,
-  partIndex: number,
-): string => `gemini_call_${turnIndex}_${partIndex}`;
-
-const deterministicReasoningId = (
-  turnIndex: number,
-  partIndex: number,
-): string => `gemini_reasoning_${turnIndex}_${partIndex}`;
-
-const partText = (part: GeminiPart): string | null =>
-  typeof part.text === "string" ? part.text : null;
-
-const collectSystemText = (content?: GeminiContent): string | null => {
-  const text = content?.parts
-    .map(partText)
-    .filter((value): value is string => value !== null);
-
-  return text?.length ? text.join("\n\n") : null;
-};
+import {
+  geminiFunctionCallingIntent,
+  geminiFunctionCallPart,
+  geminiFunctionDeclarations,
+  geminiFunctionResponsePart,
+  geminiInlineDataUrl,
+  geminiPartText,
+  geminiReasoningEffort,
+  geminiReasoningId,
+  geminiText,
+  geminiThoughtText,
+  type GeminiToolCallIds,
+  geminiVisibleText,
+} from "../shared/gemini.ts";
 
 const flushPendingContent = (
   input: ResponseInputItem[],
@@ -57,61 +37,34 @@ const flushPendingContent = (
 const inlineDataToInputImage = (
   part: GeminiPart,
 ): ResponseInputContent | null => {
-  if (!part.inlineData) return null;
-  if (!supportedImageMimeTypes.has(part.inlineData.mimeType)) return null;
+  const imageUrl = geminiInlineDataUrl(part);
+  if (imageUrl === null) return null;
 
   return {
     type: "input_image",
-    image_url:
-      `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`,
+    image_url: imageUrl,
     detail: "auto",
   };
-};
-
-const removeMatchedId = (
-  ids: string[] | undefined,
-  id: string,
-): void => {
-  const index = ids?.indexOf(id) ?? -1;
-  if (index >= 0) ids?.splice(index, 1);
-};
-
-const takeFunctionResponseCallId = (
-  part: GeminiPart,
-  turnIndex: number,
-  partIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
-): string => {
-  const response = part.functionResponse;
-  if (!response) return deterministicToolCallId(turnIndex, partIndex);
-
-  const unmatchedIds = unmatchedToolCallIds[response.name];
-  if (response.id !== undefined) {
-    removeMatchedId(unmatchedIds, response.id);
-    return response.id;
-  }
-
-  return unmatchedIds?.shift() ?? deterministicToolCallId(turnIndex, partIndex);
 };
 
 const buildFunctionCallOutput = (
   part: GeminiPart,
   turnIndex: number,
   partIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): ResponseInputItem | null => {
-  const response = part.functionResponse;
-  if (!response) return null;
+  const functionResponsePart = geminiFunctionResponsePart(
+    part,
+    unmatchedToolCallIds,
+    turnIndex,
+    partIndex,
+  );
+  if (!functionResponsePart) return null;
 
   return {
     type: "function_call_output",
-    call_id: takeFunctionResponseCallId(
-      part,
-      turnIndex,
-      partIndex,
-      unmatchedToolCallIds,
-    ),
-    output: JSON.stringify(response.response),
+    call_id: functionResponsePart.id,
+    output: JSON.stringify(functionResponsePart.response.response),
     status: "completed",
   };
 };
@@ -120,20 +73,21 @@ const buildFunctionCall = (
   part: GeminiPart,
   turnIndex: number,
   partIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): ResponseInputItem | null => {
-  const call = part.functionCall;
-  if (!call) return null;
-
-  const callId = call.id ?? deterministicToolCallId(turnIndex, partIndex);
-  unmatchedToolCallIds[call.name] ??= [];
-  unmatchedToolCallIds[call.name].push(callId);
+  const functionCallPart = geminiFunctionCallPart(
+    part,
+    unmatchedToolCallIds,
+    turnIndex,
+    partIndex,
+  );
+  if (!functionCallPart) return null;
 
   return {
     type: "function_call",
-    call_id: callId,
-    name: call.name,
-    arguments: JSON.stringify(call.args),
+    call_id: functionCallPart.id,
+    name: functionCallPart.call.name,
+    arguments: JSON.stringify(functionCallPart.call.args),
     status: "completed",
   };
 };
@@ -143,26 +97,23 @@ const buildReasoningItem = (
   turnIndex: number,
   partIndex: number,
 ): ResponseInputItem | null => {
-  const text = part.thought === true && typeof part.text === "string"
-    ? part.text
-    : "";
-  const hasSignature = Object.hasOwn(part, "thoughtSignature") &&
-    part.thoughtSignature !== undefined;
+  const text = geminiThoughtText(part) ?? "";
+  const hasSignature = part.thoughtSignature !== undefined;
 
   if (!text && !hasSignature) return null;
 
   return {
     type: "reasoning",
-    id: deterministicReasoningId(turnIndex, partIndex),
+    id: geminiReasoningId(turnIndex, partIndex),
     summary: text ? [{ type: "summary_text", text }] : [],
     ...(hasSignature ? { encrypted_content: part.thoughtSignature } : {}),
   };
 };
 
 const buildUserInputItems = (
-  content: GeminiContent,
+  content: NonNullable<GeminiGenerateContentRequest["contents"]>[number],
   turnIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): ResponseInputItem[] => {
   const input: ResponseInputItem[] = [];
   const pendingContent: ResponseInputContent[] = [];
@@ -180,7 +131,7 @@ const buildUserInputItems = (
       return;
     }
 
-    const text = partText(part);
+    const text = geminiPartText(part);
     if (text !== null) {
       pendingContent.push({ type: "input_text", text });
       return;
@@ -195,9 +146,9 @@ const buildUserInputItems = (
 };
 
 const buildAssistantInputItems = (
-  content: GeminiContent,
+  content: NonNullable<GeminiGenerateContentRequest["contents"]>[number],
   turnIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): ResponseInputItem[] => {
   const input: ResponseInputItem[] = [];
   const pendingContent: ResponseInputContent[] = [];
@@ -223,38 +174,12 @@ const buildAssistantInputItems = (
       return;
     }
 
-    const text = part.thought === true ? null : partText(part);
+    const text = geminiVisibleText(part);
     if (text !== null) pendingContent.push({ type: "output_text", text });
   });
 
   flushPendingContent(input, pendingContent, "assistant");
   return input;
-};
-
-const mapReasoningEffort = (
-  thinkingConfig?: GeminiThinkingConfig,
-): "none" | "low" | "medium" | "high" | null => {
-  if (!thinkingConfig) return null;
-
-  if (thinkingConfig.thinkingBudget !== undefined) {
-    if (thinkingConfig.thinkingBudget === 0) return "none";
-    if (thinkingConfig.thinkingBudget < 0) return null;
-    if (thinkingConfig.thinkingBudget <= 2048) return "low";
-    if (thinkingConfig.thinkingBudget <= 8192) return "medium";
-    return "high";
-  }
-
-  switch (thinkingConfig.thinkingLevel) {
-    case "minimal":
-    case "low":
-      return "low";
-    case "medium":
-      return "medium";
-    case "high":
-      return "high";
-    default:
-      return null;
-  }
 };
 
 const applyGenerationConfig = (
@@ -287,7 +212,7 @@ const applyGenerationConfig = (
     request.text = { format: { type: "json_object" } };
   }
 
-  const effort = mapReasoningEffort(generationConfig.thinkingConfig);
+  const effort = geminiReasoningEffort(generationConfig.thinkingConfig);
   if (!effort) return;
 
   request.reasoning = {
@@ -302,46 +227,18 @@ const applyGenerationConfig = (
 const buildTools = (
   payload: GeminiGenerateContentRequest,
 ): ResponseTool[] | undefined => {
-  const allowedFunctionNames = payload.toolConfig?.functionCallingConfig
-    ?.allowedFunctionNames;
-  const allowedNames = payload.toolConfig?.functionCallingConfig?.mode ===
-        "ANY" && allowedFunctionNames?.length
-    ? new Set(allowedFunctionNames)
-    : null;
-  const tools = payload.tools?.flatMap((toolGroup) =>
-    toolGroup.functionDeclarations
-      ?.filter((declaration) => allowedNames?.has(declaration.name) ?? true)
-      .map((declaration) => ({
-        type: "function" as const,
-        name: declaration.name,
-        ...(declaration.description !== undefined
-          ? { description: declaration.description }
-          : {}),
-        parameters: declaration.parameters ??
-          { type: "object", properties: {} },
-        strict: false,
-      })) ?? []
-  );
+  const tools = geminiFunctionDeclarations(payload, "any")
+    .map((declaration) => ({
+      type: "function" as const,
+      name: declaration.name,
+      ...(declaration.description !== undefined
+        ? { description: declaration.description }
+        : {}),
+      parameters: declaration.parameters ?? { type: "object", properties: {} },
+      strict: false,
+    }));
 
-  return tools?.length ? tools : undefined;
-};
-
-const mapToolChoice = (
-  config?: GeminiFunctionCallingConfig,
-): ResponseToolChoice | undefined => {
-  switch (config?.mode) {
-    case "NONE":
-      return "none";
-    case "AUTO":
-    case "VALIDATED":
-      return "auto";
-    case "ANY":
-      return config.allowedFunctionNames?.length === 1
-        ? { type: "function", name: config.allowedFunctionNames[0] }
-        : "required";
-    default:
-      return undefined;
-  }
+  return tools.length ? tools : undefined;
 };
 
 export const buildTargetRequest = (
@@ -354,9 +251,9 @@ export const buildTargetRequest = (
     stream: wantsStream,
     input: [],
   };
-  const unmatchedToolCallIds: UnmatchedToolCallIds = {};
+  const unmatchedToolCallIds: GeminiToolCallIds = {};
 
-  const instructions = collectSystemText(payload.systemInstruction);
+  const instructions = geminiText(payload.systemInstruction);
   if (instructions !== null) request.instructions = instructions;
 
   const input = request.input as ResponseInputItem[];
@@ -374,10 +271,23 @@ export const buildTargetRequest = (
   if (tools) {
     request.tools = tools;
 
-    const toolChoice = mapToolChoice(
+    const intent = geminiFunctionCallingIntent(
       payload.toolConfig?.functionCallingConfig,
     );
-    if (toolChoice !== undefined) request.tool_choice = toolChoice;
+    switch (intent?.type) {
+      case "none":
+        request.tool_choice = "none";
+        break;
+      case "auto":
+        request.tool_choice = "auto";
+        break;
+      case "any":
+        request.tool_choice = "required";
+        break;
+      case "named":
+        request.tool_choice = { type: "function", name: intent.name };
+        break;
+    }
   }
 
   return request;

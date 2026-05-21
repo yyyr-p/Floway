@@ -4,29 +4,38 @@ import type {
 } from "../../../shared/protocol/chat-completions.ts";
 import type { MessagesStreamEventData } from "../../../shared/protocol/messages.ts";
 import { mapMessagesStopReasonToChatCompletionsFinishReason } from "./result.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import {
   doneFrame,
   eventFrame,
   type ProtocolFrame,
 } from "../../shared/stream/types.ts";
 
-const upstreamMessagesStreamAlgebra = {
-  isTerminalEvent: (event: Pick<MessagesStreamEventData, "type">): boolean =>
-    event.type === "message_stop" || event.type === "error",
-  missingTerminalMessage:
-    "Upstream Messages stream ended without a message_stop event.",
+const UPSTREAM_MESSAGES_MISSING_TERMINAL_MESSAGE =
+  "Upstream Messages stream ended without a message_stop event.";
+
+const upstreamMessagesEventsUntilTerminal = async function* (
+  frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
+): AsyncGenerator<MessagesStreamEventData> {
+  for await (const frame of frames) {
+    if (frame.type === "done") continue;
+
+    yield frame.event;
+    if (frame.event.type === "message_stop" || frame.event.type === "error") {
+      return;
+    }
+  }
+
+  throw new Error(UPSTREAM_MESSAGES_MISSING_TERMINAL_MESSAGE);
 };
 
 interface MessagesToChatCompletionsStreamState {
   messageId: string;
   model: string;
   created: number;
-  toolCallIndex: number;
-  inputTokens: number;
-  cacheReadInputTokens: number;
-  cacheCreationInputTokens: number;
-  firstReasoningBlockIndex?: number;
+  nextToolCallIndex: number;
+  promptTokens: number;
+  cachedPromptTokens: number;
+  reasoningBlockIndex?: number;
 }
 
 export const createMessagesToChatCompletionsStreamState =
@@ -34,12 +43,18 @@ export const createMessagesToChatCompletionsStreamState =
     messageId: "",
     model: "",
     created: Math.floor(Date.now() / 1000),
-    toolCallIndex: -1,
-    inputTokens: 0,
-    cacheReadInputTokens: 0,
-    cacheCreationInputTokens: 0,
-    firstReasoningBlockIndex: undefined,
+    nextToolCallIndex: 0,
+    promptTokens: 0,
+    cachedPromptTokens: 0,
   });
+
+const claimReasoningBlock = (
+  state: MessagesToChatCompletionsStreamState,
+  index: number,
+): boolean => {
+  state.reasoningBlockIndex ??= index;
+  return state.reasoningBlockIndex === index;
+};
 
 const makeChunk = (
   state: MessagesToChatCompletionsStreamState,
@@ -60,30 +75,30 @@ const makeChunk = (
 const makeUsageChunk = (
   state: MessagesToChatCompletionsStreamState,
   outputTokens: number,
-): ChatCompletionChunk => {
-  const promptTokens = state.inputTokens +
-    state.cacheReadInputTokens +
-    state.cacheCreationInputTokens;
+): ChatCompletionChunk => ({
+  id: state.messageId,
+  object: "chat.completion.chunk",
+  created: state.created,
+  model: state.model,
+  choices: [],
+  usage: {
+    prompt_tokens: state.promptTokens,
+    completion_tokens: outputTokens,
+    total_tokens: state.promptTokens + outputTokens,
+    ...(state.cachedPromptTokens > 0
+      ? {
+        prompt_tokens_details: {
+          cached_tokens: state.cachedPromptTokens,
+        },
+      }
+      : {}),
+  },
+});
 
-  return {
-    id: state.messageId,
-    object: "chat.completion.chunk",
-    created: state.created,
-    model: state.model,
-    choices: [],
-    usage: {
-      prompt_tokens: promptTokens,
-      completion_tokens: outputTokens,
-      total_tokens: promptTokens + outputTokens,
-      ...(state.cacheReadInputTokens > 0
-        ? {
-          prompt_tokens_details: {
-            cached_tokens: state.cacheReadInputTokens,
-          },
-        }
-        : {}),
-    },
-  };
+const unexpectedMessagesVariant = (value: never): never => {
+  throw new Error(
+    `Unexpected Messages stream variant: ${JSON.stringify(value)}`,
+  );
 };
 
 export const translateMessagesEventToChatCompletionsChunks = (
@@ -94,65 +109,71 @@ export const translateMessagesEventToChatCompletionsChunks = (
     case "message_start": {
       state.messageId = event.message.id;
       state.model = event.message.model;
-      state.inputTokens = event.message.usage.input_tokens;
-      state.cacheReadInputTokens =
-        event.message.usage.cache_read_input_tokens ?? 0;
-      state.cacheCreationInputTokens =
-        event.message.usage.cache_creation_input_tokens ?? 0;
+      state.cachedPromptTokens = event.message.usage.cache_read_input_tokens ??
+        0;
+      state.promptTokens = event.message.usage.input_tokens +
+        state.cachedPromptTokens +
+        (event.message.usage.cache_creation_input_tokens ?? 0);
       return [makeChunk(state, { role: "assistant" })];
     }
 
-    case "content_block_start":
-      if (
-        event.content_block.type === "thinking" ||
-        event.content_block.type === "redacted_thinking"
-      ) {
-        state.firstReasoningBlockIndex ??= event.index;
+    case "content_block_start": {
+      const { content_block: block } = event;
+
+      switch (block.type) {
+        case "thinking":
+          claimReasoningBlock(state, event.index);
+          return [];
+        case "redacted_thinking":
+          return claimReasoningBlock(state, event.index)
+            ? [makeChunk(state, { reasoning_opaque: block.data })]
+            : [];
+        case "tool_use": {
+          const toolCallIndex = state.nextToolCallIndex++;
+          return [makeChunk(state, {
+            tool_calls: [{
+              index: toolCallIndex,
+              id: block.id,
+              type: "function",
+              function: { name: block.name, arguments: "" },
+            }],
+          })];
+        }
+        case "text":
+        case "server_tool_use":
+        case "web_search_tool_result":
+          return [];
       }
 
-      if (event.content_block.type === "redacted_thinking") {
-        return state.firstReasoningBlockIndex === event.index
-          ? [makeChunk(state, { reasoning_opaque: event.content_block.data })]
-          : [];
-      }
+      return unexpectedMessagesVariant(block);
+    }
 
-      if (event.content_block.type !== "tool_use") return [];
-
-      state.toolCallIndex++;
-      return [makeChunk(state, {
-        tool_calls: [{
-          index: state.toolCallIndex,
-          id: event.content_block.id,
-          type: "function",
-          function: {
-            name: event.content_block.name,
-            arguments: "",
-          },
-        }],
-      })];
-
-    case "content_block_delta":
-      switch (event.delta.type) {
+    case "content_block_delta": {
+      const { delta } = event;
+      switch (delta.type) {
         case "thinking_delta":
-          return state.firstReasoningBlockIndex === event.index
-            ? [makeChunk(state, { reasoning_text: event.delta.thinking })]
+          return state.reasoningBlockIndex === event.index
+            ? [makeChunk(state, { reasoning_text: delta.thinking })]
             : [];
         case "signature_delta":
-          return state.firstReasoningBlockIndex === event.index
-            ? [makeChunk(state, { reasoning_opaque: event.delta.signature })]
+          return state.reasoningBlockIndex === event.index
+            ? [makeChunk(state, { reasoning_opaque: delta.signature })]
             : [];
         case "text_delta":
-          return [makeChunk(state, { content: event.delta.text })];
+          return [makeChunk(state, { content: delta.text })];
         case "input_json_delta":
           return [makeChunk(state, {
             tool_calls: [{
-              index: state.toolCallIndex,
-              function: { arguments: event.delta.partial_json },
+              index: state.nextToolCallIndex - 1,
+              function: { arguments: delta.partial_json },
             }],
           })];
-        default:
+        case "citations_delta":
           return [];
       }
+
+      return unexpectedMessagesVariant(delta);
+    }
 
     case "content_block_stop":
       return [];
@@ -177,9 +198,6 @@ export const translateMessagesEventToChatCompletionsChunks = (
     case "ping":
     case "error":
       return [];
-
-    default:
-      return [];
   }
 };
 
@@ -197,12 +215,7 @@ export const translateToSourceEvents = async function* (
 ): AsyncGenerator<ProtocolFrame<ChatCompletionChunk>> {
   const state = createMessagesToChatCompletionsStreamState();
 
-  for await (
-    const event of protocolEventsUntilTerminal(
-      frames,
-      upstreamMessagesStreamAlgebra,
-    )
-  ) {
+  for await (const event of upstreamMessagesEventsUntilTerminal(frames)) {
     throwOnMessagesFatalEvent(event);
 
     const translated = translateMessagesEventToChatCompletionsChunks(

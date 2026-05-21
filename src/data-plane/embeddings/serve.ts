@@ -5,19 +5,21 @@ import type { Context } from "hono";
 
 import type { BackgroundScheduler } from "../../runtime/background.ts";
 import { backgroundSchedulerFromContext } from "../../runtime/background.ts";
-import { ModelsFetchError } from "../providers/upstream-model-cache.ts";
-import { getModelCapabilities } from "../providers/capabilities.ts";
-import { resolveModelForRequest } from "../providers/registry.ts";
-import { runOnModel, skipProvider } from "../providers/run.ts";
+import type { PerformanceTelemetryContext } from "../shared/telemetry/performance.ts";
 import {
-  type PerformanceTelemetryContext,
   recordPerformanceError,
   recordPerformanceLatency,
   recordRequestPerformanceForApiKey,
   runtimeLocationFromRequest,
 } from "../shared/telemetry/performance.ts";
-import { recordUsageForApiKey } from "../shared/telemetry/usage.ts";
-import type { TokenUsage } from "../../repo/types.ts";
+import {
+  recordUsageForApiKey,
+  tokenUsageFromPromptTokenResponse,
+} from "../shared/telemetry/usage.ts";
+import { ModelsFetchError } from "../providers/upstream-model-cache.ts";
+import { getModelCapabilities } from "../providers/capabilities.ts";
+import { resolveModelForRequest } from "../providers/registry.ts";
+import type { ProviderModelRecord } from "../providers/types.ts";
 
 interface EmbeddingsRequestBody {
   model?: unknown;
@@ -81,21 +83,25 @@ const proxyJsonResponse = (resp: Response): Response =>
     },
   });
 
-const tokenUsageFromEmbeddingsResponse = (
-  value: unknown,
-): TokenUsage | null => {
-  if (!value || typeof value !== "object") return null;
-  const usage = (value as { usage?: unknown }).usage;
-  if (!usage || typeof usage !== "object") return null;
-  const promptTokens = (usage as { prompt_tokens?: unknown }).prompt_tokens;
-  if (typeof promptTokens !== "number") return null;
-  return {
-    inputTokens: promptTokens,
-    outputTokens: 0,
-    cacheReadTokens: 0,
-    cacheCreationTokens: 0,
-  };
-};
+const embeddingsPerformanceContext = (
+  keyId: string | undefined,
+  model: string,
+  binding: ProviderModelRecord,
+  modelKey: string,
+  runtimeLocation: string,
+): PerformanceTelemetryContext | undefined =>
+  keyId
+    ? {
+      keyId,
+      model,
+      upstream: binding.upstream,
+      modelKey,
+      sourceApi: "embeddings",
+      targetApi: "embeddings",
+      stream: false,
+      runtimeLocation,
+    }
+    : undefined;
 
 const recordUpstreamPerformance = (
   scheduler: BackgroundScheduler | undefined,
@@ -115,7 +121,6 @@ export const embeddings = async (c: Context): Promise<Response> => {
   const apiKeyId = c.get("apiKeyId") as string | undefined;
   const runtimeLocation = runtimeLocationFromRequest(c.req.raw);
   const scheduleBackground = backgroundSchedulerFromContext(c);
-  const recordUsage = recordUsageForApiKey(apiKeyId);
   const recordRequestPerformance = recordRequestPerformanceForApiKey(
     apiKeyId,
     scheduleBackground,
@@ -127,6 +132,7 @@ export const embeddings = async (c: Context): Promise<Response> => {
     if (request.type === "invalid") {
       return apiErrorResponse(c, request.message, 400);
     }
+    const recordUsage = recordUsageForApiKey(apiKeyId);
 
     const { id: modelId, model } = await resolveModelForRequest(request.model);
     if (!model) {
@@ -137,71 +143,50 @@ export const embeddings = async (c: Context): Promise<Response> => {
       );
     }
 
-    const resp = await runOnModel(
-      model,
-      async (binding) => {
-        if (!getModelCapabilities(binding.upstreamModel).supportsEmbeddings) {
-          return skipProvider(apiErrorResponse(
-            c,
-            `Model ${modelId} does not support the /embeddings endpoint.`,
-            400,
-          ));
-        }
-        const { model: _model, ...body } = request.body;
-        const upstreamStartedAt = performance.now();
-        const { response, modelKey } = await binding.provider.callEmbeddings(
-          binding.upstreamModel,
-          body,
-        );
-        const perfContext: PerformanceTelemetryContext | undefined = apiKeyId
-          ? {
-            keyId: apiKeyId,
-            model: modelId,
-            upstream: binding.upstream,
-            modelKey,
-            sourceApi: "embeddings",
-            targetApi: "embeddings",
-            stream: false,
-            runtimeLocation,
-          }
-          : undefined;
-        if (perfContext) lastPerformance = perfContext;
+    for (const binding of model.providers) {
+      if (!getModelCapabilities(binding.upstreamModel).supportsEmbeddings) {
+        continue;
+      }
 
-        if (!response.ok) {
-          recordUpstreamPerformance(
-            scheduleBackground,
-            perfContext,
-            true,
-            performance.now() - upstreamStartedAt,
-          );
-          recordRequestPerformance(
-            perfContext,
-            true,
-            performance.now() - requestStartedAt,
-          );
-          return proxyJsonResponse(response);
-        }
+      const { model: _model, ...body } = request.body;
+      const upstreamStartedAt = performance.now();
+      const { response, modelKey } = await binding.provider.callEmbeddings(
+        binding.upstreamModel,
+        body,
+      );
+      const performanceContext = embeddingsPerformanceContext(
+        apiKeyId,
+        modelId,
+        binding,
+        modelKey,
+        runtimeLocation,
+      );
+      if (performanceContext) lastPerformance = performanceContext;
 
-        let parsed: unknown;
-        try {
-          parsed = await response.clone().json() as unknown;
-        } catch (error) {
-          recordUpstreamPerformance(
-            scheduleBackground,
-            perfContext,
-            true,
-            performance.now() - upstreamStartedAt,
-          );
-          throw error;
-        }
-
+      if (!response.ok) {
         recordUpstreamPerformance(
           scheduleBackground,
-          perfContext,
+          performanceContext,
+          true,
+          performance.now() - upstreamStartedAt,
+        );
+        recordRequestPerformance(
+          performanceContext,
+          true,
+          performance.now() - requestStartedAt,
+        );
+        return proxyJsonResponse(response);
+      }
+
+      try {
+        const parsed = await response.clone().json() as unknown;
+        const usage = tokenUsageFromPromptTokenResponse(parsed);
+        recordUpstreamPerformance(
+          scheduleBackground,
+          performanceContext,
           false,
           performance.now() - upstreamStartedAt,
         );
-        const usage = tokenUsageFromEmbeddingsResponse(parsed);
         if (usage) {
           await recordUsage({
             model: modelId,
@@ -209,16 +194,28 @@ export const embeddings = async (c: Context): Promise<Response> => {
             modelKey,
           }, usage);
         }
-        recordRequestPerformance(
-          perfContext,
-          false,
-          performance.now() - requestStartedAt,
+      } catch (error) {
+        recordUpstreamPerformance(
+          scheduleBackground,
+          performanceContext,
+          true,
+          performance.now() - upstreamStartedAt,
         );
-        return proxyJsonResponse(response);
-      },
-    );
+        throw error;
+      }
+      recordRequestPerformance(
+        performanceContext,
+        false,
+        performance.now() - requestStartedAt,
+      );
+      return proxyJsonResponse(response);
+    }
 
-    return resp;
+    return apiErrorResponse(
+      c,
+      `Model ${modelId} does not support the /embeddings endpoint.`,
+      400,
+    );
   } catch (e: unknown) {
     const response = modelsLoadErrorResponse(e);
     if (response) return response;

@@ -1,41 +1,28 @@
-import { assertEquals, assertRejects } from "@std/assert";
+import { assertEquals } from "@std/assert";
 import type { ChatCompletionChunk } from "../../../../shared/protocol/chat-completions.ts";
 import { doneFrame, eventFrame } from "../../../shared/stream/types.ts";
-import { chatProtocolEventsToSSEFrames } from "./to-sse.ts";
+import { chatProtocolFrameToSSEFrame } from "./to-sse.ts";
 
-const collect = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
-  const collected: T[] = [];
-  for await (const event of events) collected.push(event);
-  return collected;
-};
+const includeUsageChunk = { includeUsageChunk: true };
 
-const ignoreUsage = {
-  includeUsageChunk: true,
-  onUsage: () => {},
-};
-
-Deno.test("chatProtocolEventsToSSEFrames passes through non-chunk JSON payloads", async () => {
+Deno.test("chatProtocolFrameToSSEFrame passes through non-chunk JSON payloads", () => {
   const payload = {
     error: { message: "boom" },
   } as unknown as ChatCompletionChunk;
 
-  const frames = await collect(
-    chatProtocolEventsToSSEFrames(
-      (async function* () {
-        yield eventFrame(payload);
-      })(),
-      ignoreUsage,
-    ),
+  const frame = chatProtocolFrameToSSEFrame(
+    eventFrame(payload),
+    includeUsageChunk,
   );
 
-  assertEquals(frames, [{
+  assertEquals(frame, {
     type: "sse",
     event: undefined,
     data: JSON.stringify(payload),
-  }]);
+  });
 });
 
-Deno.test("chatProtocolEventsToSSEFrames stops at DONE", async () => {
+Deno.test("chatProtocolFrameToSSEFrame serializes DONE without owning termination", () => {
   const chunk = {
     id: "chatcmpl_done",
     object: "chat.completion.chunk",
@@ -48,54 +35,31 @@ Deno.test("chatProtocolEventsToSSEFrames stops at DONE", async () => {
     }],
   } satisfies ChatCompletionChunk;
 
-  const frames = await collect(
-    chatProtocolEventsToSSEFrames(
-      (async function* () {
-        yield eventFrame(chunk);
-        yield doneFrame();
-        yield eventFrame({
-          ...chunk,
-          id: "chatcmpl_after_done",
-          choices: [{
-            index: 0,
-            delta: { content: "ignored" },
-            finish_reason: null,
-          }],
-        });
-      })(),
-      ignoreUsage,
-    ),
-  );
+  const frames = [
+    eventFrame(chunk),
+    doneFrame(),
+    eventFrame({
+      ...chunk,
+      id: "chatcmpl_after_done",
+      choices: [{
+        index: 0,
+        delta: { content: "ignored" },
+        finish_reason: null,
+      }],
+    }),
+  ].map((frame) => chatProtocolFrameToSSEFrame(frame, includeUsageChunk));
 
-  assertEquals(frames.map((frame) => frame.data), [
+  assertEquals(frames.map((frame) => frame?.data), [
     JSON.stringify(chunk),
     "[DONE]",
+    JSON.stringify({
+      ...chunk,
+      id: "chatcmpl_after_done",
+      choices: [{
+        index: 0,
+        delta: { content: "ignored" },
+        finish_reason: null,
+      }],
+    }),
   ]);
-});
-
-Deno.test("chatProtocolEventsToSSEFrames rejects streams without DONE", async () => {
-  await assertRejects(
-    async () => {
-      await collect(chatProtocolEventsToSSEFrames(
-        (async function* () {
-          yield eventFrame(
-            {
-              id: "chatcmpl_truncated",
-              object: "chat.completion.chunk",
-              created: 123,
-              model: "gpt-test",
-              choices: [{
-                index: 0,
-                delta: { role: "assistant", content: "partial" },
-                finish_reason: null,
-              }],
-            } satisfies ChatCompletionChunk,
-          );
-        })(),
-        ignoreUsage,
-      ));
-    },
-    Error,
-    "Chat Completions stream ended without a DONE sentinel.",
-  );
 });

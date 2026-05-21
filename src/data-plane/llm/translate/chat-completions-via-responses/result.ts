@@ -1,39 +1,31 @@
 import type {
   ChatCompletionResponse,
-  ChatReasoningItem,
   ToolCall,
 } from "../../../shared/protocol/chat-completions.ts";
 import type { ResponsesResult } from "../../../shared/protocol/responses.ts";
-import { toChatReasoningItem } from "../shared/chat-responses-reasoning.ts";
+import {
+  addResponseReasoningToChatProjection,
+  chatReasoningProjectionFields,
+  createChatReasoningProjection,
+} from "../shared/chat-responses-reasoning.ts";
 
 export const mapResponsesFinishReasonToChatCompletionsFinishReason = (
   response: ResponsesResult,
-): ChatCompletionResponse["choices"][0]["finish_reason"] => {
-  if (response.status === "completed") {
-    return response.output.some((item) => item.type === "function_call")
-      ? "tool_calls"
-      : "stop";
-  }
-
-  if (
-    response.status === "incomplete" &&
+): ChatCompletionResponse["choices"][0]["finish_reason"] =>
+  response.status === "incomplete" &&
     response.incomplete_details?.reason === "max_output_tokens"
-  ) {
-    return "length";
-  }
-
-  return "stop";
-};
+    ? "length"
+    : response.status === "completed" &&
+        response.output.some((item) => item.type === "function_call")
+    ? "tool_calls"
+    : "stop";
 
 export const translateResponsesToChatCompletion = (
   response: ResponsesResult,
 ): ChatCompletionResponse => {
   let content = "";
   const toolCalls: ToolCall[] = [];
-  const reasoningItems: ChatReasoningItem[] = [];
-  let reasoningText: string | undefined;
-  let reasoningOpaque: string | undefined;
-  let hasScalarReasoning = false;
+  const reasoning = createChatReasoningProjection();
 
   // Preserve every reasoning item, and expose only the first scalar group through
   // legacy `reasoning_text` / `reasoning_opaque` fields.
@@ -62,14 +54,7 @@ export const translateResponsesToChatCompletion = (
       continue;
     }
 
-    reasoningItems.push(toChatReasoningItem(item));
-    const text = item.summary.map((part) => part.text).join("");
-    const hasEncryptedContent = Object.hasOwn(item, "encrypted_content");
-    if (!hasScalarReasoning && (text || hasEncryptedContent)) {
-      if (text) reasoningText = text;
-      if (hasEncryptedContent) reasoningOpaque = item.encrypted_content;
-      hasScalarReasoning = true;
-    }
+    addResponseReasoningToChatProjection(reasoning, item);
   }
 
   if (!content && response.output_text) {
@@ -91,15 +76,7 @@ export const translateResponsesToChatCompletion = (
         role: "assistant",
         content: content || null,
         ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        ...(reasoningText !== undefined
-          ? { reasoning_text: reasoningText }
-          : {}),
-        ...(reasoningOpaque !== undefined
-          ? { reasoning_opaque: reasoningOpaque }
-          : {}),
-        ...(reasoningItems.length > 0
-          ? { reasoning_items: reasoningItems }
-          : {}),
+        ...chatReasoningProjectionFields(reasoning),
       },
       finish_reason: mapResponsesFinishReasonToChatCompletionsFinishReason(
         response,

@@ -126,11 +126,7 @@ const chatReasoningEffort = (
 
 const messagesReasoningEffort = (
   body: Omit<MessagesPayload, "model">,
-): string | undefined => {
-  if (body.output_config?.effort) return body.output_config.effort;
-  if (body.thinking?.type === "disabled") return undefined;
-  return undefined;
-};
+): string | undefined => body.output_config?.effort;
 
 const responsesReasoningEffort = (
   body: Omit<ResponsesPayload, "model">,
@@ -159,7 +155,7 @@ const rawModelFor = (
     { object: "list", data: rawModels },
     model.id,
     hints,
-  ) ?? rawModels[0] ?? model;
+  ) ?? rawModels[0];
 };
 
 const chatHasVision = (
@@ -288,6 +284,30 @@ export const createCopilotProvider = async (
     return { response, modelKey: rawModel.id };
   };
 
+  const callMessagesEndpoint = (
+    endpoint: "messages" | "messages_count_tokens",
+  ) =>
+  (
+    model: UpstreamModel,
+    body: Omit<MessagesPayload, "model">,
+    signal?: AbortSignal,
+    anthropicBeta?: readonly string[],
+  ) => {
+    const rawModel = rawModelFor(model, endpoint, {
+      context1m: hasContext1mBeta(anthropicBeta),
+      reasoningEffort: messagesReasoningEffort(body),
+    });
+    return call(
+      endpoint,
+      body,
+      signal,
+      rawModel,
+      messagesHasVision(body),
+      messagesInitiator(body),
+      copilotAnthropicBetaHeader(body, anthropicBeta),
+    );
+  };
+
   const provider: ModelProvider = {
     async getProvidedModels() {
       const result = await loadModels(upstream, {
@@ -346,36 +366,8 @@ export const createCopilotProvider = async (
         responsesInitiator(body),
       );
     },
-    callMessages: (model, body, signal, anthropicBeta) => {
-      const rawModel = rawModelFor(model, "messages", {
-        context1m: hasContext1mBeta(anthropicBeta),
-        reasoningEffort: messagesReasoningEffort(body),
-      });
-      return call(
-        "messages",
-        body,
-        signal,
-        rawModel,
-        messagesHasVision(body),
-        messagesInitiator(body),
-        copilotAnthropicBetaHeader(body, anthropicBeta),
-      );
-    },
-    callMessagesCountTokens: (model, body, signal, anthropicBeta) => {
-      const rawModel = rawModelFor(model, "messages_count_tokens", {
-        context1m: hasContext1mBeta(anthropicBeta),
-        reasoningEffort: messagesReasoningEffort(body),
-      });
-      return call(
-        "messages_count_tokens",
-        body,
-        signal,
-        rawModel,
-        messagesHasVision(body),
-        messagesInitiator(body),
-        copilotAnthropicBetaHeader(body, anthropicBeta),
-      );
-    },
+    callMessages: callMessagesEndpoint("messages"),
+    callMessagesCountTokens: callMessagesEndpoint("messages_count_tokens"),
     callEmbeddings: (model, body, signal) =>
       call(
         "embeddings",

@@ -9,6 +9,7 @@ import { respondChatCompletions } from "./chat-completions/respond.ts";
 import { respondGemini } from "./gemini/respond.ts";
 import { respondMessages } from "./messages/respond.ts";
 import { respondResponses } from "./responses/respond.ts";
+import type { SourceExecutionContext } from "./execute.ts";
 import { eventResult } from "../shared/errors/result.ts";
 import type { ProtocolFrame } from "../shared/stream/types.ts";
 import { DOWNSTREAM_KEEP_ALIVE_INTERVAL_MS } from "../shared/stream/proxy-sse.ts";
@@ -142,6 +143,14 @@ const testTelemetryModelIdentity = {
 const recordUsage = () => Promise.resolve();
 const recordRequestPerformance = () => {};
 const requestStartedAt = performance.now();
+const source = (): SourceExecutionContext => ({
+  requestStartedAt,
+  runtimeLocation: "test",
+  recordUsage,
+  recordRequestPerformance,
+  beginDownstream: () => undefined,
+  rememberPerformance: (result) => result,
+});
 
 Deno.test("Messages streaming keepalive uses Anthropic ping events", async () => {
   await assertSourceKeepAlive<MessagesStreamEventData>(
@@ -150,9 +159,7 @@ Deno.test("Messages streaming keepalive uses Anthropic ping events", async () =>
         c,
         eventResult(events, testTelemetryModelIdentity),
         true,
-        recordUsage,
-        recordRequestPerformance,
-        requestStartedAt,
+        source(),
       ),
     'event: ping\ndata: {"type":"ping"}\n\n',
   );
@@ -165,9 +172,7 @@ Deno.test("Responses streaming keepalive uses SSE comments", async () => {
         c,
         eventResult(events, testTelemetryModelIdentity),
         true,
-        recordUsage,
-        recordRequestPerformance,
-        requestStartedAt,
+        source(),
       ),
     ": keepalive\n\n",
   );
@@ -181,9 +186,7 @@ Deno.test("Chat Completions streaming keepalive uses SSE comments", async () => 
         eventResult(events, testTelemetryModelIdentity),
         true,
         true,
-        recordUsage,
-        recordRequestPerformance,
-        requestStartedAt,
+        source(),
       ),
     ": keepalive\n\n",
   );
@@ -196,9 +199,7 @@ Deno.test("Gemini streaming keepalive uses SSE comments", async () => {
         c,
         eventResult(events, testTelemetryModelIdentity),
         true,
-        recordUsage,
-        recordRequestPerformance,
-        requestStartedAt,
+        source(),
       ),
     ": keepalive\n\n",
   );

@@ -1,38 +1,47 @@
 import type { Context } from "hono";
+import { streamSSE } from "hono/streaming";
 import type {
   GeminiErrorResponse,
   GeminiStreamEvent,
 } from "../../../shared/protocol/gemini.ts";
-import type { InternalDebugError } from "../../shared/errors/internal-debug-error.ts";
 import {
-  type RecordRequestPerformance,
-} from "../../../shared/telemetry/performance.ts";
+  type InternalDebugError,
+  toInternalDebugError,
+} from "../../shared/errors/internal-debug-error.ts";
+import type { SourceExecutionContext } from "../execute.ts";
 import {
-  type RecordUsage,
-  recordUsageIfPresent,
-} from "../../../shared/telemetry/usage.ts";
-import {
-  type SourceStreamOutcome,
-  trackSourceStreamOutcome,
-} from "../telemetry.ts";
-import { tokenUsageFromGeminiResponse } from "./usage.ts";
+  tokenUsageFromGeminiFrame,
+  tokenUsageFromGeminiResponse,
+} from "../usage.ts";
 import type {
   StreamExecuteResult,
   UpstreamErrorResult,
 } from "../../shared/errors/result.ts";
 import { decodeUpstreamErrorBody } from "../../shared/errors/upstream-error.ts";
-import { proxySSE } from "../../shared/stream/proxy-sse.ts";
+import {
+  type StreamCompletion,
+  writeSSEFrames,
+} from "../../shared/stream/proxy-sse.ts";
 import {
   type ProtocolFrame,
   sseCommentFrame,
   sseFrame,
 } from "../../shared/stream/types.ts";
 import {
+  GEMINI_MISSING_TERMINAL_MESSAGE,
   isGeminiErrorEvent,
-  isGeminiFinishedEvent,
+  isGeminiTerminalEvent,
 } from "./events/protocol.ts";
 import { collectGeminiProtocolEventsToResponse } from "./events/to-response.ts";
-import { geminiProtocolEventsToSSEFrames } from "./events/to-sse.ts";
+import { geminiProtocolFrameToSSEFrame } from "./events/to-sse.ts";
+import {
+  createSourceStreamState,
+  eventResultMetadata,
+  recordSourcePerformance,
+  recordSourceUsage,
+  rememberSourceFrameUsage,
+  sourceStreamFailed,
+} from "../respond.ts";
 
 const geminiStatusForHttpStatus = (status: number): string => {
   switch (status) {
@@ -81,6 +90,25 @@ const synthesizedGeminiHttpStatusCode = (status: number): number =>
 
 const googleRpcHttpStatusCode = (status: number): number =>
   isSaneErrorHttpStatus(status) ? status : 500;
+
+const geminiRpcErrorPayload = (
+  status: number,
+  message: string,
+  debug: GeminiErrorDebugFields = {},
+): GeminiErrorStatusPayload => {
+  const code = googleRpcHttpStatusCode(status);
+  return {
+    error: { code, message, status: geminiStatusForHttpStatus(code), ...debug },
+  };
+};
+
+export const geminiRpcErrorResponse = (
+  status: number,
+  message: string,
+): Response => {
+  const payload = geminiRpcErrorPayload(status, message);
+  return Response.json(payload, { status: payload.error.code });
+};
 
 const geminiErrorPayload = (
   status: number,
@@ -149,20 +177,6 @@ const caughtGeminiErrorEvent = (error: unknown): GeminiErrorResponse | null => {
   return isGeminiErrorResponse(error.cause) ? error.cause : null;
 };
 
-const internalErrorMessage = (error: unknown): string =>
-  error instanceof Error ? error.message : String(error);
-
-const serializeErrorCause = (cause: unknown): unknown => {
-  if (!(cause instanceof Error)) return cause;
-
-  return {
-    name: cause.name,
-    message: cause.message,
-    stack: cause.stack,
-    cause: serializeErrorCause(cause.cause),
-  };
-};
-
 const internalDebugFields = (
   error: InternalDebugError,
 ): GeminiErrorDebugFields => ({
@@ -174,129 +188,155 @@ const internalDebugFields = (
   ...(error.target_api ? { target_api: error.target_api } : {}),
 });
 
-const unknownInternalDebugFields = (
+const geminiInternalRpcErrorPayload = (
+  status: number,
   error: unknown,
-): GeminiErrorDebugFields => {
-  if (error instanceof Error) {
-    return {
-      type: "internal_error",
-      name: error.name,
-      stack: error.stack,
-      cause: serializeErrorCause(error.cause),
-      source_api: "gemini",
-    };
-  }
+): GeminiErrorStatusPayload => {
+  const debug = toInternalDebugError(error, "gemini");
+  return geminiRpcErrorPayload(
+    status,
+    debug.message,
+    internalDebugFields(debug),
+  );
+};
 
-  return { type: "internal_error", cause: error, source_api: "gemini" };
+export const geminiInternalRpcErrorResponse = (
+  status: number,
+  error: unknown,
+): Response => {
+  const payload = geminiInternalRpcErrorPayload(status, error);
+  return Response.json(payload, { status: payload.error.code });
 };
 
 const isGeminiFailureEvent = (event: GeminiStreamEvent): boolean =>
   isGeminiErrorEvent(event);
 
-const isGeminiCompletionFrame = (
+const isGeminiTerminalFrame = (
   frame: ProtocolFrame<GeminiStreamEvent>,
 ): boolean =>
-  frame.type === "done" ||
-  (frame.type === "event" && isGeminiFinishedEvent(frame.event));
+  frame.type === "done" || (frame.type === "event" &&
+    isGeminiTerminalEvent(frame.event));
+
+const internalGeminiErrorResponse = (
+  status: number,
+  error: InternalDebugError,
+): Response =>
+  geminiErrorResponse(status, error.message, internalDebugFields(error));
+
+const geminiUpstreamErrorResponse = (
+  error: UpstreamErrorResult,
+): Response =>
+  upstreamGoogleRpcErrorResponse(error) ??
+    geminiErrorResponse(error.status, upstreamErrorMessage(error));
+
+const geminiCollectErrorResponse = (error: unknown): Response => {
+  const geminiError = caughtGeminiErrorEvent(error);
+  return geminiError
+    ? geminiErrorEventResponse(geminiError)
+    : geminiInternalRpcErrorResponse(502, error);
+};
+
+const geminiStreamErrorFrame = (error: unknown) =>
+  geminiErrorEventFrame(
+    caughtGeminiErrorEvent(error) ??
+      geminiInternalRpcErrorPayload(500, error),
+  );
+
+const observeGeminiFrames = async function* (
+  frames: AsyncIterable<ProtocolFrame<GeminiStreamEvent>>,
+  state: ReturnType<typeof createSourceStreamState>,
+  observeUsage: boolean,
+) {
+  for await (const frame of frames) {
+    const failed = frame.type === "event" && isGeminiFailureEvent(frame.event);
+    if (failed) state.failed = true;
+    if (observeUsage) {
+      rememberSourceFrameUsage(state, tokenUsageFromGeminiFrame(frame));
+    }
+    if (isGeminiTerminalFrame(frame) && !failed) state.completed = true;
+    yield frame;
+    if (isGeminiTerminalFrame(frame)) return;
+  }
+  throw new Error(GEMINI_MISSING_TERMINAL_MESSAGE);
+};
+
+const geminiSseFrames = async function* (
+  frames: AsyncIterable<ProtocolFrame<GeminiStreamEvent>>,
+  state: ReturnType<typeof createSourceStreamState>,
+) {
+  try {
+    for await (const frame of frames) {
+      const sse = geminiProtocolFrameToSSEFrame(frame);
+      if (sse) yield sse;
+    }
+  } catch (error) {
+    state.failed = true;
+    yield geminiStreamErrorFrame(error);
+  }
+};
 
 export const respondGemini = async (
   c: Context,
   result: StreamExecuteResult<GeminiStreamEvent>,
   wantsStream: boolean,
-  recordUsage: RecordUsage,
-  recordRequestPerformance: RecordRequestPerformance,
-  requestStartedAt: number,
-  downstreamAbortController?: AbortController,
+  source: SourceExecutionContext,
 ): Promise<Response> => {
-  const recordPerformance = (failed: boolean): void => {
-    recordRequestPerformance(
-      result.performance,
-      failed,
-      performance.now() - requestStartedAt,
-    );
-  };
-
   if (result.type === "upstream-error") {
-    const googleRpcResponse = upstreamGoogleRpcErrorResponse(result);
-    const response = googleRpcResponse ??
-      geminiErrorResponse(result.status, upstreamErrorMessage(result));
-    recordPerformance(true);
-    return response;
+    recordSourcePerformance(source, result.performance, true);
+    return geminiUpstreamErrorResponse(result);
   }
 
   if (result.type === "internal-error") {
-    const response = geminiErrorResponse(
-      result.status,
-      result.error.message,
-      internalDebugFields(result.error),
-    );
-    recordPerformance(true);
-    return response;
+    recordSourcePerformance(source, result.performance, true);
+    return internalGeminiErrorResponse(result.status, result.error);
   }
 
-  const streamOutcome: SourceStreamOutcome = {
-    failed: false,
-    completed: false,
-  };
-  const events = trackSourceStreamOutcome(
-    result.events,
-    streamOutcome,
-    isGeminiFailureEvent,
-    isGeminiCompletionFrame,
-  );
+  const state = createSourceStreamState();
+  const frames = observeGeminiFrames(result.events, state, wantsStream);
 
   if (!wantsStream) {
     try {
-      const response = await collectGeminiProtocolEventsToResponse(events);
-      await recordUsageIfPresent(
-        result.modelIdentity,
+      const response = await collectGeminiProtocolEventsToResponse(frames);
+      const metadata = await eventResultMetadata(result);
+      await recordSourceUsage(
+        metadata.modelIdentity,
         tokenUsageFromGeminiResponse(response),
-        recordUsage,
+        source.recordUsage,
       );
-      recordPerformance(streamOutcome.failed);
+      recordSourcePerformance(source, metadata.performance, state.failed);
       return Response.json(response);
     } catch (error) {
-      streamOutcome.failed = true;
-      const geminiError = caughtGeminiErrorEvent(error);
-      const response = geminiError
-        ? geminiErrorEventResponse(geminiError)
-        : geminiErrorResponse(
-          502,
-          internalErrorMessage(error),
-          unknownInternalDebugFields(error),
-        );
-
-      recordPerformance(true);
-      return response;
+      recordSourcePerformance(source, result.performance, true);
+      return geminiCollectErrorResponse(error);
     }
   }
 
-  const response = proxySSE(
-    c,
-    geminiProtocolEventsToSSEFrames(events, {
-      onUsage: (usage) => recordUsage(result.modelIdentity, usage),
-    }),
-    {
-      keepAlive: { frame: downstreamSSECommentKeepAliveFrame },
-      downstreamAbortController,
-      onError: (error) => {
-        streamOutcome.failed = true;
-        return geminiErrorEventFrame(
-          caughtGeminiErrorEvent(error) ??
-            geminiErrorPayload(
-              500,
-              internalErrorMessage(error),
-              unknownInternalDebugFields(error),
-            ),
+  return streamSSE(c, async (stream) => {
+    let completion: StreamCompletion = "error";
+    try {
+      completion = await writeSSEFrames(
+        stream,
+        geminiSseFrames(frames, state),
+        {
+          keepAlive: { frame: downstreamSSECommentKeepAliveFrame },
+          downstreamAbortController: source.downstreamAbortController,
+        },
+      );
+    } finally {
+      const metadata = await eventResultMetadata(result);
+      try {
+        await recordSourceUsage(
+          metadata.modelIdentity,
+          state.usage,
+          source.recordUsage,
         );
-      },
-      onComplete: (completion) => {
-        recordPerformance(
-          completion === "error" || streamOutcome.failed ||
-            (completion === "cancel" && !streamOutcome.completed),
+      } finally {
+        recordSourcePerformance(
+          source,
+          metadata.performance,
+          sourceStreamFailed(completion, state),
         );
-      },
-    },
-  );
-  return response;
+      }
+    }
+  });
 };

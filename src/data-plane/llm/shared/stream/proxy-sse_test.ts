@@ -1,8 +1,9 @@
 import { assertEquals } from "@std/assert";
 import { FakeTime } from "@std/testing/time";
 import { Hono } from "hono";
+import { streamSSE } from "hono/streaming";
 import { parseSSEStream } from "./parse-sse.ts";
-import { proxySSE } from "./proxy-sse.ts";
+import { writeSSEFrames } from "./proxy-sse.ts";
 import { sseCommentFrame, type SseFrame, sseFrame } from "./types.ts";
 
 interface Deferred<T> {
@@ -79,10 +80,16 @@ const waitForIteratorReturn = async (
 
 const requestProxySSE = async (
   events: AsyncIterable<SseFrame>,
-  options: NonNullable<Parameters<typeof proxySSE>[2]>,
+  options: NonNullable<Parameters<typeof writeSSEFrames>[2]>,
 ): Promise<Response> => {
   const app = new Hono();
-  app.get("/", (c) => proxySSE(c, events, options));
+  app.get(
+    "/",
+    (c) =>
+      streamSSE(c, async (stream) => {
+        await writeSSEFrames(stream, events, options);
+      }),
+  );
   return await app.request("/");
 };
 
@@ -110,7 +117,7 @@ const cancelStateWithin = async (
   }
 };
 
-Deno.test("proxySSE emits SSE comment keepalive frames while idle", async () => {
+Deno.test("writeSSEFrames emits SSE comment keepalive frames while idle", async () => {
   const time = new FakeTime();
   const idle = createIdleSSEEvents();
 
@@ -133,7 +140,7 @@ Deno.test("proxySSE emits SSE comment keepalive frames while idle", async () => 
   }
 });
 
-Deno.test("proxySSE emits Messages ping keepalive frames while idle", async () => {
+Deno.test("writeSSEFrames emits Messages ping keepalive frames while idle", async () => {
   const time = new FakeTime();
   const idle = createIdleSSEEvents();
 
@@ -162,7 +169,7 @@ Deno.test("proxySSE emits Messages ping keepalive frames while idle", async () =
   }
 });
 
-Deno.test("proxySSE does not emit keepalive before ready events", async () => {
+Deno.test("writeSSEFrames does not emit keepalive before ready events", async () => {
   const response = await requestProxySSE(
     (async function* () {
       yield sseFrame("{}", "response.completed");
@@ -176,7 +183,7 @@ Deno.test("proxySSE does not emit keepalive before ready events", async () => {
   );
 });
 
-Deno.test("proxySSE stops idle iterator and timer when the response is canceled", async () => {
+Deno.test("writeSSEFrames stops idle iterator and timer when the response is canceled", async () => {
   const time = new FakeTime();
   const idle = createIdleSSEEvents();
 
@@ -197,7 +204,7 @@ Deno.test("proxySSE stops idle iterator and timer when the response is canceled"
   }
 });
 
-Deno.test("proxySSE handles pending iterator errors after the response is canceled", async () => {
+Deno.test("writeSSEFrames handles pending iterator errors after the response is canceled", async () => {
   const idle = createIdleSSEEvents();
   const response = await requestProxySSE(idle.events, {
     keepAlive: { intervalMs: 1_000, frame: sseCommentFrame("keepalive") },
@@ -212,7 +219,7 @@ Deno.test("proxySSE handles pending iterator errors after the response is cancel
   assertEquals(idle.returnCalled(), true);
 });
 
-Deno.test("proxySSE aborts a pending upstream SSE reader when the downstream response is canceled", async () => {
+Deno.test("writeSSEFrames aborts a pending upstream SSE reader when the downstream response is canceled", async () => {
   const upstreamCanceled = deferred<void>();
   let upstreamController!: ReadableStreamDefaultController<Uint8Array>;
   const downstreamAbortController = new AbortController();

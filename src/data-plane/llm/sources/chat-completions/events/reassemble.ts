@@ -6,9 +6,19 @@ import type {
   ToolCall,
 } from "../../../../shared/protocol/chat-completions.ts";
 import { chatCompletionsErrorPayloadMessage } from "../../../../shared/protocol/chat-completions-errors.ts";
-import { protocolEventsUntilTerminal } from "../../../shared/stream/protocol-algebra.ts";
 import { type ProtocolFrame } from "../../../shared/stream/types.ts";
-import { chatCompletionSourceStreamAlgebra } from "./protocol.ts";
+import { CHAT_COMPLETIONS_MISSING_DONE_MESSAGE } from "./protocol.ts";
+
+const chatCompletionEventsUntilDone = async function* (
+  frames: AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
+): AsyncGenerator<ChatCompletionChunk> {
+  for await (const frame of frames) {
+    if (frame.type === "done") return;
+    yield frame.event;
+  }
+
+  throw new Error(CHAT_COMPLETIONS_MISSING_DONE_MESSAGE);
+};
 
 export async function reassembleChatCompletionChunks(
   chunks: AsyncIterable<ChatCompletionChunk>,
@@ -142,6 +152,6 @@ export const collectChatProtocolEventsToCompletion = async (
   frames: AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
 ): Promise<ChatCompletionResponse> => {
   return await reassembleChatCompletionChunks(
-    protocolEventsUntilTerminal(frames, chatCompletionSourceStreamAlgebra),
+    chatCompletionEventsUntilDone(frames),
   );
 };

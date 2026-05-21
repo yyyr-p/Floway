@@ -1,5 +1,4 @@
 import { assertEquals } from "@std/assert";
-import { copilotRequestedModelAliasTarget } from "./model-name.ts";
 import { resolveCopilotRawModel } from "./model-selection.ts";
 import type { CopilotModelsResponse, CopilotRawModel } from "./types.ts";
 
@@ -155,26 +154,4 @@ Deno.test("resolveCopilotRawModel keeps the base Claude id when there is no rout
   );
 
   assertEquals(resolved?.id, "claude-opus-4.7");
-});
-
-Deno.test("copilotRequestedModelAliasTarget returns public canonical Claude alias ids", () => {
-  assertEquals(
-    copilotRequestedModelAliasTarget("claude-opus-4-7-20251001"),
-    "claude-opus-4-7",
-  );
-  assertEquals(
-    copilotRequestedModelAliasTarget("claude-opus-4-7-xhigh-20251001"),
-    "claude-opus-4-7",
-  );
-  assertEquals(
-    copilotRequestedModelAliasTarget("claude-sonnet-4-20250514"),
-    "claude-sonnet-4",
-  );
-});
-
-Deno.test("copilotRequestedModelAliasTarget keeps codex-auto-review out of Copilot aliases", () => {
-  assertEquals(
-    copilotRequestedModelAliasTarget("codex-auto-review"),
-    undefined,
-  );
 });

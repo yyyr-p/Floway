@@ -19,7 +19,7 @@ import type {
   ResponseTool,
   ResponseToolChoice,
 } from "../../../shared/protocol/responses.ts";
-import { packReasoningSignature } from "../shared/messages-responses-signature.ts";
+import { responsesReasoningToMessagesBlock } from "../shared/messages-responses-signature.ts";
 import {
   fetchRemoteImage,
   type RemoteImageLoader,
@@ -173,38 +173,8 @@ const translateResponsesInput = async (
         });
         break;
       case "reasoning": {
-        // Same opaque-only handling as result translation: emit
-        // `redacted_thinking{data}` when there is no plaintext summary, so the
-        // Anthropic-compatible target receives a valid signature-only block
-        // instead of a `thinking` block with empty/missing text. A reasoning
-        // item with neither summary nor encrypted_content carries nothing the
-        // target can verify, so we drop it. The Responses item id is packed
-        // into the signature/data slot so it survives the round-trip back to
-        // the upstream signature check; see `../shared/messages-responses-signature.ts`.
-        const thinking = item.summary?.length
-          ? item.summary.map((part) => part.text).join("").trim()
-          : "";
-        const encryptedContent = item.encrypted_content;
-        const hasEncryptedContent = Object.hasOwn(item, "encrypted_content") &&
-          encryptedContent !== undefined;
-
-        if (!thinking) {
-          if (hasEncryptedContent) {
-            appendAssistantBlock(messages, {
-              type: "redacted_thinking",
-              data: packReasoningSignature(item.id, encryptedContent),
-            });
-          }
-          break;
-        }
-
-        appendAssistantBlock(messages, {
-          type: "thinking",
-          thinking,
-          ...(hasEncryptedContent
-            ? { signature: packReasoningSignature(item.id, encryptedContent) }
-            : {}),
-        });
+        const block = responsesReasoningToMessagesBlock(item);
+        if (block) appendAssistantBlock(messages, block);
         break;
       }
     }
