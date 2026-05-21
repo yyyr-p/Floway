@@ -9,6 +9,7 @@ import type {
   MessagesToolUseBlock,
 } from "../../../shared/protocol/messages.ts";
 import { parseToolArgumentsObject } from "../shared/tool-arguments.ts";
+import { messagesThinkingBlockFromChatScalarReasoning } from "../shared/messages-chat-reasoning.ts";
 
 export const toMessagesId = (id: string): string =>
   id.startsWith("msg_") ? id : `msg_${id.replace(/^chatcmpl-/, "")}`;
@@ -55,28 +56,6 @@ export const mapChatCompletionsUsageToMessagesUsage = (
   };
 };
 
-const getThinkingBlocks = (
-  reasoningText: string | null | undefined,
-  reasoningOpaque: string | null | undefined,
-): Array<MessagesThinkingBlock | MessagesRedactedThinkingBlock> => {
-  if (reasoningText) {
-    return [{
-      type: "thinking",
-      thinking: reasoningText,
-      ...(reasoningOpaque !== undefined && reasoningOpaque !== null
-        ? { signature: reasoningOpaque }
-        : {}),
-    }];
-  }
-
-  return reasoningOpaque !== undefined && reasoningOpaque !== null
-    ? [{
-      type: "redacted_thinking",
-      data: reasoningOpaque,
-    }]
-    : [];
-};
-
 export const translateChatCompletionsToMessagesResponse = (
   response: ChatCompletionResponse,
 ): MessagesResponse => {
@@ -88,12 +67,11 @@ export const translateChatCompletionsToMessagesResponse = (
   let stopReason = response.choices[0]?.finish_reason ?? null;
 
   for (const choice of response.choices) {
-    thinkingBlocks.push(
-      ...getThinkingBlocks(
-        choice.message.reasoning_text,
-        choice.message.reasoning_opaque,
-      ),
+    const thinkingBlock = messagesThinkingBlockFromChatScalarReasoning(
+      choice.message.reasoning_text,
+      choice.message.reasoning_opaque,
     );
+    if (thinkingBlock) thinkingBlocks.push(thinkingBlock);
 
     if (choice.message.content) {
       textBlocks.push({ type: "text", text: choice.message.content });

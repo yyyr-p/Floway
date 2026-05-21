@@ -11,8 +11,7 @@ import {
   type MessagesUserMessage,
   type MessagesWebSearchToolResultBlock,
 } from "../../../shared/protocol/messages.ts";
-import { unpackReasoningSignature } from "../shared/messages-responses-signature.ts";
-import { makeResponsesReasoningId } from "../shared/reasoning.ts";
+import { messagesReasoningBlockToResponsesReasoning } from "../shared/messages-responses-signature.ts";
 import type {
   ResponseInputContent,
   ResponseInputItem,
@@ -147,39 +146,11 @@ const translateAssistantMessage = (
       continue;
     }
 
-    if (block.type === "thinking") {
+    if (block.type === "thinking" || block.type === "redacted_thinking") {
       flushPendingContent(pendingContent, input, "assistant");
-      // Recover the original Responses item id when the signature was issued
-      // by this gateway (packed as `${encrypted_content}@${id}`). Without the
-      // packed id, upstreams that verify reasoning continuity can reject the
-      // next-turn submission because the encrypted blob was signed against a
-      // different item id. Unpacked signatures fall back to a synthesized id;
-      // the upstream signature check may still fail for those, matching
-      // pre-packing behavior. See
-      // `../shared/messages-responses-signature.ts`.
-      const unpacked = typeof block.signature === "string"
-        ? unpackReasoningSignature(block.signature)
-        : null;
-      input.push({
-        type: "reasoning",
-        id: unpacked?.id ?? makeResponsesReasoningId(input.length),
-        summary: block.thinking
-          ? [{ type: "summary_text", text: block.thinking }]
-          : [],
-        ...(unpacked ? { encrypted_content: unpacked.encryptedContent } : {}),
-      });
-      continue;
-    }
-
-    if (block.type === "redacted_thinking") {
-      flushPendingContent(pendingContent, input, "assistant");
-      const unpacked = unpackReasoningSignature(block.data);
-      input.push({
-        type: "reasoning",
-        id: unpacked.id ?? makeResponsesReasoningId(input.length),
-        summary: [],
-        encrypted_content: unpacked.encryptedContent,
-      });
+      input.push(
+        messagesReasoningBlockToResponsesReasoning(block, input.length),
+      );
       continue;
     }
 
@@ -277,9 +248,7 @@ export const translateMessagesToResponses = (
   // Messages source did not express those knobs.
   return {
     model: payload.model,
-    input: payload.messages.length === 0
-      ? []
-      : translateMessagesInput(payload.messages),
+    input: translateMessagesInput(payload.messages),
     ...(instructions !== null ? { instructions } : {}),
     ...(payload.temperature !== undefined
       ? { temperature: payload.temperature }
@@ -301,5 +270,4 @@ export const translateMessagesToResponses = (
   };
 };
 
-export const buildTargetRequest = (payload: MessagesPayload) =>
-  translateMessagesToResponses(payload);
+export { translateMessagesToResponses as buildTargetRequest };

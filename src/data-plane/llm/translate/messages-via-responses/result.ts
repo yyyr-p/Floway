@@ -7,7 +7,7 @@ import type {
   ResponseOutputItem,
   ResponsesResult,
 } from "../../../shared/protocol/responses.ts";
-import { packReasoningSignature } from "../shared/messages-responses-signature.ts";
+import { responsesReasoningToMessagesBlock } from "../shared/messages-responses-signature.ts";
 import { parseToolArgumentsObject } from "../shared/tool-arguments.ts";
 
 const combineMessageTextContent = (
@@ -33,43 +33,8 @@ const mapOutputToMessagesContent = (
   for (const item of output) {
     switch (item.type) {
       case "reasoning": {
-        // Pack `${encrypted_content}@${id}` into the Anthropic signature/data
-        // slot so the original Responses item id survives the Messages
-        // round-trip. Without this, the resynthesized `rs_${index}` id we
-        // would otherwise send back next turn can fail upstream signature
-        // verification with `400 invalid_request_body: "Encrypted content
-        // item_id did not match the target item id."`. See packing rationale
-        // and permalinks in `../shared/messages-responses-signature.ts`.
-        const thinking = item.summary?.length
-          ? item.summary.map((part) => part.text).join("").trim()
-          : "";
-        const encryptedContent = item.encrypted_content;
-        const hasEncryptedContent = Object.hasOwn(item, "encrypted_content") &&
-          encryptedContent !== undefined;
-
-        // Messages-compatible targets can reject `thinking: null` and missing
-        // `thinking`, so an opaque-only reasoning item must round-trip as
-        // `redacted_thinking{data}` — the schema-sanctioned signature-only
-        // shape — rather than a `thinking` block with no text. A reasoning
-        // item with neither summary nor encrypted_content has no valid
-        // Anthropic shape, so we drop it.
-        if (!thinking) {
-          if (hasEncryptedContent) {
-            content.push({
-              type: "redacted_thinking",
-              data: packReasoningSignature(item.id, encryptedContent),
-            });
-          }
-          break;
-        }
-
-        content.push({
-          type: "thinking",
-          thinking,
-          ...(hasEncryptedContent
-            ? { signature: packReasoningSignature(item.id, encryptedContent) }
-            : {}),
-        });
+        const block = responsesReasoningToMessagesBlock(item);
+        if (block) content.push(block);
         break;
       }
       case "function_call":

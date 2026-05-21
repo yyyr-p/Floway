@@ -61,7 +61,7 @@ export interface UpstreamModel extends ModelMetadata {
   providerData?: unknown;
 }
 
-export interface ModelProviderBinding {
+export interface ProviderModelRecord {
   upstream: string;
   provider: ModelProvider;
   upstreamModel: UpstreamModel;
@@ -70,10 +70,13 @@ export interface ModelProviderBinding {
   targetInterceptors?: ProviderTargetInterceptors;
 }
 
-export interface Model extends ModelMetadata {
+export interface CatalogModel extends ModelMetadata {
   supportedEndpoints: readonly ModelEndpoint[];
-  providers: readonly ModelProviderBinding[];
-  supports_generation?: boolean;
+  supports_generation: boolean;
+}
+
+export interface ResolvedModel extends CatalogModel {
+  providers: readonly ProviderModelRecord[];
 }
 
 export interface ProviderSourceInterceptors {

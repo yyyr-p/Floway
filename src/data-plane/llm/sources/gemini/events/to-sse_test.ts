@@ -1,17 +1,9 @@
 import { assertEquals } from "@std/assert";
 import type { GeminiStreamEvent } from "../../../../shared/protocol/gemini.ts";
 import { doneFrame, eventFrame } from "../../../shared/stream/types.ts";
-import { geminiProtocolEventsToSSEFrames } from "./to-sse.ts";
+import { geminiProtocolFrameToSSEFrame } from "./to-sse.ts";
 
-const collect = async <T>(events: AsyncIterable<T>): Promise<T[]> => {
-  const collected: T[] = [];
-  for await (const event of events) collected.push(event);
-  return collected;
-};
-
-const ignoreUsage = { onUsage: () => {} };
-
-Deno.test("geminiProtocolEventsToSSEFrames emits data-only JSON chunks", async () => {
+Deno.test("geminiProtocolFrameToSSEFrame emits data-only JSON chunks", () => {
   const chunk = {
     candidates: [{
       index: 0,
@@ -20,15 +12,9 @@ Deno.test("geminiProtocolEventsToSSEFrames emits data-only JSON chunks", async (
     modelVersion: "gemini-test",
   } satisfies GeminiStreamEvent;
 
-  const frames = await collect(
-    geminiProtocolEventsToSSEFrames(
-      (async function* () {
-        yield eventFrame(chunk);
-        yield doneFrame();
-      })(),
-      ignoreUsage,
-    ),
-  );
+  const frames = [eventFrame(chunk), doneFrame()]
+    .map(geminiProtocolFrameToSSEFrame)
+    .filter((frame) => frame !== null);
 
   assertEquals(frames, [{
     type: "sse",
@@ -37,7 +23,7 @@ Deno.test("geminiProtocolEventsToSSEFrames emits data-only JSON chunks", async (
   }]);
 });
 
-Deno.test("geminiProtocolEventsToSSEFrames stops at finishReason without DONE", async () => {
+Deno.test("geminiProtocolFrameToSSEFrame serializes events without owning termination", () => {
   const first = {
     candidates: [{
       index: 0,
@@ -58,20 +44,18 @@ Deno.test("geminiProtocolEventsToSSEFrames stops at finishReason without DONE", 
     }],
   } satisfies GeminiStreamEvent;
 
-  const frames = await collect(
-    geminiProtocolEventsToSSEFrames(
-      (async function* () {
-        yield eventFrame(first);
-        yield eventFrame(terminal);
-        yield eventFrame(afterTerminal);
-      })(),
-      ignoreUsage,
-    ),
-  );
+  const frames = [
+    eventFrame(first),
+    eventFrame(terminal),
+    eventFrame(afterTerminal),
+  ]
+    .map(geminiProtocolFrameToSSEFrame)
+    .filter((frame) => frame !== null);
 
   assertEquals(frames.map((frame) => frame.data), [
     JSON.stringify(first),
     JSON.stringify(terminal),
+    JSON.stringify(afterTerminal),
   ]);
   assertEquals(frames.some((frame) => frame.data === "[DONE]"), false);
 });

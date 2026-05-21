@@ -3,7 +3,7 @@ import type {
   ResponsesResult,
   ResponseStreamEvent,
 } from "../../../shared/protocol/responses.ts";
-import { chatProtocolEventsToSSEFrames } from "../../sources/chat-completions/events/to-sse.ts";
+import { chatProtocolFrameToSSEFrame } from "../../sources/chat-completions/events/to-sse.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
 import { responsesResultToEvents } from "../../targets/responses/events/from-result.ts";
 import { translateToSourceEvents } from "./events.ts";
@@ -35,9 +35,15 @@ const toProtocolFrame = (
 ): ProtocolFrame<UpstreamResponseStreamEvent> =>
   eventFrame({ ...event, sequence_number: 0 });
 
-const ignoreUsage = {
-  includeUsageChunk: true,
-  onUsage: () => {},
+const includeUsageChunk = { includeUsageChunk: true };
+
+const chatSseFrames = async function* (
+  frames: AsyncIterable<ProtocolFrame<UpstreamResponseStreamEvent>>,
+) {
+  for await (const frame of translateToSourceEvents(frames)) {
+    const sse = chatProtocolFrameToSSEFrame(frame, includeUsageChunk);
+    if (sse) yield sse;
+  }
 };
 
 const countDoneSentinels = async (
@@ -50,10 +56,7 @@ const countDoneSentinels = async (
   }
 
   for await (
-    const frame of chatProtocolEventsToSSEFrames(
-      translateToSourceEvents(stream()),
-      ignoreUsage,
-    )
+    const frame of chatSseFrames(stream())
   ) {
     if (frame.data === "[DONE]") doneCount++;
   }
@@ -72,10 +75,7 @@ const countAssistantStartChunksAndDone = async (
   }
 
   for await (
-    const frame of chatProtocolEventsToSSEFrames(
-      translateToSourceEvents(stream()),
-      ignoreUsage,
-    )
+    const frame of chatSseFrames(stream())
   ) {
     if (frame.data === "[DONE]") {
       doneCount++;
@@ -189,6 +189,90 @@ Deno.test("translateToSourceEvents preserves refusal text from JSON fallback", a
   }
 
   assertEquals(text.join(""), "No.");
+});
+
+Deno.test("translateToSourceEvents preserves deferred reasoning and stream usage", async () => {
+  async function* stream() {
+    yield* [
+      toProtocolFrame({
+        type: "response.created",
+        response: {
+          ...makeResponse("in_progress"),
+          id: "resp_deferred_reasoning",
+          output_text: "",
+          output: [],
+        },
+      }),
+      toProtocolFrame({
+        type: "response.output_item.added",
+        output_index: 0,
+        item: { type: "reasoning", id: "rs_0", summary: [] },
+      }),
+      toProtocolFrame({
+        type: "response.output_text.delta",
+        item_id: "msg_1",
+        output_index: 1,
+        content_index: 0,
+        delta: "answer",
+      }),
+      toProtocolFrame({
+        type: "response.output_item.done",
+        output_index: 0,
+        item: {
+          type: "reasoning",
+          id: "rs_0",
+          summary: [{ type: "summary_text", text: "trace" }],
+          encrypted_content: "opaque_sig",
+        },
+      }),
+      toProtocolFrame({
+        type: "response.completed",
+        response: {
+          ...makeResponse("completed"),
+          id: "resp_deferred_reasoning",
+          output_text: "answer",
+          output: [],
+          usage: {
+            input_tokens: 12,
+            output_tokens: 4,
+            total_tokens: 16,
+            input_tokens_details: { cached_tokens: 3 },
+          },
+        },
+      }),
+    ];
+  }
+
+  const frames = await collect(translateToSourceEvents(stream()));
+  const events = [];
+  for (const frame of frames) {
+    if (frame.type === "event") events.push(frame.event);
+  }
+
+  assertEquals(events.slice(0, -1).map((event) => event.choices[0]?.delta), [
+    { role: "assistant" },
+    { reasoning_text: "trace" },
+    { reasoning_opaque: "opaque_sig" },
+    {
+      reasoning_items: [{
+        type: "reasoning",
+        id: "rs_0",
+        summary: [{ type: "summary_text", text: "trace" }],
+        encrypted_content: "opaque_sig",
+      }],
+    },
+    { content: "answer" },
+    {},
+  ]);
+
+  assertEquals(events.at(-1)?.choices, []);
+  assertEquals(events.at(-1)?.usage, {
+    prompt_tokens: 12,
+    completion_tokens: 4,
+    total_tokens: 16,
+    prompt_tokens_details: { cached_tokens: 3 },
+  });
+  assertEquals(frames.at(-1)?.type, "done");
 });
 
 Deno.test("translateToSourceEvents stops after Responses terminal completion", async () => {

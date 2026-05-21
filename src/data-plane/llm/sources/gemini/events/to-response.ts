@@ -4,9 +4,12 @@ import type {
   GeminiPart,
   GeminiStreamEvent,
 } from "../../../../shared/protocol/gemini.ts";
-import { protocolEventsUntilTerminal } from "../../../shared/stream/protocol-algebra.ts";
 import type { ProtocolFrame } from "../../../shared/stream/types.ts";
-import { geminiSourceStreamAlgebra, isGeminiErrorEvent } from "./protocol.ts";
+import {
+  GEMINI_MISSING_TERMINAL_MESSAGE,
+  isGeminiErrorEvent,
+  isGeminiTerminalEvent,
+} from "./protocol.ts";
 
 const hasOnlyTextShape = (part: GeminiPart): boolean =>
   part.inlineData === undefined && part.functionCall === undefined &&
@@ -68,13 +71,15 @@ export const collectGeminiProtocolEventsToResponse = async (
 ): Promise<GeminiGenerateContentResponse> => {
   const candidates = new Map<number, GeminiCandidate>();
   const response: GeminiGenerateContentResponse = {};
+  let completed = false;
 
-  for await (
-    const event of protocolEventsUntilTerminal(
-      frames,
-      geminiSourceStreamAlgebra,
-    )
-  ) {
+  for await (const frame of frames) {
+    if (frame.type === "done") {
+      completed = true;
+      break;
+    }
+
+    const event = frame.event;
     if (isGeminiErrorEvent(event)) {
       throw new Error(`${event.error.status}: ${event.error.message}`, {
         cause: event,
@@ -92,6 +97,15 @@ export const collectGeminiProtocolEventsToResponse = async (
     if (event.usageMetadata !== undefined) {
       response.usageMetadata = event.usageMetadata;
     }
+
+    if (isGeminiTerminalEvent(event)) {
+      completed = true;
+      break;
+    }
+  }
+
+  if (!completed) {
+    throw new Error(GEMINI_MISSING_TERMINAL_MESSAGE);
   }
 
   const mergedCandidates = [...candidates.values()].sort((a, b) =>

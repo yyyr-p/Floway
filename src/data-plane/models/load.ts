@@ -1,6 +1,5 @@
-import { endpointsIncludeLlmGeneration } from "../providers/endpoints.ts";
-import { getModels } from "../providers/registry.ts";
-import type { Model } from "../providers/types.ts";
+import { getCatalogModels } from "../providers/registry.ts";
+import type { CatalogModel } from "../providers/types.ts";
 import type {
   AnthropicModelInfo,
   AnthropicModelsResponse,
@@ -8,7 +7,7 @@ import type {
   ModelsResponse,
 } from "./types.ts";
 
-export const toPublicModelInfo = (model: Model): ModelInfo => {
+export const toPublicModelInfo = (model: CatalogModel): ModelInfo => {
   return {
     id: model.id,
     object: model.object,
@@ -17,7 +16,9 @@ export const toPublicModelInfo = (model: Model): ModelInfo => {
   };
 };
 
-export const toAnthropicModelInfo = (model: Model): AnthropicModelInfo => {
+export const toAnthropicModelInfo = (
+  model: CatalogModel,
+): AnthropicModelInfo => {
   const createdAt = model.created_at ??
     (model.created !== undefined
       ? new Date(model.created * 1000).toISOString()
@@ -31,7 +32,7 @@ export const toAnthropicModelInfo = (model: Model): AnthropicModelInfo => {
 };
 
 export const loadMergedModels = async (): Promise<ModelsResponse> => {
-  const models = await getModels();
+  const models = await getCatalogModels();
   return {
     object: "list",
     data: models.map(toPublicModelInfo),
@@ -41,8 +42,8 @@ export const loadMergedModels = async (): Promise<ModelsResponse> => {
 export const loadAnthropicModels = async (): Promise<
   AnthropicModelsResponse
 > => {
-  const data = (await getModels())
-    .filter((model) => endpointsIncludeLlmGeneration(model.supportedEndpoints))
+  const data = (await getCatalogModels())
+    .filter((model) => model.supports_generation)
     .map(toAnthropicModelInfo);
   return {
     data,

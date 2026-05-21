@@ -2,12 +2,12 @@ import type {
   ResponsesResult,
   ResponseStreamEvent,
 } from "../../../../shared/protocol/responses.ts";
-import { protocolEventsUntilTerminal } from "../../../shared/stream/protocol-algebra.ts";
-import { type ProtocolFrame } from "../../../shared/stream/types.ts";
 import {
-  responsesStreamAlgebra,
+  isResponsesTerminalEvent,
+  RESPONSES_MISSING_TERMINAL_MESSAGE,
   type ResponsesStreamEvent,
 } from "../../../shared/protocol/responses.ts";
+import { type ProtocolFrame } from "../../../shared/stream/types.ts";
 
 type ResponsesReassembleEvent = ResponseStreamEvent | {
   type: "error";
@@ -41,7 +41,16 @@ export async function reassembleResponsesEvents(
 export const collectResponsesProtocolEventsToResult = async (
   frames: AsyncIterable<ProtocolFrame<ResponsesStreamEvent>>,
 ): Promise<ResponsesResult> => {
-  return await reassembleResponsesEvents(
-    protocolEventsUntilTerminal(frames, responsesStreamAlgebra),
-  );
+  const events = async function* (): AsyncGenerator<ResponsesStreamEvent> {
+    for await (const frame of frames) {
+      if (frame.type === "done") continue;
+
+      yield frame.event;
+      if (isResponsesTerminalEvent(frame.event)) return;
+    }
+
+    throw new Error(RESPONSES_MISSING_TERMINAL_MESSAGE);
+  };
+
+  return await reassembleResponsesEvents(events());
 };

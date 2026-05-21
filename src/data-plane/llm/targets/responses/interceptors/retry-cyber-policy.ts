@@ -4,11 +4,11 @@ import type {
   ResponsesExchangeResult,
   ResponsesInterceptor,
 } from "../../../interceptors.ts";
+import type { ResponsesStreamEvent } from "../../../shared/protocol/responses.ts";
 import {
   eventFrame,
   type ProtocolFrame,
 } from "../../../shared/stream/types.ts";
-import type { ResponsesStreamEvent } from "../../../shared/protocol/responses.ts";
 
 const CYBER_POLICY_ERROR_CODE = "cyber_policy";
 const MAX_CYBER_POLICY_RETRIES = 10;
@@ -30,10 +30,7 @@ interface FailurePayload {
   response?: Record<string, unknown>;
 }
 
-type FailureResult = Exclude<
-  ResponsesExchangeResult,
-  { type: "events" }
->;
+type FailureResult = Exclude<ResponsesExchangeResult, { type: "events" }>;
 
 const stringField = (
   value: unknown,
@@ -89,9 +86,8 @@ const cyberPolicyPayloadFrom = (
     : undefined;
 };
 
-const isCyberPolicyPayload = (value: unknown): boolean => {
-  return cyberPolicyPayloadFrom(value) !== undefined;
-};
+const isCyberPolicyPayload = (value: unknown): boolean =>
+  cyberPolicyPayloadFrom(value) !== undefined;
 
 const cyberPolicyUpstreamErrorFrom = (
   result: ResponsesExchangeResult,
@@ -109,9 +105,7 @@ const cyberPolicyUpstreamErrorFrom = (
 
 const isCyberPolicyUpstreamError = (
   result: ResponsesExchangeResult,
-): boolean => {
-  return cyberPolicyUpstreamErrorFrom(result) !== undefined;
-};
+): boolean => cyberPolicyUpstreamErrorFrom(result) !== undefined;
 
 const failurePayloadFromUpstreamError = (
   result: Extract<ResponsesExchangeResult, { type: "upstream-error" }>,

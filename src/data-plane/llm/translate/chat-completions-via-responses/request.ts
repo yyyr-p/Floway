@@ -1,10 +1,8 @@
 import type {
   ChatCompletionsPayload,
-  ContentPart,
   Tool,
 } from "../../../shared/protocol/chat-completions.ts";
 import type {
-  ResponseInputContent,
   ResponseInputItem,
   ResponseInputReasoning,
   ResponsesPayload,
@@ -12,58 +10,14 @@ import type {
   ResponseToolChoice,
 } from "../../../shared/protocol/responses.ts";
 import {
+  chatContentToResponsesInputContent,
+  chatContentToText,
+} from "../shared/chat-responses-content.ts";
+import {
   scalarToResponseReasoningItem,
   translateChatReasoningItems,
 } from "../shared/chat-responses-reasoning.ts";
 import { makeResponsesReasoningId } from "../shared/reasoning.ts";
-
-const extractTextContent = (
-  content: string | ContentPart[] | null,
-): string => {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-
-  // Assumption: OpenAI text parts are transport fragments of one message, not
-  // Anthropic-style paragraph blocks. Preserve the current no-separator join
-  // unless we later find a stronger upstream boundary guarantee.
-  return content
-    .filter((part): part is Extract<ContentPart, { type: "text" }> =>
-      part.type === "text"
-    )
-    .map((part) => part.text)
-    .join("");
-};
-
-const toResponsesContent = (
-  content: string | ContentPart[] | null,
-): string | ResponseInputContent[] => {
-  if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return "";
-
-  const parts: ResponseInputContent[] = [];
-
-  for (const part of content) {
-    if (part.type === "text") {
-      parts.push({ type: "input_text", text: part.text });
-      continue;
-    }
-
-    parts.push({
-      type: "input_image",
-      image_url: part.image_url.url,
-      detail: part.image_url.detail ?? "auto",
-    });
-  }
-
-  return parts.length > 0 ? parts : "";
-};
-
-const toResponsesAssistantContent = (
-  content: string | ContentPart[] | null,
-): string | ResponseInputContent[] => {
-  const text = extractTextContent(content);
-  return text ? [{ type: "output_text", text }] : "";
-};
 
 const translateChatTools = (tools?: Tool[] | null): ResponseTool[] | null =>
   tools?.length
@@ -83,25 +37,12 @@ const translateChatTools = (tools?: Tool[] | null): ResponseTool[] | null =>
 
 const translateChatToolChoice = (
   choice?: ChatCompletionsPayload["tool_choice"],
-): ResponseToolChoice => {
-  if (!choice) return "auto";
-  if (typeof choice === "string") {
-    return choice === "none" || choice === "auto" || choice === "required"
-      ? choice
-      : "auto";
-  }
-
-  return choice.type === "function" && choice.function?.name
-    ? { type: "function", name: choice.function.name }
-    : "auto";
-};
-
-const buildResponsesTextConfig = (
-  responseFormat: ChatCompletionsPayload["response_format"],
-): ResponsesPayload["text"] | undefined => {
-  if (responseFormat === undefined) return undefined;
-  return responseFormat === null ? null : { format: responseFormat };
-};
+): ResponseToolChoice =>
+  choice == null
+    ? "auto"
+    : typeof choice === "string"
+    ? choice
+    : { type: "function", name: choice.function.name };
 
 export const translateChatCompletionsToResponses = (
   payload: ChatCompletionsPayload,
@@ -115,7 +56,7 @@ export const translateChatCompletionsToResponses = (
     // `instructions`; later `system` and `developer` turns are
     // chronology-bearing input items.
     if (hoistSystemPrefix && message.role === "system") {
-      const text = extractTextContent(message.content);
+      const text = chatContentToText(message.content);
       if (text) instructions.push(text);
       continue;
     }
@@ -126,7 +67,7 @@ export const translateChatCompletionsToResponses = (
       input.push({
         type: "message",
         role: "user",
-        content: toResponsesContent(message.content),
+        content: chatContentToResponsesInputContent(message.content),
       });
       continue;
     }
@@ -152,7 +93,7 @@ export const translateChatCompletionsToResponses = (
       }
 
       if (message.tool_calls?.length) {
-        const text = extractTextContent(message.content);
+        const text = chatContentToText(message.content);
         if (text) {
           input.push({
             type: "message",
@@ -174,10 +115,11 @@ export const translateChatCompletionsToResponses = (
         continue;
       }
 
+      const text = chatContentToText(message.content);
       input.push({
         type: "message",
         role: "assistant",
-        content: toResponsesAssistantContent(message.content),
+        content: text ? [{ type: "output_text", text }] : "",
       });
       continue;
     }
@@ -186,7 +128,7 @@ export const translateChatCompletionsToResponses = (
       input.push({
         type: "message",
         role: message.role,
-        content: toResponsesContent(message.content),
+        content: chatContentToResponsesInputContent(message.content),
       });
       continue;
     }
@@ -206,7 +148,11 @@ export const translateChatCompletionsToResponses = (
     });
   }
 
-  const responseTextConfig = buildResponsesTextConfig(payload.response_format);
+  const responseTextConfig = payload.response_format === undefined
+    ? undefined
+    : payload.response_format === null
+    ? null
+    : { format: payload.response_format };
 
   return {
     model: payload.model,
@@ -260,5 +206,4 @@ export const translateChatCompletionsToResponses = (
   };
 };
 
-export const buildTargetRequest = (payload: ChatCompletionsPayload) =>
-  translateChatCompletionsToResponses(payload);
+export const buildTargetRequest = translateChatCompletionsToResponses;

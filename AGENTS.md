@@ -30,13 +30,12 @@ Deno KV on Deno runtime, in-memory for tests), TypeScript, and `deno test`.
 - `src/data-plane/`: client-facing compatibility APIs, model/provider routing,
   protocol translation, embeddings, and data-plane tools.
 - `src/data-plane/providers/`: provider interface, provider registry, model
-  merge, upstream model discovery/cache, model capabilities, provider fix
-  catalog, and concrete provider implementations.
-- `src/data-plane/shared/protocol/`: protocol DTOs shared by providers, sources,
-  targets, translators, model listing, and embeddings.
-- `src/data-plane/shared/telemetry/`: data-plane telemetry primitives shared by
-  LLM and embeddings. `usage.ts` owns token usage recording; `performance.ts`
-  owns request/upstream latency and error recording.
+  merge, provider-owned alias resolution, and concrete provider implementations.
+- `src/data-plane/providers/copilot/`: Copilot provider projection, raw model
+  variant selection, endpoint capability projection, and Copilot-specific
+  provider registrations.
+- `src/data-plane/providers/openai/`: custom OpenAI-compatible provider
+  behavior.
 - `src/repo/`: persistence interfaces and implementations.
 - `src/runtime/`: runtime integration helpers.
 - `src/shared/`: project-wide helpers that are not owned by one plane.
@@ -65,25 +64,39 @@ callEmbeddings(upstreamModel, bodyWithoutModel, signal?)
 ```
 
 `UpstreamModel.supportedEndpoints` is the source of truth for routing. The
-global `Model` returned by the registry merges public model metadata and keeps a
-list of provider bindings. Request execution tries provider bindings in order
-only until the first binding that can serve the requested source shape; that
-provider's result is final for the request.
+registry separates public catalog data from execution bindings:
 
-Copilot-specific behavior belongs in `src/data-plane/providers/copilot/`,
-including provider-owned source and target interceptor implementations. This
-includes Copilot raw model variant selection, Claude public-name normalization,
-Copilot request-alias resolution, Copilot endpoint projection, `anthropic-beta`
-filtering, and Copilot upstream request fixes. Custom OpenAI-compatible provider
-behavior belongs in `src/data-plane/providers/openai/`.
+- `CatalogModel` is the public model-listing DTO. It must not expose provider
+  bindings, raw upstream variants, or UI-only provider metadata.
+- `ResolvedModel` extends the catalog shape with ordered `ProviderModelRecord`
+  bindings for execution.
+- `ProviderModelRecord` keeps the provider instance, upstream id, exact
+  `UpstreamModel`, enabled fixes, and provider-registered source/target
+  interceptors.
+
+Request execution tries provider bindings in order only until the first binding
+that can serve the requested source shape. That provider's result is final for
+the request. If no binding can produce a plan, return a source-shaped
+unsupported-model error instead of inventing legacy model-name routing. Source
+and capability handlers should loop over provider bindings directly; do not hide
+provider eligibility behind callback-based wrappers or "try-next-provider"
+pseudo-results.
+
+Provider-specific behavior is registered by the provider and then executed at
+the owning source or target boundary. Copilot behavior includes raw model
+variant selection, Claude public-name normalization, request-alias resolution,
+endpoint projection, `anthropic-beta` filtering, and Copilot upstream request
+fixes. Generic source/target pipelines execute registered interceptor lists but
+do not choose behavior based on provider kind.
 
 Messages web-search behavior is decided by the post-plan Messages protocol
 interceptor. Messages via Responses or Chat Completions always uses the gateway
 shim when native web-search tools are present, because those targets cannot run
 Anthropic server tools. Native Messages targets receive native web-search tools
-directly by default; Copilot enables `messages-web-search-shim` by default, and
-custom OpenAI-compatible providers can opt native Messages into the shim with
-that upstream fix flag.
+directly by default; Copilot providers enable the shim directly, while custom
+OpenAI-compatible providers enable it only through the
+`messages-web-search-shim` upstream fix flag. Do not rewrite the shim as part of
+unrelated data-plane flow work.
 
 Backoff is intentionally disabled for now. Control-plane status returns empty
 temporary-unavailability data until a provider-level backoff design lands.
@@ -97,26 +110,17 @@ their capability directories.
 
 Model listing belongs in `src/data-plane/models/`: `/v1/models` is
 OpenAI-shaped, `/models` is Anthropic-shaped, and `/v1beta/models` is
-Gemini-shaped. Public data-plane model APIs must not expose provider bindings,
-raw upstream variants, or UI-only provider metadata; `/api/models` may add
-dashboard-owned compatibility fields. Upstream model discovery/cache belongs to
-`src/data-plane/providers/`, not `src/data-plane/models/`.
+Gemini-shaped. Public data-plane model APIs consume `CatalogModel`; execution
+paths use `ResolvedModel` and `ProviderModelRecord`.
 
-Gemini generation handling belongs under `src/data-plane/llm/` because Gemini is
-a source API, not a separate data-plane brand boundary. Protocol DTOs that are
-needed outside the LLM routing graph live in `src/data-plane/shared/protocol/`.
-Usage and performance are telemetry, not LLM concepts: shared recording lives in
-`src/data-plane/shared/telemetry/`, while source-specific usage mappers stay in
-the owning source directory such as `src/data-plane/llm/sources/messages/`.
-
-The LLM pipeline is:
+The LLM execution flow is:
 
 ```text
-serve -> resolve model -> provider binding loop
-  -> plan from the provider's UpstreamModel capabilities
-  -> source protocol interceptors -> build target request
-  -> target protocol interceptors -> emit through provider method
-  -> translate target protocol events back to source protocol -> respond
+serve -> source request cleanup -> resolve model -> provider binding loop
+  -> plan from that provider's UpstreamModel
+  -> provider-registered source interceptors -> build target request
+  -> target interceptors -> emit through provider method
+  -> translate target events to source events -> source respond
 ```
 
 Use those terms. Planning is the only layer that chooses a target. Successful
@@ -136,20 +140,41 @@ interceptor context. Raw upstream frames stay inside target emitters and
 raw-to-protocol converters; protocol interceptors see protocol request payloads
 and protocol result/events.
 
+Source response flow is source-owned. Each concrete source responder owns its
+own upstream/internal error shaping, non-stream collection, stream terminal
+observation, downstream SSE serialization, usage extraction, usage recording,
+and request performance recording in forward order. Shared source helpers in
+`src/data-plane/llm/sources/respond.ts` may hold only low-level stream state,
+final metadata, usage recording, and request performance helpers; they must not
+accept source-specific callback tables or call back into source behavior.
+Protocol `events/to-sse.ts` serializers must stay pure: they convert source
+protocol frames to SSE frames and must not record usage, mutate external state,
+or accept callback listeners for accounting.
+
+Target emission is target-owned. Each concrete target emit file owns its forward
+order: force target-required streaming, run target interceptors, call the
+provider method, build model accounting, normalize the upstream response into
+raw frames, translate raw frames into target protocol events, and preserve
+target-shaped failures. Shared target helpers in
+`src/data-plane/llm/targets/emit.ts` may hold only low-level provider body,
+accounting, upstream response, telemetry, and internal-error helpers; they must
+not accept target-specific callback tables or call back into target behavior.
+
 Request translation is direct and pairwise. Do not introduce a canonical
 internal request IR. Pair translators belong under
 `src/data-plane/llm/translate/<source>-via-<target>/`.
 
 Workarounds belong at the owning boundary:
 
-- source-owned request cleanup, whole-pipeline retry, and final response shaping
-  stay under `src/data-plane/llm/sources/<source>/`; source interceptors still
-  run after planning for each attempted provider.
-- target upstream request fixes, upstream retries, and target event fixes stay
-  under `src/data-plane/llm/targets/<target>/`.
-- provider-specific source and target fixes are registered by the provider and
-  live under that provider's directory; the generic LLM pipeline only executes
-  registered interceptor lists.
+- source request cleanup, provider-registered source interceptors, whole-flow
+  retry, final response shaping, usage observation, and request performance
+  recording stay under `src/data-plane/llm/sources/<source>/` or the shared
+  source responder.
+- target upstream request fixes, upstream retries, target event fixes, provider
+  call normalization, and target telemetry stay under
+  `src/data-plane/llm/targets/<target>/` or shared target helpers.
+- provider-specific interceptor registrations live on provider records; concrete
+  interceptor implementations live at the source or target boundary they patch.
 - shared translation primitives belong in `src/data-plane/llm/translate/shared/`
   only when multiple pair directions need the same protocol rule.
 
@@ -163,15 +188,11 @@ Target preferences:
 - Gemini generation has no native upstream target in the provider API; it uses
   Chat Completions, then Messages, then Responses.
 
-If no provider binding can produce a plan for the requested source API, return a
-source-shaped unsupported-model error. Do not invent legacy model-name routing
-outside provider capability metadata.
-
 Claude compatibility aliases and Copilot raw variant selection live in the
 provider layer. Until there is a general model-alias feature, Responses rewrites
 `codex-auto-review` to `gpt-5.4` with reasoning effort `low` at the Responses
 source entry, before model resolution and usage/performance metadata. Historical
-telemetry rows are converted to the public model id only in migrations.
+accounting rows are converted to the public model id only in migrations.
 
 ## Contracts
 

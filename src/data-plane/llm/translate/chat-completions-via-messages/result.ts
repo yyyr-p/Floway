@@ -3,11 +3,16 @@ import type {
   ToolCall,
 } from "../../../shared/protocol/chat-completions.ts";
 import type { MessagesResponse } from "../../../shared/protocol/messages.ts";
+import {
+  type ChatScalarReasoning,
+  chatScalarReasoningFromMessagesBlock,
+} from "../shared/messages-chat-reasoning.ts";
 
 export const mapMessagesStopReasonToChatCompletionsFinishReason = (
   stopReason: MessagesResponse["stop_reason"],
 ): ChatCompletionResponse["choices"][0]["finish_reason"] => {
   switch (stopReason) {
+    case null:
     case "end_turn":
     case "stop_sequence":
     case "pause_turn":
@@ -17,8 +22,6 @@ export const mapMessagesStopReasonToChatCompletionsFinishReason = (
       return "length";
     case "tool_use":
       return "tool_calls";
-    default:
-      return "stop";
   }
 };
 
@@ -27,11 +30,7 @@ export const translateMessagesToChatCompletionsResponse = (
 ): ChatCompletionResponse => {
   const textParts: string[] = [];
   const toolCalls: ToolCall[] = [];
-  let scalarReasoning: {
-    reasoningText: string | null;
-    reasoningOpaque: string | null;
-    hasReasoningOpaque: boolean;
-  } | null = null;
+  let scalarReasoning: ChatScalarReasoning | null = null;
 
   for (const block of response.content) {
     switch (block.type) {
@@ -49,20 +48,8 @@ export const translateMessagesToChatCompletionsResponse = (
         });
         break;
       case "thinking":
-        scalarReasoning ??= {
-          reasoningText: block.thinking || null,
-          reasoningOpaque: Object.hasOwn(block, "signature")
-            ? block.signature ?? null
-            : null,
-          hasReasoningOpaque: Object.hasOwn(block, "signature"),
-        };
-        break;
       case "redacted_thinking":
-        scalarReasoning ??= {
-          reasoningText: null,
-          reasoningOpaque: block.data,
-          hasReasoningOpaque: true,
-        };
+        scalarReasoning ??= chatScalarReasoningFromMessagesBlock(block);
         break;
       case "server_tool_use":
       case "web_search_tool_result":

@@ -3,22 +3,11 @@ import { ModelsFetchError } from "../../../../providers/upstream-model-cache.ts"
 import type { MessagesPayload } from "../../../../shared/protocol/messages.ts";
 import { getModelCapabilities } from "../../../../providers/capabilities.ts";
 import { resolveModelForRequest } from "../../../../providers/registry.ts";
-import { runOnModel, skipProvider } from "../../../../providers/run.ts";
-
-const parseAnthropicBeta = (raw: string | undefined): string[] | undefined => {
-  if (!raw) return undefined;
-  const values = raw.split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0);
-  return values.length > 0 ? values : undefined;
-};
-
-const bodyBetaParam = (payload: MessagesPayload): string | undefined => {
-  const record = payload as unknown as Record<string, unknown>;
-  if (Object.hasOwn(record, "anthropic_beta")) return "anthropic_beta";
-  if (Object.hasOwn(record, "betas")) return "betas";
-  return undefined;
-};
+import {
+  bodyAnthropicBetaResponse,
+  bodyBetaParam,
+  parseAnthropicBeta,
+} from "../serve.ts";
 
 const modelsLoadErrorResponse = (error: ModelsFetchError): Response =>
   new Response(error.body, {
@@ -30,16 +19,7 @@ export const countTokens = async (c: Context) => {
   try {
     const payload = await c.req.json<MessagesPayload>();
     const rejectedBetaParam = bodyBetaParam(payload);
-    if (rejectedBetaParam) {
-      return c.json({
-        error: {
-          type: "invalid_request_error",
-          message:
-            `${rejectedBetaParam} in the Messages request body is not supported; send Anthropic beta flags with the anthropic-beta HTTP header.`,
-          param: rejectedBetaParam,
-        },
-      }, 400);
-    }
+    if (rejectedBetaParam) return bodyAnthropicBetaResponse(rejectedBetaParam);
 
     const anthropicBeta = parseAnthropicBeta(c.req.header("anthropic-beta"));
     const { id: modelId, model } = await resolveModelForRequest(payload.model);
@@ -54,33 +34,36 @@ export const countTokens = async (c: Context) => {
       }, 404);
     }
 
-    const resp = await runOnModel(
-      model,
-      async (binding) => {
-        if (
-          !getModelCapabilities(binding.upstreamModel)
-            .supportsMessagesCountTokens
-        ) {
-          return Promise.resolve(skipProvider(c.json({
-            error: {
-              type: "invalid_request_error",
-              message:
-                `Model ${modelId} does not support the /messages/count_tokens endpoint.`,
-            },
-          }, 400)));
-        }
-        const attemptPayload = structuredClone(payload);
-        attemptPayload.model = modelId;
-        const { model: _model, ...body } = attemptPayload;
-        const { response } = await binding.provider.callMessagesCountTokens(
-          binding.upstreamModel,
-          body,
-          undefined,
-          anthropicBeta,
-        );
-        return response;
-      },
-    );
+    let resp: Response | undefined;
+    for (const binding of model.providers) {
+      if (
+        !getModelCapabilities(binding.upstreamModel).supportsMessagesCountTokens
+      ) {
+        continue;
+      }
+
+      const attemptPayload = structuredClone(payload);
+      attemptPayload.model = modelId;
+      const { model: _model, ...body } = attemptPayload;
+      const { response } = await binding.provider.callMessagesCountTokens(
+        binding.upstreamModel,
+        body,
+        undefined,
+        anthropicBeta,
+      );
+      resp = response;
+      break;
+    }
+
+    if (!resp) {
+      return c.json({
+        error: {
+          type: "invalid_request_error",
+          message:
+            `Model ${modelId} does not support the /messages/count_tokens endpoint.`,
+        },
+      }, 400);
+    }
 
     return new Response(resp.body, {
       status: resp.status,

@@ -15,6 +15,28 @@ export const hasTokenUsage = (usage: TokenUsage): boolean =>
   usage.inputTokens > 0 || usage.outputTokens > 0 ||
   usage.cacheReadTokens > 0 || usage.cacheCreationTokens > 0;
 
+export const tokenUsage = (
+  inputTokens = 0,
+  outputTokens = 0,
+  cacheReadTokens = 0,
+  cacheCreationTokens = 0,
+): TokenUsage => ({
+  inputTokens,
+  outputTokens,
+  cacheReadTokens,
+  cacheCreationTokens,
+});
+
+export const tokenUsageFromPromptTokenResponse = (
+  value: unknown,
+): TokenUsage | null => {
+  if (!value || typeof value !== "object") return null;
+  const usage = (value as { usage?: { prompt_tokens?: unknown } }).usage;
+  return typeof usage?.prompt_tokens === "number"
+    ? tokenUsage(usage.prompt_tokens)
+    : null;
+};
+
 export const recordTokenUsage = async (
   keyId: string,
   modelIdentity: TelemetryModelIdentity,
@@ -53,13 +75,4 @@ export const recordUsageForApiKey = (
   if (!keyId) return () => Promise.resolve();
   return (modelIdentity, usage) =>
     recordTokenUsage(keyId, modelIdentity, usage);
-};
-
-export const recordUsageIfPresent = async (
-  modelIdentity: TelemetryModelIdentity,
-  usage: TokenUsage | null,
-  recordUsage: RecordUsage,
-): Promise<void> => {
-  if (!usage || !hasTokenUsage(usage)) return;
-  await recordUsage(modelIdentity, usage);
 };

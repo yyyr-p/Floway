@@ -78,18 +78,6 @@ export async function recordPerformanceError(
   }
 }
 
-export const recordRequestTotal = (
-  scheduler: BackgroundScheduler | undefined,
-  context: PerformanceTelemetryContext,
-  failed: boolean,
-  durationMs: number,
-): void => {
-  const promise = failed
-    ? recordPerformanceError(context, "request_total")
-    : recordPerformanceLatency(context, "request_total", durationMs);
-  scheduler ? scheduler(promise) : void promise;
-};
-
 export const recordRequestPerformanceForApiKey = (
   keyId: string | undefined,
   scheduler: BackgroundScheduler | undefined,
@@ -97,6 +85,10 @@ export const recordRequestPerformanceForApiKey = (
   if (!keyId) return () => {};
   return (context, failed, durationMs) => {
     if (!context) return;
-    recordRequestTotal(scheduler, { ...context, keyId }, failed, durationMs);
+    const keyed = { ...context, keyId };
+    const promise = failed
+      ? recordPerformanceError(keyed, "request_total")
+      : recordPerformanceLatency(keyed, "request_total", durationMs);
+    scheduler ? scheduler(promise) : void promise;
   };
 };

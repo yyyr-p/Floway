@@ -4,11 +4,11 @@ import type {
   ModelsResponse,
 } from "../../data-plane/models/types.ts";
 import { getModels } from "../../data-plane/providers/registry.ts";
-import {
-  endpointsIncludeLlmGeneration,
-  modelEndpointsToPublicPaths,
-} from "../../data-plane/providers/endpoints.ts";
-import type { Model, ModelMetadata } from "../../data-plane/providers/types.ts";
+import { modelEndpointsToPublicPaths } from "../../data-plane/providers/endpoints.ts";
+import type {
+  ModelMetadata,
+  ResolvedModel,
+} from "../../data-plane/providers/types.ts";
 import {
   ModelsFetchError,
   ModelsRequestError,
@@ -26,8 +26,8 @@ interface ControlPlaneModelInfo extends ModelInfo {
   supported_endpoints: string[];
   supports_generation: boolean;
   upstream_kind: "copilot" | "openai";
-  billing?: Model["billing"];
-  policy?: Model["policy"];
+  billing?: ResolvedModel["billing"];
+  policy?: ResolvedModel["policy"];
   model_picker_enabled?: boolean;
 }
 
@@ -36,13 +36,15 @@ interface ControlPlaneModelsResponse extends Omit<ModelsResponse, "data"> {
 }
 
 const modelUpstreamKind = (
-  model: Model,
+  model: ResolvedModel,
 ): ControlPlaneModelInfo["upstream_kind"] =>
   model.providers.some((binding) => binding.upstream.startsWith("copilot:"))
     ? "copilot"
     : "openai";
 
-const toControlPlaneModelInfo = (model: Model): ControlPlaneModelInfo => {
+const toControlPlaneModelInfo = (
+  model: ResolvedModel,
+): ControlPlaneModelInfo => {
   const displayName = model.display_name ?? model.name ?? model.id;
   const info: ControlPlaneModelInfo = {
     id: model.id,
@@ -58,9 +60,7 @@ const toControlPlaneModelInfo = (model: Model): ControlPlaneModelInfo => {
       : {}),
     capabilities: model.capabilities,
     supported_endpoints: modelEndpointsToPublicPaths(model.supportedEndpoints),
-    supports_generation: endpointsIncludeLlmGeneration(
-      model.supportedEndpoints,
-    ),
+    supports_generation: model.supports_generation,
     upstream_kind: modelUpstreamKind(model),
   };
   if (model.billing) info.billing = model.billing;

@@ -11,7 +11,6 @@ import {
 
 interface ChatCompletionResultToEventsOptions {
   includeUsageChunk?: boolean;
-  onUsageChunk?: (usage: NonNullable<ChatCompletionResponse["usage"]>) => void;
 }
 
 type ResultChoice = ChatCompletionResponse["choices"][number];
@@ -158,8 +157,6 @@ export const chatCompletionResultToEvents = (
       makeChoice(choice, {}, choice.finish_reason)
     ),
   )));
-
-  if (response.usage) options.onUsageChunk?.(response.usage);
 
   if (includeUsageChunk && response.usage) {
     frames.push(eventFrame({

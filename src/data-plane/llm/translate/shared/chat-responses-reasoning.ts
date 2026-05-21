@@ -14,6 +14,16 @@ export type ResponseReasoningItem =
   | ResponseInputReasoning
   | ResponseOutputReasoning;
 
+export interface ChatReasoningProjection {
+  items: ChatReasoningItem[];
+  text?: string;
+  opaque?: string;
+}
+
+export const createChatReasoningProjection = (): ChatReasoningProjection => ({
+  items: [],
+});
+
 export const toChatReasoningItem = (
   item: ChatReasoningSourceItem,
 ): ChatReasoningItem => ({
@@ -23,6 +33,33 @@ export const toChatReasoningItem = (
   ...(item.encrypted_content !== undefined
     ? { encrypted_content: item.encrypted_content }
     : {}),
+});
+
+export const addResponseReasoningToChatProjection = (
+  projection: ChatReasoningProjection,
+  item: ChatReasoningSourceItem,
+): void => {
+  projection.items.push(toChatReasoningItem(item));
+
+  const text = item.summary.map((part) => part.text).join("");
+  const hasEncryptedContent = Object.hasOwn(item, "encrypted_content");
+  if (
+    projection.text === undefined && projection.opaque === undefined &&
+    (text || hasEncryptedContent)
+  ) {
+    if (text) projection.text = text;
+    if (hasEncryptedContent) projection.opaque = item.encrypted_content;
+  }
+};
+
+export const chatReasoningProjectionFields = (
+  projection: ChatReasoningProjection,
+) => ({
+  ...(projection.text !== undefined ? { reasoning_text: projection.text } : {}),
+  ...(projection.opaque !== undefined
+    ? { reasoning_opaque: projection.opaque }
+    : {}),
+  ...(projection.items.length > 0 ? { reasoning_items: projection.items } : {}),
 });
 
 export const toResponseReasoningItem = <T extends ResponseReasoningItem>(

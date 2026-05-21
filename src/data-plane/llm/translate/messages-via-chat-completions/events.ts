@@ -1,92 +1,103 @@
 import type { ChatCompletionChunk } from "../../../shared/protocol/chat-completions.ts";
-import type { MessagesStreamEventData } from "../../../shared/protocol/messages.ts";
+import type {
+  MessagesContentBlockDeltaEvent,
+  MessagesContentBlockStartEvent,
+  MessagesStreamEventData,
+} from "../../../shared/protocol/messages.ts";
 import {
   mapChatCompletionsFinishReasonToMessagesStopReason,
   mapChatCompletionsUsageToMessagesUsage,
   toMessagesId,
 } from "./result.ts";
 import { checkWhitespaceOverflow } from "../shared/tool-arguments.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
 
-const upstreamChatCompletionStreamAlgebra = {
-  doneTerminates: true as const,
-  missingTerminalMessage:
-    "Upstream Chat Completions stream ended without a DONE sentinel.",
+const UPSTREAM_CHAT_COMPLETIONS_MISSING_DONE_MESSAGE =
+  "Upstream Chat Completions stream ended without a DONE sentinel.";
+
+const upstreamChatCompletionEventsUntilDone = async function* (
+  frames: AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
+): AsyncGenerator<ChatCompletionChunk> {
+  for await (const frame of frames) {
+    if (frame.type === "done") return;
+    yield frame.event;
+  }
+
+  throw new Error(UPSTREAM_CHAT_COMPLETIONS_MISSING_DONE_MESSAGE);
 };
 
 type ChatStreamDelta = ChatCompletionChunk["choices"][0]["delta"];
 type ChatStreamToolCalls = NonNullable<ChatStreamDelta["tool_calls"]>;
+type MessagesContentBlock = MessagesContentBlockStartEvent["content_block"];
+type MessagesContentDelta = MessagesContentBlockDeltaEvent["delta"];
 
 type DeferredAfterThinking =
   | { type: "content"; content: string }
   | { type: "tool_calls"; toolCalls: ChatStreamToolCalls };
 
+type OpenContentBlock = "text" | "thinking" | "tool_use";
+
 interface ChatCompletionsToMessagesStreamState {
   messageStartSent: boolean;
   contentBlockIndex: number;
-  contentBlockOpen: boolean;
+  openBlock?: OpenContentBlock;
   toolCalls: Record<number, {
-    id: string;
-    name: string;
     messagesBlockIndex: number;
     consecutiveWhitespace: number;
   }>;
   aborted?: boolean;
-  thinkingBlockOpen?: boolean;
   pendingReasoningOpaque?: string;
   pendingThinkingSignature?: string;
   deferredAfterThinking: DeferredAfterThinking[];
   pendingFinishReason?: ChatCompletionChunk["choices"][0]["finish_reason"];
   pendingUsage?: ChatCompletionChunk["usage"];
-  messageStopped?: boolean;
-  usageSent?: boolean;
+  finalMessageSent?: boolean;
 }
 
 const hasPendingReasoning = (
   state: ChatCompletionsToMessagesStreamState,
 ): boolean =>
-  Boolean(
-    state.thinkingBlockOpen || state.pendingReasoningOpaque !== undefined,
-  );
+  state.openBlock === "thinking" || state.pendingReasoningOpaque !== undefined;
 
-const isToolBlockOpen = (
+const startContentBlock = (
   state: ChatCompletionsToMessagesStreamState,
-): boolean =>
-  state.contentBlockOpen &&
-  Object.values(state.toolCalls).some((toolCall) =>
-    toolCall.messagesBlockIndex === state.contentBlockIndex
-  );
+  events: MessagesStreamEventData[],
+  openBlock: OpenContentBlock,
+  contentBlock: MessagesContentBlock,
+): void => {
+  events.push({
+    type: "content_block_start",
+    index: state.contentBlockIndex,
+    content_block: contentBlock,
+  });
+  state.openBlock = openBlock;
+};
 
-const closeThinkingBlock = (
+const emitContentBlockDelta = (
+  state: ChatCompletionsToMessagesStreamState,
+  events: MessagesStreamEventData[],
+  delta: MessagesContentDelta,
+  index = state.contentBlockIndex,
+): void => {
+  events.push({ type: "content_block_delta", index, delta });
+};
+
+const closeCurrentBlock = (
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  if (!state.thinkingBlockOpen) return;
-
-  if (state.pendingThinkingSignature !== undefined) {
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: {
-        type: "signature_delta",
-        signature: state.pendingThinkingSignature,
-      },
-    });
-    state.pendingThinkingSignature = undefined;
-  }
+  if (state.openBlock === undefined) return;
 
   events.push({ type: "content_block_stop", index: state.contentBlockIndex });
   state.contentBlockIndex++;
-  state.contentBlockOpen = false;
-  state.thinkingBlockOpen = false;
+  state.openBlock = undefined;
 };
 
 const attachOpaqueToOpenThinkingBlock = (
   state: ChatCompletionsToMessagesStreamState,
 ): boolean => {
   if (
-    !state.thinkingBlockOpen || state.pendingReasoningOpaque === undefined
+    state.openBlock !== "thinking" || state.pendingReasoningOpaque === undefined
   ) {
     return false;
   }
@@ -95,17 +106,6 @@ const attachOpaqueToOpenThinkingBlock = (
     state.pendingReasoningOpaque;
   state.pendingReasoningOpaque = undefined;
   return true;
-};
-
-const closeCurrentBlock = (
-  state: ChatCompletionsToMessagesStreamState,
-  events: MessagesStreamEventData[],
-): void => {
-  if (!state.contentBlockOpen) return;
-
-  events.push({ type: "content_block_stop", index: state.contentBlockIndex });
-  state.contentBlockIndex++;
-  state.contentBlockOpen = false;
 };
 
 const emitPendingOpaqueReasoningBlock = (
@@ -140,23 +140,17 @@ const emitContentDelta = (
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  if (isToolBlockOpen(state)) {
+  if (state.openBlock === "tool_use") {
     closeCurrentBlock(state, events);
   }
 
-  if (!state.contentBlockOpen) {
-    events.push({
-      type: "content_block_start",
-      index: state.contentBlockIndex,
-      content_block: { type: "text", text: "" },
-    });
-    state.contentBlockOpen = true;
+  if (state.openBlock === undefined) {
+    startContentBlock(state, events, "text", { type: "text", text: "" });
   }
 
-  events.push({
-    type: "content_block_delta",
-    index: state.contentBlockIndex,
-    delta: { type: "text_delta", text: content },
+  emitContentBlockDelta(state, events, {
+    type: "text_delta",
+    text: content,
   });
 };
 
@@ -166,22 +160,18 @@ const handleReasoningDelta = (
   events: MessagesStreamEventData[],
 ): boolean => {
   if (delta.reasoning_text) {
-    if (!state.thinkingBlockOpen) {
+    if (state.openBlock !== "thinking") {
       closeCurrentBlock(state, events);
-      events.push({
-        type: "content_block_start",
-        index: state.contentBlockIndex,
-        content_block: { type: "thinking", thinking: "" },
+      startContentBlock(state, events, "thinking", {
+        type: "thinking",
+        thinking: "",
       });
-      state.contentBlockOpen = true;
-      state.thinkingBlockOpen = true;
       attachOpaqueToOpenThinkingBlock(state);
     }
 
-    events.push({
-      type: "content_block_delta",
-      index: state.contentBlockIndex,
-      delta: { type: "thinking_delta", thinking: delta.reasoning_text },
+    emitContentBlockDelta(state, events, {
+      type: "thinking_delta",
+      thinking: delta.reasoning_text,
     });
   }
 
@@ -189,28 +179,15 @@ const handleReasoningDelta = (
     return false;
   }
 
-  if (state.thinkingBlockOpen) {
+  if (state.openBlock === "thinking") {
     state.pendingThinkingSignature = (state.pendingThinkingSignature ?? "") +
       delta.reasoning_opaque;
-    return flushPendingReasoningAndDeferred(state, events);
+    return emitPendingReasoningAndDeferred(state, events);
   }
 
   state.pendingReasoningOpaque = (state.pendingReasoningOpaque ?? "") +
     delta.reasoning_opaque;
   return false;
-};
-
-const handleContentDelta = (
-  content: string,
-  state: ChatCompletionsToMessagesStreamState,
-  events: MessagesStreamEventData[],
-): void => {
-  if (hasPendingReasoning(state)) {
-    state.deferredAfterThinking.push({ type: "content", content });
-    return;
-  }
-
-  emitContentDelta(content, state, events);
 };
 
 const emitToolCallsDelta = (
@@ -223,22 +200,15 @@ const emitToolCallsDelta = (
       closeCurrentBlock(state, events);
       const blockIndex = state.contentBlockIndex;
       state.toolCalls[toolCall.index] = {
-        id: toolCall.id,
-        name: toolCall.function.name,
         messagesBlockIndex: blockIndex,
         consecutiveWhitespace: 0,
       };
-      events.push({
-        type: "content_block_start",
-        index: blockIndex,
-        content_block: {
-          type: "tool_use",
-          id: toolCall.id,
-          name: toolCall.function.name,
-          input: {},
-        },
+      startContentBlock(state, events, "tool_use", {
+        type: "tool_use",
+        id: toolCall.id,
+        name: toolCall.function.name,
+        input: {},
       });
-      state.contentBlockOpen = true;
     }
 
     if (!toolCall.function?.arguments) continue;
@@ -269,27 +239,32 @@ const emitToolCallsDelta = (
       return true;
     }
 
-    events.push({
-      type: "content_block_delta",
-      index: toolCallInfo.messagesBlockIndex,
-      delta: {
-        type: "input_json_delta",
-        partial_json: toolCall.function.arguments,
-      },
-    });
+    emitContentBlockDelta(state, events, {
+      type: "input_json_delta",
+      partial_json: toolCall.function.arguments,
+    }, toolCallInfo.messagesBlockIndex);
   }
 
   return false;
 };
 
-const flushPendingReasoningAndDeferred = (
+const emitPendingReasoningAndDeferred = (
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): boolean => {
   // Opaque-only reasoning still owns source order: it may later become a
   // thinking signature, so content/tool deltas wait behind the reasoning gate.
   emitPendingOpaqueReasoningBlock(state, events);
-  closeThinkingBlock(state, events);
+  if (state.openBlock === "thinking") {
+    if (state.pendingThinkingSignature !== undefined) {
+      emitContentBlockDelta(state, events, {
+        type: "signature_delta",
+        signature: state.pendingThinkingSignature,
+      });
+      state.pendingThinkingSignature = undefined;
+    }
+    closeCurrentBlock(state, events);
+  }
 
   const deferred = state.deferredAfterThinking;
   state.deferredAfterThinking = [];
@@ -306,42 +281,28 @@ const flushPendingReasoningAndDeferred = (
   return false;
 };
 
-const handleToolCallsDelta = (
-  toolCalls: ChatStreamToolCalls,
-  state: ChatCompletionsToMessagesStreamState,
-  events: MessagesStreamEventData[],
-): boolean => {
-  if (hasPendingReasoning(state)) {
-    state.deferredAfterThinking.push({ type: "tool_calls", toolCalls });
-    return false;
-  }
-
-  return emitToolCallsDelta(toolCalls, state, events);
-};
-
 const handleFinishReason = (
   finishReason: ChatCompletionChunk["choices"][0]["finish_reason"],
   chunk: ChatCompletionChunk,
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  if (flushPendingReasoningAndDeferred(state, events)) return;
+  if (emitPendingReasoningAndDeferred(state, events)) return;
 
   closeCurrentBlock(state, events);
 
   state.pendingFinishReason = finishReason;
   if (chunk.usage) state.pendingUsage = chunk.usage;
-  if (chunk.usage) flushFinalMessage(state, events);
+  if (chunk.usage) emitFinalMessageIfReady(state, events);
 };
 
-const flushFinalMessage = (
+const emitFinalMessageIfReady = (
   state: ChatCompletionsToMessagesStreamState,
   events: MessagesStreamEventData[],
 ): void => {
-  if (!state.pendingFinishReason || state.messageStopped) return;
+  if (!state.pendingFinishReason || state.finalMessageSent) return;
 
   const usage = mapChatCompletionsUsageToMessagesUsage(state.pendingUsage);
-  if (state.pendingUsage) state.usageSent = true;
 
   events.push(
     {
@@ -357,7 +318,7 @@ const flushFinalMessage = (
     { type: "message_stop" },
   );
 
-  state.messageStopped = true;
+  state.finalMessageSent = true;
   state.pendingFinishReason = undefined;
 };
 
@@ -365,7 +326,6 @@ export const createChatCompletionsToMessagesStreamState =
   (): ChatCompletionsToMessagesStreamState => ({
     messageStartSent: false,
     contentBlockIndex: 0,
-    contentBlockOpen: false,
     toolCalls: {},
     deferredAfterThinking: [],
   });
@@ -377,9 +337,9 @@ export const translateChatCompletionsChunkToMessagesEvents = (
   const events: MessagesStreamEventData[] = [];
 
   if (chunk.choices.length === 0) {
-    if (!state.aborted && chunk.usage && !state.usageSent) {
+    if (!state.aborted && chunk.usage) {
       state.pendingUsage = chunk.usage;
-      flushFinalMessage(state, events);
+      emitFinalMessageIfReady(state, events);
     }
 
     return events;
@@ -411,12 +371,20 @@ export const translateChatCompletionsChunkToMessagesEvents = (
 
   if (handleReasoningDelta(choice.delta, state, events)) return events;
 
-  if (choice.delta.content) {
-    handleContentDelta(choice.delta.content, state, events);
+  const content = choice.delta.content;
+  if (content) {
+    if (hasPendingReasoning(state)) {
+      state.deferredAfterThinking.push({ type: "content", content });
+    } else {
+      emitContentDelta(content, state, events);
+    }
   }
 
-  if (choice.delta.tool_calls?.length) {
-    if (handleToolCallsDelta(choice.delta.tool_calls, state, events)) {
+  const toolCalls = choice.delta.tool_calls;
+  if (toolCalls?.length) {
+    if (hasPendingReasoning(state)) {
+      state.deferredAfterThinking.push({ type: "tool_calls", toolCalls });
+    } else if (emitToolCallsDelta(toolCalls, state, events)) {
       return events;
     }
   }
@@ -436,9 +404,9 @@ export const flushChatCompletionsToMessagesEvents = (
 ): MessagesStreamEventData[] => {
   const events: MessagesStreamEventData[] = [];
   if (state.aborted) return events;
-  if (flushPendingReasoningAndDeferred(state, events)) return events;
+  if (emitPendingReasoningAndDeferred(state, events)) return events;
   closeCurrentBlock(state, events);
-  flushFinalMessage(state, events);
+  emitFinalMessageIfReady(state, events);
   return events;
 };
 
@@ -447,12 +415,7 @@ export const translateToSourceEvents = async function* (
 ): AsyncGenerator<ProtocolFrame<MessagesStreamEventData>> {
   const state = createChatCompletionsToMessagesStreamState();
 
-  for await (
-    const chunk of protocolEventsUntilTerminal(
-      frames,
-      upstreamChatCompletionStreamAlgebra,
-    )
-  ) {
+  for await (const chunk of upstreamChatCompletionEventsUntilDone(frames)) {
     for (
       const event of translateChatCompletionsChunkToMessagesEvents(
         chunk,

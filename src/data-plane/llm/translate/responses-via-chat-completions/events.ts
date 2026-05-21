@@ -1,34 +1,35 @@
+import type { ChatCompletionChunk } from "../../../shared/protocol/chat-completions.ts";
 import type {
-  ChatCompletionChunk,
-  ChatCompletionResponse,
-  ChatReasoningItem,
-} from "../../../shared/protocol/chat-completions.ts";
-import type {
-  ResponseOutputFunctionCall,
   ResponseOutputItem,
-  ResponseOutputMessage,
   ResponseOutputReasoning,
   ResponsesResult,
   ResponseStreamEvent,
 } from "../../../shared/protocol/responses.ts";
 import { toResponseReasoningItem } from "../shared/chat-responses-reasoning.ts";
 import { makeResponsesReasoningId } from "../shared/reasoning.ts";
+import * as responses from "../shared/responses-event-builder.ts";
 import { checkWhitespaceOverflow } from "../shared/tool-arguments.ts";
 import { mapChatCompletionsUsageToResponsesUsage } from "./result.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
 import type { ResponsesStreamEvent } from "../../shared/protocol/responses.ts";
 
-const upstreamChatCompletionStreamAlgebra = {
-  doneTerminates: true as const,
-  missingTerminalMessage:
-    "Upstream Chat Completions stream ended without a DONE sentinel.",
+const UPSTREAM_CHAT_COMPLETIONS_MISSING_DONE_MESSAGE =
+  "Upstream Chat Completions stream ended without a DONE sentinel.";
+
+const upstreamChatCompletionEventsUntilDone = async function* (
+  frames: AsyncIterable<ProtocolFrame<ChatCompletionChunk>>,
+): AsyncGenerator<ChatCompletionChunk> {
+  for await (const frame of frames) {
+    if (frame.type === "done") return;
+    yield frame.event;
+  }
+
+  throw new Error(UPSTREAM_CHAT_COMPLETIONS_MISSING_DONE_MESSAGE);
 };
 
 interface PendingScalarReasoningItem {
   text: string;
-  signature: string;
-  hasSignature: boolean;
+  encryptedContent?: string;
 }
 
 interface PendingTextItem {
@@ -37,17 +38,30 @@ interface PendingTextItem {
   text: string;
 }
 
+interface FunctionCallStreamItem {
+  outputIndex: number;
+  itemId: string;
+}
+
 interface PendingFunctionCallItem {
-  outputIndex?: number;
-  itemId?: string;
+  streamItem?: FunctionCallStreamItem;
   callId?: string;
   name?: string;
   arguments: string;
   consecutiveWhitespace: number;
 }
 
+type StartedFunctionCallItem = PendingFunctionCallItem & {
+  streamItem: FunctionCallStreamItem;
+  callId: string;
+  name: string;
+};
+
 type ChatStreamDelta = ChatCompletionChunk["choices"][0]["delta"];
 type ChatStreamToolCalls = NonNullable<ChatStreamDelta["tool_calls"]>;
+type ChatFinishReason = NonNullable<
+  ChatCompletionChunk["choices"][0]["finish_reason"]
+>;
 
 type DeferredAfterReasoning =
   | { type: "content"; content: string }
@@ -60,14 +74,14 @@ interface ChatCompletionsToResponsesStreamState {
   responseId: string;
   model: string;
   outputText: string;
-  completedItems: Map<number, ResponseOutputItem>;
-  pendingScalarReasoning: PendingScalarReasoningItem | null;
-  openText: PendingTextItem | null;
+  completedItems: (ResponseOutputItem | undefined)[];
+  pendingScalarReasoning?: PendingScalarReasoningItem;
+  openText?: PendingTextItem;
   openFunctionCalls: Map<number, PendingFunctionCallItem>;
   deferredAfterReasoning: DeferredAfterReasoning[];
   reasoningItemsSeen: boolean;
   usage?: ResponsesResult["usage"];
-  pendingFinishReason?: ChatCompletionResponse["choices"][0]["finish_reason"];
+  pendingFinishReason?: ChatFinishReason;
   completed: boolean;
 }
 
@@ -79,43 +93,27 @@ export const createChatCompletionsToResponsesStreamState =
     responseId: "",
     model: "",
     outputText: "",
-    completedItems: new Map(),
-    pendingScalarReasoning: null,
-    openText: null,
+    completedItems: [],
     openFunctionCalls: new Map(),
     deferredAfterReasoning: [],
     reasoningItemsSeen: false,
-    usage: undefined,
-    pendingFinishReason: undefined,
     completed: false,
   });
-
-const seq = (
-  state: ChatCompletionsToResponsesStreamState,
-  events: ResponseStreamEvent[],
-): ResponseStreamEvent[] =>
-  events.map((event) => ({
-    ...event,
-    sequence_number: state.sequenceNumber++,
-  }));
 
 const buildResult = (
   state: ChatCompletionsToResponsesStreamState,
   status: ResponsesResult["status"],
-): ResponsesResult => ({
-  id: state.responseId,
-  object: "response",
-  model: state.model,
-  output: [...state.completedItems.entries()]
-    .sort(([a], [b]) => a - b)
-    .map(([, item]) => item),
-  output_text: state.outputText,
-  status,
-  ...(state.pendingFinishReason === "length"
-    ? { incomplete_details: { reason: "max_output_tokens" } }
-    : {}),
-  ...(state.usage ? { usage: state.usage } : {}),
-});
+): ResponsesResult =>
+  responses.result({
+    id: state.responseId,
+    model: state.model,
+    output: state.completedItems.filter((item): item is ResponseOutputItem =>
+      item !== undefined
+    ),
+    outputText: state.outputText,
+    status,
+    ...(state.usage !== undefined ? { usage: state.usage } : {}),
+  });
 
 const ensureResponseCreated = (
   chunk: ChatCompletionChunk,
@@ -133,10 +131,7 @@ const ensureResponseCreated = (
   state.responseCreated = true;
   const response = buildResult(state, "in_progress");
 
-  return seq(state, [
-    { type: "response.created", response },
-    { type: "response.in_progress", response },
-  ]);
+  return responses.started(state, response);
 };
 
 const emitCompletedReasoningItem = (
@@ -144,43 +139,13 @@ const emitCompletedReasoningItem = (
   outputIndex: number,
   state: ChatCompletionsToResponsesStreamState,
 ): ResponseStreamEvent[] => {
-  state.completedItems.set(outputIndex, item);
+  state.completedItems[outputIndex] = item;
 
-  return seq(state, [
-    {
-      type: "response.output_item.added",
-      output_index: outputIndex,
-      item,
-    },
-    ...item.summary.flatMap((part, summaryIndex) => [
-      {
-        type: "response.reasoning_summary_part.added" as const,
-        item_id: item.id,
-        output_index: outputIndex,
-        summary_index: summaryIndex,
-        part,
-      },
-      {
-        type: "response.reasoning_summary_text.done" as const,
-        item_id: item.id,
-        output_index: outputIndex,
-        summary_index: summaryIndex,
-        text: part.text,
-      },
-      {
-        type: "response.reasoning_summary_part.done" as const,
-        item_id: item.id,
-        output_index: outputIndex,
-        summary_index: summaryIndex,
-        part,
-      },
-    ]),
-    {
-      type: "response.output_item.done",
-      output_index: outputIndex,
-      item,
-    },
-  ]);
+  return responses.completedReasoning(
+    state,
+    outputIndex,
+    item,
+  );
 };
 
 const commitPendingScalarReasoning = (
@@ -189,18 +154,13 @@ const commitPendingScalarReasoning = (
   if (!state.pendingScalarReasoning) return [];
 
   const reasoning = state.pendingScalarReasoning;
-  state.pendingScalarReasoning = null;
+  state.pendingScalarReasoning = undefined;
   const outputIndex = state.outputIndex++;
-  const item: ResponseOutputReasoning = {
-    type: "reasoning",
-    id: makeResponsesReasoningId(outputIndex),
-    summary: reasoning.text
-      ? [{ type: "summary_text", text: reasoning.text }]
-      : [],
-    ...(reasoning.hasSignature
-      ? { encrypted_content: reasoning.signature }
-      : {}),
-  };
+  const item = responses.reasoningItem(
+    makeResponsesReasoningId(outputIndex),
+    reasoning.text,
+    reasoning.encryptedContent,
+  );
 
   return emitCompletedReasoningItem(item, outputIndex, state);
 };
@@ -211,38 +171,19 @@ const closeText = (
   if (!state.openText) return [];
 
   const textItem = state.openText;
-  state.openText = null;
+  state.openText = undefined;
 
-  const part = { type: "output_text" as const, text: textItem.text };
-  const item: ResponseOutputMessage = {
-    type: "message",
-    role: "assistant",
-    content: [part],
-  };
+  const item = responses.messageItem(textItem.text);
 
-  state.completedItems.set(textItem.outputIndex, item);
+  state.completedItems[textItem.outputIndex] = item;
 
-  return seq(state, [
-    {
-      type: "response.output_text.done",
-      item_id: textItem.itemId,
-      output_index: textItem.outputIndex,
-      content_index: 0,
-      text: textItem.text,
-    },
-    {
-      type: "response.content_part.done",
-      item_id: textItem.itemId,
-      output_index: textItem.outputIndex,
-      content_index: 0,
-      part,
-    },
-    {
-      type: "response.output_item.done",
-      output_index: textItem.outputIndex,
-      item,
-    },
-  ]);
+  return responses.textDone(
+    state,
+    textItem.outputIndex,
+    textItem.itemId,
+    textItem.text,
+    item,
+  );
 };
 
 const closeFunctionCalls = (
@@ -251,162 +192,113 @@ const closeFunctionCalls = (
   const events: ResponseStreamEvent[] = [];
 
   for (
-    const functionCall of [...state.openFunctionCalls.values()].sort((a, b) =>
-      (a.outputIndex ?? Number.MAX_SAFE_INTEGER) -
-      (b.outputIndex ?? Number.MAX_SAFE_INTEGER)
-    )
+    const functionCall of [...state.openFunctionCalls.values()]
+      .filter((item): item is StartedFunctionCallItem =>
+        item.streamItem !== undefined && Boolean(item.callId) &&
+        Boolean(item.name)
+      )
+      .sort((a, b) => a.streamItem.outputIndex - b.streamItem.outputIndex)
   ) {
-    if (
-      functionCall.outputIndex == null ||
-      !functionCall.itemId ||
-      !functionCall.callId ||
-      !functionCall.name
-    ) {
-      continue;
-    }
+    const { outputIndex, itemId } = functionCall.streamItem;
 
-    const item: ResponseOutputFunctionCall = {
-      type: "function_call",
-      call_id: functionCall.callId,
-      name: functionCall.name,
-      arguments: functionCall.arguments,
-      status: "completed",
-    };
+    const item = responses.functionCallItem(
+      functionCall.callId,
+      functionCall.name,
+      functionCall.arguments,
+      "completed",
+    );
 
-    state.completedItems.set(functionCall.outputIndex, item);
+    state.completedItems[outputIndex] = item;
     events.push(
-      {
-        type: "response.function_call_arguments.done",
-        item_id: functionCall.itemId,
-        output_index: functionCall.outputIndex,
-        arguments: functionCall.arguments,
-      },
-      {
-        type: "response.output_item.done",
-        output_index: functionCall.outputIndex,
+      ...responses.functionCallDone(
+        state,
+        outputIndex,
+        itemId,
+        functionCall.arguments,
         item,
-      },
+      ),
     );
   }
 
   state.openFunctionCalls.clear();
-  return seq(state, events);
+  return events;
 };
 
-const ensureReasoning = (
+const openScalarReasoning = (
   state: ChatCompletionsToResponsesStreamState,
-): ResponseStreamEvent[] => {
-  if (state.pendingScalarReasoning) return [];
-
-  state.pendingScalarReasoning = {
+): PendingScalarReasoningItem =>
+  state.pendingScalarReasoning ??= {
     text: "",
-    signature: "",
-    hasSignature: false,
   };
-  return [];
-};
 
-const ensureText = (
+const openText = (
   state: ChatCompletionsToResponsesStreamState,
-): ResponseStreamEvent[] => {
-  if (state.openText) return [];
+): { item: PendingTextItem; events: ResponseStreamEvent[] } => {
+  if (state.openText) return { item: state.openText, events: [] };
 
   const outputIndex = state.outputIndex++;
   const itemId = `msg_${outputIndex}`;
-  state.openText = { outputIndex, itemId, text: "" };
+  const item = { outputIndex, itemId, text: "" };
+  state.openText = item;
 
-  return seq(state, [
-    {
-      type: "response.output_item.added",
-      output_index: outputIndex,
-      item: {
-        type: "message",
-        role: "assistant",
-        content: [{ type: "output_text", text: "" }],
-      },
-    },
-    {
-      type: "response.content_part.added",
-      item_id: itemId,
-      output_index: outputIndex,
-      content_index: 0,
-      part: { type: "output_text", text: "" },
-    },
-  ]);
+  return {
+    item,
+    events: responses.textStart(state, outputIndex, itemId),
+  };
 };
 
-const ensureFunctionCall = (
-  toolCallIndex: number,
+const startFunctionCall = (
+  current: PendingFunctionCallItem,
   state: ChatCompletionsToResponsesStreamState,
 ): ResponseStreamEvent[] => {
-  const current = state.openFunctionCalls.get(toolCallIndex);
-  if (
-    !current ||
-    current.outputIndex != null ||
-    !current.callId ||
-    !current.name
-  ) {
+  if (current.streamItem || !current.callId || !current.name) {
     return [];
   }
 
-  current.outputIndex = state.outputIndex++;
-  current.itemId = `fc_${current.outputIndex}`;
-
-  const events: ResponseStreamEvent[] = [{
-    type: "response.output_item.added",
-    output_index: current.outputIndex,
-    item: {
-      type: "function_call",
-      call_id: current.callId,
-      name: current.name,
-      arguments: "",
-      status: "in_progress",
-    },
-  }];
-
-  if (current.arguments) {
-    events.push({
-      type: "response.function_call_arguments.delta",
-      item_id: current.itemId,
-      output_index: current.outputIndex,
-      delta: current.arguments,
-    });
-  }
-
-  return seq(state, events);
-};
-
-const emitReasoningItemFromChatDelta = (
-  item: ChatReasoningItem,
-  state: ChatCompletionsToResponsesStreamState,
-): ResponseStreamEvent[] => {
   const outputIndex = state.outputIndex++;
-  const responseItem = toResponseReasoningItem<ResponseOutputReasoning>(
-    item,
-    makeResponsesReasoningId(outputIndex),
+  const streamItem = { outputIndex, itemId: `fc_${outputIndex}` };
+  current.streamItem = streamItem;
+
+  const events = responses.itemAdded(
+    state,
+    outputIndex,
+    responses.functionCallItem(
+      current.callId,
+      current.name,
+      "",
+      "in_progress",
+    ),
   );
 
-  return emitCompletedReasoningItem(responseItem, outputIndex, state);
+  if (current.arguments) {
+    events.push(
+      ...responses.argumentsDelta(
+        state,
+        outputIndex,
+        streamItem.itemId,
+        current.arguments,
+      ),
+    );
+  }
+
+  return events;
 };
 
 const emitContentDelta = (
   content: string,
   state: ChatCompletionsToResponsesStreamState,
 ): ResponseStreamEvent[] => {
-  const events: ResponseStreamEvent[] = [];
-  events.push(...ensureText(state));
-
-  if (state.openText) {
-    state.openText.text += content;
-    state.outputText += content;
-    events.push(...seq(state, [{
-      type: "response.output_text.delta",
-      item_id: state.openText.itemId,
-      output_index: state.openText.outputIndex,
-      content_index: 0,
-      delta: content,
-    }]));
-  }
+  const { item, events } = openText(state);
+  item.text += content;
+  state.outputText += content;
+  events.push(
+    ...responses.textDelta(
+      state,
+      item.outputIndex,
+      item.itemId,
+      content,
+    ),
+  );
 
   return events;
 };
@@ -427,7 +319,7 @@ const emitToolCallsDelta = (
     if (toolCall.id) current.callId = toolCall.id;
     if (toolCall.function?.name) current.name = toolCall.function.name;
     state.openFunctionCalls.set(toolCall.index, current);
-    events.push(...ensureFunctionCall(toolCall.index, state));
+    events.push(...startFunctionCall(current, state));
 
     if (!toolCall.function?.arguments) continue;
 
@@ -441,7 +333,7 @@ const emitToolCallsDelta = (
       state.completed = true;
       return [
         ...events,
-        ...seq(state, [{
+        ...responses.seq(state, [{
           type: "error",
           message:
             "Tool call arguments contained excessive whitespace, indicating a degenerate response.",
@@ -452,20 +344,22 @@ const emitToolCallsDelta = (
 
     current.arguments += toolCall.function.arguments;
 
-    if (current.outputIndex != null && current.itemId) {
-      events.push(...seq(state, [{
-        type: "response.function_call_arguments.delta",
-        item_id: current.itemId,
-        output_index: current.outputIndex,
-        delta: toolCall.function.arguments,
-      }]));
+    if (current.streamItem) {
+      events.push(
+        ...responses.argumentsDelta(
+          state,
+          current.streamItem.outputIndex,
+          current.streamItem.itemId,
+          toolCall.function.arguments,
+        ),
+      );
     }
   }
 
   return events;
 };
 
-const flushDeferredAfterReasoning = (
+const commitReasoningAndReplayDeferredDeltas = (
   state: ChatCompletionsToResponsesStreamState,
 ): ResponseStreamEvent[] => {
   const events: ResponseStreamEvent[] = [];
@@ -489,28 +383,24 @@ const flushDeferredAfterReasoning = (
 const finalize = (
   state: ChatCompletionsToResponsesStreamState,
 ): ResponseStreamEvent[] => {
-  if (state.completed || state.pendingFinishReason == null) return [];
+  if (state.completed || state.pendingFinishReason === undefined) return [];
 
   const events = [
-    ...flushDeferredAfterReasoning(state),
+    ...commitReasoningAndReplayDeferredDeltas(state),
     ...closeText(state),
     ...closeFunctionCalls(state),
   ];
 
   if (state.completed) return events;
   state.completed = true;
+  const incomplete = state.pendingFinishReason === "length";
+  const status: ResponsesResult["status"] = incomplete
+    ? "incomplete"
+    : "completed";
 
   return [
     ...events,
-    ...seq(state, [{
-      type: state.pendingFinishReason === "length"
-        ? "response.incomplete"
-        : "response.completed",
-      response: buildResult(
-        state,
-        state.pendingFinishReason === "length" ? "incomplete" : "completed",
-      ),
-    }]),
+    ...responses.terminal(state, buildResult(state, status)),
   ];
 };
 
@@ -520,17 +410,16 @@ export const translateChatCompletionsChunkToResponsesEvents = (
 ): ResponseStreamEvent[] => {
   const events = ensureResponseCreated(chunk, state);
 
-  if (chunk.usage) {
-    state.usage = mapChatCompletionsUsageToResponsesUsage(chunk.usage);
-  }
-
   if (chunk.choices.length === 0) {
     return [...events, ...finalize(state)];
   }
 
   for (const choice of chunk.choices) {
+    const reasoningOpaque = choice.delta.reasoning_opaque;
+
     if (choice.delta.reasoning_items?.length) {
-      const hadPendingScalarReasoning = state.pendingScalarReasoning !== null;
+      const hadPendingScalarReasoning = state.pendingScalarReasoning !==
+        undefined;
       state.reasoningItemsSeen = true;
 
       if (hadPendingScalarReasoning) {
@@ -538,41 +427,46 @@ export const translateChatCompletionsChunkToResponsesEvents = (
         // richer item-level `reasoning_items[]` carrier later. Responses SSE
         // items are not retractable, so scalar reasoning remains buffered until
         // either a carrier replaces it or finalization commits it.
-        state.pendingScalarReasoning = null;
+        state.pendingScalarReasoning = undefined;
       } else {
-        events.push(...flushDeferredAfterReasoning(state));
+        events.push(...commitReasoningAndReplayDeferredDeltas(state));
         events.push(...closeText(state));
       }
 
       for (const item of choice.delta.reasoning_items) {
-        events.push(...emitReasoningItemFromChatDelta(item, state));
+        const outputIndex = state.outputIndex++;
+        events.push(
+          ...emitCompletedReasoningItem(
+            toResponseReasoningItem<ResponseOutputReasoning>(
+              item,
+              makeResponsesReasoningId(outputIndex),
+            ),
+            outputIndex,
+            state,
+          ),
+        );
       }
 
       if (hadPendingScalarReasoning) {
-        events.push(...flushDeferredAfterReasoning(state));
+        events.push(...commitReasoningAndReplayDeferredDeltas(state));
         if (state.completed) return events;
       }
     } else if (
       choice.delta.reasoning_text ||
-      choice.delta.reasoning_opaque !== undefined &&
-        choice.delta.reasoning_opaque !== null
+      reasoningOpaque != null
     ) {
       if (!state.reasoningItemsSeen) {
         if (!state.pendingScalarReasoning) events.push(...closeText(state));
-        events.push(...ensureReasoning(state));
+        const reasoning = openScalarReasoning(state);
 
-        if (choice.delta.reasoning_text && state.pendingScalarReasoning) {
-          state.pendingScalarReasoning.text += choice.delta.reasoning_text;
+        if (choice.delta.reasoning_text) {
+          reasoning.text += choice.delta.reasoning_text;
         }
 
-        if (
-          choice.delta.reasoning_opaque !== undefined &&
-          choice.delta.reasoning_opaque !== null &&
-          state.pendingScalarReasoning
-        ) {
-          state.pendingScalarReasoning.signature +=
-            choice.delta.reasoning_opaque;
-          state.pendingScalarReasoning.hasSignature = true;
+        if (reasoningOpaque != null) {
+          reasoning.encryptedContent = `${
+            reasoning.encryptedContent ?? ""
+          }${reasoningOpaque}`;
         }
       }
     }
@@ -617,12 +511,7 @@ export const translateToSourceEvents = async function* (
 ): AsyncGenerator<ProtocolFrame<ResponsesStreamEvent>> {
   const state = createChatCompletionsToResponsesStreamState();
 
-  for await (
-    const chunk of protocolEventsUntilTerminal(
-      frames,
-      upstreamChatCompletionStreamAlgebra,
-    )
-  ) {
+  for await (const chunk of upstreamChatCompletionEventsUntilDone(frames)) {
     for (
       const event of translateChatCompletionsChunkToResponsesEvents(
         chunk,

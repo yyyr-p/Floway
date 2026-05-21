@@ -1,6 +1,5 @@
 import type {
   GeminiContent,
-  GeminiFunctionCallingConfig,
   GeminiGenerateContentRequest,
   GeminiGenerationConfig,
   GeminiPart,
@@ -16,46 +15,25 @@ import {
   type MessagesUserContentBlock,
 } from "../../../shared/protocol/messages.ts";
 import type { ModelCapabilities } from "../../../providers/capabilities.ts";
-
-type UnmatchedToolCallIds = Record<string, string[]>;
-
-const SUPPORTED_IMAGE_MEDIA_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-] as const;
-
-type SupportedImageMediaType = typeof SUPPORTED_IMAGE_MEDIA_TYPES[number];
-
-const deterministicToolCallId = (
-  turnIndex: number,
-  partIndex: number,
-): string => `gemini_call_${turnIndex}_${partIndex}`;
-
-const isSupportedImageMediaType = (
-  mediaType: string,
-): mediaType is SupportedImageMediaType =>
-  SUPPORTED_IMAGE_MEDIA_TYPES.some((supported) => supported === mediaType);
-
-const partText = (part: GeminiPart): string | null =>
-  typeof part.text === "string" ? part.text : null;
-
-const collectSystemText = (content?: GeminiContent): string | null => {
-  const text = content?.parts
-    .map(partText)
-    .filter((value): value is string => value !== null);
-
-  return text?.length ? text.join("\n\n") : null;
-};
+import {
+  geminiFunctionCallingIntent,
+  geminiFunctionCallPart,
+  geminiFunctionDeclarations,
+  geminiFunctionResponsePart,
+  geminiInlineData,
+  geminiPartText,
+  geminiText,
+  geminiThinkingLevelEffort,
+  geminiThoughtText,
+  type GeminiToolCallIds,
+  geminiVisibleText,
+} from "../shared/gemini.ts";
 
 const inlineDataToImageBlock = (
   part: GeminiPart,
 ): MessagesImageBlock | null => {
-  const inlineData = part.inlineData;
-  if (!inlineData || !isSupportedImageMediaType(inlineData.mimeType)) {
-    return null;
-  }
+  const inlineData = geminiInlineData(part);
+  if (!inlineData) return null;
 
   return {
     type: "image",
@@ -67,39 +45,32 @@ const inlineDataToImageBlock = (
   };
 };
 
-const removeMatchedId = (
-  ids: string[] | undefined,
-  id: string,
-): void => {
-  const index = ids?.lastIndexOf(id) ?? -1;
-  if (index >= 0) ids?.splice(index, 1);
-};
-
 const buildToolResultBlock = (
   part: GeminiPart,
   turnIndex: number,
   partIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): MessagesToolResultBlock | null => {
-  const response = part.functionResponse;
-  if (!response) return null;
-
-  const unmatchedIds = unmatchedToolCallIds[response.name];
-  const toolUseId = response.id ?? unmatchedIds?.shift() ??
-    deterministicToolCallId(turnIndex, partIndex);
-  if (response.id !== undefined) removeMatchedId(unmatchedIds, response.id);
+  const functionResponsePart = geminiFunctionResponsePart(
+    part,
+    unmatchedToolCallIds,
+    turnIndex,
+    partIndex,
+    "last",
+  );
+  if (!functionResponsePart) return null;
 
   return {
     type: "tool_result",
-    tool_use_id: toolUseId,
-    content: JSON.stringify(response.response),
+    tool_use_id: functionResponsePart.id,
+    content: JSON.stringify(functionResponsePart.response.response),
   };
 };
 
 const buildUserMessage = (
   content: GeminiContent,
   turnIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): MessagesPayload["messages"][number] | null => {
   const blocks: MessagesUserContentBlock[] = [];
 
@@ -115,7 +86,7 @@ const buildUserMessage = (
       return;
     }
 
-    const text = partText(part);
+    const text = geminiPartText(part);
     if (text !== null) {
       blocks.push({ type: "text", text });
       return;
@@ -154,27 +125,28 @@ const buildToolUseBlock = (
   part: GeminiPart,
   turnIndex: number,
   partIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): MessagesAssistantContentBlock | null => {
-  const call = part.functionCall;
-  if (!call) return null;
-
-  const id = call.id ?? deterministicToolCallId(turnIndex, partIndex);
-  unmatchedToolCallIds[call.name] ??= [];
-  unmatchedToolCallIds[call.name].push(id);
+  const functionCallPart = geminiFunctionCallPart(
+    part,
+    unmatchedToolCallIds,
+    turnIndex,
+    partIndex,
+  );
+  if (!functionCallPart) return null;
 
   return {
     type: "tool_use",
-    id,
-    name: call.name,
-    input: call.args,
+    id: functionCallPart.id,
+    name: functionCallPart.call.name,
+    input: functionCallPart.call.args,
   };
 };
 
 const buildAssistantMessage = (
   content: GeminiContent,
   turnIndex: number,
-  unmatchedToolCallIds: UnmatchedToolCallIds,
+  unmatchedToolCallIds: GeminiToolCallIds,
 ): MessagesPayload["messages"][number] | null => {
   const blocks: MessagesAssistantContentBlock[] = [];
   let firstThinkingIndex: number | undefined;
@@ -188,9 +160,10 @@ const buildAssistantMessage = (
       firstActionSignature = part.thoughtSignature;
     }
 
-    if (part.thought === true && typeof part.text === "string") {
+    const thoughtText = geminiThoughtText(part);
+    if (thoughtText !== null) {
       firstThinkingIndex ??= blocks.length;
-      blocks.push({ type: "thinking", thinking: part.text });
+      blocks.push({ type: "thinking", thinking: thoughtText });
       return;
     }
 
@@ -208,7 +181,7 @@ const buildAssistantMessage = (
       return;
     }
 
-    const text = partText(part);
+    const text = geminiVisibleText(part);
     if (text !== null) {
       if (part.thoughtSignature !== undefined) {
         firstSignedActionIndex ??= blocks.length;
@@ -225,22 +198,6 @@ const buildAssistantMessage = (
   );
 
   return blocks.length ? { role: "assistant", content: blocks } : null;
-};
-
-const mapThinkingEffort = (
-  thinkingConfig?: GeminiThinkingConfig,
-): "low" | "medium" | "high" | undefined => {
-  switch (thinkingConfig?.thinkingLevel) {
-    case "minimal":
-    case "low":
-      return "low";
-    case "medium":
-      return "medium";
-    case "high":
-      return "high";
-    default:
-      return undefined;
-  }
 };
 
 const applyThinkingConfig = (
@@ -262,7 +219,7 @@ const applyThinkingConfig = (
     }
   }
 
-  const effort = mapThinkingEffort(thinkingConfig);
+  const effort = geminiThinkingLevelEffort(thinkingConfig);
   if (effort !== undefined) request.output_config = { effort };
 };
 
@@ -305,43 +262,17 @@ const inputSchemaForDeclaration = (
 const buildTools = (
   payload: GeminiGenerateContentRequest,
 ): MessagesTool[] | undefined => {
-  const allowedFunctionNames = payload.toolConfig?.functionCallingConfig
-    ?.allowedFunctionNames;
-  const allowedNames = allowedFunctionNames?.length
-    ? new Set(allowedFunctionNames)
-    : null;
-  const tools = payload.tools?.flatMap((toolGroup) =>
-    toolGroup.functionDeclarations
-      ?.filter((declaration) => allowedNames?.has(declaration.name) ?? true)
-      .map((declaration) => ({
-        type: "custom" as const,
-        name: declaration.name,
-        ...(declaration.description !== undefined
-          ? { description: declaration.description }
-          : {}),
-        input_schema: inputSchemaForDeclaration(declaration.parameters),
-      })) ?? []
-  );
+  const tools = geminiFunctionDeclarations(payload, "all")
+    .map((declaration) => ({
+      type: "custom" as const,
+      name: declaration.name,
+      ...(declaration.description !== undefined
+        ? { description: declaration.description }
+        : {}),
+      input_schema: inputSchemaForDeclaration(declaration.parameters),
+    }));
 
-  return tools?.length ? tools : undefined;
-};
-
-const mapToolChoice = (
-  config?: GeminiFunctionCallingConfig,
-): MessagesPayload["tool_choice"] | undefined => {
-  switch (config?.mode) {
-    case "NONE":
-      return { type: "none" };
-    case "AUTO":
-    case "VALIDATED":
-      return { type: "auto" };
-    case "ANY":
-      return config.allowedFunctionNames?.length === 1
-        ? { type: "tool", name: config.allowedFunctionNames[0] }
-        : { type: "any" };
-    default:
-      return undefined;
-  }
+  return tools.length ? tools : undefined;
 };
 
 export const buildTargetRequest = (
@@ -362,9 +293,9 @@ export const buildTargetRequest = (
     max_tokens: fallbackMaxOutputTokens,
     messages: [],
   };
-  const unmatchedToolCallIds: UnmatchedToolCallIds = {};
+  const unmatchedToolCallIds: GeminiToolCallIds = {};
 
-  const system = collectSystemText(payload.systemInstruction);
+  const system = geminiText(payload.systemInstruction);
   if (system !== null) request.system = system;
 
   payload.contents?.forEach((content, turnIndex) => {
@@ -383,8 +314,23 @@ export const buildTargetRequest = (
   const tools = buildTools(payload);
   if (tools) request.tools = tools;
 
-  const toolChoice = mapToolChoice(payload.toolConfig?.functionCallingConfig);
-  if (toolChoice !== undefined) request.tool_choice = toolChoice;
+  const intent = geminiFunctionCallingIntent(
+    payload.toolConfig?.functionCallingConfig,
+  );
+  switch (intent?.type) {
+    case "none":
+      request.tool_choice = { type: "none" };
+      break;
+    case "auto":
+      request.tool_choice = { type: "auto" };
+      break;
+    case "any":
+      request.tool_choice = { type: "any" };
+      break;
+    case "named":
+      request.tool_choice = { type: "tool", name: intent.name };
+      break;
+  }
 
   return request;
 };

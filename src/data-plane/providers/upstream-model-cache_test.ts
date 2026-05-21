@@ -2,7 +2,6 @@ import { assertEquals } from "@std/assert";
 import { clearCopilotTokenCache } from "../../shared/copilot.ts";
 import {
   clearModelsCache,
-  getModelsForUpstream,
   invalidateUpstreamModels,
   loadModels,
 } from "./upstream-model-cache.ts";
@@ -36,6 +35,14 @@ function withMutableNow<T>(
     Date.now = originalNow;
   });
 }
+
+const loadModelData = async (
+  upstream: Parameters<typeof loadModels>[0],
+) => {
+  const result = await loadModels(upstream);
+  if (result.type === "error") throw result.error;
+  return result.data;
+};
 
 Deno.test("models cache uses L1 cache for 120s and L2 cache for 600s", async () => {
   const { githubAccount } = await setupAppTest();
@@ -85,9 +92,9 @@ Deno.test("models cache uses L1 cache for 120s and L2 cache for 600s", async () 
     throw new Error(`Unhandled fetch ${request.url}`);
   }, async () => {
     await withFakeNow([0, 60_000, 130_000], async () => {
-      const first = await getModelsForUpstream(upstream);
-      const second = await getModelsForUpstream(upstream);
-      const third = await getModelsForUpstream(upstream);
+      const first = await loadModelData(upstream);
+      const second = await loadModelData(upstream);
+      const third = await loadModelData(upstream);
 
       assertEquals(first.data[0].id, "claude-sonnet-4");
       assertEquals(second.data[0].id, "claude-sonnet-4");
@@ -146,8 +153,8 @@ Deno.test("models cache refreshes upstream after repo-backed cache expires", asy
     throw new Error(`Unhandled fetch ${request.url}`);
   }, async () => {
     await withFakeNow([0, 610_000], async () => {
-      const first = await getModelsForUpstream(upstream);
-      const second = await getModelsForUpstream(upstream);
+      const first = await loadModelData(upstream);
+      const second = await loadModelData(upstream);
 
       assertEquals(first.data[0].id, "model-1");
       assertEquals(second.data[0].id, "model-2");
@@ -217,7 +224,7 @@ Deno.test("models cache ignores malformed repo-backed entries", async () => {
     throw new Error(`Unhandled fetch ${request.url}`);
   }, async () => {
     await withFakeNow([0], async () => {
-      const models = await getModelsForUpstream(upstream);
+      const models = await loadModelData(upstream);
 
       assertEquals(models.data[0].id, "fresh-model");
     });
@@ -328,12 +335,12 @@ Deno.test("invalidateUpstreamModels clears both L1 and L2 cache for a given upst
     throw new Error(`Unhandled fetch ${request.url}`);
   }, async () => {
     // First fetch populates both caches
-    const first = await getModelsForUpstream(upstream);
+    const first = await loadModelData(upstream);
     assertEquals(first.data[0].id, "model-1");
     assertEquals(modelsFetches, 1);
 
     // Within L1 TTL (120s) — should use cache
-    const second = await getModelsForUpstream(upstream);
+    const second = await loadModelData(upstream);
     assertEquals(second.data[0].id, "model-1");
     assertEquals(modelsFetches, 1, "should not re-fetch within L1 TTL");
 
@@ -341,7 +348,7 @@ Deno.test("invalidateUpstreamModels clears both L1 and L2 cache for a given upst
     await invalidateUpstreamModels(upstream.id);
 
     // After invalidation, should re-fetch
-    const third = await getModelsForUpstream(upstream);
+    const third = await loadModelData(upstream);
     assertEquals(third.data[0].id, "model-2");
     assertEquals(modelsFetches, 2, "invalidation should trigger re-fetch");
   });

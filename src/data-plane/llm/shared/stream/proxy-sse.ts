@@ -1,5 +1,4 @@
-import type { Context } from "hono";
-import { type SSEStreamingApi, streamSSE } from "hono/streaming";
+import type { SSEStreamingApi } from "hono/streaming";
 import type { SseFrame, SseWritableFrame } from "./types.ts";
 
 export const DOWNSTREAM_KEEP_ALIVE_INTERVAL_MS = 15_000;
@@ -10,8 +9,6 @@ interface ProxySSEKeepAliveOptions {
 }
 
 interface ProxySSEOptions {
-  onError?: (error: unknown) => SseFrame;
-  onComplete?: (completion: StreamCompletion) => void | Promise<void>;
   keepAlive?: ProxySSEKeepAliveOptions;
   downstreamAbortController?: AbortController;
 }
@@ -98,7 +95,7 @@ const nextFrameOrKeepAlive = async (
   }
 };
 
-const writeSSEFrames = async (
+const drainSSEFrames = async (
   stream: SSEStreamingApi,
   events: AsyncIterable<SseFrame>,
   keepAlive: ResolvedProxySSEKeepAliveOptions | undefined,
@@ -170,29 +167,16 @@ const writeSSEFrames = async (
   }
 };
 
-export const proxySSE = (
-  c: Context,
+export const writeSSEFrames = async (
+  stream: SSEStreamingApi,
   events: AsyncIterable<SseFrame>,
   options: ProxySSEOptions = {},
-): Response =>
-  streamSSE(c, async (stream) => {
-    const keepAlive = resolveKeepAliveOptions(options.keepAlive);
-    let completion: StreamCompletion = "eof";
-
-    try {
-      completion = await writeSSEFrames(
-        stream,
-        events,
-        keepAlive,
-        options.downstreamAbortController,
-      );
-    } catch (error) {
-      completion = "error";
-      if (!options.onError) throw error;
-
-      const event = options.onError(error);
-      await writeSSEFrame(stream, event);
-    } finally {
-      await options.onComplete?.(completion);
-    }
-  });
+): Promise<StreamCompletion> => {
+  const keepAlive = resolveKeepAliveOptions(options.keepAlive);
+  return await drainSSEFrames(
+    stream,
+    events,
+    keepAlive,
+    options.downstreamAbortController,
+  );
+};

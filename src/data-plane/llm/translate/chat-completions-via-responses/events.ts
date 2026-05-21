@@ -14,12 +14,17 @@ import {
   type ResponsesOutputOrderState,
   shouldDeferForEarlierResponseOutput,
 } from "../shared/responses-stream-order.ts";
+import {
+  isResponseCompletionEvent,
+  type ResponseEvent,
+  responsePartKey,
+  type UpstreamResponseStreamEvent,
+} from "../shared/responses-stream.ts";
 import { toChatReasoningItem } from "../shared/chat-responses-reasoning.ts";
 import {
   mapResponsesFinishReasonToChatCompletionsFinishReason,
   translateResponsesToChatCompletion,
 } from "./result.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import {
   doneFrame,
   type EventFrame,
@@ -28,22 +33,28 @@ import {
 } from "../../shared/stream/types.ts";
 import { chatCompletionResultToEvents } from "../../targets/chat-completions/events/from-result.ts";
 
-type UpstreamResponseStreamEvent = ResponseStreamEvent & {
-  sequence_number?: number;
-};
+const UPSTREAM_RESPONSES_MISSING_TERMINAL_MESSAGE =
+  "Upstream Responses stream ended without a terminal event.";
 
-const upstreamResponsesStreamAlgebra = {
-  isTerminalEvent: (event: Pick<ResponseStreamEvent, "type">): boolean =>
-    event.type === "response.completed" ||
-    event.type === "response.incomplete" ||
-    event.type === "response.failed" ||
-    event.type === "error",
-  missingTerminalMessage:
-    "Upstream Responses stream ended without a terminal event.",
-};
+const upstreamResponsesEventsUntilTerminal = async function* (
+  frames: AsyncIterable<ProtocolFrame<UpstreamResponseStreamEvent>>,
+): AsyncGenerator<UpstreamResponseStreamEvent> {
+  for await (const frame of frames) {
+    if (frame.type === "done") continue;
 
-const responsePartKey = (outputIndex: number, partIndex: number): string =>
-  `${outputIndex}:${partIndex}`;
+    yield frame.event;
+    if (
+      frame.event.type === "response.completed" ||
+      frame.event.type === "response.incomplete" ||
+      frame.event.type === "response.failed" ||
+      frame.event.type === "error"
+    ) {
+      return;
+    }
+  }
+
+  throw new Error(UPSTREAM_RESPONSES_MISSING_TERMINAL_MESSAGE);
+};
 
 interface ResponsesToChatCompletionsStreamState {
   messageId: string;
@@ -51,8 +62,6 @@ interface ResponsesToChatCompletionsStreamState {
   created: number;
   toolCallIndex: number;
   functionCallIndices: Map<number, number>;
-  inputTokens: number;
-  cachedTokens: number;
   reasoningItems: ChatReasoningItem[];
   firstScalarReasoningOutputIndex?: number;
   pendingReasoningSummaryTexts: Map<string, {
@@ -74,8 +83,6 @@ export const createResponsesToChatCompletionsStreamState =
     created: Math.floor(Date.now() / 1000),
     toolCallIndex: -1,
     functionCallIndices: new Map(),
-    inputTokens: 0,
-    cachedTokens: 0,
     reasoningItems: [],
     pendingReasoningSummaryTexts: new Map(),
     emittedReasoningSummaryKeys: new Set(),
@@ -85,24 +92,54 @@ export const createResponsesToChatCompletionsStreamState =
     done: false,
   });
 
-const shouldDeferForEarlierReasoning = (
-  event: ResponseStreamEvent,
-  state: ResponsesToChatCompletionsStreamState,
-): boolean => shouldDeferForEarlierResponseOutput(event, state.outputOrder);
-
 const trackReasoningOutputItem = (item: ResponseOutputItem): boolean =>
   item.type === "reasoning";
 
 const flushPendingReasoningChunks = (
   state: ResponsesToChatCompletionsStreamState,
 ): ChatCompletionChunk[] => {
+  if (state.reasoningItems.length === 0) return [];
+
+  const reasoningItems = state.reasoningItems;
+  state.reasoningItems = [];
+  return [makeChunk(state, { reasoning_items: reasoningItems })];
+};
+
+const isReasoningOutputDone = (event: ResponseStreamEvent): boolean => {
+  if (event.type !== "response.output_item.done") return false;
+  return (event as ResponseEvent<"response.output_item.done">).item.type ===
+    "reasoning";
+};
+
+const takeNextReadyDeferredResponseEvent = (
+  state: ResponsesToChatCompletionsStreamState,
+  onlyReasoningOutputDone: boolean,
+): ResponseStreamEvent | undefined => {
+  const nextReadyIndex = state.outputOrder.deferredEvents.findIndex((event) =>
+    !shouldDeferForEarlierResponseOutput(event, state.outputOrder) &&
+    (!onlyReasoningOutputDone || isReasoningOutputDone(event))
+  );
+  if (nextReadyIndex === -1) return undefined;
+
+  const [event] = state.outputOrder.deferredEvents.splice(nextReadyIndex, 1);
+  return event;
+};
+
+const flushReadyDeferredChatChunks = (
+  state: ResponsesToChatCompletionsStreamState,
+  onlyReasoningOutputDone = false,
+): ChatCompletionChunk[] => {
   const chunks: ChatCompletionChunk[] = [];
-
-  if (state.reasoningItems.length > 0) {
-    chunks.push(makeChunk(state, { reasoning_items: state.reasoningItems }));
-    state.reasoningItems = [];
+  while (state.outputOrder.deferredEvents.length > 0) {
+    const event = takeNextReadyDeferredResponseEvent(
+      state,
+      onlyReasoningOutputDone,
+    );
+    if (!event) break;
+    chunks.push(
+      ...translateResponsesEventToChatCompletionsChunks(event, state),
+    );
   }
-
   return chunks;
 };
 
@@ -117,33 +154,21 @@ const shouldProjectScalarReasoning = (
   return state.firstScalarReasoningOutputIndex === outputIndex;
 };
 
-const emitReasoningSummaryDelta = (
+type ReasoningSummaryEmitMode = "delta" | "done-fallback";
+
+const emitReasoningSummaryText = (
   outputIndex: number,
   summaryIndex: number,
   text: string,
   state: ResponsesToChatCompletionsStreamState,
-): ChatCompletionChunk[] => {
-  if (!text || !shouldProjectScalarReasoning(outputIndex, state)) return [];
-
-  state.emittedReasoningSummaryKeys.add(
-    responsePartKey(outputIndex, summaryIndex),
-  );
-  state.pendingReasoningSummaryTexts.delete(
-    responsePartKey(outputIndex, summaryIndex),
-  );
-  return [makeChunk(state, { reasoning_text: text })];
-};
-
-const emitReasoningSummaryDoneFallback = (
-  outputIndex: number,
-  summaryIndex: number,
-  text: string,
-  state: ResponsesToChatCompletionsStreamState,
+  mode: ReasoningSummaryEmitMode,
 ): ChatCompletionChunk[] => {
   if (!text || !shouldProjectScalarReasoning(outputIndex, state)) return [];
 
   const key = responsePartKey(outputIndex, summaryIndex);
-  if (state.emittedReasoningSummaryKeys.has(key)) return [];
+  if (mode === "done-fallback" && state.emittedReasoningSummaryKeys.has(key)) {
+    return [];
+  }
 
   state.emittedReasoningSummaryKeys.add(key);
   state.pendingReasoningSummaryTexts.delete(key);
@@ -168,28 +193,14 @@ const queueReasoningSummaryDoneFallback = (
   });
 };
 
-const flushPendingReasoningSummaryDoneFallbacks = (
-  outputIndex: number,
+const flushReasoningSummaryDoneFallbacks = (
   state: ResponsesToChatCompletionsStreamState,
+  outputIndex?: number,
 ): ChatCompletionChunk[] => {
   const pending = [...state.pendingReasoningSummaryTexts.values()]
-    .filter((item) => item.outputIndex === outputIndex)
-    .sort((a, b) => a.summaryIndex - b.summaryIndex);
-
-  return pending.flatMap((item) =>
-    emitReasoningSummaryDoneFallback(
-      item.outputIndex,
-      item.summaryIndex,
-      item.text,
-      state,
+    .filter((item) =>
+      outputIndex === undefined || item.outputIndex === outputIndex
     )
-  );
-};
-
-const flushAllPendingReasoningSummaryDoneFallbacks = (
-  state: ResponsesToChatCompletionsStreamState,
-): ChatCompletionChunk[] => {
-  const pending = [...state.pendingReasoningSummaryTexts.values()]
     .sort((a, b) =>
       a.outputIndex === b.outputIndex
         ? a.summaryIndex - b.summaryIndex
@@ -197,45 +208,14 @@ const flushAllPendingReasoningSummaryDoneFallbacks = (
     );
 
   return pending.flatMap((item) =>
-    emitReasoningSummaryDoneFallback(
+    emitReasoningSummaryText(
       item.outputIndex,
       item.summaryIndex,
       item.text,
       state,
+      "done-fallback",
     )
   );
-};
-
-const flushDeferredEvents = (
-  state: ResponsesToChatCompletionsStreamState,
-): ChatCompletionChunk[] => {
-  const chunks: ChatCompletionChunk[] = [];
-
-  while (state.outputOrder.deferredEvents.length > 0) {
-    const ready: ResponseStreamEvent[] = [];
-    const stillDeferred: ResponseStreamEvent[] = [];
-
-    for (const event of state.outputOrder.deferredEvents) {
-      if (shouldDeferForEarlierReasoning(event, state)) {
-        stillDeferred.push(event);
-      } else {
-        ready.push(event);
-      }
-    }
-
-    if (ready.length === 0) break;
-    state.outputOrder.deferredEvents = stillDeferred;
-
-    for (const event of ready) {
-      const translated = translateResponsesEventToChatCompletionsChunks(
-        event,
-        state,
-      );
-      chunks.push(...translated);
-    }
-  }
-
-  return chunks;
 };
 
 export const translateResponsesEventToChatCompletionsChunks = (
@@ -243,7 +223,7 @@ export const translateResponsesEventToChatCompletionsChunks = (
   state: ResponsesToChatCompletionsStreamState,
 ): ChatCompletionChunk[] => {
   if (state.done) return [];
-  if (shouldDeferForEarlierReasoning(event, state)) {
+  if (shouldDeferForEarlierResponseOutput(event, state.outputOrder)) {
     state.outputOrder.deferredEvents.push(event);
     return [];
   }
@@ -255,27 +235,16 @@ export const translateResponsesEventToChatCompletionsChunks = (
 
   switch (event.type) {
     case "response.created": {
-      const { response } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.created" }
-      >;
+      const { response } = event as ResponseEvent<"response.created">;
       state.messageId = response.id;
       state.model = response.model;
-      state.inputTokens = response.usage?.input_tokens ?? 0;
-      state.cachedTokens =
-        response.usage?.input_tokens_details?.cached_tokens ?? 0;
       return [makeChunk(state, { role: "assistant" })];
     }
 
     case "response.output_item.added": {
-      const { item, output_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.output_item.added" }
+      const { item, output_index } = event as ResponseEvent<
+        "response.output_item.added"
       >;
-      if (item.type === "reasoning") {
-        return [];
-      }
-
       if (item.type !== "function_call") return [];
 
       state.toolCallIndex++;
@@ -295,9 +264,8 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.output_item.done": {
-      const { item, output_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.output_item.done" }
+      const { item, output_index } = event as ResponseEvent<
+        "response.output_item.done"
       >;
       if (item.type !== "reasoning") return [];
 
@@ -305,17 +273,15 @@ export const translateResponsesEventToChatCompletionsChunks = (
       state.reasoningItems.push(toChatReasoningItem(item));
 
       for (const [summaryIndex, part] of item.summary.entries()) {
-        chunks.push(...emitReasoningSummaryDoneFallback(
+        chunks.push(...emitReasoningSummaryText(
           output_index,
           summaryIndex,
           part.text,
           state,
+          "done-fallback",
         ));
       }
-      chunks.push(...flushPendingReasoningSummaryDoneFallbacks(
-        output_index,
-        state,
-      ));
+      chunks.push(...flushReasoningSummaryDoneFallbacks(state, output_index));
 
       if (
         Object.hasOwn(item, "encrypted_content") &&
@@ -326,27 +292,30 @@ export const translateResponsesEventToChatCompletionsChunks = (
         }));
       }
 
-      const deferred = flushDeferredEvents(state);
-      return [...chunks, ...flushPendingReasoningChunks(state), ...deferred];
+      return [
+        ...chunks,
+        ...flushReadyDeferredChatChunks(state, true),
+        ...flushPendingReasoningChunks(state),
+        ...flushReadyDeferredChatChunks(state),
+      ];
     }
 
     case "response.reasoning_summary_text.delta": {
-      const { delta, output_index, summary_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.reasoning_summary_text.delta" }
+      const { delta, output_index, summary_index } = event as ResponseEvent<
+        "response.reasoning_summary_text.delta"
       >;
-      return emitReasoningSummaryDelta(
+      return emitReasoningSummaryText(
         output_index,
         summary_index,
         delta,
         state,
+        "delta",
       );
     }
 
     case "response.reasoning_summary_text.done": {
-      const { text, output_index, summary_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.reasoning_summary_text.done" }
+      const { text, output_index, summary_index } = event as ResponseEvent<
+        "response.reasoning_summary_text.done"
       >;
       queueReasoningSummaryDoneFallback(
         output_index,
@@ -358,9 +327,8 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.output_text.delta": {
-      const { delta, output_index, content_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.output_text.delta" }
+      const { delta, output_index, content_index } = event as ResponseEvent<
+        "response.output_text.delta"
       >;
       if (delta) {
         state.emittedTextContentKeys.add(
@@ -371,9 +339,8 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.output_text.done": {
-      const { text, output_index, content_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.output_text.done" }
+      const { text, output_index, content_index } = event as ResponseEvent<
+        "response.output_text.done"
       >;
       const key = responsePartKey(output_index, content_index);
       if (!text || state.emittedTextContentKeys.has(key)) return [];
@@ -383,9 +350,8 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.content_part.done": {
-      const { part, output_index, content_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.content_part.done" }
+      const { part, output_index, content_index } = event as ResponseEvent<
+        "response.content_part.done"
       >;
       if (part.type !== "refusal") return [];
 
@@ -397,9 +363,8 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.function_call_arguments.delta": {
-      const { delta, output_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.function_call_arguments.delta" }
+      const { delta, output_index } = event as ResponseEvent<
+        "response.function_call_arguments.delta"
       >;
       if (!delta) return [];
 
@@ -416,9 +381,8 @@ export const translateResponsesEventToChatCompletionsChunks = (
     }
 
     case "response.function_call_arguments.done": {
-      const { arguments: args, output_index } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.function_call_arguments.done" }
+      const { arguments: args, output_index } = event as ResponseEvent<
+        "response.function_call_arguments.done"
       >;
       if (
         !args || state.emittedFunctionArgumentOutputIndexes.has(output_index)
@@ -440,15 +404,14 @@ export const translateResponsesEventToChatCompletionsChunks = (
 
     case "response.completed":
     case "response.incomplete": {
-      const { response } = event as Extract<
-        ResponseStreamEvent,
-        { type: "response.completed" | "response.incomplete" }
+      const { response } = event as ResponseEvent<
+        "response.completed" | "response.incomplete"
       >;
       const chunks: ChatCompletionChunk[] = [];
 
-      chunks.push(...flushAllPendingReasoningSummaryDoneFallbacks(state));
+      chunks.push(...flushReasoningSummaryDoneFallbacks(state));
       chunks.push(...flushPendingReasoningChunks(state));
-      chunks.push(...flushDeferredEvents(state));
+      chunks.push(...flushReadyDeferredChatChunks(state));
 
       const chunk = makeChunk(
         state,
@@ -542,7 +505,7 @@ const debugFieldsFrom = (value: Record<string, unknown>) => ({
 });
 
 const chatErrorPayloadFromResponsesError = (
-  event: Extract<ResponseStreamEvent, { type: "error" }>,
+  event: ResponseEvent<"error">,
 ): ChatErrorPayload => ({
   error: {
     message: event.message,
@@ -557,7 +520,7 @@ const chatErrorPayloadFromResponsesError = (
 });
 
 const chatErrorPayloadFromResponsesFailure = (
-  event: Extract<ResponseStreamEvent, { type: "response.failed" }>,
+  event: ResponseEvent<"response.failed">,
 ): ChatErrorPayload => {
   const response = event.response as ResponsesResult;
   const error = isRecord(response.error) ? response.error : undefined;
@@ -577,13 +540,13 @@ const chatErrorPayloadFromResponsesFailure = (
 
 const chatErrorFrameFromResponsesFatalEvent = (
   event: ResponseStreamEvent,
-): EventFrame<ChatCompletionChunk> | undefined => {
+): ProtocolFrame<ChatCompletionChunk> | undefined => {
   if (event.type === "error") {
     // OpenAI-compatible Chat streams can carry top-level error payloads;
     // ChatCompletionChunk only models successful chunk payloads.
     return eventFrame(
       chatErrorPayloadFromResponsesError(
-        event as Extract<ResponseStreamEvent, { type: "error" }>,
+        event as ResponseEvent<"error">,
       ) as unknown as ChatCompletionChunk,
     );
   }
@@ -591,7 +554,7 @@ const chatErrorFrameFromResponsesFatalEvent = (
   if (event.type === "response.failed") {
     return eventFrame(
       chatErrorPayloadFromResponsesFailure(
-        event as Extract<ResponseStreamEvent, { type: "response.failed" }>,
+        event as ResponseEvent<"response.failed">,
       ) as unknown as ChatCompletionChunk,
     );
   }
@@ -599,78 +562,58 @@ const chatErrorFrameFromResponsesFatalEvent = (
   return undefined;
 };
 
+const startsStructuredChatStream = (event: ResponseStreamEvent): boolean =>
+  event.type === "response.output_item.added" ||
+  event.type === "response.output_item.done" ||
+  event.type === "response.reasoning_summary_text.delta" ||
+  event.type === "response.output_text.delta" ||
+  event.type === "response.function_call_arguments.delta";
+
 export const translateToSourceEvents = async function* (
   frames: AsyncIterable<ProtocolFrame<UpstreamResponseStreamEvent>>,
 ): AsyncGenerator<ProtocolFrame<ChatCompletionChunk>> {
   const state = createResponsesToChatCompletionsStreamState();
-  let sawStructuredOutput = false;
   let streamingCommitted = false;
   const pendingFrames: Array<EventFrame<ChatCompletionChunk>> = [];
-  let yieldedDone = false;
 
-  for await (
-    const event of protocolEventsUntilTerminal(
-      frames,
-      upstreamResponsesStreamAlgebra,
-    )
-  ) {
-    const failureFrame = chatErrorFrameFromResponsesFatalEvent(event);
-    if (failureFrame) {
-      yield failureFrame;
+  for await (const event of upstreamResponsesEventsUntilTerminal(frames)) {
+    const fatalFrame = chatErrorFrameFromResponsesFatalEvent(event);
+    if (fatalFrame) {
+      yield fatalFrame;
       return;
     }
 
-    if (
-      event.type === "response.output_item.added" ||
-      event.type === "response.output_item.done" ||
-      event.type === "response.reasoning_summary_text.delta" ||
-      event.type === "response.output_text.delta" ||
-      event.type === "response.function_call_arguments.delta"
-    ) {
-      sawStructuredOutput = true;
-      if (!streamingCommitted) {
-        streamingCommitted = true;
-        for (const pending of pendingFrames) yield pending;
-        pendingFrames.length = 0;
-      }
-    }
-
-    if (
-      !streamingCommitted &&
-      !sawStructuredOutput &&
-      (event.type === "response.completed" ||
-        event.type === "response.incomplete")
-    ) {
+    if (!streamingCommitted && startsStructuredChatStream(event)) {
+      streamingCommitted = true;
+      for (const pending of pendingFrames) yield pending;
       pendingFrames.length = 0;
-      for (
-        const translated of chatCompletionResultToEvents(
-          translateResponsesToChatCompletion(event.response as ResponsesResult),
-        )
-      ) {
-        if (translated.type === "done") yieldedDone = true;
-        yield translated;
-      }
-      continue;
     }
 
-    const translated = translateResponsesEventToChatCompletionsChunks(
-      event,
-      state,
-    );
+    if (!streamingCommitted && isResponseCompletionEvent(event)) {
+      yield* chatCompletionResultToEvents(
+        translateResponsesToChatCompletion(event.response),
+      );
+      return;
+    }
 
-    for (const chunk of translated) {
-      const chunkFrame = eventFrame(chunk);
+    for (
+      const translated of translateResponsesEventToChatCompletionsChunks(
+        event,
+        state,
+      )
+    ) {
+      const translatedFrame = eventFrame(translated);
       if (streamingCommitted) {
-        yield chunkFrame;
+        yield translatedFrame;
       } else {
-        pendingFrames.push(chunkFrame);
+        pendingFrames.push(translatedFrame);
       }
     }
   }
 
-  if (!streamingCommitted && pendingFrames.length > 0) {
+  if (!streamingCommitted) {
     for (const pending of pendingFrames) yield pending;
   }
 
-  if (!yieldedDone) yield doneFrame();
+  yield doneFrame();
 };

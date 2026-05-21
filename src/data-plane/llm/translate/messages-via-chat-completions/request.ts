@@ -17,8 +17,11 @@ import type {
   MessagesToolUseBlock,
   MessagesUserContentBlock,
   MessagesUserMessage,
-  MessagesWebSearchToolResultBlock,
 } from "../../../shared/protocol/messages.ts";
+import {
+  type ChatScalarReasoning,
+  chatScalarReasoningFromMessagesBlock,
+} from "../shared/messages-chat-reasoning.ts";
 
 const toChatCompletionsContent = (
   content:
@@ -27,7 +30,6 @@ const toChatCompletionsContent = (
     | MessagesAssistantContentBlock[],
 ): string | ContentPart[] | null => {
   if (typeof content === "string") return content;
-  if (!Array.isArray(content)) return null;
 
   if (!content.some((block) => block.type === "image")) {
     return content
@@ -85,53 +87,20 @@ const toChatCompletionsFunctionCall = (
   },
 });
 
-const toChatCompletionsStructuredToolOutput = (
-  block: MessagesWebSearchToolResultBlock,
-): string => JSON.stringify(block.content);
-
 type PendingAssistantMessage = {
   textParts: string[];
   toolCalls: ToolCall[];
-  scalarReasoning: {
-    reasoningText: string | null;
-    reasoningOpaque: string | null;
-    hasReasoningOpaque: boolean;
-  } | null;
+  scalarReasoning: ChatScalarReasoning | null;
 };
-
-const createPendingAssistantMessage = (): PendingAssistantMessage => ({
-  textParts: [],
-  toolCalls: [],
-  scalarReasoning: null,
-});
 
 const recordPendingScalarReasoning = (
   pending: PendingAssistantMessage,
   block: MessagesAssistantContentBlock,
 ): void => {
-  if (pending.scalarReasoning) return;
-
   // Chat scalar reasoning cannot represent ordered interleaved Messages
   // thinking blocks. Project only the first source-order group so readable text
   // is never paired with an opaque signature from a later block.
-  if (block.type === "thinking") {
-    pending.scalarReasoning = {
-      reasoningText: block.thinking || null,
-      reasoningOpaque: Object.hasOwn(block, "signature")
-        ? block.signature ?? null
-        : null,
-      hasReasoningOpaque: Object.hasOwn(block, "signature"),
-    };
-    return;
-  }
-
-  if (block.type === "redacted_thinking") {
-    pending.scalarReasoning = {
-      reasoningText: null,
-      reasoningOpaque: block.data,
-      hasReasoningOpaque: true,
-    };
-  }
+  pending.scalarReasoning ??= chatScalarReasoningFromMessagesBlock(block);
 };
 
 const flushPendingAssistantMessage = (
@@ -145,19 +114,19 @@ const flushPendingAssistantMessage = (
     return;
   }
 
+  const reasoning = pending.scalarReasoning;
+
   messages.push({
     role: "assistant",
     content: pending.textParts.join("\n\n") || null,
     ...(pending.toolCalls.length > 0
       ? { tool_calls: [...pending.toolCalls] }
       : {}),
-    ...(pending.scalarReasoning
-      ? { reasoning_text: pending.scalarReasoning.reasoningText }
-      : {}),
-    ...(pending.scalarReasoning
+    ...(reasoning
       ? {
-        reasoning_opaque: pending.scalarReasoning.hasReasoningOpaque
-          ? pending.scalarReasoning.reasoningOpaque
+        reasoning_text: reasoning.reasoningText,
+        reasoning_opaque: reasoning.hasReasoningOpaque
+          ? reasoning.reasoningOpaque
           : null,
       }
       : {}),
@@ -171,12 +140,10 @@ const flushPendingAssistantMessage = (
 const getClientTools = (
   tools?: MessagesPayload["tools"],
 ): MessagesClientTool[] | undefined => {
-  if (!tools) return undefined;
-
-  const clientTools = tools.filter((tool): tool is MessagesClientTool =>
+  const clientTools = tools?.filter((tool): tool is MessagesClientTool =>
     tool.type === undefined || tool.type === "custom"
   );
-  return clientTools.length > 0 ? clientTools : undefined;
+  return clientTools?.length ? clientTools : undefined;
 };
 
 const translateMessagesUser = (message: MessagesUserMessage): Message[] => {
@@ -235,35 +202,34 @@ const translateMessagesAssistant = (
   }
 
   const messages: Message[] = [];
-  const pending = createPendingAssistantMessage();
+  const pending: PendingAssistantMessage = {
+    textParts: [],
+    toolCalls: [],
+    scalarReasoning: null,
+  };
 
   for (const block of message.content) {
-    if (block.type === "text") {
-      pending.textParts.push(block.text);
-      continue;
+    switch (block.type) {
+      case "text":
+        pending.textParts.push(block.text);
+        break;
+      case "thinking":
+      case "redacted_thinking":
+        recordPendingScalarReasoning(pending, block);
+        break;
+      case "tool_use":
+      case "server_tool_use":
+        pending.toolCalls.push(toChatCompletionsFunctionCall(block));
+        break;
+      case "web_search_tool_result":
+        flushPendingAssistantMessage(messages, pending);
+        messages.push({
+          role: "tool",
+          tool_call_id: block.tool_use_id,
+          content: JSON.stringify(block.content),
+        });
+        break;
     }
-
-    if (block.type === "thinking") {
-      recordPendingScalarReasoning(pending, block);
-      continue;
-    }
-
-    if (block.type === "redacted_thinking") {
-      recordPendingScalarReasoning(pending, block);
-      continue;
-    }
-
-    if (block.type === "tool_use" || block.type === "server_tool_use") {
-      pending.toolCalls.push(toChatCompletionsFunctionCall(block));
-      continue;
-    }
-
-    flushPendingAssistantMessage(messages, pending);
-    messages.push({
-      role: "tool",
-      tool_call_id: block.tool_use_id,
-      content: toChatCompletionsStructuredToolOutput(block),
-    });
   }
 
   flushPendingAssistantMessage(messages, pending);
@@ -316,30 +282,19 @@ const translateMessagesToolChoice = (
 ): ChatCompletionsPayload["tool_choice"] => {
   if (!toolChoice || !tools || tools.length === 0) return undefined;
 
-  const toolNames = new Set(tools.map((tool) => tool.name));
-
   switch (toolChoice.type) {
     case "auto":
       return "auto";
     case "any":
       return "required";
     case "tool":
-      return toolChoice.name && toolNames.has(toolChoice.name)
+      return toolChoice.name &&
+          tools.some((tool) => tool.name === toolChoice.name)
         ? { type: "function", function: { name: toolChoice.name } }
         : undefined;
     case "none":
       return "none";
-    default:
-      return undefined;
   }
-};
-
-const translateMessagesReasoningEffort = (
-  payload: MessagesPayload,
-): string | undefined => {
-  if (payload.output_config?.effort) return payload.output_config.effort;
-  if (payload.thinking?.type === "disabled") return "none";
-  return undefined;
 };
 
 export const translateMessagesToChatCompletions = (
@@ -348,7 +303,11 @@ export const translateMessagesToChatCompletions = (
   const clientTools = getClientTools(payload.tools);
   // Pass effort through verbatim; per-upstream enum acceptance (e.g. some
   // backends rejecting `xhigh`/`max`) is the target interceptor's concern.
-  const reasoningEffort = translateMessagesReasoningEffort(payload);
+  const reasoningEffort = payload.output_config?.effort
+    ? payload.output_config.effort
+    : payload.thinking?.type === "disabled"
+    ? "none"
+    : undefined;
 
   return {
     model: payload.model,
@@ -367,5 +326,4 @@ export const translateMessagesToChatCompletions = (
   };
 };
 
-export const buildTargetRequest = (payload: MessagesPayload) =>
-  translateMessagesToChatCompletions(payload);
+export const buildTargetRequest = translateMessagesToChatCompletions;

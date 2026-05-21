@@ -3,9 +3,8 @@ import {
   ModelsFetchError,
   ModelsRequestError,
 } from "../providers/upstream-model-cache.ts";
-import { endpointsIncludeLlmGeneration } from "../providers/endpoints.ts";
-import { getModels } from "../providers/registry.ts";
-import type { Model } from "../providers/types.ts";
+import { getCatalogModels } from "../providers/registry.ts";
+import type { CatalogModel } from "../providers/types.ts";
 
 type GeminiGenerationMethod =
   | "generateContent"
@@ -27,22 +26,7 @@ interface GeminiModel {
   topK?: number;
 }
 
-const supportsLlmGeneration = (model: Model): boolean =>
-  endpointsIncludeLlmGeneration(model.supportedEndpoints);
-
-const displayNameForModel = (model: Model): string =>
-  model.display_name ?? model.name ?? model.id;
-
-const inputLimitForModel = (model: Model): number | undefined => {
-  const limits = model.capabilities?.limits;
-  return limits?.max_prompt_tokens ?? limits?.max_context_window_tokens;
-};
-
-const outputLimitForModel = (model: Model): number | undefined =>
-  model.capabilities?.limits?.max_output_tokens ??
-    model.capabilities?.limits?.max_non_streaming_output_tokens;
-
-const toGeminiModel = (model: Model): GeminiModel => {
+const toGeminiModel = (model: CatalogModel): GeminiModel => {
   const methods: GeminiGenerationMethod[] = [
     "generateContent",
     "streamGenerateContent",
@@ -50,17 +34,19 @@ const toGeminiModel = (model: Model): GeminiModel => {
   if (model.supportedEndpoints.includes("messages_count_tokens")) {
     methods.push("countTokens");
   }
+  const limits = model.capabilities.limits;
+  const inputTokenLimit = limits.max_prompt_tokens ??
+    limits.max_context_window_tokens;
+  const outputTokenLimit = limits.max_output_tokens ??
+    limits.max_non_streaming_output_tokens;
+
   return {
     name: `models/${model.id}`,
     baseModelId: model.id,
-    displayName: displayNameForModel(model),
+    displayName: model.display_name ?? model.name,
     supportedGenerationMethods: methods,
-    ...(inputLimitForModel(model) !== undefined
-      ? { inputTokenLimit: inputLimitForModel(model) }
-      : {}),
-    ...(outputLimitForModel(model) !== undefined
-      ? { outputTokenLimit: outputLimitForModel(model) }
-      : {}),
+    ...(inputTokenLimit !== undefined ? { inputTokenLimit } : {}),
+    ...(outputTokenLimit !== undefined ? { outputTokenLimit } : {}),
     temperature: 1,
     topP: 0.95,
     topK: 40,
@@ -109,8 +95,8 @@ const geminiModelLoadError = (error: unknown): Response => {
 };
 
 const loadGeminiModels = async (): Promise<GeminiModel[]> => {
-  const models = await getModels();
-  return models.filter(supportsLlmGeneration).map(toGeminiModel);
+  const models = await getCatalogModels();
+  return models.filter((model) => model.supports_generation).map(toGeminiModel);
 };
 
 export const serveGeminiModels = async (_c: Context): Promise<Response> => {

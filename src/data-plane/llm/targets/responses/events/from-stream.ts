@@ -6,48 +6,38 @@ import {
   doneFrame,
   eventFrame,
   type ProtocolFrame,
-  type SseFrame,
   type StreamFrame,
 } from "../../../shared/stream/types.ts";
+import { parseTargetStreamFrames } from "../../events/from-stream.ts";
 import {
   responsesResultToEvents,
   type SequencedResponseStreamEvent,
 } from "./from-result.ts";
 
-const responsesSSEFrameToEvent = (
-  frame: SseFrame,
-): ProtocolFrame<SequencedResponseStreamEvent> | null => {
-  const data = frame.data.trim();
-  if (!data) return null;
-  if (data === "[DONE]") return doneFrame();
-
-  try {
-    const parsed = JSON.parse(data) as ResponseStreamEvent;
-    const event = frame.event && !(parsed as { type?: string }).type
-      ? { ...parsed, type: frame.event }
-      : parsed;
-
-    return eventFrame(event as SequencedResponseStreamEvent);
-  } catch (error) {
-    throw new Error(
-      `Malformed upstream Responses SSE JSON for event "${
-        frame.event ?? "response"
-      }": ${data}`,
-      { cause: error },
-    );
-  }
-};
-
-export const responsesStreamFramesToEvents = async function* (
+export const responsesStreamFramesToEvents = (
   frames: AsyncIterable<StreamFrame<ResponsesResult>>,
-): AsyncGenerator<ProtocolFrame<SequencedResponseStreamEvent>> {
-  for await (const frame of frames) {
-    if (frame.type === "sse") {
-      const event = responsesSSEFrameToEvent(frame);
-      if (event) yield event;
-      continue;
+): AsyncGenerator<ProtocolFrame<SequencedResponseStreamEvent>> =>
+  (async function* () {
+    for await (
+      const frame of parseTargetStreamFrames<ResponsesResult>(frames, {
+        protocol: "Responses",
+        malformedJsonEventName: "response",
+      })
+    ) {
+      if (frame.type === "json") {
+        yield* responsesResultToEvents(frame.data);
+      } else if (frame.type === "done") {
+        yield doneFrame();
+      } else {
+        const event = frame.data as ResponseStreamEvent;
+        yield eventFrame(
+          frame.frame.event && !(event as { type?: string }).type
+            ? ({
+              ...event,
+              type: frame.frame.event,
+            } as SequencedResponseStreamEvent)
+            : (event as SequencedResponseStreamEvent),
+        );
+      }
     }
-
-    yield* responsesResultToEvents(frame.data);
-  }
-};
+  })();

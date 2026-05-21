@@ -2,10 +2,17 @@ import { getRepo } from "../../repo/index.ts";
 import { createCopilotProvider } from "./copilot/provider.ts";
 import { endpointsIncludeLlmGeneration } from "./endpoints.ts";
 import { createOpenAiProvider } from "./openai/provider.ts";
-import type { Model, ModelEndpoint, ModelProviderInstance } from "./types.ts";
+import type {
+  CatalogModel,
+  ModelEndpoint,
+  ModelProviderInstance,
+  ProviderModelRecord,
+  ResolvedModel,
+  UpstreamModel,
+} from "./types.ts";
 
 interface ProviderModelsResult {
-  models: Model[];
+  models: ResolvedModel[];
   sawSuccess: boolean;
   lastError: unknown;
 }
@@ -40,10 +47,27 @@ const unionEndpoints = (
   return result;
 };
 
+const catalogModelFromUpstreamModel = (
+  upstreamModel: UpstreamModel,
+): CatalogModel => {
+  const {
+    providerData: _providerData,
+    supportedEndpoints: upstreamSupportedEndpoints,
+    ...modelInfo
+  } = upstreamModel;
+  const supportedEndpoints = [...upstreamSupportedEndpoints];
+
+  return {
+    ...modelInfo,
+    supportedEndpoints,
+    supports_generation: endpointsIncludeLlmGeneration(supportedEndpoints),
+  };
+};
+
 const collectProviderModels = async (
   providers: readonly ModelProviderInstance[],
 ): Promise<ProviderModelsResult> => {
-  const byId = new Map<string, Model>();
+  const byId = new Map<string, ResolvedModel>();
   let sawSuccess = false;
   let lastError: unknown = null;
 
@@ -53,27 +77,19 @@ const collectProviderModels = async (
       sawSuccess = true;
       for (const upstreamModel of providedModels) {
         if (!upstreamModel.id) continue;
-        const {
-          providerData: _providerData,
-          supportedEndpoints: upstreamSupportedEndpoints,
-          ...modelInfo
-        } = upstreamModel;
+        const record: ProviderModelRecord = {
+          upstream: instance.upstream,
+          provider: instance.provider,
+          upstreamModel,
+          enabledFixes: instance.enabledFixes,
+          sourceInterceptors: instance.sourceInterceptors,
+          targetInterceptors: instance.targetInterceptors,
+        };
         const existing = byId.get(upstreamModel.id);
         if (!existing) {
           byId.set(upstreamModel.id, {
-            ...modelInfo,
-            supportedEndpoints: [...upstreamSupportedEndpoints],
-            supports_generation: endpointsIncludeLlmGeneration(
-              upstreamSupportedEndpoints,
-            ),
-            providers: [{
-              upstream: instance.upstream,
-              provider: instance.provider,
-              upstreamModel,
-              enabledFixes: instance.enabledFixes,
-              sourceInterceptors: instance.sourceInterceptors,
-              targetInterceptors: instance.targetInterceptors,
-            }],
+            ...catalogModelFromUpstreamModel(upstreamModel),
+            providers: [record],
           });
           continue;
         }
@@ -83,26 +99,17 @@ const collectProviderModels = async (
         // public /models metadata. Runtime execution still uses the selected
         // provider's own UpstreamModel, so capability-sensitive calls do not
         // depend on this merged view being perfectly representative.
+        const supportedEndpoints = unionEndpoints(
+          existing.supportedEndpoints,
+          upstreamModel.supportedEndpoints,
+        );
         byId.set(upstreamModel.id, {
           ...existing,
-          supportedEndpoints: unionEndpoints(
-            existing.supportedEndpoints,
-            upstreamSupportedEndpoints,
-          ),
+          supportedEndpoints,
           supports_generation: endpointsIncludeLlmGeneration(
-            unionEndpoints(
-              existing.supportedEndpoints,
-              upstreamSupportedEndpoints,
-            ),
+            supportedEndpoints,
           ),
-          providers: [...existing.providers, {
-            upstream: instance.upstream,
-            provider: instance.provider,
-            upstreamModel,
-            enabledFixes: instance.enabledFixes,
-            sourceInterceptors: instance.sourceInterceptors,
-            targetInterceptors: instance.targetInterceptors,
-          }],
+          providers: [...existing.providers, record],
         });
       }
     } catch (error) {
@@ -113,12 +120,13 @@ const collectProviderModels = async (
   return { models: [...byId.values()], sawSuccess, lastError };
 };
 
-const modelWithProviderSet = (
-  model: Model,
+const modelWithProviderInstances = (
+  model: ResolvedModel,
   providers: ReadonlySet<ModelProviderInstance>,
-): Model => {
+): ResolvedModel => {
+  const providerInstances = [...providers];
   const bindings = model.providers.filter((binding) =>
-    [...providers].some((instance) =>
+    providerInstances.some((instance) =>
       instance.upstream === binding.upstream &&
       instance.provider === binding.provider
     )
@@ -137,7 +145,7 @@ const modelWithProviderSet = (
   };
 };
 
-export const getModels = async (): Promise<Model[]> => {
+export const getModels = async (): Promise<ResolvedModel[]> => {
   const providers = await listModelProviders();
   if (providers.length === 0) {
     throw new Error(
@@ -154,17 +162,20 @@ export const getModels = async (): Promise<Model[]> => {
   return [];
 };
 
+export const getCatalogModels = async (): Promise<CatalogModel[]> =>
+  (await getModels()).map(({ providers: _providers, ...model }) => model);
+
 export interface ModelResolution {
   id: string;
-  model?: Model;
+  model?: ResolvedModel;
 }
 
 const resolveProviderAlias = (
   providers: readonly ModelProviderInstance[],
-  byId: ReadonlyMap<string, Model>,
+  byId: ReadonlyMap<string, ResolvedModel>,
   modelId: string,
-): Model | undefined => {
-  let resolved: Model | undefined;
+): ResolvedModel | undefined => {
+  let resolved: ResolvedModel | undefined;
   const providersForAlias = new Set<ModelProviderInstance>();
 
   for (const instance of providers) {
@@ -186,7 +197,7 @@ const resolveProviderAlias = (
   }
 
   if (!resolved) return undefined;
-  return modelWithProviderSet(resolved, providersForAlias);
+  return modelWithProviderInstances(resolved, providersForAlias);
 };
 
 export const resolveModelForRequest = async (

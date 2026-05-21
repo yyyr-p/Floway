@@ -366,7 +366,7 @@ Deno.test("public model list endpoints hide malformed upstream response bodies",
   });
 });
 
-Deno.test("/v1/models returns empty list when no upstream is configured", async () => {
+Deno.test("/v1/models reports an upstream configuration error when no provider is configured", async () => {
   const { repo, apiKey } = await setupAppTest();
   await repo.github.deleteAllAccounts();
 

@@ -1,5 +1,5 @@
 // Copilot-only Responses target workarounds. The Copilot provider attaches
-// this set to its provider metadata, so the generic target assembler does not
+// this set to its provider metadata, so target interceptor assembly does not
 // need to know which provider kind is running.
 
 import type { ResponsesInterceptor } from "../../../../llm/interceptors.ts";

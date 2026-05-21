@@ -9,9 +9,6 @@ import {
   type MessagesAssistantContentBlock,
   type MessagesMessage,
   type MessagesPayload,
-  type MessagesRedactedThinkingBlock,
-  type MessagesThinkingBlock,
-  type MessagesToolResultBlock,
   type MessagesUserContentBlock,
 } from "../../../shared/protocol/messages.ts";
 import {
@@ -21,6 +18,7 @@ import {
 } from "../shared/remote-images.ts";
 import { parseToolArgumentsObject } from "../shared/tool-arguments.ts";
 import type { ModelCapabilities } from "../../../providers/capabilities.ts";
+import { messagesThinkingBlockFromChatScalarReasoning } from "../shared/messages-chat-reasoning.ts";
 
 export type { RemoteImageLoader } from "../shared/remote-images.ts";
 
@@ -35,30 +33,11 @@ interface TranslateChatCompletionsToMessagesOptions {
   fallbackMaxOutputTokens?: number;
 }
 
-const buildMessagesThinkingBlock = (
-  reasoningText: string | null | undefined,
-  reasoningOpaque: string | null | undefined,
-): MessagesThinkingBlock | MessagesRedactedThinkingBlock | null => {
-  if (reasoningText) {
-    return {
-      type: "thinking",
-      thinking: reasoningText,
-      ...(reasoningOpaque !== undefined && reasoningOpaque !== null
-        ? { signature: reasoningOpaque }
-        : {}),
-    };
-  }
-
-  return reasoningOpaque !== undefined && reasoningOpaque !== null
-    ? { type: "redacted_thinking", data: reasoningOpaque }
-    : null;
-};
-
 const buildAssistantBlocks = (
   message: Message,
 ): MessagesAssistantContentBlock[] => {
   const blocks: MessagesAssistantContentBlock[] = [];
-  const thinkingBlock = buildMessagesThinkingBlock(
+  const thinkingBlock = messagesThinkingBlockFromChatScalarReasoning(
     message.reasoning_text,
     message.reasoning_opaque,
   );
@@ -81,7 +60,7 @@ const buildAssistantBlocks = (
   return blocks.length > 0 ? blocks : [{ type: "text", text: "" }];
 };
 
-const appendUserContent = (
+const appendUserBlocks = (
   messages: MessagesMessage[],
   blocks: MessagesUserContentBlock[],
 ): void => {
@@ -102,24 +81,6 @@ const appendUserContent = (
       ? blocks[0].text
       : blocks,
   });
-};
-
-const appendToolResult = (
-  messages: MessagesMessage[],
-  toolResult: MessagesToolResultBlock,
-): void => {
-  const lastMessage = messages[messages.length - 1];
-
-  if (lastMessage?.role === "user") {
-    const existing = Array.isArray(lastMessage.content)
-      ? lastMessage.content
-      : [{ type: "text" as const, text: lastMessage.content }];
-
-    lastMessage.content = [...existing, toolResult];
-    return;
-  }
-
-  messages.push({ role: "user", content: [toolResult] });
 };
 
 const convertUserContent = async (
@@ -160,7 +121,7 @@ const buildMessagesInput = async (
   for (const message of messages) {
     switch (message.role) {
       case "user":
-        appendUserContent(
+        appendUserBlocks(
           result,
           await convertUserContent(message, loadRemoteImage),
         );
@@ -178,11 +139,11 @@ const buildMessagesInput = async (
           );
         }
 
-        appendToolResult(result, {
+        appendUserBlocks(result, [{
           type: "tool_result",
           tool_use_id: message.tool_call_id,
           content: typeof message.content === "string" ? message.content : "",
-        });
+        }]);
         break;
     }
   }
@@ -206,23 +167,19 @@ const translateChatCompletionsTools = (
 const translateChatCompletionsToolChoice = (
   toolChoice: NonNullable<ChatCompletionsPayload["tool_choice"]>,
 ): MessagesPayload["tool_choice"] => {
-  if (typeof toolChoice === "string") {
-    switch (toolChoice) {
-      case "auto":
-        return { type: "auto" };
-      case "none":
-        return { type: "none" };
-      case "required":
-        return { type: "any" };
-      default:
-        return undefined;
-    }
-  }
+  if (typeof toolChoice === "string") return CHAT_TOOL_CHOICES[toolChoice];
 
-  return toolChoice.type === "function" && toolChoice.function?.name
-    ? { type: "tool", name: toolChoice.function.name }
-    : undefined;
+  return { type: "tool", name: toolChoice.function.name };
 };
+
+const CHAT_TOOL_CHOICES = {
+  auto: { type: "auto" },
+  none: { type: "none" },
+  required: { type: "any" },
+} satisfies Record<
+  Extract<ChatCompletionsPayload["tool_choice"], string>,
+  MessagesPayload["tool_choice"]
+>;
 
 export const translateChatCompletionsToMessages = async (
   payload: ChatCompletionsPayload,
@@ -290,11 +247,10 @@ export const translateChatCompletionsToMessages = async (
   };
 };
 
-export const buildTargetRequest = async (
+export const buildTargetRequest = (
   payload: ChatCompletionsPayload,
   capabilities: ModelCapabilities,
 ): Promise<MessagesPayload> =>
-  await translateChatCompletionsToMessages(payload, {
-    loadRemoteImage: fetchRemoteImage,
+  translateChatCompletionsToMessages(payload, {
     fallbackMaxOutputTokens: capabilities.maxOutputTokens,
   });

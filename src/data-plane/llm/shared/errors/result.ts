@@ -8,6 +8,12 @@ export interface EventResult<T> {
   events: AsyncIterable<T>;
   modelIdentity: TelemetryModelIdentity;
   performance?: PerformanceTelemetryContext;
+  finalMetadata?: Promise<EventResultMetadata>;
+}
+
+export interface EventResultMetadata {
+  modelIdentity: TelemetryModelIdentity;
+  performance?: PerformanceTelemetryContext;
 }
 
 export interface UpstreamErrorResult {
@@ -36,11 +42,13 @@ export const eventResult = <T>(
   events: AsyncIterable<T>,
   modelIdentity: TelemetryModelIdentity,
   performance?: PerformanceTelemetryContext,
+  finalMetadata?: Promise<EventResultMetadata>,
 ): EventResult<T> => {
   const result: EventResult<T> = { type: "events", events, modelIdentity };
   if (performance !== undefined) {
     result.performance = performance;
   }
+  if (finalMetadata !== undefined) result.finalMetadata = finalMetadata;
   return result;
 };
 

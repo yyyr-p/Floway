@@ -1,99 +1,49 @@
 import type {
-  GeminiPart,
   GeminiStreamEvent,
   GeminiUsageMetadata,
 } from "../../../shared/protocol/gemini.ts";
 import type { MessagesStreamEventData } from "../../../shared/protocol/messages.ts";
-import { protocolEventsUntilTerminal } from "../../shared/stream/protocol-algebra.ts";
 import { eventFrame, type ProtocolFrame } from "../../shared/stream/types.ts";
+import {
+  appendGeminiThoughtSignature,
+  flushGeminiThoughtSignature,
+  type GeminiThoughtSignatureState,
+  parseStrictJsonObject,
+  signGeminiPart,
+} from "../shared/gemini.ts";
 import { geminiResponse, messagesStopReasonToGemini } from "./result.ts";
 
-const upstreamMessagesStreamAlgebra = {
-  isTerminalEvent: (event: Pick<MessagesStreamEventData, "type">): boolean =>
-    event.type === "message_stop" || event.type === "error",
-  missingTerminalMessage:
-    "Upstream Messages stream ended without a message_stop event.",
+const UPSTREAM_MESSAGES_MISSING_TERMINAL_MESSAGE =
+  "Upstream Messages stream ended without a message_stop event.";
+
+const upstreamMessagesEventsUntilTerminal = async function* (
+  frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
+): AsyncGenerator<MessagesStreamEventData> {
+  for await (const frame of frames) {
+    if (frame.type === "done") continue;
+
+    yield frame.event;
+    if (frame.event.type === "message_stop" || frame.event.type === "error") {
+      return;
+    }
+  }
+
+  throw new Error(UPSTREAM_MESSAGES_MISSING_TERMINAL_MESSAGE);
 };
 
-interface ToolUseState {
-  id: string;
-  name: string;
-  input: Record<string, unknown>;
-  partialJson: string;
+interface MessagesToolUseDraft {
+  id?: string;
+  name?: string;
+  argsJson: string;
+  args?: Record<string, unknown>;
 }
 
-interface GeminiViaMessagesStreamState {
+interface GeminiViaMessagesStreamState extends GeminiThoughtSignatureState {
   inputTokens: number;
   cacheReadInputTokens: number;
   cacheCreationInputTokens: number;
-  pendingThoughtSignature?: string;
-  toolUses: Record<number, ToolUseState>;
+  toolUses: Record<number, MessagesToolUseDraft>;
 }
-
-const createState = (): GeminiViaMessagesStreamState => ({
-  inputTokens: 0,
-  cacheReadInputTokens: 0,
-  cacheCreationInputTokens: 0,
-  toolUses: {},
-});
-
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-  typeof value === "object" && value !== null && !Array.isArray(value);
-
-const appendPendingThoughtSignature = (
-  state: GeminiViaMessagesStreamState,
-  signature: string,
-): void => {
-  state.pendingThoughtSignature = `${
-    state.pendingThoughtSignature ?? ""
-  }${signature}`;
-};
-
-const attachPendingThoughtSignature = (
-  part: GeminiPart,
-  state: GeminiViaMessagesStreamState,
-): GeminiPart => {
-  if (state.pendingThoughtSignature === undefined) return part;
-
-  const signedPart = {
-    ...part,
-    thoughtSignature: state.pendingThoughtSignature,
-  };
-  state.pendingThoughtSignature = undefined;
-  return signedPart;
-};
-
-const parseToolInput = (toolUse: ToolUseState): Record<string, unknown> => {
-  if (!toolUse.partialJson) return toolUse.input;
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(toolUse.partialJson) as unknown;
-  } catch (error) {
-    throw new Error(
-      "Upstream Messages tool use input was not valid JSON.",
-      { cause: error },
-    );
-  }
-
-  if (!isRecord(parsed)) {
-    throw new Error("Upstream Messages tool use input must be a JSON object.");
-  }
-
-  return parsed;
-};
-
-const toolUsePart = (
-  toolUse: ToolUseState,
-  state: GeminiViaMessagesStreamState,
-): GeminiPart =>
-  attachPendingThoughtSignature({
-    functionCall: {
-      id: toolUse.id,
-      name: toolUse.name,
-      args: parseToolInput(toolUse),
-    },
-  }, state);
 
 // Anthropic's input_tokens excludes cache reads and cache creation; Gemini's
 // promptTokenCount is an inclusive total like OpenAI's prompt_tokens. Fold all
@@ -132,14 +82,14 @@ const throwOnMessagesFatalEvent = (event: MessagesStreamEventData): void => {
 export const translateToSourceEvents = async function* (
   frames: AsyncIterable<ProtocolFrame<MessagesStreamEventData>>,
 ): AsyncGenerator<ProtocolFrame<GeminiStreamEvent>> {
-  const state = createState();
+  const state: GeminiViaMessagesStreamState = {
+    inputTokens: 0,
+    cacheReadInputTokens: 0,
+    cacheCreationInputTokens: 0,
+    toolUses: {},
+  };
 
-  for await (
-    const event of protocolEventsUntilTerminal(
-      frames,
-      upstreamMessagesStreamAlgebra,
-    )
-  ) {
+  for await (const event of upstreamMessagesEventsUntilTerminal(frames)) {
     throwOnMessagesFatalEvent(event);
 
     switch (event.type) {
@@ -156,14 +106,14 @@ export const translateToSourceEvents = async function* (
           state.toolUses[event.index] = {
             id: event.content_block.id,
             name: event.content_block.name,
-            input: event.content_block.input,
-            partialJson: "",
+            argsJson: "",
+            args: event.content_block.input,
           };
           break;
         }
 
         if (event.content_block.type === "redacted_thinking") {
-          appendPendingThoughtSignature(state, event.content_block.data);
+          appendGeminiThoughtSignature(state, event.content_block.data);
           break;
         }
 
@@ -171,10 +121,12 @@ export const translateToSourceEvents = async function* (
           event.content_block.type === "thinking" &&
           event.content_block.thinking.length > 0
         ) {
-          yield eventFrame(geminiResponse([{
-            text: event.content_block.thinking,
-            thought: true,
-          }]));
+          yield eventFrame(
+            geminiResponse([{
+              text: event.content_block.thinking,
+              thought: true,
+            }]),
+          );
           break;
         }
 
@@ -183,10 +135,7 @@ export const translateToSourceEvents = async function* (
           event.content_block.text.length > 0
         ) {
           yield eventFrame(geminiResponse([
-            attachPendingThoughtSignature(
-              { text: event.content_block.text },
-              state,
-            ),
+            signGeminiPart(state, { text: event.content_block.text }),
           ]));
         }
         break;
@@ -195,29 +144,24 @@ export const translateToSourceEvents = async function* (
         switch (event.delta.type) {
           case "thinking_delta":
             if (event.delta.thinking.length > 0) {
-              yield eventFrame(geminiResponse([{
-                text: event.delta.thinking,
-                thought: true,
-              }]));
+              yield eventFrame(
+                geminiResponse([{ text: event.delta.thinking, thought: true }]),
+              );
             }
             break;
           case "signature_delta":
-            appendPendingThoughtSignature(state, event.delta.signature);
+            appendGeminiThoughtSignature(state, event.delta.signature);
             break;
           case "text_delta":
             if (event.delta.text.length > 0) {
               yield eventFrame(geminiResponse([
-                attachPendingThoughtSignature(
-                  { text: event.delta.text },
-                  state,
-                ),
+                signGeminiPart(state, { text: event.delta.text }),
               ]));
             }
             break;
           case "input_json_delta":
             if (state.toolUses[event.index]) {
-              state.toolUses[event.index].partialJson +=
-                event.delta.partial_json;
+              state.toolUses[event.index].argsJson += event.delta.partial_json;
             }
             break;
           default:
@@ -229,17 +173,31 @@ export const translateToSourceEvents = async function* (
         const toolUse = state.toolUses[event.index];
         if (toolUse) {
           delete state.toolUses[event.index];
-          yield eventFrame(geminiResponse([toolUsePart(toolUse, state)]));
+          if (!toolUse.name) {
+            throw new Error("Messages tool use ended without a name.");
+          }
+
+          yield eventFrame(geminiResponse([
+            signGeminiPart(state, {
+              functionCall: {
+                ...(toolUse.id !== undefined ? { id: toolUse.id } : {}),
+                name: toolUse.name,
+                args: toolUse.argsJson
+                  ? parseStrictJsonObject(
+                    toolUse.argsJson,
+                    "Messages tool use input",
+                  )
+                  : toolUse.args ?? {},
+              },
+            }),
+          ]));
         }
         break;
       }
 
       case "message_delta": {
-        const parts = state.pendingThoughtSignature !== undefined
-          ? [attachPendingThoughtSignature({ text: "" }, state)]
-          : [];
         yield eventFrame(geminiResponse(
-          parts,
+          flushGeminiThoughtSignature(state),
           messagesStopReasonToGemini(event.delta.stop_reason),
           mapUsage(state, event.usage),
         ));
