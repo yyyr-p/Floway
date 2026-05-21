@@ -227,6 +227,54 @@ test('translateToSourceEvents accumulates function call arguments and attaches p
   ]);
 });
 
+test('translateToSourceEvents uses final function call arguments when streamed draft arguments are empty', async () => {
+  const frames = await collect([
+    eventFrame({
+      type: 'response.output_item.added',
+      output_index: 0,
+      item: {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'lookup',
+        arguments: '',
+        status: 'in_progress',
+      },
+    }),
+    eventFrame({
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'lookup',
+        arguments: '{"query":"docs"}',
+        status: 'completed',
+      },
+    }),
+    eventFrame({ type: 'response.completed', response: response('completed') }),
+  ]);
+
+  assertEquals(frames[0], geminiFrame({
+    candidates: [
+      {
+        index: 0,
+        content: {
+          role: 'model',
+          parts: [
+            {
+              functionCall: {
+                id: 'call_1',
+                name: 'lookup',
+                args: { query: 'docs' },
+              },
+            },
+          ],
+        },
+      },
+    ],
+  }));
+});
+
 test('translateToSourceEvents maps incomplete and failed finish reasons with usage', async () => {
   const maxTokenFrames = await collect([
     eventFrame({

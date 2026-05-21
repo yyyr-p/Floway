@@ -245,7 +245,12 @@ export const translateMessagesToChatCompletions = (payload: MessagesPayload): Ch
   const clientTools = getClientTools(payload.tools);
   // Pass effort through verbatim; per-upstream enum acceptance (e.g. some
   // backends rejecting `xhigh`/`max`) is the target interceptor's concern.
-  const reasoningEffort = payload.output_config?.effort ?? (payload.thinking?.type === 'disabled' ? 'none' : undefined);
+  let reasoningEffort: string | undefined;
+  if (payload.output_config?.effort) {
+    reasoningEffort = payload.output_config.effort;
+  } else if (payload.thinking?.type === 'disabled') {
+    reasoningEffort = 'none';
+  }
 
   return {
     model: payload.model,

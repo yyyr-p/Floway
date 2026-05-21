@@ -26,6 +26,18 @@ test('translateMessagesToChatCompletions prefers output_config.effort over think
   assertEquals(result.reasoning_effort, 'high');
 });
 
+test('translateMessagesToChatCompletions treats empty output_config.effort as absent', () => {
+  const result = translateMessagesToChatCompletions({
+    model: 'gpt-test',
+    max_tokens: 256,
+    output_config: { effort: '' },
+    thinking: { type: 'disabled' },
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+
+  assertEquals(result.reasoning_effort, 'none');
+});
+
 test('translateMessagesToChatCompletions keeps tool_result and user text as separate chat messages', () => {
   const result = translateMessagesToChatCompletions({
     model: 'gpt-test',

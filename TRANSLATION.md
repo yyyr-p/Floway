@@ -341,9 +341,9 @@ Request mapping:
   `reasoning_opaque`.
 - `max_tokens`, `stop_sequences` -> `stop`, `stream`, `temperature`, and `top_p`
   pass through when present.
-- `output_config.effort` maps directly to `reasoning_effort`; disabled thinking
-  maps to `reasoning_effort: "none"`; enabled thinking without explicit effort
-  is omitted.
+- non-empty `output_config.effort` maps directly to `reasoning_effort`;
+  disabled thinking maps to `reasoning_effort: "none"`; enabled thinking
+  without explicit effort is omitted.
 - streaming translated requests force upstream `stream_options.include_usage` so
   gateway usage telemetry can see usage.
 - Messages tools become OpenAI function tools; explicit `strict` is preserved

@@ -62,7 +62,8 @@ const functionCallDoneFrame = (item: ResponseOutputFunctionCall, outputIndex: nu
     name: item.name,
     argsJson: item.arguments,
   };
-  const argsJson = current?.argsJson ?? item.arguments;
+  let argsJson = item.arguments;
+  if (current?.argsJson) argsJson = current.argsJson;
 
   if (!draft.name) {
     throw new Error('Responses function call ended without a name.');
