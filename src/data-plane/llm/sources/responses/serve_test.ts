@@ -184,7 +184,7 @@ test('/v1/responses rewrites codex-auto-review to gpt-5.4 low reasoning at the e
   assertEquals(usage[0].outputTokens, 5);
 });
 
-test('/v1/responses direct mode converts apply_patch and fixes mismatched stream item IDs', async () => {
+test('/v1/responses direct mode preserves custom apply_patch and fixes mismatched stream item IDs', async () => {
   const { apiKey } = await setupAppTest();
 
   let upstreamBody: Record<string, unknown> | undefined;
@@ -269,7 +269,15 @@ test('/v1/responses direct mode converts apply_patch and fixes mismatched stream
           top_p: null,
           service_tier: 'auto',
           max_output_tokens: 32,
-          tools: [{ type: 'image_generation' }, { type: 'custom', name: 'apply_patch' }],
+          tools: [
+            { type: 'image_generation' },
+            {
+              type: 'custom',
+              name: 'apply_patch',
+              description: 'Use the `apply_patch` tool to edit files. This is a FREEFORM tool, so do not wrap the patch in JSON.',
+              format: { type: 'grammar', syntax: 'lark', definition: 'start: "ok"' },
+            },
+          ],
           tool_choice: 'auto',
           metadata: null,
           stream: true,
@@ -289,9 +297,10 @@ test('/v1/responses direct mode converts apply_patch and fixes mismatched stream
   assertExists(upstreamBody);
   assertEquals((upstreamBody!.tools as Array<Record<string, unknown>>).length, 1);
   const tool = (upstreamBody!.tools as Array<Record<string, unknown>>)[0];
-  assertEquals(tool.type, 'function');
+  assertEquals(tool.type, 'custom');
   assertEquals(tool.name, 'apply_patch');
-  assertEquals((tool.parameters as Record<string, unknown>).type, 'object');
+  assertEquals(tool.format, { type: 'grammar', syntax: 'lark', definition: 'start: "ok"' });
+  assertFalse('parameters' in tool);
   assertFalse('service_tier' in upstreamBody!);
 });
 
@@ -1259,7 +1268,14 @@ test('/v1/responses prefers messages over chat completions when both translated 
           temperature: 1,
           top_p: null,
           max_output_tokens: null,
-          tools: [{ type: 'custom', name: 'apply_patch' }],
+          tools: [
+            {
+              type: 'function',
+              name: 'lookup',
+              parameters: { type: 'object' },
+              strict: false,
+            },
+          ],
           tool_choice: 'auto',
           metadata: null,
           stream: true,
@@ -1289,7 +1305,7 @@ test('/v1/responses prefers messages over chat completions when both translated 
   );
 
   assertExists(upstreamBody);
-  assertEquals((upstreamBody!.tools as Array<Record<string, unknown>>)[0].name, 'apply_patch');
+  assertEquals((upstreamBody!.tools as Array<Record<string, unknown>>)[0].name, 'lookup');
   assertEquals(upstreamBody!.max_tokens, 8192);
   assertEquals(upstreamBody!.stream, true);
 });

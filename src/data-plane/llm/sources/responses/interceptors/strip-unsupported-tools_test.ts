@@ -20,7 +20,7 @@ test('stripUnsupportedToolsFromPayload removes image_generation tools', () => {
     tool_choice: 'auto',
   } as ResponsesPayload;
 
-  stripUnsupportedToolsFromPayload(payload);
+  stripUnsupportedToolsFromPayload(payload, 'responses');
 
   assertEquals(payload.tools?.length, 1);
   assertEquals(payload.tools?.[0].type, 'function');
@@ -35,7 +35,7 @@ test('stripUnsupportedToolsFromPayload removes forced image_generation tool_choi
     tool_choice: { type: 'image_generation' },
   } as ResponsesPayload;
 
-  stripUnsupportedToolsFromPayload(payload);
+  stripUnsupportedToolsFromPayload(payload, 'responses');
 
   assertFalse('tools' in payload);
   assertFalse('tool_choice' in payload);
@@ -49,7 +49,7 @@ test('stripUnsupportedToolsFromPayload removes required tool_choice when no tool
     tool_choice: 'required',
   } as ResponsesPayload;
 
-  stripUnsupportedToolsFromPayload(payload);
+  stripUnsupportedToolsFromPayload(payload, 'responses');
 
   assertFalse('tools' in payload);
   assertFalse('tool_choice' in payload);
@@ -78,7 +78,7 @@ test('stripUnsupportedToolsFromPayload removes Codex hosted server tools that la
     tool_choice: 'auto',
   } as ResponsesPayload;
 
-  stripUnsupportedToolsFromPayload(payload);
+  stripUnsupportedToolsFromPayload(payload, 'responses');
 
   assertEquals(payload.tools?.length, 1);
   assertEquals(payload.tools?.[0].type, 'function');
@@ -93,17 +93,32 @@ test('stripUnsupportedToolsFromPayload removes a forced web_search tool_choice',
     tool_choice: { type: 'web_search' },
   } as ResponsesPayload;
 
-  stripUnsupportedToolsFromPayload(payload);
+  stripUnsupportedToolsFromPayload(payload, 'responses');
 
   assertFalse('tools' in payload);
   assertFalse('tool_choice' in payload);
 });
 
-test('stripUnsupportedToolsFromPayload removes leftover custom Freeform tools', () => {
-  // fix-apply-patch-tools rewrites `apply_patch` into a function tool before
-  // this interceptor runs. Any remaining `custom` entry is a Freeform tool the
-  // gateway has no shim for and would surface upstream as
-  // `tools.N.custom.name: Field required`.
+test('stripUnsupportedToolsFromPayload preserves custom Freeform tools for native Responses', () => {
+  const payload = {
+    model: 'gpt-test',
+    input: 'do x',
+    tools: [
+      { type: 'custom', name: 'apply_patch', description: 'x' },
+    ],
+    tool_choice: { type: 'custom', name: 'apply_patch' },
+  } as ResponsesPayload;
+
+  stripUnsupportedToolsFromPayload(payload, 'responses');
+
+  assertEquals(payload.tools?.length, 1);
+  assertEquals(payload.tools?.[0].type, 'custom');
+  assertEquals(payload.tool_choice, { type: 'custom', name: 'apply_patch' });
+});
+
+test('stripUnsupportedToolsFromPayload removes custom Freeform tools for translated targets', () => {
+  // Freeform tools are native Responses-only. Messages and Chat Completions
+  // translation can only project function-shaped tools.
   const payload = {
     model: 'gpt-test',
     input: 'do x',
@@ -119,7 +134,7 @@ test('stripUnsupportedToolsFromPayload removes leftover custom Freeform tools', 
     tool_choice: { type: 'custom', name: 'freeform_other' },
   } as ResponsesPayload;
 
-  stripUnsupportedToolsFromPayload(payload);
+  stripUnsupportedToolsFromPayload(payload, 'messages');
 
   assertEquals(payload.tools?.length, 1);
   assertEquals(payload.tools?.[0].name, 'lookup');

@@ -157,15 +157,11 @@ const translateResponsesInput = async (input: string | ResponseInputItem[], load
 const translateTools = (tools?: ResponseTool[] | null): MessagesTool[] | undefined => {
   if (!tools || tools.length === 0) return undefined;
 
-  // Hosted Responses tool entries (web_search, image_generation, …) and
+  // Hosted Responses tool entries (web_search, image_generation, ...) and
   // Freeform `custom` tools do not carry the `name`/`parameters` pair Anthropic
-  // Messages requires, and Anthropic upstream rejects them with
-  // `tools.N.custom.name: Field required`. The source-level
-  // strip-unsupported-tools interceptor drops every hosted entry, and
-  // fix-apply-patch-tools rewrites Codex's `apply_patch` Freeform tool into a
-  // function tool. Other Freeform tools currently have no shim, so they would
-  // also reach this point as non-function entries — drop them defensively
-  // rather than forwarding a malformed tool upstream.
+  // Messages requires. The source cleanup strips them for translated targets;
+  // keep this narrow as defense-in-depth so malformed tool entries are never
+  // forwarded upstream.
   const functionTools = tools.filter((tool): tool is ResponseFunctionTool => tool.type === 'function');
   if (functionTools.length === 0) return undefined;
 

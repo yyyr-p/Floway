@@ -101,9 +101,11 @@ Copilot Messages provider target boundary:
 
 Responses source boundary:
 
-- rewrites `apply_patch` from `custom` to `function`
-- removes unsupported `image_generation` tools and forced tool choices before
-  target request construction/emission
+- preserves native Responses `custom` tools such as Codex `apply_patch` when
+  the selected upstream target is Responses
+- removes unsupported hosted Responses tools and translated-only `custom` tools,
+  plus forced tool choices that target removed tools, before target request
+  construction/emission
 
 Gemini source boundary:
 

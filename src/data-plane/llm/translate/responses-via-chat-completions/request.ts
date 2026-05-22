@@ -39,12 +39,10 @@ const appendAssistantToolCall = (assistant: AssistantAccumulator | null, item: E
 };
 
 const translateResponseTools = (tools?: ResponseTool[] | null): Tool[] | undefined => {
-  // Same defense-in-depth as the responses-to-messages translator: the
-  // source-level strip-unsupported-tools interceptor drops hosted server tools
-  // and fix-apply-patch-tools rewrites Codex's `apply_patch` Freeform tool.
-  // Other Freeform tools have no shim today, so anything left without
-  // `name`/`parameters` is dropped here rather than forwarded as a malformed
-  // function tool.
+  // Same defense-in-depth as the responses-to-messages translator: source
+  // cleanup strips hosted server tools and Freeform `custom` tools for
+  // translated targets. Anything left without `name`/`parameters` is dropped
+  // here rather than forwarded as a malformed function tool.
   const functionTools = tools?.filter((tool): tool is ResponseFunctionTool => tool.type === 'function') ?? [];
 
   return functionTools.length > 0
@@ -63,9 +61,9 @@ const translateResponseTools = (tools?: ResponseTool[] | null): Tool[] | undefin
 const translateResponseToolChoice = (choice?: ResponseToolChoice): ChatCompletionsPayload['tool_choice'] => {
   if (choice == null) return undefined;
   if (typeof choice === 'string') return choice;
-  // Source interceptors strip hosted server tools and rewrite the only known
-  // Freeform tool (`apply_patch`) into a function tool. Any remaining
-  // non-function forced choice would point at a tool that no longer exists.
+  // Source cleanup strips hosted server tools and translated-only Freeform
+  // tools. Any remaining non-function forced choice would point at a tool that
+  // no longer exists in the translated target payload.
   if (choice.type !== 'function') return undefined;
   return { type: 'function', function: { name: choice.name } };
 };
