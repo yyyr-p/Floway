@@ -13,7 +13,7 @@ const baseInvocation = (): Invocation<{ model: string; stream?: boolean }> => ({
   payload: { model: 'claude-test', stream: true },
   provider: stubProvider(),
   upstreamModel: stubUpstreamModel(),
-  enabledFixes: new Set<string>(),
+  enabledFlags: new Set<string>(),
 });
 
 const baseRequest = (): RequestContext => ({

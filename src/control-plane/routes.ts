@@ -9,7 +9,7 @@ import { performanceOverview, performanceTelemetry } from './performance/routes.
 import { getSearchConfigRoute, putSearchConfigRoute, testSearchConfigRoute } from './search-config/routes.ts';
 import { searchUsage } from './search-usage/routes.ts';
 import { tokenUsage } from './token-usage/routes.ts';
-import { copilotAuthPoll, copilotAuthStart, createUpstream, deleteUpstream, listOptionalFixes, listUpstreams, testUpstream, updateUpstream } from './upstreams/routes.ts';
+import { copilotAuthPoll, copilotAuthStart, createUpstream, deleteUpstream, listOptionalFlags, listUpstreams, testUpstream, updateUpstream } from './upstreams/routes.ts';
 import { DashboardPage } from '../ui/dashboard.tsx';
 import { LoginPage } from '../ui/login.tsx';
 
@@ -53,7 +53,7 @@ export const mountControlPlane = (app: Hono) => {
   adminApi.patch('/keys/:id', renameKey);
   adminApi.delete('/keys/:id', deleteKey);
   adminApi.get('/upstreams', listUpstreams);
-  adminApi.get('/upstream-fixes', listOptionalFixes);
+  adminApi.get('/upstream-flags', listOptionalFlags);
   adminApi.post('/upstreams/copilot/auth/start', copilotAuthStart);
   adminApi.post('/upstreams/copilot/auth/poll', copilotAuthPoll);
   adminApi.post('/upstreams', createUpstream);

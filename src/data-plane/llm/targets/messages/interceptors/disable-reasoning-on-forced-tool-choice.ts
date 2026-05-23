@@ -14,6 +14,7 @@ const disableMessagesReasoning = (payload: MessagesPayload): MessagesPayload => 
 };
 
 export const withReasoningDisabledOnForcedToolChoice: MessagesInterceptor = async (ctx, _request, run) => {
+  if (!ctx.enabledFlags.has('disable-reasoning-on-forced-tool-choice')) return await run();
   if (!hasForcedToolChoice(ctx.payload)) return await run();
   ctx.payload = disableMessagesReasoning(ctx.payload);
   return await run();

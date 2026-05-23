@@ -65,7 +65,7 @@ const collectProviderModels = async (providers: readonly ModelProviderInstance[]
           providerKind: instance.providerKind,
           provider: instance.provider,
           upstreamModel,
-          enabledFixes: instance.enabledFixes,
+          enabledFlags: upstreamModel.enabledFlags,
           sourceInterceptors: instance.sourceInterceptors,
           targetInterceptors: instance.targetInterceptors,
         };

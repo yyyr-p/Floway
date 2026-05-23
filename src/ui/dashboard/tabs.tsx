@@ -921,7 +921,7 @@ export function renderSettingsTab() {
                           >
                             <span class="flex items-center gap-1.5">
                               <span>Path Overrides</span>
-                              <span x-show="upstreamModalOverrideCount() > 0" class="font-mono text-[10px] text-accent-emerald" x-text="'(+' + upstreamModalOverrideCount() + ')' "></span>
+                              <span x-show="upstreamModalOverrideCount() > 0" class="font-mono text-[10px] text-accent-cyan" x-text="'(+' + upstreamModalOverrideCount() + ')' "></span>
                             </span>
                             <span class="flex items-center gap-2 normal-case tracking-normal text-[10px] text-gray-600">
                               <svg class="h-3 w-3 transition-transform" :class="upstreamModal.pathOverridesOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1067,6 +1067,46 @@ export function renderSettingsTab() {
                                       Per-million-token USD rates. Leave all four blank to omit pricing. <span class="text-gray-400">Input</span> and <span class="text-gray-400">Output</span> must both be filled or both blank; <span class="text-gray-400">Cache Read</span> / <span class="text-gray-400">Cache Write</span> are independently optional.
                                     </p>
                                   </div>
+
+                                  <div class="mt-4">
+                                    <div class="mb-2 flex items-center justify-between">
+                                      <p class="text-xs font-semibold text-gray-400">
+                                        <span>Override Feature Flags</span>
+                                        <span x-show="deployment.flagOverridesEnabled && Object.keys(deployment.flagOverridesValues ?? {}).length > 0"
+                                          class="ml-1.5 font-mono text-[10px] font-medium text-accent-cyan"
+                                          x-text="'(+' + Object.keys(deployment.flagOverridesValues).length + ')'"></span>
+                                      </p>
+                                      <button type="button"
+                                        @click="toggleDeploymentFlagOverridesEnabled(deployment)"
+                                        class="inline-flex h-5 w-9 shrink-0 items-center rounded-full transition-colors"
+                                        :class="deployment.flagOverridesEnabled ? 'bg-accent-cyan' : 'bg-white/10'"
+                                        :aria-pressed="deployment.flagOverridesEnabled.toString()">
+                                        <span class="h-4 w-4 transform rounded-full bg-white transition-transform" :class="deployment.flagOverridesEnabled ? 'translate-x-4' : 'translate-x-0.5'"></span>
+                                      </button>
+                                    </div>
+                                    <div x-show="deployment.flagOverridesEnabled" x-cloak>
+                                      <p x-show="upstreamFlagCatalog.length === 0" class="text-[11px] text-gray-600">No flags are registered.</p>
+                                      <div x-show="upstreamFlagCatalog.length > 0" class="max-h-72 overflow-y-auto divide-y divide-white/[0.06]">
+                                        <template x-for="flag in upstreamFlagCatalog" :key="flag.id">
+                                          <div class="flex items-start justify-between gap-3 py-2.5 first:pt-0">
+                                            <div class="min-w-0">
+                                              <span class="block break-all font-mono text-xs text-white" x-text="flag.label || flag.id"></span>
+                                              <span x-show="flag.description" class="mt-0.5 block text-[11px] text-gray-500" x-text="flag.description"></span>
+                                            </div>
+                                            <div class="flex shrink-0 items-center gap-1 text-[11px]">
+                                              <template x-for="state in ['inherit', 'on', 'off']" :key="state">
+                                                <label class="flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5"
+                                                  :class="flagPillClass(state, deploymentFlagState(deployment, flag.id) === state, upstreamFlagEffective(flag.id))">
+                                                  <input type="radio" class="hidden" :name="'depflag-' + index + '-' + flag.id" :value="state" :checked="deploymentFlagState(deployment, flag.id) === state" @change="setDeploymentFlagState(deployment, flag.id, state)" />
+                                                  <span x-text="state === 'inherit' ? 'Inherit: ' + upstreamFlagEffective(flag.id) : state === 'on' ? 'On' : 'Off'"></span>
+                                                </label>
+                                              </template>
+                                            </div>
+                                          </div>
+                                        </template>
+                                      </div>
+                                    </div>
+                                  </div>
                                 </div>
                               </div>
                             </template>
@@ -1174,42 +1214,48 @@ export function renderSettingsTab() {
                       </div>
                     </template>
 
-                    <template x-if="upstreamModal.provider !== 'copilot'">
-                      <div class="flex flex-col gap-3">
-                        <div>
-                          <button
-                            type="button"
-                            @click="upstreamModal.enabledFixesOpen = !upstreamModal.enabledFixesOpen"
-                            :aria-expanded="upstreamModal.enabledFixesOpen.toString()"
-                            class="mb-2 flex w-full items-center justify-between text-left text-xs font-medium text-gray-500 transition-colors hover:text-gray-300"
-                          >
-                            <span class="flex items-center gap-1.5">
-                              <span>Enabled Fixes</span>
-                              <span x-show="upstreamModal.enabledFixes.length > 0" class="font-mono text-[10px] text-accent-emerald" x-text="'(+' + upstreamModal.enabledFixes.length + ')' "></span>
-                            </span>
-                            <span class="flex items-center gap-2 normal-case tracking-normal text-[10px] text-gray-600">
-                              <svg class="h-3 w-3 transition-transform" :class="upstreamModal.enabledFixesOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <polyline points="6 9 12 15 18 9" />
-                              </svg>
-                            </span>
-                          </button>
-                          <div x-show="upstreamModal.enabledFixesOpen" x-cloak>
-                            <p x-show="upstreamFixCatalog.length === 0" class="text-[11px] text-gray-600">No opt-in upstream behavior flags are registered.</p>
-                            <div x-show="upstreamFixCatalog.length > 0" class="flex max-h-56 flex-col gap-2 overflow-y-auto rounded-lg border border-white/10 bg-surface-800/40 p-3">
-                              <template x-for="fix in upstreamFixCatalog" :key="fix.id">
-                                <label class="flex items-start gap-2 text-sm text-gray-300">
-                                  <input type="checkbox" class="accent-accent-cyan mt-0.5" :checked="upstreamModal.enabledFixes.includes(fix.id)" @change="toggleUpstreamFix(fix.id)" />
-                                  <span class="min-w-0 flex-1">
-                                    <span class="break-all font-mono text-xs text-white" :title="fix.label || fix.id" x-text="fix.label || fix.id"></span>
-                                    <span x-show="fix.description" class="mt-0.5 block text-[11px] text-gray-500" x-text="fix.description"></span>
-                                  </span>
-                                </label>
-                              </template>
-                            </div>
+                    <div class="flex flex-col gap-3">
+                      <div>
+                        <button
+                          type="button"
+                          @click="upstreamModal.flagOverridesOpen = !upstreamModal.flagOverridesOpen"
+                          :aria-expanded="upstreamModal.flagOverridesOpen.toString()"
+                          class="mb-2 flex w-full items-center justify-between text-left text-xs font-medium text-gray-500 transition-colors hover:text-gray-300"
+                        >
+                          <span class="flex items-center gap-1.5">
+                            <span>Feature Flags</span>
+                            <span x-show="Object.keys(upstreamModal.flagOverrides).length > 0" class="font-mono text-[10px] text-accent-cyan" x-text="'(+' + Object.keys(upstreamModal.flagOverrides).length + ')'"></span>
+                          </span>
+                          <span class="flex items-center gap-2 normal-case tracking-normal text-[10px] text-gray-600">
+                            <svg class="h-3 w-3 transition-transform" :class="upstreamModal.flagOverridesOpen ? 'rotate-180' : ''" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                              <polyline points="6 9 12 15 18 9" />
+                            </svg>
+                          </span>
+                        </button>
+                        <div x-show="upstreamModal.flagOverridesOpen" x-cloak>
+                          <p x-show="upstreamFlagCatalog.length === 0" class="text-[11px] text-gray-600">No flags are registered.</p>
+                          <div x-show="upstreamFlagCatalog.length > 0" class="max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-surface-800/40 px-3 divide-y divide-white/[0.06]">
+                            <template x-for="flag in upstreamFlagCatalog" :key="flag.id">
+                              <div class="flex items-start justify-between gap-3 py-2.5">
+                                <div class="min-w-0">
+                                  <span class="block break-all font-mono text-xs text-white" x-text="flag.label || flag.id"></span>
+                                  <span x-show="flag.description" class="mt-0.5 block text-[11px] text-gray-500" x-text="flag.description"></span>
+                                </div>
+                                <div class="flex shrink-0 items-center gap-1 text-[11px]">
+                                  <template x-for="state in ['inherit', 'on', 'off']" :key="state">
+                                    <label class="flex cursor-pointer items-center gap-1 rounded border px-1.5 py-0.5"
+                                      :class="flagPillClass(state, upstreamFlagState(flag.id) === state, upstreamFlagInheritedFrom(flag))">
+                                      <input type="radio" class="hidden" :name="'flag-' + flag.id" :value="state" :checked="upstreamFlagState(flag.id) === state" @change="setUpstreamFlagState(flag.id, state)" />
+                                      <span x-text="state === 'inherit' ? 'Inherit: ' + upstreamFlagInheritedFrom(flag) : state === 'on' ? 'On' : 'Off'"></span>
+                                    </label>
+                                  </template>
+                                </div>
+                              </div>
+                            </template>
                           </div>
                         </div>
                       </div>
-                    </template>
+                    </div>
 
                     <template x-if="upstreamModal.id && upstreamTestResult">
                       <div class="rounded-md border p-3" :class="upstreamTestResult.ok ? 'border-accent-emerald/20 bg-accent-emerald/5' : 'border-red-500/20 bg-red-500/5'">

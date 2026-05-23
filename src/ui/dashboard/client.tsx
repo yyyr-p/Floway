@@ -358,6 +358,8 @@ export function dashboardAssets() {
               max_prompt_tokens: '',
               max_output_tokens: '',
             },
+            flagOverridesEnabled: false,
+            flagOverridesValues: {},
             cost: {
               input: '',
               output: '',
@@ -380,6 +382,7 @@ export function dashboardAssets() {
         function normalizeAzureDeploymentForModal(deployment, open = false) {
           const source = cloneJson(deployment || {});
           const limits = source.limits || {};
+          const overrides = (source.flagOverrides && typeof source.flagOverrides === 'object') ? source.flagOverrides : null;
           return {
             ...blankAzureDeployment(),
             open,
@@ -393,6 +396,8 @@ export function dashboardAssets() {
               max_prompt_tokens: optionalNumberForInput(limits.max_prompt_tokens),
               max_output_tokens: optionalNumberForInput(limits.max_output_tokens),
             },
+            flagOverridesEnabled: overrides ? overrides.enabled === true : false,
+            flagOverridesValues: overrides && overrides.values && typeof overrides.values === 'object' ? { ...overrides.values } : {},
             cost: {
               input: optionalNumberForInput((source.cost || {}).input),
               output: optionalNumberForInput((source.cost || {}).output),
@@ -474,12 +479,20 @@ export function dashboardAssets() {
 
         function azureDeploymentPayloadFromModal(deployment) {
           const apiType = deployment.apiType || azureDeploymentApiTypeFromEndpoints(deployment.supportedEndpoints);
-          return {
+          const payload = {
             ...cleanAzureDeploymentPayload(deployment),
             deployment: typeof deployment.deployment === 'string' ? deployment.deployment.trim() : '',
             ...(nonEmptyString(deployment.publicModelId) ? { publicModelId: deployment.publicModelId.trim() } : {}),
             supportedEndpoints: azureDeploymentEndpointsForApiType(apiType),
           };
+          const values = deployment.flagOverridesValues ?? {};
+          if (deployment.flagOverridesEnabled) {
+            payload.flagOverrides = {
+              enabled: true,
+              values: { ...values },
+            };
+          }
+          return payload;
         }
 
         function azureDeploymentPayloadsFromUi(deployments) {
@@ -523,8 +536,8 @@ export function dashboardAssets() {
             name: '',
             enabled: true,
             sortOrder,
-            enabledFixes: [],
-            enabledFixesOpen: false,
+            flagOverrides: {},
+            flagOverridesOpen: false,
             saving: false,
             error: null,
             baseUrl: '',
@@ -640,8 +653,8 @@ export function dashboardAssets() {
           upstreams: [],
           upstreamsLoaded: false,
           upstreamTestingId: null,
-          upstreamFixCatalog: [],
-          upstreamFixCatalogLoaded: false,
+          upstreamFlagCatalog: [],
+          upstreamFlagCatalogLoaded: false,
           upstreamTestResult: null,
           upstreamModal: blankUpstreamModal('custom', 100),
           _chatAbort: null,
@@ -1003,21 +1016,21 @@ export function dashboardAssets() {
             } catch (e) {
               console.error('loadUpstreams:', e);
             }
-            if (!this.upstreamFixCatalogLoaded) {
+            if (!this.upstreamFlagCatalogLoaded) {
               try {
-                const resp = await fetch('/api/upstream-fixes', { headers: this.authHeaders() });
+                const resp = await fetch('/api/upstream-flags', { headers: this.authHeaders() });
                 if (resp.status === 401) {
                   this.logout();
                   return;
                 }
                 if (resp.ok) {
-                  this.upstreamFixCatalog = await resp.json();
-                  this.upstreamFixCatalogLoaded = true;
+                  this.upstreamFlagCatalog = await resp.json();
+                  this.upstreamFlagCatalogLoaded = true;
                 } else {
-                  console.error('loadUpstreams (fixes): HTTP', resp.status);
+                  console.error('loadUpstreams (flags): HTTP', resp.status);
                 }
               } catch (e) {
-                console.error('loadUpstreams (fixes):', e);
+                console.error('loadUpstreams (flags):', e);
               }
             }
           },
@@ -1162,14 +1175,14 @@ export function dashboardAssets() {
               return;
             }
             const config = this.upstreamConfig(existing);
-            const existingFixes = Array.isArray(existing.enabled_fixes) ? [...existing.enabled_fixes] : [];
+            const overrides = (existing.flag_overrides && typeof existing.flag_overrides === 'object') ? { ...existing.flag_overrides } : {};
             const modal = blankUpstreamModal(existing.provider, existing.sort_order ?? this.nextUpstreamSortOrder());
             modal.open = true;
             modal.id = existing.id;
             modal.name = existing.name;
             modal.enabled = existing.enabled;
             modal.sortOrder = existing.sort_order;
-            modal.enabledFixes = existingFixes;
+            modal.flagOverrides = overrides;
 
             if (existing.provider === 'custom') {
               const overrides = { ...blankPathOverrides(), ...(config.pathOverrides ?? {}) };
@@ -1303,11 +1316,75 @@ export function dashboardAssets() {
             this.upstreamModal.deployments.splice(index, 1);
           },
 
-          toggleUpstreamFix(id) {
-            const list = this.upstreamModal.enabledFixes;
-            const idx = list.indexOf(id);
-            if (idx === -1) list.push(id);
-            else list.splice(idx, 1);
+          upstreamFlagState(id) {
+            const v = this.upstreamModal.flagOverrides[id];
+            if (v === true) return 'on';
+            if (v === false) return 'off';
+            return 'inherit';
+          },
+
+          setUpstreamFlagState(id, state) {
+            const next = { ...this.upstreamModal.flagOverrides };
+            if (state === 'on') next[id] = true;
+            else if (state === 'off') next[id] = false;
+            else delete next[id];
+            this.upstreamModal.flagOverrides = next;
+          },
+
+          // What the upstream-level "Inherit" radio resolves to: the provider's
+          // default for this flag. 'on' if the provider kind is in the flag's
+          // defaultFor list, otherwise 'off'.
+          upstreamFlagInheritedFrom(flag) {
+            const defaults = Array.isArray(flag.defaultFor) ? flag.defaultFor : [];
+            return defaults.includes(this.upstreamModal.provider) ? 'on' : 'off';
+          },
+
+          // Resolved upstream-effective state for a flag id: applies the
+          // upstream modal's overrides on top of provider defaults. Used by
+          // the per-deployment override section to label its "Inherit" radio.
+          upstreamFlagEffective(id) {
+            const explicit = this.upstreamModal.flagOverrides[id];
+            if (typeof explicit === 'boolean') return explicit ? 'on' : 'off';
+            const flag = this.upstreamFlagCatalog.find(f => f.id === id);
+            const defaults = flag && Array.isArray(flag.defaultFor) ? flag.defaultFor : [];
+            return defaults.includes(this.upstreamModal.provider) ? 'on' : 'off';
+          },
+
+          // CSS class for a flag-state pill. Selected On glows accent-emerald;
+          // selected Off glows accent-rose; selected Inherit uses accent-cyan
+          // when the inherited resolved state is "on", neutral gray when "off".
+          // Unselected pills stay dim regardless of which state they represent.
+          flagPillClass(state, selected, inheritedTo) {
+            if (!selected) return 'border-white/10 text-gray-500 hover:bg-white/5';
+            if (state === 'on') return 'bg-accent-emerald/15 text-accent-emerald border-accent-emerald/40';
+            if (state === 'off') return 'bg-accent-rose/15 text-accent-rose border-accent-rose/40';
+            return inheritedTo === 'on'
+              ? 'bg-accent-cyan/20 text-accent-cyan border-accent-cyan/40'
+              : 'bg-white/10 text-gray-200 border-white/20';
+          },
+
+          deploymentFlagState(deployment, id) {
+            const v = (deployment.flagOverridesValues ?? {})[id];
+            if (v === true) return 'on';
+            if (v === false) return 'off';
+            return 'inherit';
+          },
+
+          setDeploymentFlagState(deployment, id, state) {
+            const next = { ...(deployment.flagOverridesValues ?? {}) };
+            if (state === 'on') next[id] = true;
+            else if (state === 'off') next[id] = false;
+            else delete next[id];
+            deployment.flagOverridesValues = next;
+          },
+
+          toggleDeploymentFlagOverridesEnabled(deployment) {
+            if (deployment.flagOverridesEnabled) {
+              deployment.flagOverridesEnabled = false;
+              deployment.flagOverridesValues = {};
+            } else {
+              deployment.flagOverridesEnabled = true;
+            }
           },
 
           buildCustomUpstreamConfig() {
@@ -1343,12 +1420,11 @@ export function dashboardAssets() {
               name: this.upstreamModal.name,
               enabled: this.upstreamModal.enabled,
               sort_order: this.upstreamModal.sortOrder,
+              flag_overrides: { ...this.upstreamModal.flagOverrides },
             };
             if (this.upstreamModal.provider === 'custom') {
-              body.enabled_fixes = this.upstreamModal.enabledFixes;
               body.config = this.buildCustomUpstreamConfig();
             } else if (this.upstreamModal.provider === 'azure') {
-              body.enabled_fixes = this.upstreamModal.enabledFixes;
               body.config = this.buildAzureUpstreamConfig();
             }
             return body;

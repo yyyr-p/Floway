@@ -8,8 +8,8 @@ import { eventResult } from '../../../shared/errors/result.ts';
 
 const okEvents = () => Promise.resolve(eventResult((async function* () {})(), testTelemetryModelIdentity));
 
-const emitInput = (payload: ChatCompletionsPayload, enabledFixes: ReadonlySet<string> = new Set()): ReturnType<typeof chatCompletionsInvocation> =>
-  chatCompletionsInvocation(payload, enabledFixes);
+const emitInput = (payload: ChatCompletionsPayload, enabledFlags: ReadonlySet<string> = new Set(['disable-reasoning-on-forced-tool-choice'])): ReturnType<typeof chatCompletionsInvocation> =>
+  chatCompletionsInvocation(payload, enabledFlags);
 
 test('chat completions required tool_choice strips reasoning_effort', async () => {
   const input = emitInput({
@@ -48,7 +48,7 @@ test('chat completions vendor flags add explicit disable fields', async () => {
       reasoning_effort: 'high',
       tool_choice: 'required',
     },
-    new Set(['vendor-deepseek', 'vendor-qwen']),
+    new Set(['disable-reasoning-on-forced-tool-choice', 'vendor-deepseek', 'vendor-qwen']),
   );
 
   await withReasoningDisabledOnForcedToolChoice(input, stubRequestContext, okEvents);

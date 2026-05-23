@@ -11,7 +11,7 @@ const upstream = (overrides: Partial<UpstreamRecord> & Pick<UpstreamRecord, 'id'
   enabled: true,
   updatedAt: overrides.createdAt,
   config: { nested: { value: overrides.id }, endpoints: ['chat_completions'] },
-  enabledFixes: [],
+  flagOverrides: {},
   ...overrides,
 });
 
@@ -63,7 +63,7 @@ test('memory upstream repo saves, lists, updates, deletes, and clears rows', asy
     createdAt: '2099-01-01T00:00:00.000Z',
     updatedAt: '2026-05-21T10:00:04.000Z',
     config: { nested: { value: 'updated' }, supportedEndpoints: ['responses'] },
-    enabledFixes: ['retry-tool-use'],
+    flagOverrides: { 'retry-tool-use': true },
   });
   await repo.save(updatedCustom);
 
@@ -87,7 +87,7 @@ test('memory upstream repo saves, lists, updates, deletes, and clears rows', asy
   assertEquals(await repo.list(), []);
 });
 
-test('memory upstream repo deeply clones configs and enabled fixes at the repo boundary', async () => {
+test('memory upstream repo deeply clones configs and flag overrides at the repo boundary', async () => {
   const repo = new InMemoryRepo().upstreams;
   const original = upstream({
     id: 'up_custom_clone',
@@ -100,15 +100,15 @@ test('memory upstream repo deeply clones configs and enabled fixes at the repo b
         headers: ['authorization'],
       },
     },
-    enabledFixes: ['z-fix', 'a-fix'],
+    flagOverrides: { 'z-fix': true, 'a-fix': true },
   });
 
   await repo.save(original);
-  original.enabledFixes.push('mutated-after-save');
+  original.flagOverrides['mutated-after-save'] = true;
   (original.config as { nested: { headers: string[] } }).nested.headers.push('mutated-after-save');
 
   const saved = await repo.getById('up_custom_clone');
-  assertEquals(saved?.enabledFixes, ['a-fix', 'z-fix']);
+  assertEquals(saved?.flagOverrides, { 'a-fix': true, 'z-fix': true });
   assertEquals(saved?.config, {
     nested: {
       baseUrl: 'https://example.test/v1',
@@ -117,10 +117,10 @@ test('memory upstream repo deeply clones configs and enabled fixes at the repo b
   });
 
   const listed = await repo.list();
-  listed[0].enabledFixes.push('mutated-after-list');
+  listed[0].flagOverrides['mutated-after-list'] = true;
   (listed[0].config as { nested: { headers: string[] } }).nested.headers.push('mutated-after-list');
 
-  assertEquals((await repo.getById('up_custom_clone'))?.enabledFixes, ['a-fix', 'z-fix']);
+  assertEquals((await repo.getById('up_custom_clone'))?.flagOverrides, { 'a-fix': true, 'z-fix': true });
   assertEquals((await repo.getById('up_custom_clone'))?.config, {
     nested: {
       baseUrl: 'https://example.test/v1',
@@ -129,7 +129,7 @@ test('memory upstream repo deeply clones configs and enabled fixes at the repo b
   });
 });
 
-test('memory upstream repo sorts and dedupes enabled fixes when saving rows', async () => {
+test('memory upstream repo sorts flag overrides by key when saving rows', async () => {
   const repo = new InMemoryRepo().upstreams;
 
   await repo.save(
@@ -138,11 +138,11 @@ test('memory upstream repo sorts and dedupes enabled fixes when saving rows', as
       provider: 'copilot',
       sortOrder: 0,
       createdAt: '2026-05-21T10:00:00.000Z',
-      enabledFixes: ['z-fix', 'a-fix', 'z-fix', 'm-fix', 'a-fix'],
+      flagOverrides: { 'z-fix': true, 'a-fix': false, 'm-fix': true },
     }),
   );
 
-  assertEquals((await repo.getById('up_copilot_fixes'))?.enabledFixes, ['a-fix', 'm-fix', 'z-fix']);
+  assertEquals((await repo.getById('up_copilot_fixes'))?.flagOverrides, { 'a-fix': false, 'm-fix': true, 'z-fix': true });
 });
 
 const exerciseD1UpstreamRepo = async (repo: UpstreamRepo) => {
@@ -154,7 +154,7 @@ const exerciseD1UpstreamRepo = async (repo: UpstreamRepo) => {
     createdAt: '2026-05-21T10:00:02.000Z',
     updatedAt: '2026-05-21T10:00:02.000Z',
     config: { baseUrl: 'https://custom.example/v1', bearerToken: 'sk-custom', supportedEndpoints: ['chat_completions'] },
-    enabledFixes: ['z-fix', 'a-fix', 'z-fix'],
+    flagOverrides: { 'z-fix': true, 'a-fix': true },
   });
   const copilot = upstream({
     id: 'up_copilot_d1',
@@ -183,7 +183,7 @@ const exerciseD1UpstreamRepo = async (repo: UpstreamRepo) => {
     (await repo.list()).map(row => row.id),
     ['up_azure_d1', 'up_copilot_d1', 'up_custom_d1'],
   );
-  assertEquals((await repo.getById('up_custom_d1'))?.enabledFixes, ['a-fix', 'z-fix']);
+  assertEquals((await repo.getById('up_custom_d1'))?.flagOverrides, { 'a-fix': true, 'z-fix': true });
   assertEquals(await repo.getById('missing'), null);
 
   await repo.save({
@@ -194,7 +194,7 @@ const exerciseD1UpstreamRepo = async (repo: UpstreamRepo) => {
     createdAt: '2099-01-01T00:00:00.000Z',
     updatedAt: '2026-05-21T10:00:04.000Z',
     config: { baseUrl: 'https://updated.example/v1', bearerToken: 'sk-updated', supportedEndpoints: ['responses'] },
-    enabledFixes: ['m-fix', 'a-fix'],
+    flagOverrides: { 'm-fix': true, 'a-fix': true },
   });
   assertEquals(
     (await repo.list()).map(row => [row.id, row.name, row.enabled]),
@@ -232,13 +232,13 @@ test('D1 upstream repo rejects malformed stored upstream JSON', async () => {
     created_at: '2026-05-21T10:00:00.000Z',
     updated_at: '2026-05-21T10:00:00.000Z',
     config_json: '{bad json',
-    enabled_fixes: '[]',
+    flag_overrides: '{}',
   });
 
   await assertRejects(() => new D1Repo(db).upstreams.list(), Error, 'Malformed upstream config JSON for up_bad_config');
 });
 
-test('D1 upstream repo rejects malformed stored enabled fixes JSON', async () => {
+test('D1 upstream repo rejects malformed stored flag overrides JSON', async () => {
   const db = new FakeUpstreamsD1Database();
   db.rows.push({
     id: 'up_bad_fixes',
@@ -249,10 +249,52 @@ test('D1 upstream repo rejects malformed stored enabled fixes JSON', async () =>
     created_at: '2026-05-21T10:00:00.000Z',
     updated_at: '2026-05-21T10:00:00.000Z',
     config_json: '{}',
-    enabled_fixes: '{bad json',
+    flag_overrides: '{bad json',
   });
 
-  await assertRejects(() => new D1Repo(db).upstreams.getById('up_bad_fixes'), Error, 'Malformed upstream enabled_fixes JSON for up_bad_fixes');
+  await assertRejects(() => new D1Repo(db).upstreams.getById('up_bad_fixes'), Error, 'Malformed upstream flag_overrides JSON for up_bad_fixes');
+});
+
+test('D1 upstream repo rejects array-shaped flag_overrides with helpful message', async () => {
+  const db = new FakeUpstreamsD1Database();
+  db.rows.push({
+    id: 'up_array_fixes',
+    provider: 'custom',
+    name: 'Array Fixes',
+    enabled: 1,
+    sort_order: 0,
+    created_at: '2026-05-21T10:00:00.000Z',
+    updated_at: '2026-05-21T10:00:00.000Z',
+    config_json: '{}',
+    flag_overrides: '[]',
+  });
+
+  await assertRejects(
+    () => new D1Repo(db).upstreams.getById('up_array_fixes'),
+    Error,
+    'Upstream up_array_fixes flag_overrides must be a JSON object, got array',
+  );
+});
+
+test('D1 upstream repo rejects non-boolean value in flag_overrides with helpful message', async () => {
+  const db = new FakeUpstreamsD1Database();
+  db.rows.push({
+    id: 'up_nonbool_fixes',
+    provider: 'custom',
+    name: 'Non-boolean Fixes',
+    enabled: 1,
+    sort_order: 0,
+    created_at: '2026-05-21T10:00:00.000Z',
+    updated_at: '2026-05-21T10:00:00.000Z',
+    config_json: '{}',
+    flag_overrides: '{"x": 1}',
+  });
+
+  await assertRejects(
+    () => new D1Repo(db).upstreams.getById('up_nonbool_fixes'),
+    Error,
+    'Upstream up_nonbool_fixes flag_overrides["x"] must be a boolean, got number',
+  );
 });
 
 test('migration 0010 creates unified upstreams and rewrites legacy upstream identities', async () => {
@@ -365,7 +407,7 @@ type FakeUpstreamRow = {
   created_at: string;
   updated_at: string;
   config_json: string;
-  enabled_fixes: string;
+  flag_overrides: string;
 };
 
 class FakeUpstreamsD1PreparedStatement {
@@ -433,7 +475,7 @@ class FakeUpstreamsD1Database implements D1Database {
   }
 
   upsert(binds: unknown[]): void {
-    const [id, provider, name, enabled, sortOrder, createdAt, updatedAt, configJson, enabledFixes] = binds as [string, string, string, number, number, string, string, string, string];
+    const [id, provider, name, enabled, sortOrder, createdAt, updatedAt, configJson, flagOverrides] = binds as [string, string, string, number, number, string, string, string, string];
     const existingIndex = this.rows.findIndex(candidate => candidate.id === id);
     const preservedCreatedAt = existingIndex >= 0 ? this.rows[existingIndex].created_at : createdAt;
     const row = {
@@ -445,7 +487,7 @@ class FakeUpstreamsD1Database implements D1Database {
       created_at: preservedCreatedAt,
       updated_at: updatedAt,
       config_json: configJson,
-      enabled_fixes: enabledFixes,
+      flag_overrides: flagOverrides,
     };
     if (existingIndex >= 0) {
       this.rows[existingIndex] = row;

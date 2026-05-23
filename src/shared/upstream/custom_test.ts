@@ -18,7 +18,7 @@ const baseRecord: UpstreamRecord = {
     bearerToken: 'sk-test',
     supportedEndpoints: ['/chat/completions'],
   },
-  enabledFixes: [],
+  flagOverrides: {},
 };
 
 test('createCustomUpstream uses default /v1/* paths', async () => {
@@ -106,17 +106,6 @@ test('createCustomUpstream sends the configured bearer token', async () => {
   );
 
   assertEquals(authHeader, 'Bearer sk-test');
-});
-
-test('createCustomUpstream surfaces the configured enabled fixes as a Set', () => {
-  const none = createCustomUpstream(baseRecord);
-  const withFix = createCustomUpstream({
-    ...baseRecord,
-    enabledFixes: ['deepseek-reasoning-dialect'],
-  });
-
-  assertEquals(none.enabledFixes.size, 0);
-  assertEquals(withFix.enabledFixes.has('deepseek-reasoning-dialect'), true);
 });
 
 test('createCustomUpstream rejects malformed opaque config instead of dropping endpoints', () => {

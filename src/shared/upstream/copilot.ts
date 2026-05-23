@@ -36,10 +36,6 @@ export const createCopilotUpstream = (id: string, name: string, githubToken: str
     name,
     kind: 'copilot',
     supportedEndpoints: COPILOT_SUPPORTED_ENDPOINTS,
-    // Admin's explicit opt-in set. Empty for Copilot: Copilot provider code
-    // owns its default fixes and Copilot-only structural workarounds before
-    // this low-level adapter sends the HTTP request.
-    enabledFixes: new Set<string>(),
     fetch: async (endpoint, init, options?: CopilotUpstreamFetchOptions) => {
       try {
         return await copilotFetch(COPILOT_PATHS[endpoint], init, githubToken, accountType, options);

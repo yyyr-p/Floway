@@ -44,6 +44,7 @@ export interface InternalModel {
 export interface UpstreamModel extends InternalModel {
   upstreamEndpoints: readonly ModelEndpoint[];
   providerData?: unknown;
+  enabledFlags: ReadonlySet<string>;
 }
 
 export interface ProviderModelRecord {
@@ -51,7 +52,7 @@ export interface ProviderModelRecord {
   providerKind: UpstreamProviderKind;
   provider: ModelProvider;
   upstreamModel: UpstreamModel;
-  enabledFixes: ReadonlySet<string>;
+  enabledFlags: ReadonlySet<string>;
   sourceInterceptors?: ProviderSourceInterceptors;
   targetInterceptors?: ProviderTargetInterceptors;
 }
@@ -84,7 +85,6 @@ export interface ModelProviderInstance {
   providerKind: UpstreamProviderKind;
   name: string;
   provider: ModelProvider;
-  enabledFixes: ReadonlySet<string>;
   sourceInterceptors?: ProviderSourceInterceptors;
   targetInterceptors?: ProviderTargetInterceptors;
   resolveRequestedModelId?(modelId: string): string | undefined;

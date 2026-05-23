@@ -1068,7 +1068,7 @@ test('dashboardApp keeps supported Azure deployment metadata with a single endpo
     name: 'Azure UI',
     enabled: true,
     sort_order: 3,
-    enabled_fixes: [],
+    flag_overrides: {},
     config: {
       endpoint: 'https://example.openai.azure.com/openai/v1',
       apiKeySet: true,
@@ -1425,7 +1425,7 @@ test('DashboardPage renders Settings as masonry settings columns', () => {
   assertStringIncludes(html, 'Test Upstream');
   assertStringIncludes(html, 'API Endpoints');
   assertStringIncludes(html, 'Web Search');
-  assertStringIncludes(html, 'Enabled Fixes');
+  assertStringIncludes(html, 'Feature Flags');
   assertStringIncludes(html, 'Path Overrides');
   assertStringIncludes(html, 'Export Data');
   assertStringIncludes(html, 'Import Data');

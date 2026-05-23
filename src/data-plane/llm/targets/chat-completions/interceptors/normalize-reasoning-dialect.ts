@@ -6,9 +6,9 @@ import { eventFrame } from '../../../shared/stream/types.ts';
  * DeepSeek's reasoner endpoints expose thinking text through the legacy
  * `reasoning_content` scalar both in responses and in the assistant messages a
  * client must replay during multi-turn tool calls. The gateway's internal
- * protocol is the OpenAI shape, so on upstreams with this fix enabled we rename
- * fields on the way out (`reasoning_text` → `reasoning_content`) and on the way
- * back in (`reasoning_content` → `reasoning_text`).
+ * protocol is the OpenAI shape, so on upstreams with this flag enabled we
+ * rename fields on the way out (`reasoning_text` → `reasoning_content`) and on
+ * the way back in (`reasoning_content` → `reasoning_text`).
  *
  * This is required for correctness, not just aesthetics: DeepSeek documents
  * `reasoning_content` as part of the assistant message clients replay during
@@ -16,9 +16,9 @@ import { eventFrame } from '../../../shared/stream/types.ts';
  * field is omitted.
  *
  * Gating: bound to the `deepseek-reasoning-dialect` flag (declared in
- * ../../../../providers/fixes.ts) and enabled per-upstream via
- * `Upstream.enabledFixes`. The assembler in ../index.ts only attaches this
- * interceptor when the upstream opted in, so the body below is unconditional.
+ * ../../../../providers/flags.ts). The interceptor is always attached to the
+ * Chat Completions target list and early-returns inside its body when the
+ * flag is not set on the invocation.
  *
  * References:
  * - https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
@@ -77,6 +77,8 @@ const rewriteInboundChunk = (chunk: ChatCompletionChunk): ChatCompletionChunk =>
 };
 
 export const withDeepseekReasoningDialect: ChatCompletionsInterceptor = async (ctx, _request, run) => {
+  if (!ctx.enabledFlags.has('deepseek-reasoning-dialect')) return await run();
+
   ctx.payload = rewriteOutboundPayload(ctx.payload);
 
   const result = await run();

@@ -24,7 +24,7 @@ const okEvents = () =>
     ),
   );
 
-const invocation = (payload: ResponsesPayload, enabledFixes: ReadonlySet<string> = new Set()): ResponsesInvocation => ({
+const invocation = (payload: ResponsesPayload, enabledFlags: ReadonlySet<string> = new Set(['disable-reasoning-on-forced-tool-choice'])): ResponsesInvocation => ({
   sourceApi: 'responses',
   targetApi: 'responses',
   model: payload.model,
@@ -32,7 +32,7 @@ const invocation = (payload: ResponsesPayload, enabledFixes: ReadonlySet<string>
   payload,
   provider: stubProvider(),
   upstreamModel: stubUpstreamModel(),
-  enabledFixes,
+  enabledFlags,
 });
 
 test('responses required tool_choice strips reasoning', async () => {
@@ -72,7 +72,7 @@ test('responses vendor flags add explicit disable fields', async () => {
       reasoning: { effort: 'high' },
       tool_choice: 'required',
     },
-    new Set(['vendor-deepseek', 'vendor-qwen']),
+    new Set(['disable-reasoning-on-forced-tool-choice', 'vendor-deepseek', 'vendor-qwen']),
   );
 
   await withReasoningDisabledOnForcedToolChoice(input, stubRequest, okEvents);

@@ -7,7 +7,7 @@ import type { ModelEndpoint, ProviderModelRecord } from '../../../providers/type
 import type { ChatCompletionsPayload } from '../../../shared/protocol/chat-completions.ts';
 import type { MessagesPayload, MessagesStreamEventData } from '../../../shared/protocol/messages.ts';
 import type { ResponsesPayload } from '../../../shared/protocol/responses.ts';
-import { type LlmTargetApi, type MessagesInterceptor, type MessagesInvocation, runInterceptors } from '../../interceptors.ts';
+import { type LlmTargetApi, type MessagesInvocation, runInterceptors } from '../../interceptors.ts';
 import type { ExecuteResult } from '../../shared/errors/result.ts';
 import type { ProtocolFrame } from '../../shared/stream/types.ts';
 import { emitToChatCompletions } from '../../targets/chat-completions/emit.ts';
@@ -46,8 +46,6 @@ export const bodyAnthropicBetaResponse = (param: string): Response =>
     { status: 400 },
   );
 
-const messagesSourceInterceptorsForProvider = (binding: ProviderModelRecord): readonly MessagesInterceptor[] => [...messagesSourceInterceptors, ...(binding.sourceInterceptors?.messages ?? [])];
-
 const messagesInvocation = <TPayload extends { model: string }>(
   binding: ProviderModelRecord,
   targetApi: LlmTargetApi,
@@ -61,7 +59,7 @@ const messagesInvocation = <TPayload extends { model: string }>(
   upstream: binding.upstream,
   upstreamModel: binding.upstreamModel,
   provider: binding.provider,
-  enabledFixes: binding.enabledFixes,
+  enabledFlags: binding.enabledFlags,
   ...(binding.targetInterceptors !== undefined ? { targetInterceptors: binding.targetInterceptors } : {}),
   payload,
   ...(anthropicBeta !== undefined ? { anthropicBeta } : {}),
@@ -110,7 +108,7 @@ export const serveMessages = async (c: Context): Promise<Response> => {
             await emitToChatCompletions(messagesInvocation(binding, 'chat-completions', model, tgtPayload), request)),
         };
 
-        result = await runInterceptors(invocation, request, messagesSourceInterceptorsForProvider(binding), () =>
+        result = await runInterceptors(invocation, request, [...messagesSourceInterceptors, ...(binding.sourceInterceptors?.messages ?? [])], () =>
           emits[target](invocation.payload, { model, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }

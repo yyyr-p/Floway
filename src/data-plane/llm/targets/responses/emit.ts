@@ -1,5 +1,5 @@
 import { responsesStreamFramesToEvents } from './events/from-stream.ts';
-import { interceptorsForResponses } from './interceptors/index.ts';
+import { responsesBaseInterceptors } from './interceptors/index.ts';
 import type { TelemetryModelIdentity } from '../../../../repo/types.ts';
 import type { ResponsesPayload } from '../../../shared/protocol/responses.ts';
 import { type RequestContext, type ResponsesInvocation, runInterceptors } from '../../interceptors.ts';
@@ -14,7 +14,7 @@ export const emitToResponses = async (invocation: ResponsesInvocation, request: 
   let modelIdentity: TelemetryModelIdentity | undefined;
 
   try {
-    return await runInterceptors(invocation, request, interceptorsForResponses(invocation), async () => {
+    return await runInterceptors(invocation, request, [...responsesBaseInterceptors, ...(invocation.targetInterceptors?.responses ?? [])], async () => {
       const upstreamStartedAt = performance.now();
       const { model: _model, ...body }: ResponsesPayload = invocation.payload;
       const providerResult = await invocation.provider.callResponses(invocation.upstreamModel, body, request.downstreamAbortSignal);

@@ -974,11 +974,14 @@ const resolveActiveMessagesWebSearchProvider = async (apiKeyId: string | undefin
  * response back to the Anthropic native `server_tool_use` /
  * `web_search_tool_result` / `web_search_result_location` shape.
  *
- * Base Messages routing applies this shim for Messages via non-Messages
- * targets. Providers may also register it for native Messages targets when the
- * upstream should not receive Anthropic native web-search tools directly.
+ * The shim is unconditional for non-native Messages targets (Responses /
+ * Chat Completions cannot carry Anthropic server tools), and gated by the
+ * `messages-web-search-shim` flag for native Messages targets (the upstream
+ * may or may not be able to serve web_search natively).
  */
 export const withMessagesWebSearchShim: MessagesInterceptor = async (ctx, request, run) => {
+  if (ctx.targetApi === 'messages' && !ctx.enabledFlags.has('messages-web-search-shim')) return await run();
+
   const prepared = prepareMessagesWebSearchShimRequest(ctx.payload);
 
   if (prepared.type === 'invalid-request') {
@@ -1002,5 +1005,3 @@ export const withMessagesWebSearchShim: MessagesInterceptor = async (ctx, reques
     events: rewriteMessagesWebSearchEventsToNative(result.events, prepared.state, provider.provider),
   };
 };
-
-export const withMessagesWebSearchShimForTranslatedTargets: MessagesInterceptor = async (ctx, request, run) => (ctx.targetApi === 'messages' ? await run() : await withMessagesWebSearchShim(ctx, request, run));

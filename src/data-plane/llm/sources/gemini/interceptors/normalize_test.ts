@@ -21,7 +21,7 @@ const invocation = (payload: GeminiGenerateContentRequest): GeminiInvocation => 
   upstream: 'test-upstream',
   upstreamModel: {} as never,
   provider: {} as never,
-  enabledFixes: new Set(),
+  enabledFlags: new Set(),
   payload,
 });
 

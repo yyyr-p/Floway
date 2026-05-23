@@ -26,20 +26,21 @@ const hasForcedToolChoice = (payload: ResponsesPayload): boolean => {
   return true;
 };
 
-const disableResponsesReasoning = (payload: ResponsesPayload, enabledFixes: ReadonlySet<string>): ResponsesPayloadWithVendorReasoningDisable => {
+const disableResponsesReasoning = (payload: ResponsesPayload, enabledFlags: ReadonlySet<string>): ResponsesPayloadWithVendorReasoningDisable => {
   const { reasoning: _reasoning, ...rest } = payload;
   const out: ResponsesPayloadWithVendorReasoningDisable = rest;
-  if (enabledFixes.has('vendor-deepseek')) {
+  if (enabledFlags.has('vendor-deepseek')) {
     out.thinking = { type: 'disabled' };
   }
-  if (enabledFixes.has('vendor-qwen')) {
+  if (enabledFlags.has('vendor-qwen')) {
     out.enable_thinking = false;
   }
   return out;
 };
 
 export const withReasoningDisabledOnForcedToolChoice: ResponsesInterceptor = async (ctx, _request, run) => {
+  if (!ctx.enabledFlags.has('disable-reasoning-on-forced-tool-choice')) return await run();
   if (!hasForcedToolChoice(ctx.payload)) return await run();
-  ctx.payload = disableResponsesReasoning(ctx.payload, ctx.enabledFixes) as ResponsesPayload;
+  ctx.payload = disableResponsesReasoning(ctx.payload, ctx.enabledFlags) as ResponsesPayload;
   return await run();
 };

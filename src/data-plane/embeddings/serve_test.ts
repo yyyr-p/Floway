@@ -218,7 +218,7 @@ test('/v1/embeddings routes to custom upstream when model is only declared there
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://embed.example.com',
       bearerToken: 'sk-embed',
@@ -290,7 +290,7 @@ test('/v1/embeddings rejects model on custom upstream without /embeddings capabi
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://chat.example.com',
       bearerToken: 'sk-chat',
@@ -343,7 +343,7 @@ test('/v1/embeddings preserves custom upstream /models HTTP errors', async () =>
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://embed.example.com',
       bearerToken: 'sk-embed',
@@ -393,7 +393,7 @@ test('/v1/embeddings preserves model-load errors hidden by another provider', as
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://embed.example.com',
       bearerToken: 'sk-embed',

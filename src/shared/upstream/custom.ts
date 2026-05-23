@@ -125,7 +125,6 @@ export const createCustomUpstream = (record: UpstreamRecord): Upstream => {
     name: record.name,
     kind: 'custom',
     supportedEndpoints: config.supportedEndpoints,
-    enabledFixes: new Set(record.enabledFixes),
     fetch: async (endpoint, init: RequestInit, options?: UpstreamFetchOptions) => {
       const headers = new Headers(init.headers);
       headers.set('Authorization', `Bearer ${config.bearerToken}`);

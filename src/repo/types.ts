@@ -143,7 +143,7 @@ export interface UpstreamRecord {
   createdAt: string;
   updatedAt: string;
   config: unknown;
-  enabledFixes: string[];
+  flagOverrides: Record<string, boolean>;
 }
 
 export interface UpstreamRepo {

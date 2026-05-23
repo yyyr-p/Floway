@@ -1,5 +1,6 @@
 // In-memory repository implementation for testing
 
+import { normalizeFlagOverrides } from './flag-overrides.ts';
 import type {
   ApiKey,
   ApiKeyRepo,
@@ -339,12 +340,10 @@ class MemoryUpstreamRepo implements UpstreamRepo {
   }
 }
 
-const normalizeEnabledFixes = (enabledFixes: string[]): string[] => [...new Set(enabledFixes)].sort();
-
 const cloneUpstreamRecord = (upstream: UpstreamRecord): UpstreamRecord => ({
   ...upstream,
   config: structuredClone(upstream.config),
-  enabledFixes: normalizeEnabledFixes(upstream.enabledFixes),
+  flagOverrides: normalizeFlagOverrides(upstream.flagOverrides),
 });
 
 export class InMemoryRepo implements Repo {

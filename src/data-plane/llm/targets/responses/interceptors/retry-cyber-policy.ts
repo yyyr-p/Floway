@@ -272,6 +272,8 @@ const retryCyberPolicyEvents = async function* (
  * error-log TODO pattern.
  */
 export const withCyberPolicyRetried: ResponsesInterceptor = async (ctx, request, run) => {
+  if (!ctx.enabledFlags.has('retry-cyber-policy')) return await run();
+
   let finalResult: ResponsesResultFrames | undefined;
 
   for (let attempt = 0; attempt <= MAX_CYBER_POLICY_RETRIES; attempt++) {

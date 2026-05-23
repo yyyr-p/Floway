@@ -8,6 +8,7 @@ export const stubUpstreamModel = (overrides: Partial<UpstreamModel> = {}): Upstr
   limits: {},
   supports_generation: true,
   upstreamEndpoints: ['chat_completions', 'responses', 'messages'],
+  enabledFlags: new Set<string>(),
   ...overrides,
 });
 
@@ -28,14 +29,14 @@ export const testTelemetryModelIdentity: TelemetryModelIdentity = {
   modelKey: 'test-model-key', cost: null,
 };
 
-export const chatCompletionsInvocation = (payload: ChatCompletionsPayload, enabledFixes: ReadonlySet<string> = new Set()): ChatCompletionsInvocation => ({
+export const chatCompletionsInvocation = (payload: ChatCompletionsPayload, enabledFlags: ReadonlySet<string> = new Set()): ChatCompletionsInvocation => ({
   sourceApi: 'chat-completions',
   targetApi: 'chat-completions',
   model: payload.model,
   upstream: 'test-upstream',
   upstreamModel: stubUpstreamModel(),
   provider: stubProvider(),
-  enabledFixes,
+  enabledFlags,
   payload,
 });
 

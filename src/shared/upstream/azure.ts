@@ -1,5 +1,6 @@
 import { joinBaseAndPath } from './join.ts';
 import type { EndpointKey, Upstream, UpstreamFetchOptions } from './types.ts';
+import { isKnownFlagId } from '../../data-plane/providers/flags.ts';
 import type { ModelPricing } from '../../data-plane/providers/types.ts';
 import type { UpstreamRecord } from '../../repo/types.ts';
 
@@ -10,6 +11,12 @@ export interface AzureDeploymentConfig {
   display_name?: string;
   limits?: AzureDeploymentLimits;
   cost?: ModelPricing;
+  flagOverrides?: AzureDeploymentFlagOverrides;
+}
+
+export interface AzureDeploymentFlagOverrides {
+  enabled: boolean;
+  values: Record<string, boolean>;
 }
 
 export interface AzureDeploymentLimits {
@@ -141,6 +148,27 @@ const limitsField = (value: unknown, field: string): AzureDeploymentLimits | und
   };
 };
 
+const flagOverridesField = (value: unknown, field: string): AzureDeploymentFlagOverrides | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error(`Malformed azure upstream config: ${field} must be an object`);
+  if (typeof value.enabled !== 'boolean') throw new Error(`Malformed azure upstream config: ${field}.enabled must be a boolean`);
+  if (!isRecord(value.values)) throw new Error(`Malformed azure upstream config: ${field}.values must be an object`);
+  const unknown: string[] = [];
+  const values: Record<string, boolean> = {};
+  for (const [id, on] of Object.entries(value.values)) {
+    if (typeof on !== 'boolean') throw new Error(`Malformed azure upstream config: ${field}.values.${id} must be a boolean`);
+    if (!isKnownFlagId(id)) {
+      unknown.push(id);
+      continue;
+    }
+    values[id] = on;
+  }
+  if (unknown.length > 0) {
+    throw new Error(`Malformed azure upstream config: ${field}.values has unknown flag ids: ${unknown.join(', ')}`);
+  }
+  return { enabled: value.enabled, values };
+};
+
 const nonNegativeNumberField = (value: unknown, field: string): number => {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) {
     throw new Error(`Malformed azure upstream config: ${field} must be a finite non-negative number`);
@@ -176,6 +204,7 @@ const deploymentField = (value: unknown, index: number): AzureDeploymentConfig =
     ...(value.display_name !== undefined ? { display_name: optionalStringField(value.display_name, `deployments[${index}].display_name`) } : {}),
     ...(value.limits !== undefined ? { limits: limitsField(value.limits, `deployments[${index}].limits`) } : {}),
     ...(pricing ? { cost: pricing } : {}),
+    ...(value.flagOverrides !== undefined ? { flagOverrides: flagOverridesField(value.flagOverrides, `deployments[${index}].flagOverrides`) } : {}),
   };
 };
 
@@ -291,7 +320,6 @@ export const createAzureUpstream = (record: UpstreamRecord): Upstream => {
     name: record.name,
     kind: 'azure',
     supportedEndpoints: configuredSupportedEndpoints(config),
-    enabledFixes: new Set(record.enabledFixes),
     fetch: async (endpoint, init: RequestInit, options?: UpstreamFetchOptions) => {
       const headers = new Headers(init.headers);
       if (isAnthropicEndpoint(endpoint)) {

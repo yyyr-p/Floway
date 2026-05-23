@@ -34,7 +34,7 @@ const CUSTOM_UPSTREAM: UpstreamRecord = {
   sortOrder: 10,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
-  enabledFixes: ['messages-web-search-shim'],
+  flagOverrides: { 'messages-web-search-shim': true },
   config: {
     baseUrl: 'https://custom.example.com',
     bearerToken: 'sk-custom',
@@ -51,7 +51,7 @@ const COPILOT_UPSTREAM: UpstreamRecord = {
   sortOrder: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
-  enabledFixes: [],
+  flagOverrides: {},
   config: {
     githubToken: 'ghu-alice',
     accountType: 'individual',
@@ -72,7 +72,7 @@ const AZURE_UPSTREAM: UpstreamRecord = {
   sortOrder: 20,
   createdAt: '2026-01-01T00:00:00.000Z',
   updatedAt: '2026-01-01T00:00:00.000Z',
-  enabledFixes: [],
+  flagOverrides: {},
   config: {
     endpoint: 'https://example.openai.azure.com',
     apiKey: 'az-key',
@@ -404,7 +404,7 @@ test('import rejects invalid records before clearing existing data', async () =>
   });
   const badFixes = await doImport(app, 'replace', {
     apiKeys: [],
-    upstreams: [{ ...upstreamRecordToFullJson(CUSTOM_UPSTREAM), enabled_fixes: ['made-up-fix'] }],
+    upstreams: [{ ...upstreamRecordToFullJson(CUSTOM_UPSTREAM), flag_overrides: { 'made-up-fix': true } }],
     usage: [],
     searchUsage: [],
     performanceIncluded: false,
@@ -426,7 +426,7 @@ test('import rejects invalid records before clearing existing data', async () =>
   assertEquals(badUpstream.status, 400);
   assertEquals(String(badUpstream.body.error).includes('invalid upstreams at index 0'), true);
   assertEquals(badFixes.status, 400);
-  assertEquals(badFixes.body.error, 'invalid upstreams at index 0: Unknown enabled_fixes ids: made-up-fix');
+  assertEquals(badFixes.body.error, 'invalid upstreams at index 0: Unknown flag_overrides ids: made-up-fix');
   assertEquals(badSearchUsage.status, 400);
   assertEquals(badSearchUsage.body.error, 'invalid searchUsage record at index 0');
   assertEquals(await repo.apiKeys.list(), [KEY_A]);
@@ -481,6 +481,27 @@ test('import rejects legacy provider-prefixed upstream identities before mutatin
   assertEquals(legacyUsageUpstream.body.error, 'invalid usage at index 0: upstream must use a raw upstream id, not a legacy provider-prefixed identity');
   assertEquals(legacyPerformanceUpstream.status, 400);
   assertEquals(legacyPerformanceUpstream.body.error, 'invalid performance record at index 0');
+  assertEquals(await repo.apiKeys.list(), [KEY_A]);
+  assertEquals(await repo.upstreams.list(), [CUSTOM_UPSTREAM]);
+});
+
+test('import rejects legacy enabled_fixes payloads before mutating', async () => {
+  const { app, repo } = setup();
+  await repo.apiKeys.save(KEY_A);
+  await repo.upstreams.save(CUSTOM_UPSTREAM);
+
+  const { flag_overrides: _flagOverrides, ...customWithoutFlagOverrides } = upstreamRecordToFullJson(CUSTOM_UPSTREAM);
+  const legacyEnabledFixes = await doImport(app, 'replace', latestImportData({
+    upstreams: [{ ...customWithoutFlagOverrides, enabled_fixes: ['messages-web-search-shim'] }],
+  }));
+  const legacyAlongsideNew = await doImport(app, 'replace', latestImportData({
+    upstreams: [{ ...upstreamRecordToFullJson(CUSTOM_UPSTREAM), enabled_fixes: [] }],
+  }));
+
+  assertEquals(legacyEnabledFixes.status, 400);
+  assertEquals(String(legacyEnabledFixes.body.error).includes("legacy 'enabled_fixes' field is no longer supported"), true);
+  assertEquals(legacyAlongsideNew.status, 400);
+  assertEquals(String(legacyAlongsideNew.body.error).includes("legacy 'enabled_fixes' field is no longer supported"), true);
   assertEquals(await repo.apiKeys.list(), [KEY_A]);
   assertEquals(await repo.upstreams.list(), [CUSTOM_UPSTREAM]);
 });

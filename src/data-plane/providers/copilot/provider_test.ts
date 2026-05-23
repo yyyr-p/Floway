@@ -221,17 +221,42 @@ test('Copilot provider selects raw variants that support the target endpoint', a
   assertEquals(responsesBody?.model, 'claude-opus-4.7');
 });
 
-test('Copilot provider owns default response retry fix', async () => {
+test('Copilot provider exposes its default flag set via UpstreamModel.enabledFlags', async () => {
   const { copilotUpstream } = await setupAppTest();
   const instance = await createCopilotProvider({
     ...copilotUpstream,
-    enabledFixes: ['messages-web-search-shim'],
+    flagOverrides: { 'messages-web-search-shim': true },
   });
 
   assertEquals(instance.upstream, 'up_copilot');
   assertEquals(instance.name, copilotUpstream.name);
-  assertEquals(instance.enabledFixes.has('retry-cyber-policy'), true);
-  assertEquals(instance.enabledFixes.has('messages-web-search-shim'), true);
+
+  await withMockedFetch(
+    request => {
+      const url = new URL(request.url);
+      if (url.hostname === 'update.code.visualstudio.com') {
+        return jsonResponse(['1.110.1']);
+      }
+      if (url.pathname === '/copilot_internal/v2/token') {
+        return jsonResponse({
+          token: 'copilot-access-token',
+          expires_at: 4102444800,
+          refresh_in: 3600,
+        });
+      }
+      if (url.pathname === '/models') {
+        return jsonResponse(copilotModels([{ id: 'gpt-test', supported_endpoints: ['/chat/completions'] }]));
+      }
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const models = await instance.provider.getProvidedModels();
+      const model = models[0];
+      if (!model) throw new Error('expected at least one Copilot model in test fixture');
+      assertEquals(model.enabledFlags.has('retry-cyber-policy'), true);
+      assertEquals(model.enabledFlags.has('messages-web-search-shim'), true);
+    },
+  );
 });
 
 test('Copilot provider enables Copilot-owned Messages source interceptors by default', async () => {

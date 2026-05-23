@@ -64,7 +64,7 @@ export const buildCopilotUpstreamRecord = (githubAccount: CopilotAccountFixture,
     sortOrder: 0,
     createdAt: TEST_UPSTREAM_TIMESTAMP,
     updatedAt: TEST_UPSTREAM_TIMESTAMP,
-    enabledFixes: [],
+    flagOverrides: {},
     ...rest,
     config: overrideConfig ?? config,
   };
@@ -86,7 +86,7 @@ export const buildCustomUpstreamRecord = (overrides: Partial<UpstreamRecord> = {
     sortOrder: 100,
     createdAt: TEST_UPSTREAM_TIMESTAMP,
     updatedAt: TEST_UPSTREAM_TIMESTAMP,
-    enabledFixes: [],
+    flagOverrides: {},
     ...rest,
     config: overrideConfig ?? config,
   };
@@ -329,7 +329,6 @@ export const stubUpstream = (overrides: Partial<Upstream> = {}): Upstream => ({
   name: 'Test Upstream',
   kind: 'custom',
   supportedEndpoints: ['/chat/completions', '/responses', '/v1/messages'],
-  enabledFixes: new Set<string>(),
   fetch: () => Promise.reject(new Error('stubUpstream.fetch was called')),
   ...overrides,
 });
@@ -339,6 +338,7 @@ export const stubUpstreamModel = (overrides: Partial<UpstreamModel> = {}): Upstr
   limits: {},
   supports_generation: true,
   upstreamEndpoints: ['chat_completions', 'responses', 'messages'],
+  enabledFlags: new Set<string>(),
   ...overrides,
 });
 

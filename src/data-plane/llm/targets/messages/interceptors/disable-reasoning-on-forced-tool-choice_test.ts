@@ -24,6 +24,7 @@ const stubUpstreamModel = (): UpstreamModel => ({
   limits: {},
   supports_generation: true,
   upstreamEndpoints: ['messages'],
+  enabledFlags: new Set<string>(),
 });
 
 const testTelemetryModelIdentity: TelemetryModelIdentity = {
@@ -43,7 +44,7 @@ const invocation = (payload: MessagesPayload): MessagesInvocation => ({
   payload,
   provider: stubProvider(),
   upstreamModel: stubUpstreamModel(),
-  enabledFixes: new Set<string>(),
+  enabledFlags: new Set(['disable-reasoning-on-forced-tool-choice']),
 });
 
 const stubRequest: RequestContext = {

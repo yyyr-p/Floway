@@ -36,7 +36,7 @@ const createBody = (overrides: Record<string, unknown> = {}) => ({
   provider: 'custom',
   name: 'Test custom upstream',
   config: customConfig,
-  enabled_fixes: [],
+  flag_overrides: {},
   ...overrides,
 });
 
@@ -53,7 +53,7 @@ test('POST /api/upstreams creates custom upstreams and redacts bearer tokens', a
   const { repo, adminKey } = await setupAppTest();
   await repo.upstreams.deleteAll();
 
-  const resp = await requestApp('/api/upstreams', authed(adminKey, createBody({ enabled_fixes: ['deepseek-reasoning-dialect'] })));
+  const resp = await requestApp('/api/upstreams', authed(adminKey, createBody({ flag_overrides: { 'deepseek-reasoning-dialect': true } })));
 
   assertEquals(resp.status, 201);
   const created = (await resp.json()) as Record<string, any>;
@@ -61,7 +61,7 @@ test('POST /api/upstreams creates custom upstreams and redacts bearer tokens', a
   assertEquals(created.config.bearerToken, undefined);
   assertEquals(created.config.bearerTokenSet, true);
   assertEquals(created.config.baseUrl, 'https://custom.example.com');
-  assertEquals(created.enabled_fixes, ['deepseek-reasoning-dialect']);
+  assertEquals(created.flag_overrides, { 'deepseek-reasoning-dialect': true });
 
   const stored = await repo.upstreams.getById(created.id);
   assertEquals((stored?.config as Record<string, unknown>).bearerToken, 'sk-test');
@@ -165,7 +165,7 @@ test('PATCH /api/upstreams keeps Azure as a single endpoint config', async () =>
     sortOrder: 0,
     createdAt: '2026-05-22T00:00:00.000Z',
     updatedAt: '2026-05-22T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       endpoint: 'https://example.openai.azure.com/openai/v1',
       apiKey: 'az-secret',
@@ -257,16 +257,18 @@ test('POST /api/upstreams/:id/test probes custom, Azure, and Copilot models', as
   );
 });
 
-test('GET /api/upstream-fixes returns the flag catalog and requires admin auth', async () => {
+test('GET /api/upstream-flags returns the flag catalog and requires admin auth', async () => {
   const { adminKey, apiKey } = await setupAppTest();
 
-  const resp = await requestApp('/api/upstream-fixes', { method: 'GET', headers: { 'x-api-key': adminKey } });
+  const resp = await requestApp('/api/upstream-flags', { method: 'GET', headers: { 'x-api-key': adminKey } });
   assertEquals(resp.status, 200);
   const catalog = (await resp.json()) as Array<Record<string, unknown>>;
   const deepseek = catalog.find(e => e.id === 'deepseek-reasoning-dialect');
-  assertEquals(deepseek?.appliesTo, ['chat_completions']);
-  assertEquals('defaultFor' in deepseek!, false);
+  assertEquals(typeof deepseek?.label, 'string');
+  assertEquals(Array.isArray(deepseek!.defaultFor), true);
+  // `appliesTo` was dropped from the catalog during the Feature Flags refactor; guard against silent re-introduction.
+  assertEquals('appliesTo' in deepseek!, false);
 
-  const forbidden = await requestApp('/api/upstream-fixes', { method: 'GET', headers: { 'x-api-key': apiKey.key } });
+  const forbidden = await requestApp('/api/upstream-flags', { method: 'GET', headers: { 'x-api-key': apiKey.key } });
   assertEquals(forbidden.status, 403);
 });

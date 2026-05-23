@@ -1,3 +1,4 @@
+import { normalizeFlagOverrides } from './flag-overrides.ts';
 import type {
   ApiKey,
   ApiKeyRepo,
@@ -640,14 +641,14 @@ class D1UpstreamRepo implements UpstreamRepo {
 
   async list(): Promise<UpstreamRecord[]> {
     const { results } = await this.db
-      .prepare('SELECT id, provider, name, enabled, sort_order, created_at, updated_at, config_json, enabled_fixes FROM upstreams ORDER BY sort_order, created_at')
+      .prepare('SELECT id, provider, name, enabled, sort_order, created_at, updated_at, config_json, flag_overrides FROM upstreams ORDER BY sort_order, created_at')
       .all<UpstreamRow>();
     return results.map(toUpstreamRecord);
   }
 
   async getById(id: string): Promise<UpstreamRecord | null> {
     const row = await this.db
-      .prepare('SELECT id, provider, name, enabled, sort_order, created_at, updated_at, config_json, enabled_fixes FROM upstreams WHERE id = ?')
+      .prepare('SELECT id, provider, name, enabled, sort_order, created_at, updated_at, config_json, flag_overrides FROM upstreams WHERE id = ?')
       .bind(id)
       .first<UpstreamRow>();
     return row ? toUpstreamRecord(row) : null;
@@ -658,7 +659,7 @@ class D1UpstreamRepo implements UpstreamRepo {
     // wins, and re-saves preserve that timestamp regardless of what the caller passes.
     await this.db
       .prepare(
-        `INSERT INTO upstreams (id, provider, name, enabled, sort_order, created_at, updated_at, config_json, enabled_fixes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO upstreams (id, provider, name, enabled, sort_order, created_at, updated_at, config_json, flag_overrides) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            provider = excluded.provider,
            name = excluded.name,
@@ -666,7 +667,7 @@ class D1UpstreamRepo implements UpstreamRepo {
            sort_order = excluded.sort_order,
            updated_at = excluded.updated_at,
            config_json = excluded.config_json,
-           enabled_fixes = excluded.enabled_fixes`,
+           flag_overrides = excluded.flag_overrides`,
       )
       .bind(
         upstream.id,
@@ -677,7 +678,7 @@ class D1UpstreamRepo implements UpstreamRepo {
         upstream.createdAt,
         upstream.updatedAt,
         serializeStoredConfig(upstream.config),
-        JSON.stringify(normalizeEnabledFixes(upstream.enabledFixes)),
+        JSON.stringify(normalizeFlagOverrides(upstream.flagOverrides)),
       )
       .run();
   }
@@ -701,7 +702,7 @@ interface UpstreamRow {
   created_at: string;
   updated_at: string;
   config_json: string;
-  enabled_fixes: string;
+  flag_overrides: string;
 }
 
 function toUpstreamRecord(row: UpstreamRow): UpstreamRecord {
@@ -721,7 +722,7 @@ function toUpstreamRecord(row: UpstreamRow): UpstreamRecord {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     config,
-    enabledFixes: parseEnabledFixes(row.id, row.enabled_fixes),
+    flagOverrides: parseFlagOverrides(row.id, row.flag_overrides),
   };
 }
 
@@ -730,19 +731,25 @@ const assertUpstreamProviderKind = (provider: string): UpstreamProviderKind => {
   throw new TypeError(`Invalid upstream provider kind: ${provider}`);
 };
 
-const normalizeEnabledFixes = (enabledFixes: string[]): string[] => [...new Set(enabledFixes)].sort();
-
-const parseEnabledFixes = (id: string, enabledFixesJson: string): string[] => {
+const parseFlagOverrides = (id: string, json: string): Record<string, boolean> => {
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(enabledFixesJson) as unknown;
-    if (Array.isArray(parsed) && parsed.every(value => typeof value === 'string')) {
-      return normalizeEnabledFixes(parsed);
-    }
-  } catch {
-    throw new Error(`Malformed upstream enabled_fixes JSON for ${id}`);
+    parsed = JSON.parse(json);
+  } catch (cause) {
+    throw new Error(`Malformed upstream flag_overrides JSON for ${id}`, { cause });
   }
-
-  throw new Error(`Malformed upstream enabled_fixes JSON for ${id}`);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    const got = Array.isArray(parsed) ? 'array' : parsed === null ? 'null' : typeof parsed;
+    throw new Error(`Upstream ${id} flag_overrides must be a JSON object, got ${got}`);
+  }
+  const out: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+    if (typeof v !== 'boolean') {
+      throw new Error(`Upstream ${id} flag_overrides[${JSON.stringify(k)}] must be a boolean, got ${typeof v}`);
+    }
+    out[k] = v;
+  }
+  return normalizeFlagOverrides(out);
 };
 
 export class D1Repo implements Repo {

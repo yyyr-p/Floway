@@ -34,19 +34,19 @@ const azureRecord = (overrides: Partial<UpstreamRecord> = {}): UpstreamRecord =>
     sortOrder: 0,
     createdAt: '2026-05-21T00:00:00.000Z',
     updatedAt: '2026-05-21T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     ...rest,
     config: overrideConfig ?? config,
   };
 };
 
 test('createAzureProvider projects configured deployments into upstream models', async () => {
-  const instance = createAzureProvider(azureRecord({ enabledFixes: ['deepseek-reasoning-dialect'] }));
+  const instance = createAzureProvider(azureRecord({ flagOverrides: { 'deepseek-reasoning-dialect': true } }));
   const models = await instance.provider.getProvidedModels();
 
   assertEquals(instance.upstream, 'up_azure');
   assertEquals(instance.name, 'Azure Resource');
-  assertEquals(instance.enabledFixes.has('deepseek-reasoning-dialect'), true);
+  assertEquals(models[0]?.enabledFlags.has('deepseek-reasoning-dialect'), true);
   assertEquals(
     models.map(model => ({ id: model.id, displayName: model.display_name, endpoints: model.upstreamEndpoints, providerData: model.providerData })),
     [
@@ -226,6 +226,57 @@ test('createAzureProvider supports native Azure Anthropic Messages deployments',
       beta: null,
     },
   ]);
+});
+
+test('createAzureProvider applies per-deployment flag overrides on top of the upstream layer', async () => {
+  const instance = createAzureProvider(
+    azureRecord({
+      flagOverrides: { 'vendor-deepseek': true },
+      config: {
+        endpoint: 'https://example.openai.azure.com/openai/v1',
+        apiKey: 'az-key',
+        deployments: [
+          { deployment: 'd1', supportedEndpoints: ['/chat/completions'] },
+          {
+            deployment: 'd2',
+            supportedEndpoints: ['/chat/completions'],
+            flagOverrides: { enabled: true, values: { 'vendor-deepseek': false, 'deepseek-reasoning-dialect': true } },
+          },
+        ],
+      },
+    }),
+  );
+  const models = await instance.provider.getProvidedModels();
+  const d1 = models.find(model => (model.providerData as { deployment: string }).deployment === 'd1');
+  const d2 = models.find(model => (model.providerData as { deployment: string }).deployment === 'd2');
+  if (!d1 || !d2) throw new Error('expected both deployments');
+
+  assertEquals(d1.enabledFlags.has('vendor-deepseek'), true);
+  assertEquals(d1.enabledFlags.has('deepseek-reasoning-dialect'), false);
+  assertEquals(d2.enabledFlags.has('vendor-deepseek'), false);
+  assertEquals(d2.enabledFlags.has('deepseek-reasoning-dialect'), true);
+});
+
+test('createAzureProvider skips the per-deployment layer when flagOverrides.enabled is false', async () => {
+  const instance = createAzureProvider(
+    azureRecord({
+      flagOverrides: { 'vendor-deepseek': true },
+      config: {
+        endpoint: 'https://example.openai.azure.com/openai/v1',
+        apiKey: 'az-key',
+        deployments: [
+          {
+            deployment: 'd1',
+            supportedEndpoints: ['/chat/completions'],
+            flagOverrides: { enabled: false, values: { 'vendor-deepseek': false } },
+          },
+        ],
+      },
+    }),
+  );
+  const [model] = await instance.provider.getProvidedModels();
+
+  assertEquals(model.enabledFlags.has('vendor-deepseek'), true);
 });
 
 test('createAzureProvider attaches cost field from deployment config', async () => {

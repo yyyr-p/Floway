@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 
-import { createAzureUpstream } from './azure.ts';
+import { assertAzureUpstreamRecord, createAzureUpstream } from './azure.ts';
 import type { UpstreamRecord } from '../../repo/types.ts';
 import { assertEquals, assertThrows } from '../../test-assert.ts';
 import { withMockedFetch } from '../../test-helpers.ts';
@@ -23,7 +23,7 @@ const baseRecord: UpstreamRecord = {
       },
     ],
   },
-  enabledFixes: [],
+  flagOverrides: {},
 };
 
 test('createAzureUpstream uses Azure OpenAI v1 paths with api-key auth', async () => {
@@ -370,6 +370,110 @@ test('createAzureUpstream validates Azure opaque config strictly', () => {
       }),
     Error,
     'endpoint must be an http(s) URL without query or fragment',
+  );
+});
+
+test('assertAzureUpstreamRecord round-trips per-deployment flagOverrides', () => {
+  const parsed = assertAzureUpstreamRecord({
+    ...baseRecord,
+    config: {
+      endpoint: 'https://example.openai.azure.com/openai/v1',
+      apiKey: 'az-key',
+      deployments: [
+        {
+          deployment: 'gpt-5',
+          supportedEndpoints: ['/chat/completions'],
+          flagOverrides: { enabled: true, values: { 'deepseek-reasoning-dialect': true, 'vendor-deepseek': false } },
+        },
+      ],
+    },
+  });
+
+  assertEquals(parsed.config.deployments[0].flagOverrides, {
+    enabled: true,
+    values: { 'deepseek-reasoning-dialect': true, 'vendor-deepseek': false },
+  });
+});
+
+test('assertAzureUpstreamRecord rejects malformed per-deployment flagOverrides', () => {
+  assertThrows(
+    () =>
+      assertAzureUpstreamRecord({
+        ...baseRecord,
+        config: {
+          ...(baseRecord.config as Record<string, unknown>),
+          deployments: [
+            {
+              deployment: 'gpt-prod',
+              supportedEndpoints: ['/chat/completions'],
+              flagOverrides: { enabled: 'yes', values: {} },
+            },
+          ],
+        },
+      }),
+    Error,
+    'deployments[0].flagOverrides.enabled must be a boolean',
+  );
+
+  assertThrows(
+    () =>
+      assertAzureUpstreamRecord({
+        ...baseRecord,
+        config: {
+          ...(baseRecord.config as Record<string, unknown>),
+          deployments: [
+            {
+              deployment: 'gpt-prod',
+              supportedEndpoints: ['/chat/completions'],
+              flagOverrides: { enabled: true, values: { 'vendor-deepseek': 'on' } },
+            },
+          ],
+        },
+      }),
+    Error,
+    'deployments[0].flagOverrides.values.vendor-deepseek must be a boolean',
+  );
+});
+
+test('assertAzureUpstreamRecord rejects per-deployment flagOverrides with unknown flag id', () => {
+  assertThrows(
+    () =>
+      assertAzureUpstreamRecord({
+        ...baseRecord,
+        config: {
+          ...(baseRecord.config as Record<string, unknown>),
+          deployments: [
+            {
+              deployment: 'gpt-prod',
+              supportedEndpoints: ['/chat/completions'],
+              flagOverrides: { enabled: true, values: { 'made-up-flag': true } },
+            },
+          ],
+        },
+      }),
+    Error,
+    'deployments[0].flagOverrides.values has unknown flag ids: made-up-flag',
+  );
+});
+
+test('assertAzureUpstreamRecord reports all unknown per-deployment flag ids in one error', () => {
+  assertThrows(
+    () =>
+      assertAzureUpstreamRecord({
+        ...baseRecord,
+        config: {
+          ...(baseRecord.config as Record<string, unknown>),
+          deployments: [
+            {
+              deployment: 'gpt-prod',
+              supportedEndpoints: ['/chat/completions'],
+              flagOverrides: { enabled: true, values: { 'made-up-flag': true, 'another-typo': false } },
+            },
+          ],
+        },
+      }),
+    Error,
+    'deployments[0].flagOverrides.values has unknown flag ids: made-up-flag, another-typo',
   );
 });
 

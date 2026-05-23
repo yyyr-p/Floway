@@ -2,8 +2,9 @@ import { fetchCustomModels, type CustomModelsResponse, type CustomRawModel } fro
 import type { UpstreamRecord } from '../../../repo/types.ts';
 import { createCustomUpstream } from '../../../shared/upstream/custom.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
-import { messagesWebSearchShimInterceptors } from '../../llm/sources/messages/interceptors/index.ts';
 import { endpointsIncludeLlmGeneration, isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
+import { resolveEffectiveFlags } from '../flags-resolve.ts';
+import { defaultsForProvider } from '../flags.ts';
 import { inProcessMemo, isProviderModelsHttpStatus, readModelsStore, writeModelsStore } from '../models-store.ts';
 import type { ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 
@@ -19,13 +20,13 @@ interface CustomModelsBlob {
 const SOFT_MS = 10 * 60 * 1000;
 const HARD_MS = 2 * 60 * 60 * 1000;
 const L1_TTL_MS = 120_000;
-
 const providerData = (model: UpstreamModel): CustomProviderData => model.providerData as CustomProviderData;
 
 // Project an OpenAI-shaped raw model into the slim provider-neutral fields.
-// supports_generation/upstreamEndpoints/providerData are added by the caller.
-const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> => {
-  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> = {
+// supports_generation/upstreamEndpoints/providerData/enabledFlags are added by
+// the caller.
+const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> => {
+  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> = {
     id: model.id,
     limits: {},
   };
@@ -35,7 +36,11 @@ const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'suppor
   return internal;
 };
 
-const finalizeCustomModels = (response: CustomModelsResponse, configuredEndpoints: ReturnType<typeof publicPathsToModelEndpoints>): UpstreamModel[] => {
+const finalizeCustomModels = (
+  response: CustomModelsResponse,
+  configuredEndpoints: ReturnType<typeof publicPathsToModelEndpoints>,
+  enabledFlags: ReadonlySet<string>,
+): UpstreamModel[] => {
   const models: UpstreamModel[] = [];
   for (const rawModel of response.data) {
     if (!rawModel.id) continue;
@@ -45,6 +50,7 @@ const finalizeCustomModels = (response: CustomModelsResponse, configuredEndpoint
       supports_generation: endpointsIncludeLlmGeneration(upstreamEndpoints),
       upstreamEndpoints,
       providerData: { rawModelId: rawModel.id } satisfies CustomProviderData,
+      enabledFlags,
     });
   }
   return models;
@@ -53,7 +59,9 @@ const finalizeCustomModels = (response: CustomModelsResponse, configuredEndpoint
 export const createCustomProvider = (record: UpstreamRecord): ModelProviderInstance => {
   const upstream = createCustomUpstream(record);
   const configuredEndpoints = publicPathsToModelEndpoints(upstream.supportedEndpoints);
-  const enabledFixes = new Set(record.enabledFixes);
+  // Computed once: only the upstream layer applies for this provider kind
+  // (no per-model override layer). Azure recomputes per deployment.
+  const upstreamFlags = resolveEffectiveFlags(defaultsForProvider('custom'), [record.flagOverrides]);
 
   const call = (endpoint: EndpointKey, model: UpstreamModel, body: Record<string, unknown>, signal?: AbortSignal, extraHeaders?: Record<string, string>): Promise<ProviderCallResult> => {
     const requestBody = isStreamingEndpoint(endpoint)
@@ -81,15 +89,15 @@ export const createCustomProvider = (record: UpstreamRecord): ModelProviderInsta
         const stored = await readModelsStore<CustomModelsBlob>(record.id);
         const now = Date.now();
         if (stored && now - stored.fetchedAt < SOFT_MS) {
-          return finalizeCustomModels(stored.response, configuredEndpoints);
+          return finalizeCustomModels(stored.response, configuredEndpoints, upstreamFlags);
         }
         try {
           const response = await fetchCustomModels(upstream);
           await writeModelsStore<CustomModelsBlob>(record.id, { response, fetchedAt: now });
-          return finalizeCustomModels(response, configuredEndpoints);
+          return finalizeCustomModels(response, configuredEndpoints, upstreamFlags);
         } catch (err) {
           if (stored && now - stored.fetchedAt < HARD_MS && isProviderModelsHttpStatus(err, 429)) {
-            return finalizeCustomModels(stored.response, configuredEndpoints);
+            return finalizeCustomModels(stored.response, configuredEndpoints, upstreamFlags);
           }
           throw err;
         }
@@ -108,13 +116,5 @@ export const createCustomProvider = (record: UpstreamRecord): ModelProviderInsta
     providerKind: 'custom',
     name: record.name,
     provider,
-    enabledFixes,
-    ...(enabledFixes.has('messages-web-search-shim')
-      ? {
-          sourceInterceptors: {
-            messages: messagesWebSearchShimInterceptors,
-          },
-        }
-      : {}),
   };
 };

@@ -1646,7 +1646,7 @@ test('/v1/messages routes Azure Responses-only deployments through OpenAI v1 Res
     sortOrder: 0,
     createdAt: '2026-05-22T00:00:00.000Z',
     updatedAt: '2026-05-22T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       endpoint: 'https://example.openai.azure.com/openai/v1',
       apiKey: 'az-key',
@@ -2244,7 +2244,7 @@ test('/v1/messages preserves cache_control.scope for custom Messages providers',
     id: 'up_messages',
     name: 'Messages Provider',
     sortOrder: 100,
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://messages.example.com',
       bearerToken: 'sk-messages',
@@ -2343,7 +2343,7 @@ test('/v1/messages forwards native web search unchanged to custom Messages provi
     id: 'up_messages_native_search',
     name: 'Messages Native Search Provider',
     sortOrder: 100,
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://messages-native-search.example.com',
       bearerToken: 'sk-messages',
@@ -2423,7 +2423,7 @@ test('/v1/messages applies native web search shim to custom Messages providers w
     id: 'up_messages_shimmed_search',
     name: 'Messages Shimmed Search Provider',
     sortOrder: 100,
-    enabledFixes: ['messages-web-search-shim'],
+    flagOverrides: { 'messages-web-search-shim': true },
     config: {
       baseUrl: 'https://messages-shimmed-search.example.com',
       bearerToken: 'sk-messages',
@@ -2512,7 +2512,7 @@ test('/v1/messages applies native web search shim to custom Responses targets', 
     id: 'up_responses_search',
     name: 'Responses Search Provider',
     sortOrder: 100,
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://responses-search.example.com',
       bearerToken: 'sk-responses',
@@ -2622,7 +2622,7 @@ test('/v1/messages applies native web search shim to custom Chat Completions tar
     id: 'up_chat_search',
     name: 'Chat Search Provider',
     sortOrder: 100,
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://chat-search.example.com',
       bearerToken: 'sk-chat',
@@ -3568,7 +3568,7 @@ test('/v1/messages rejects embedding-only custom upstream model instead of legac
     id: 'up_embed',
     name: 'Embedding Only',
     sortOrder: 100,
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://embed.example.com',
       bearerToken: 'sk-embed',
@@ -3621,7 +3621,7 @@ test('/v1/messages preserves custom upstream /models HTTP errors', async () => {
     id: 'up_custom',
     name: 'Custom Provider',
     sortOrder: 100,
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',

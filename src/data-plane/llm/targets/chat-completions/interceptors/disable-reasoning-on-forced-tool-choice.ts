@@ -28,20 +28,21 @@ const hasForcedToolChoice = (payload: ChatCompletionsPayload): boolean => {
   return true;
 };
 
-const disableChatCompletionsReasoning = (payload: ChatCompletionsPayload, enabledFixes: ReadonlySet<string>): ChatCompletionsPayloadWithVendorReasoningDisable => {
+const disableChatCompletionsReasoning = (payload: ChatCompletionsPayload, enabledFlags: ReadonlySet<string>): ChatCompletionsPayloadWithVendorReasoningDisable => {
   const { reasoning_effort: _reasoningEffort, ...rest } = payload;
   const out: ChatCompletionsPayloadWithVendorReasoningDisable = rest;
-  if (enabledFixes.has('vendor-deepseek')) {
+  if (enabledFlags.has('vendor-deepseek')) {
     out.thinking = { type: 'disabled' };
   }
-  if (enabledFixes.has('vendor-qwen')) {
+  if (enabledFlags.has('vendor-qwen')) {
     out.enable_thinking = false;
   }
   return out;
 };
 
 export const withReasoningDisabledOnForcedToolChoice: ChatCompletionsInterceptor = async (ctx, _request, run) => {
+  if (!ctx.enabledFlags.has('disable-reasoning-on-forced-tool-choice')) return await run();
   if (!hasForcedToolChoice(ctx.payload)) return await run();
-  ctx.payload = disableChatCompletionsReasoning(ctx.payload, ctx.enabledFixes) as ChatCompletionsPayload;
+  ctx.payload = disableChatCompletionsReasoning(ctx.payload, ctx.enabledFlags) as ChatCompletionsPayload;
   return await run();
 };

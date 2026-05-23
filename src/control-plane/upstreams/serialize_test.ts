@@ -14,7 +14,7 @@ const custom: UpstreamRecord = {
   sortOrder: 10,
   createdAt: timestamp,
   updatedAt: timestamp,
-  enabledFixes: ['deepseek-reasoning-dialect'],
+  flagOverrides: { 'deepseek-reasoning-dialect': true },
   config: {
     baseUrl: 'https://api.example.com',
     bearerToken: 'sk-secret-token-12345',
@@ -32,7 +32,7 @@ test('upstreamRecordToJson redacts custom bearer token inside config', () => {
   assertEquals(result.sort_order, 10);
   assertEquals(result.created_at, timestamp);
   assertEquals(result.updated_at, timestamp);
-  assertEquals(result.enabled_fixes, ['deepseek-reasoning-dialect']);
+  assertEquals(result.flag_overrides, { 'deepseek-reasoning-dialect': true });
   assertEquals(config.baseUrl, 'https://api.example.com');
   assertEquals(config.bearerToken, undefined);
   assertEquals(config.bearerTokenSet, true);

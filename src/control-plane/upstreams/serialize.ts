@@ -8,7 +8,7 @@ export interface SerializedUpstreamRecord {
   sort_order: number;
   created_at: string;
   updated_at: string;
-  enabled_fixes: string[];
+  flag_overrides: Record<string, boolean>;
   config: unknown;
 }
 
@@ -56,7 +56,7 @@ const serializeBase = (upstream: UpstreamRecord, config: unknown): SerializedUps
   sort_order: upstream.sortOrder,
   created_at: upstream.createdAt,
   updated_at: upstream.updatedAt,
-  enabled_fixes: [...upstream.enabledFixes],
+  flag_overrides: { ...upstream.flagOverrides },
   config,
 });
 

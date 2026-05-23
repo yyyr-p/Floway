@@ -112,7 +112,7 @@ test('listModelProviders creates enabled provider instances with upstream row id
         },
       ],
     },
-    enabledFixes: [],
+    flagOverrides: {},
   });
   await repo.upstreams.save(buildCopilotUpstreamRecord(githubAccount, { id: 'up_copilot', name: 'Copilot Row', sortOrder: 3 }));
   await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_disabled', enabled: false, sortOrder: 0 }));

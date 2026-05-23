@@ -1,7 +1,7 @@
 import type { Context } from 'hono';
 
 import { upstreamRecordToJson } from './serialize.ts';
-import { getFixCatalog, isKnownFixId } from '../../data-plane/providers/fixes.ts';
+import { getFlagCatalog, parseFlagOverridesWire } from '../../data-plane/providers/flags.ts';
 import { clearModelsStore, invalidateModelsStore } from '../../data-plane/providers/models-store.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { UpstreamProviderKind, UpstreamRecord } from '../../repo/types.ts';
@@ -19,7 +19,7 @@ interface UpstreamCreateBody {
   name?: unknown;
   enabled?: unknown;
   sort_order?: unknown;
-  enabled_fixes?: unknown;
+  flag_overrides?: unknown;
   config?: unknown;
 }
 
@@ -68,25 +68,16 @@ const validateSortOrder = (value: unknown): ValidationResult<number> => {
   return { ok: true, value: Math.floor(value) };
 };
 
-// Validate enabled_fixes against the flag catalog. Unknown ids are hard-rejected
-// so an admin typo surfaces at save time; endpoint applicability is enforced by
-// interceptor assembly at runtime.
-const validateEnabledFixes = (value: unknown): ValidationResult<string[]> => {
-  if (!Array.isArray(value)) {
-    return { ok: false, error: 'enabled_fixes must be an array of strings' };
+// Validate flag_overrides against the flag catalog. Wraps the shared
+// throw-style parser to fit the local ValidationResult shape. Unknown ids
+// are hard-rejected so an admin typo surfaces at save time; endpoint
+// applicability is enforced by interceptor assembly at runtime.
+const validateFlagOverrides = (value: unknown): ValidationResult<Record<string, boolean>> => {
+  try {
+    return { ok: true, value: parseFlagOverridesWire(value) };
+  } catch (error) {
+    return { ok: false, error: validationError(error) };
   }
-  const unknown: string[] = [];
-  const known = new Set<string>();
-  for (const item of value) {
-    if (typeof item !== 'string') return { ok: false, error: 'enabled_fixes entries must be strings' };
-    if (!isKnownFixId(item)) {
-      unknown.push(item);
-      continue;
-    }
-    known.add(item);
-  }
-  if (unknown.length > 0) return { ok: false, error: `Unknown enabled_fixes ids: ${unknown.join(', ')}` };
-  return { ok: true, value: [...known].sort() };
 };
 
 const stringField = (value: unknown, field: string): string => {
@@ -226,7 +217,7 @@ export const listUpstreams = async (c: Context) => {
   return c.json(items.map(upstreamRecordToJson));
 };
 
-export const listOptionalFixes = (c: Context) => c.json(getFixCatalog());
+export const listOptionalFlags = (c: Context) => c.json(getFlagCatalog());
 
 export const createUpstream = async (c: Context) => {
   const body = await c.req.json<UpstreamCreateBody>();
@@ -242,8 +233,8 @@ export const createUpstream = async (c: Context) => {
   const enabled = body.enabled === undefined ? { ok: true as const, value: true } : validateBoolean(body.enabled, 'enabled');
   if (!enabled.ok) return c.json({ error: enabled.error }, 400);
 
-  const fixes = validateEnabledFixes(body.enabled_fixes ?? []);
-  if (!fixes.ok) return c.json({ error: fixes.error }, 400);
+  const overrides = validateFlagOverrides(body.flag_overrides ?? {});
+  if (!overrides.ok) return c.json({ error: overrides.error }, 400);
 
   const existing = await getRepo().upstreams.list();
   const sortOrder = body.sort_order === undefined ? { ok: true as const, value: nextSortOrder(existing) } : validateSortOrder(body.sort_order);
@@ -258,7 +249,7 @@ export const createUpstream = async (c: Context) => {
     sortOrder: sortOrder.value,
     createdAt: now,
     updatedAt: now,
-    enabledFixes: fixes.value,
+    flagOverrides: overrides.value,
     config: body.config,
   };
 
@@ -300,10 +291,10 @@ export const updateUpstream = async (c: Context) => {
     if (!sortOrder.ok) return c.json({ error: sortOrder.error }, 400);
     next = { ...next, sortOrder: sortOrder.value };
   }
-  if (body.enabled_fixes !== undefined) {
-    const fixes = validateEnabledFixes(body.enabled_fixes);
-    if (!fixes.ok) return c.json({ error: fixes.error }, 400);
-    next = { ...next, enabledFixes: fixes.value };
+  if (body.flag_overrides !== undefined) {
+    const overrides = validateFlagOverrides(body.flag_overrides);
+    if (!overrides.ok) return c.json({ error: overrides.error }, 400);
+    next = { ...next, flagOverrides: overrides.value };
   }
   if (body.config !== undefined) {
     const config = mergeConfigPatch(existing.provider, existing.config, body.config);
@@ -476,7 +467,7 @@ export const copilotAuthPoll = async (c: Context) => {
           sortOrder: nextSortOrder(upstreams),
           createdAt: now,
           updatedAt: now,
-          enabledFixes: [],
+          flagOverrides: {},
           config,
         };
 

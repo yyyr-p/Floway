@@ -2,7 +2,7 @@
 
 import type { Context } from 'hono';
 
-import { isKnownFixId } from '../../data-plane/providers/fixes.ts';
+import { parseFlagOverridesWire } from '../../data-plane/providers/flags.ts';
 import { invalidateModelsStore } from '../../data-plane/providers/models-store.ts';
 import { normalizeSearchConfig } from '../../data-plane/tools/web-search/search-config.ts';
 import type { SearchConfig } from '../../data-plane/tools/web-search/types.ts';
@@ -67,22 +67,6 @@ const safeIntegerField = (value: unknown, field: string): number => {
   return value;
 };
 
-const enabledFixesField = (value: unknown): string[] => {
-  if (!Array.isArray(value)) throw new Error('enabled_fixes must be an array of strings');
-  const unknown: string[] = [];
-  const known = new Set<string>();
-  for (const item of value) {
-    if (typeof item !== 'string') throw new Error('enabled_fixes entries must be strings');
-    if (isKnownFixId(item)) {
-      known.add(item);
-    } else {
-      unknown.push(item);
-    }
-  }
-  if (unknown.length > 0) throw new Error(`Unknown enabled_fixes ids: ${unknown.join(', ')}`);
-  return [...known].sort();
-};
-
 const copilotConfigField = (value: unknown): unknown => {
   if (!isRecord(value)) throw new Error('config must be an object');
   if (!isCopilotAccountType(value.accountType)) throw new Error('config.accountType must be one of individual, business, enterprise');
@@ -113,6 +97,9 @@ const parseUpstreamRecords = (value: unknown): { type: 'ok'; records: UpstreamRe
     try {
       const item = value[i];
       if (!isRecord(item)) throw new Error('record must be an object');
+      if (hasOwn(item, 'enabled_fixes')) {
+        throw new Error("legacy 'enabled_fixes' field is no longer supported; this export predates the flag_overrides refactor — re-export with current code");
+      }
       if (typeof item.provider !== 'string' || !UPSTREAM_PROVIDERS.has(item.provider as UpstreamProviderKind)) {
         throw new Error('provider must be one of custom, azure, copilot');
       }
@@ -130,7 +117,7 @@ const parseUpstreamRecords = (value: unknown): { type: 'ok'; records: UpstreamRe
         sortOrder: Math.floor(item.sort_order),
         createdAt: nonEmptyString(item.created_at, 'created_at'),
         updatedAt: nonEmptyString(item.updated_at, 'updated_at'),
-        enabledFixes: enabledFixesField(item.enabled_fixes),
+        flagOverrides: parseFlagOverridesWire(item.flag_overrides),
         config: item.config,
       };
       records.push({ ...record, config: normalizeUpstreamConfig(record) });

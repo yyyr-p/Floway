@@ -1,12 +1,13 @@
 import type { Context } from 'hono';
 
+import { chatCompletionsSourceInterceptors } from './interceptors/index.ts';
 import { respondChatCompletions } from './respond.ts';
 import { resolveModelForRequest } from '../../../providers/registry.ts';
 import type { ModelEndpoint, ProviderModelRecord } from '../../../providers/types.ts';
 import type { ChatCompletionChunk, ChatCompletionsPayload } from '../../../shared/protocol/chat-completions.ts';
 import type { MessagesPayload } from '../../../shared/protocol/messages.ts';
 import type { ResponsesPayload } from '../../../shared/protocol/responses.ts';
-import { type ChatCompletionsInterceptor, type ChatCompletionsInvocation, type LlmTargetApi, runInterceptors } from '../../interceptors.ts';
+import { type ChatCompletionsInvocation, type LlmTargetApi, runInterceptors } from '../../interceptors.ts';
 import type { ExecuteResult } from '../../shared/errors/result.ts';
 import type { ProtocolFrame } from '../../shared/stream/types.ts';
 import { emitToChatCompletions } from '../../targets/chat-completions/emit.ts';
@@ -16,8 +17,6 @@ import { translateChatCompletionsViaMessages } from '../../translate/chat-comple
 import { translateChatCompletionsViaResponses } from '../../translate/chat-completions-via-responses/translate.ts';
 import { type SourceEmit, viaTranslation } from '../../translate/types.ts';
 import { createRequestContext, openAiMissingModelResult, openAiUnsupportedEndpointResult, sourceErrorResult } from '../execute.ts';
-
-const chatSourceInterceptorsForProvider = (binding: ProviderModelRecord): readonly ChatCompletionsInterceptor[] => binding.sourceInterceptors?.chatCompletions ?? [];
 
 const chatInvocation = <TPayload extends { model: string }>(
   binding: ProviderModelRecord,
@@ -31,7 +30,7 @@ const chatInvocation = <TPayload extends { model: string }>(
   upstream: binding.upstream,
   upstreamModel: binding.upstreamModel,
   provider: binding.provider,
-  enabledFixes: binding.enabledFixes,
+  enabledFlags: binding.enabledFlags,
   ...(binding.targetInterceptors !== undefined ? { targetInterceptors: binding.targetInterceptors } : {}),
   payload,
 });
@@ -79,7 +78,7 @@ export const serveChatCompletions = async (c: Context): Promise<Response> => {
             await emitToResponses(chatInvocation(binding, 'responses', model, tgtPayload), request)),
         };
 
-        result = await runInterceptors(invocation, request, chatSourceInterceptorsForProvider(binding), () =>
+        result = await runInterceptors(invocation, request, [...chatCompletionsSourceInterceptors, ...(binding.sourceInterceptors?.chatCompletions ?? [])], () =>
           emits[target](invocation.payload, { model, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }

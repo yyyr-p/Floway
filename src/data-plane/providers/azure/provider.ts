@@ -1,8 +1,9 @@
 import type { UpstreamRecord } from '../../../repo/types.ts';
 import { assertAzureUpstreamRecord, createAzureUpstream, type AzureDeploymentConfig } from '../../../shared/upstream/azure.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
-import { messagesWebSearchShimInterceptors } from '../../llm/sources/messages/interceptors/index.ts';
 import { endpointsIncludeLlmGeneration, isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
+import { resolveEffectiveFlags } from '../flags-resolve.ts';
+import { defaultsForProvider } from '../flags.ts';
 import type { ModelEndpoint, ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 
 interface AzureProviderData {
@@ -22,9 +23,10 @@ const withMessagesCountTokens = (endpoints: readonly ModelEndpoint[]): ModelEndp
 const azureDeploymentEndpoints = (deployment: AzureDeploymentConfig): ModelEndpoint[] => withMessagesCountTokens(publicPathsToModelEndpoints(deployment.supportedEndpoints));
 
 // Project an Azure deployment config row into the slim provider-neutral fields.
-// supports_generation/upstreamEndpoints/providerData are added by the caller.
-const azureInternalModel = (deployment: AzureDeploymentConfig): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> => {
-  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> = {
+// supports_generation/upstreamEndpoints/providerData/enabledFlags are added by
+// the caller.
+const azureInternalModel = (deployment: AzureDeploymentConfig): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> => {
+  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> = {
     id: publicModelId(deployment),
     limits: { ...(deployment.limits ?? {}) },
   };
@@ -35,7 +37,6 @@ const azureInternalModel = (deployment: AzureDeploymentConfig): Omit<UpstreamMod
 export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstance => {
   const azure = assertAzureUpstreamRecord(record);
   const upstream = createAzureUpstream(azure);
-  const enabledFixes = new Set(record.enabledFixes);
 
   const call = (endpoint: EndpointKey, model: UpstreamModel, body: Record<string, unknown>, signal?: AbortSignal, extraHeaders?: Record<string, string>): Promise<ProviderCallResult> => {
     const deployment = providerData(model).deployment;
@@ -59,6 +60,8 @@ export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstan
   const provider: ModelProvider = {
     async getProvidedModels() {
       return azure.config.deployments.map(deployment => {
+        const deploymentLayer = deployment.flagOverrides?.enabled ? deployment.flagOverrides.values : undefined;
+        const effective = resolveEffectiveFlags(defaultsForProvider('azure'), [azure.flagOverrides, deploymentLayer]);
         const upstreamEndpoints = azureDeploymentEndpoints(deployment);
         return {
           ...azureInternalModel(deployment),
@@ -68,6 +71,7 @@ export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstan
             deployment: deployment.deployment,
           } satisfies AzureProviderData,
           ...(deployment.cost ? { cost: deployment.cost } : {}),
+          enabledFlags: effective,
         };
       });
     },
@@ -88,13 +92,5 @@ export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstan
     providerKind: 'azure',
     name: azure.name,
     provider,
-    enabledFixes,
-    ...(enabledFixes.has('messages-web-search-shim')
-      ? {
-          sourceInterceptors: {
-            messages: messagesWebSearchShimInterceptors,
-          },
-        }
-      : {}),
   };
 };

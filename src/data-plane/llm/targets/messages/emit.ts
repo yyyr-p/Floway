@@ -1,4 +1,4 @@
-import { interceptorsForMessages } from './interceptors/index.ts';
+import { messagesBaseInterceptors } from './interceptors/index.ts';
 import type { TelemetryModelIdentity } from '../../../../repo/types.ts';
 import type { MessagesPayload, MessagesStreamEventData } from '../../../shared/protocol/messages.ts';
 import { type MessagesInvocation, type RequestContext, runInterceptors } from '../../interceptors.ts';
@@ -27,7 +27,7 @@ export const emitToMessages = async (invocation: MessagesInvocation, request: Re
   let modelIdentity: TelemetryModelIdentity | undefined;
 
   try {
-    return await runInterceptors(invocation, request, interceptorsForMessages(invocation), async () => {
+    return await runInterceptors(invocation, request, [...messagesBaseInterceptors, ...(invocation.targetInterceptors?.messages ?? [])], async () => {
       const upstreamStartedAt = performance.now();
       const { model: _model, ...body }: MessagesPayload = invocation.payload;
       const providerResult = await invocation.provider.callMessages(invocation.upstreamModel, body, request.downstreamAbortSignal, invocation.anthropicBeta);

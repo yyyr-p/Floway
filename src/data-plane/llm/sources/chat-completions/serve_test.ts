@@ -373,7 +373,7 @@ test('/v1/chat/completions plans per provider without letting a later native pro
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://chat.example.com',
       bearerToken: 'sk-chat',
@@ -1786,7 +1786,7 @@ test('/v1/chat/completions preserves custom upstream /models HTTP errors', async
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',

@@ -12,7 +12,7 @@ const azureUpstream = (): UpstreamRecord => ({
   sortOrder: 200,
   createdAt: '2026-05-21T00:00:00.000Z',
   updatedAt: '2026-05-21T00:00:00.000Z',
-  enabledFixes: [],
+  flagOverrides: {},
   config: {
     endpoint: 'https://example.openai.azure.com',
     apiKey: 'az-key',

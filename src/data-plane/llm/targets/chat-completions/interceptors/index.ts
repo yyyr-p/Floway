@@ -2,39 +2,21 @@ import { withReasoningDisabledOnForcedToolChoice } from './disable-reasoning-on-
 import { withUsageStreamOptionsIncluded } from './include-usage-stream-options.ts';
 import { withDeepseekReasoningDialect } from './normalize-reasoning-dialect.ts';
 import { withUsageNormalized } from './normalize-usage.ts';
-import type { OptionalFixId } from '../../../../providers/fixes.ts';
-import type { ProviderTargetInterceptors } from '../../../../providers/types.ts';
 import type { ChatCompletionsInterceptor } from '../../../interceptors.ts';
 
-interface ChatCompletionsInterceptorProvider {
-  enabledFixes: ReadonlySet<string>;
-  targetInterceptors?: ProviderTargetInterceptors;
-}
-
-// Always-on Chat Completions target interceptors. Both gate the gateway's
-// usage-tracking pipeline:
-//   - `include-usage-stream-options` ensures upstreams emit a final usage
-//     chunk in streaming mode.
-//   - `normalize-usage` normalizes vendor variants (DeepSeek / Kimi /
-//     standard OpenAI) into the OpenAI standard usage shape so telemetry
-//     reads one contract.
-// Turning either off would silently break per-key telemetry, so neither
-// is surfaced as a flag.
-const baseInterceptors = [withUsageStreamOptionsIncluded, withUsageNormalized] as const satisfies readonly ChatCompletionsInterceptor[];
-
-export const chatCompletionsOptionalInterceptors = [
-  {
-    fixId: 'deepseek-reasoning-dialect',
-    run: withDeepseekReasoningDialect,
-  },
-  {
-    fixId: 'disable-reasoning-on-forced-tool-choice',
-    run: withReasoningDisabledOnForcedToolChoice,
-  },
-] as const satisfies readonly { fixId: OptionalFixId; run: ChatCompletionsInterceptor }[];
-
-export const interceptorsForChatCompletions = (provider: ChatCompletionsInterceptorProvider): readonly ChatCompletionsInterceptor[] => [
-  ...baseInterceptors,
-  ...(provider.targetInterceptors?.chatCompletions ?? []),
-  ...chatCompletionsOptionalInterceptors.filter(({ fixId }) => provider.enabledFixes.has(fixId)).map(({ run }) => run),
+// Target-side Chat Completions interceptors. Every entry is attached to every
+// binding; each interceptor's body decides whether to act (flag-gated entries
+// early-return on `ctx.enabledFlags.has(flagId)`).
+//
+//   - withUsageStreamOptionsIncluded, withUsageNormalized: unconditional.
+//     Both gate the gateway's usage-tracking pipeline. Turning either off
+//     would silently break per-key telemetry, so neither is surfaced as a flag.
+//   - withDeepseekReasoningDialect: gated by `deepseek-reasoning-dialect`.
+//   - withReasoningDisabledOnForcedToolChoice: gated by
+//     `disable-reasoning-on-forced-tool-choice`.
+export const chatCompletionsBaseInterceptors: readonly ChatCompletionsInterceptor[] = [
+  withUsageStreamOptionsIncluded,
+  withUsageNormalized,
+  withDeepseekReasoningDialect,
+  withReasoningDisabledOnForcedToolChoice,
 ];

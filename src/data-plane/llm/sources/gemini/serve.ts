@@ -8,7 +8,7 @@ import type { ChatCompletionsPayload } from '../../../shared/protocol/chat-compl
 import type { GeminiGenerateContentRequest, GeminiStreamEvent } from '../../../shared/protocol/gemini.ts';
 import type { MessagesPayload } from '../../../shared/protocol/messages.ts';
 import type { ResponsesPayload } from '../../../shared/protocol/responses.ts';
-import { type GeminiInterceptor, type GeminiInvocation, type LlmTargetApi, runInterceptors } from '../../interceptors.ts';
+import { type GeminiInvocation, type LlmTargetApi, runInterceptors } from '../../interceptors.ts';
 import type { ExecuteResult } from '../../shared/errors/result.ts';
 import type { ProtocolFrame } from '../../shared/stream/types.ts';
 import { emitToChatCompletions } from '../../targets/chat-completions/emit.ts';
@@ -38,8 +38,6 @@ const unsupportedGeminiModelResult = (model: string) =>
     },
   });
 
-const geminiSourceInterceptorsForProvider = (binding: ProviderModelRecord): readonly GeminiInterceptor[] => [...geminiSourceInterceptors, ...(binding.sourceInterceptors?.gemini ?? [])];
-
 const geminiInvocation = <TPayload>(
   binding: ProviderModelRecord,
   targetApi: LlmTargetApi,
@@ -52,7 +50,7 @@ const geminiInvocation = <TPayload>(
   upstream: binding.upstream,
   upstreamModel: binding.upstreamModel,
   provider: binding.provider,
-  enabledFixes: binding.enabledFixes,
+  enabledFlags: binding.enabledFlags,
   ...(binding.targetInterceptors !== undefined ? { targetInterceptors: binding.targetInterceptors } : {}),
   payload,
 });
@@ -97,7 +95,7 @@ export const serveGemini = async (c: Context, model: string, wantsStream: boolea
             await emitToChatCompletions(geminiInvocation(binding, 'chat-completions', modelId, tgtPayload), request)),
         };
 
-        result = await runInterceptors(invocation, request, geminiSourceInterceptorsForProvider(binding), () =>
+        result = await runInterceptors(invocation, request, [...geminiSourceInterceptors, ...(binding.sourceInterceptors?.gemini ?? [])], () =>
           emits[target](invocation.payload, { model: modelId, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }

@@ -1,4 +1,4 @@
-import { interceptorsForChatCompletions } from './interceptors/index.ts';
+import { chatCompletionsBaseInterceptors } from './interceptors/index.ts';
 import type { TelemetryModelIdentity } from '../../../../repo/types.ts';
 import { chatCompletionsErrorPayloadMessage } from '../../../shared/protocol/chat-completions-errors.ts';
 import type { ChatCompletionChunk, ChatCompletionsPayload } from '../../../shared/protocol/chat-completions.ts';
@@ -39,7 +39,7 @@ export const emitToChatCompletions = async (invocation: ChatCompletionsInvocatio
   let modelIdentity: TelemetryModelIdentity | undefined;
 
   try {
-    return await runInterceptors(invocation, request, interceptorsForChatCompletions(invocation), async () => {
+    return await runInterceptors(invocation, request, [...chatCompletionsBaseInterceptors, ...(invocation.targetInterceptors?.chatCompletions ?? [])], async () => {
       const upstreamStartedAt = performance.now();
       const { model: _model, ...body }: ChatCompletionsPayload = invocation.payload;
       const providerResult = await invocation.provider.callChatCompletions(invocation.upstreamModel, body, request.downstreamAbortSignal);

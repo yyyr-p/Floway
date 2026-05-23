@@ -694,7 +694,7 @@ test('/v1beta/models/:model:generateContent preserves custom upstream /models HT
     enabled: true,
     sortOrder: 100,
     createdAt: '2026-05-01T00:00:00.000Z',
-    enabledFixes: [],
+    flagOverrides: {},
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',

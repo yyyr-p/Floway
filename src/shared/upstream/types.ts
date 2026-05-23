@@ -28,9 +28,5 @@ export interface Upstream {
   // when /models does not declare per-model `supported_endpoints` (Copilot
   // does; most third-party providers do not).
   supportedEndpoints: string[];
-  // Flag ids the upstream opted into. Provider construction promotes this
-  // low-level setting into ModelProvider.enabledFixes before target emitters
-  // assemble optional interceptors.
-  enabledFixes: ReadonlySet<string>;
   fetch(endpoint: EndpointKey, init: RequestInit, options?: UpstreamFetchOptions): Promise<Response>;
 }

@@ -15,7 +15,8 @@ import type { ChatCompletionsPayload } from '../../shared/protocol/chat-completi
 import type { MessagesPayload } from '../../shared/protocol/messages.ts';
 import type { ResponsesPayload } from '../../shared/protocol/responses.ts';
 import { endpointsIncludeLlmGeneration, isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
-import type { OptionalFixId } from '../fixes.ts';
+import { resolveEffectiveFlags } from '../flags-resolve.ts';
+import { defaultsForProvider } from '../flags.ts';
 import { inProcessMemo, readModelsStore, writeModelsStore } from '../models-store.ts';
 import type { ModelEndpoint, ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 
@@ -41,8 +42,6 @@ type CopilotUpstreamRecord = UpstreamRecord & {
   config: CopilotUpstreamConfig;
 };
 
-const COPILOT_DEFAULT_FIXES = ['retry-cyber-policy'] as const satisfies readonly OptionalFixId[];
-
 const ALLOWED_ANTHROPIC_BETAS = new Set(['interleaved-thinking-2025-05-14', 'context-management-2025-06-27', 'advanced-tool-use-2025-11-20']);
 const INTERLEAVED_THINKING_BETA = 'interleaved-thinking-2025-05-14';
 
@@ -52,15 +51,16 @@ const L1_TTL_MS = 120_000;
 const providerData = (model: UpstreamModel): CopilotProviderData => model.providerData as CopilotProviderData;
 
 // Project Copilot's raw `/models` shape into the slim provider-neutral fields
-// shared by every provider. supports_generation/upstreamEndpoints/providerData
-// are added by the caller because they depend on Copilot's endpoint knowledge.
-const copilotInternalModel = (model: CopilotRawModel): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> => {
+// shared by every provider. supports_generation/upstreamEndpoints/providerData/
+// enabledFlags are added by the caller because they depend on Copilot's
+// endpoint knowledge and the upstream-level flag layer.
+const copilotInternalModel = (model: CopilotRawModel): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> => {
   const limits: UpstreamModel['limits'] = {};
   if (model.capabilities?.limits?.max_output_tokens !== undefined) limits.max_output_tokens = model.capabilities.limits.max_output_tokens;
   if (model.capabilities?.limits?.max_context_window_tokens !== undefined) limits.max_context_window_tokens = model.capabilities.limits.max_context_window_tokens;
   if (model.capabilities?.limits?.max_prompt_tokens !== undefined) limits.max_prompt_tokens = model.capabilities.limits.max_prompt_tokens;
 
-  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> = {
+  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> = {
     id: model.id,
     limits,
   };
@@ -227,7 +227,7 @@ const copilotEmbeddingsBody = (body: Record<string, unknown>): Record<string, un
   return { ...body, input: [body.input] };
 };
 
-const finalizeCopilotModels = (rawModels: CopilotRawModel[]): UpstreamModel[] => {
+const finalizeCopilotModels = (rawModels: CopilotRawModel[], enabledFlags: ReadonlySet<string>): UpstreamModel[] => {
   const merged = mergeClaudeVariants({ object: 'list', data: rawModels });
   const groups = new Map<string, CopilotRawModel[]>();
   for (const rawModel of rawModels) {
@@ -246,6 +246,7 @@ const finalizeCopilotModels = (rawModels: CopilotRawModel[]): UpstreamModel[] =>
       upstreamEndpoints,
       providerData: { rawModels: variants } satisfies CopilotProviderData,
       ...(cost ? { cost } : {}),
+      enabledFlags,
     });
   }
   return models;
@@ -254,6 +255,9 @@ const finalizeCopilotModels = (rawModels: CopilotRawModel[]): UpstreamModel[] =>
 export const createCopilotProvider = async (record: UpstreamRecord): Promise<ModelProviderInstance> => {
   const copilot = assertCopilotUpstreamRecord(record);
   const upstream = createCopilotUpstream(copilot.id, copilot.name, copilot.config.githubToken, copilot.config.accountType);
+  // Computed once: only the upstream layer applies for this provider kind
+  // (no per-model override layer). Azure recomputes per deployment.
+  const upstreamFlags = resolveEffectiveFlags(defaultsForProvider('copilot'), [copilot.flagOverrides]);
 
   const call = async (
     endpoint: EndpointKey,
@@ -301,15 +305,15 @@ export const createCopilotProvider = async (record: UpstreamRecord): Promise<Mod
         const now = Date.now();
         const initial = projectLedger(ledger, now);
         if (now - ledger.fetchedAt < SOFT_MS && initial.length > 0) {
-          return finalizeCopilotModels(initial);
+          return finalizeCopilotModels(initial, upstreamFlags);
         }
         try {
           const response = await fetchCopilotModels(upstream);
           const merged = mergeLedger(ledger, response, now);
           await writeModelsStore<CopilotLedger>(copilot.id, merged);
-          return finalizeCopilotModels(projectLedger(merged, now));
+          return finalizeCopilotModels(projectLedger(merged, now), upstreamFlags);
         } catch (err) {
-          if (initial.length > 0) return finalizeCopilotModels(initial);
+          if (initial.length > 0) return finalizeCopilotModels(initial, upstreamFlags);
           throw err;
         }
       }),
@@ -336,7 +340,6 @@ export const createCopilotProvider = async (record: UpstreamRecord): Promise<Mod
     providerKind: 'copilot',
     name: copilot.name,
     provider,
-    enabledFixes: new Set([...COPILOT_DEFAULT_FIXES, ...copilot.enabledFixes]),
     sourceInterceptors: {
       messages: messagesCopilotSourceInterceptors,
     },

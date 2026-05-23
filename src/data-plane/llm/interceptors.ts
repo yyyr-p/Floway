@@ -49,7 +49,7 @@ export interface RequestContext {
  *   the planner picked for this binding.
  * - model: the resolved public model id.
  * - upstream / upstreamModel / provider: the planner's binding choice.
- * - enabledFixes: the upstream-fix set for this binding.
+ * - enabledFlags: the effective flag set for this binding.
  * - targetInterceptors: the provider-registered target interceptor table.
  * - payload: the source-shape request body, mutable so source interceptors
  *   can clean it.
@@ -70,7 +70,7 @@ export interface Invocation<TPayload> {
   readonly upstream: string;
   readonly upstreamModel: UpstreamModel;
   readonly provider: ModelProvider;
-  readonly enabledFixes: ReadonlySet<string>;
+  readonly enabledFlags: ReadonlySet<string>;
   readonly targetInterceptors?: ProviderTargetInterceptors;
   payload: TPayload;
 }

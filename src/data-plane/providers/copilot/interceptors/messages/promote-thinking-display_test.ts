@@ -30,6 +30,7 @@ const stubUpstreamModel = (): UpstreamModel => ({
   limits: {},
   supports_generation: true,
   upstreamEndpoints: ['messages'],
+  enabledFlags: new Set<string>(),
 });
 
 const testTelemetryModelIdentity: TelemetryModelIdentity = {
@@ -57,7 +58,7 @@ const makeCtx = (
   },
   provider: stubProvider(),
   upstreamModel: stubUpstreamModel(),
-  enabledFixes: new Set<string>(),
+  enabledFlags: new Set<string>(),
 });
 
 const stubRequest: RequestContext = {

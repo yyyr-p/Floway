@@ -43,8 +43,8 @@ binding unless that becomes an explicit product goal.
 - `src/data-plane/`: client-facing compatibility APIs, model/provider routing,
   protocol translation, embeddings, and data-plane tools.
 - `src/data-plane/providers/`: provider interface, provider registry, model
-  merge, provider-owned alias resolution, optional fix catalog, and concrete
-  provider implementations.
+  merge, provider-owned alias resolution, flag catalog and effective-flag
+  resolver, and concrete provider implementations.
 - `src/data-plane/providers/copilot/`: Copilot provider projection, raw model
   variant selection, endpoint capability projection, and Copilot-specific
   provider registrations.
@@ -58,7 +58,9 @@ binding unless that becomes an explicit product goal.
   background scheduling.
 - `src/shared/`: project-wide helpers that are not owned by one plane.
 - `src/shared/upstream/`: low-level HTTP adapters. These know how to call an
-  upstream, but they do not own LLM planning or provider selection.
+  upstream and own the persisted shape of provider-specific config (including
+  any per-deployment flag-override metadata), but they do not own LLM
+  planning, target selection, or interceptor wiring.
 
 Keep behavior in the subtree that owns the boundary where it is true. Avoid flat
 shared utility modules unless the rule is genuinely cross-boundary.
@@ -82,7 +84,7 @@ sortOrder: number
 createdAt: string
 updatedAt: string
 config: unknown
-enabledFixes: string[]
+flagOverrides: Record<string, boolean>
 ```
 
 The row id is the runtime upstream identity. Do not prefix it with provider type
@@ -123,7 +125,11 @@ Provider config rules:
   code persists the provider-owned `supportedEndpoints` capability set. Azure
   deployment rows may also carry provider-owned catalog metadata such as
   `display_name`, limits, and `model_picker_enabled`; keep that metadata out of
-  the main dashboard form unless a concrete UI workflow needs it. The configured
+  the main dashboard form unless a concrete UI workflow needs it. Each
+  deployment row may also carry `flagOverrides: { enabled: boolean; values:
+  Record<string, boolean> }`; when `enabled` is true the deployment's `values`
+  replace the upstream layer in the effective-flag computation for that
+  deployment's models. The configured
   endpoint plus API key is not enough to fetch rich Azure deployment metadata;
   Azure management-plane metadata requires ARM/AAD credentials and subscription
   resource context. Do not add a Chat+Messages Azure preset unless Azure
@@ -133,10 +139,20 @@ Provider config rules:
 - `copilot`: `githubToken`, `accountType`, and `user`. Copilot auth and quota
   are upstream-owned control-plane flows, not separate account resources.
 
-`enabledFixes` is a common upstream field for admin-opt-in behavior. Custom and
-Azure upstreams use it directly. Copilot providers union stored `enabledFixes`
-with provider-owned default fixes and structural workarounds; the dashboard does
-not expose Copilot default fixes as admin-editable toggles.
+`flagOverrides` is a `Record<string, boolean>` of per-upstream flag opt-ins.
+Each provider kind has a default flag set declared on each catalog entry's
+`defaultFor` field; `defaultsForProvider(kind)` returns the seed set. The
+effective per-binding flag set is `defaults ∪ upstream.flagOverrides ∪
+deployment.flagOverrides.values` resolved layer-by-layer, where a layer's
+`false` removes the flag (including flags seeded by defaults) and a later
+layer's `true` re-adds it. Azure deployments may additionally carry
+`flagOverrides: { enabled: boolean; values: Record<string, boolean> }` to
+override the upstream layer per-deployment; when `enabled` is false the
+deployment layer is skipped. The flag catalog lives in
+`src/data-plane/providers/flags.ts`. Copilot's structural source/target
+interceptors (Claude name normalization, alias resolution, endpoint
+projection, anthropic-beta filtering, Copilot request fixes) are NOT flags
+— they live on the provider record and run unconditionally.
 
 Control-plane `/api/models` is UI-owned. It may expose `provider` and
 `upstream_ids` so the dashboard can group model pickers and count models per
@@ -169,8 +185,8 @@ registry separates public catalog data from execution bindings:
 - `ResolvedModel` extends the catalog shape with ordered `ProviderModelRecord`
   bindings for execution.
 - `ProviderModelRecord` keeps the provider instance, upstream row id, exact
-  `UpstreamModel`, enabled fixes, and provider-registered source/target
-  interceptors.
+  `UpstreamModel`, the binding's effective `enabledFlags` set, and
+  provider-registered source/target interceptors.
 
 Request execution tries provider bindings in order only until the first binding
 that can serve the requested source shape. That provider's result is final for
@@ -188,14 +204,25 @@ endpoint projection, `anthropic-beta` filtering, and Copilot upstream request
 fixes. Generic source/target pipelines execute registered interceptor lists but
 do not choose behavior based on provider kind.
 
-Messages web-search behavior is decided by the post-plan Messages protocol
-interceptor. Messages via Responses or Chat Completions always uses the gateway
-shim when native web-search tools are present, because those targets cannot run
-Anthropic server tools. Native Messages targets receive native web-search tools
-directly by default; Copilot providers enable the shim directly, while custom
-and Azure providers enable it only through the `messages-web-search-shim`
-upstream fix flag. Do not rewrite the shim as part of unrelated data-plane flow
-work.
+`UpstreamModel.enabledFlags` is the effective flag set for that single model,
+computed by `resolveEffectiveFlags(defaultsForProvider(providerKind),
+[upstream.flagOverrides, deployment.flagOverrides?.enabled ?
+deployment.flagOverrides.values : undefined])`. `ProviderModelRecord` and
+`Invocation` carry the same set through to interceptors. Source-side and
+target-side interceptors are flat base lists attached to every binding;
+flag-gated interceptors early-return on `ctx.enabledFlags.has(flagId)` at the
+top of their body. There is no assembler-level flag filtering and no
+per-provider conditional registration of optional interceptors.
+
+Messages web-search behavior is decided inside the
+`withMessagesWebSearchShim` source interceptor (attached unconditionally on
+every binding). Its body uses a combined gate: when the planner picked a
+non-Messages target (Responses / Chat Completions) the shim ALWAYS runs,
+because those targets cannot carry Anthropic server tools; when the target
+is native Messages the shim runs only if `messages-web-search-shim` is in
+the binding's effective flag set. The flag is a default for `copilot` and
+`azure` (declared via the catalog's `defaultFor` field); Custom upstreams
+opt in per-upstream, and Azure can additionally override per-deployment.
 
 Backoff is intentionally disabled for now. Control-plane status returns empty
 temporary-unavailability data until a provider-level backoff design lands.
@@ -269,7 +296,7 @@ Per-HTTP-request invariants live on `RequestContext`: `apiKeyId`,
 `recordRequestPerformance`, `downstreamAbortSignal`, `clientStream`,
 `requestStartedAt`. Per-provider-binding-attempt request-side state lives on
 `Invocation<TPayload>`: `sourceApi`, `targetApi`, the resolved model id,
-provider/upstream/upstreamModel/enabledFixes, `targetInterceptors`, and the
+provider/upstream/upstreamModel/enabledFlags, `targetInterceptors`, and the
 mutable source-shape `payload`. `MessagesInvocation` additionally carries
 `anthropicBeta`. Mutable per-request state (last performance row, downstream
 abort controller) is intentionally not on either context; it lives as
@@ -358,7 +385,11 @@ stored API key. Mutating key APIs and upstream management are admin-only;
 Upstream control-plane routes:
 
 - `GET/POST /api/upstreams` and `PATCH/DELETE /api/upstreams/:id` manage all
-  provider kinds.
+  provider kinds. Mutating routes accept `flag_overrides` (a
+  `Record<string, boolean>`); legacy `enabled_fixes` payloads are rejected.
+- `GET /api/upstream-flags` returns the flag catalog so the dashboard can
+  render the tri-state (Inherit / On / Off) Feature Flags section per
+  upstream and the optional Azure per-deployment override panel.
 - `POST /api/upstreams/:id/test` probes saved upstream connectivity. Custom and
   Copilot tests use model listing; Azure tests probe declared deployment
   endpoints.
@@ -373,7 +404,9 @@ Copilot quota route. Control-plane model DTOs expose `provider` as
 
 Import/export is latest-only. Export payloads use `version: 2` and
 `data.upstreams`. Import must reject missing or mismatched versions before any
-mutation. It must not accept old split account/config payloads in runtime code.
+mutation. It must not accept old split account/config payloads in runtime code,
+and it hard-rejects upstream entries containing legacy `enabled_fixes`; the
+current shape is `flag_overrides: Record<string, boolean>`.
 
 ## Errors and Style
 
