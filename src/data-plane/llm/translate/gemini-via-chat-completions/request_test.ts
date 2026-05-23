@@ -17,7 +17,7 @@ test('buildTargetRequest maps system instruction and multimodal user content', (
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', true), {
+  assertEquals(buildTargetRequest(payload, 'gpt-test'), {
     model: 'gpt-test',
     stream: true,
     messages: [
@@ -57,7 +57,7 @@ test('buildTargetRequest maps function calls, tool responses, and reasoning hist
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false).messages, [
+  assertEquals(buildTargetRequest(payload, 'gpt-test').messages, [
     {
       role: 'assistant',
       content: 'I will call a tool.',
@@ -105,7 +105,7 @@ test('buildTargetRequest matches omitted functionResponse ids to same-name calls
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false).messages, [
+  assertEquals(buildTargetRequest(payload, 'gpt-test').messages, [
     {
       role: 'assistant',
       content: null,
@@ -165,7 +165,7 @@ test('buildTargetRequest does not rematch a prior call already answered by expli
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false).messages, [
+  assertEquals(buildTargetRequest(payload, 'gpt-test').messages, [
     {
       role: 'assistant',
       content: null,
@@ -211,9 +211,9 @@ test('buildTargetRequest maps generation config and reasoning effort', () => {
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false), {
+  assertEquals(buildTargetRequest(payload, 'gpt-test'), {
     model: 'gpt-test',
-    stream: false,
+    stream: true,
     messages: [],
     max_tokens: 512,
     temperature: 0.25,
@@ -245,11 +245,10 @@ test('buildTargetRequest maps structured output schema and zero thinking budget'
         },
       },
       'gpt-test',
-      false,
     ),
     {
       model: 'gpt-test',
-      stream: false,
+      stream: true,
       messages: [],
       reasoning_effort: 'none',
       response_format: {
@@ -287,9 +286,9 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false), {
+  assertEquals(buildTargetRequest(payload, 'gpt-test'), {
     model: 'gpt-test',
-    stream: false,
+    stream: true,
     messages: [],
     tools: [
       {
@@ -314,7 +313,6 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
         toolConfig: { functionCallingConfig: { mode: 'NONE' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'none',
   );
@@ -325,7 +323,6 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
         toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'auto',
   );
@@ -336,7 +333,6 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
         toolConfig: { functionCallingConfig: { mode: 'VALIDATED' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'auto',
   );
@@ -347,11 +343,10 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
         toolConfig: { functionCallingConfig: { mode: 'ANY' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'required',
   );
-  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'ANY' } } }, 'gpt-test', false).tool_choice, undefined);
+  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'ANY' } } }, 'gpt-test').tool_choice, undefined);
 });
 
 test('buildTargetRequest filters tools to allowed function names for ANY mode', () => {
@@ -376,7 +371,6 @@ test('buildTargetRequest filters tools to allowed function names for ANY mode', 
       },
     },
     'gpt-test',
-    false,
   );
 
   assertEquals(result.tools, [
@@ -393,9 +387,9 @@ test('buildTargetRequest filters tools to allowed function names for ANY mode', 
 });
 
 test('buildTargetRequest maps thinking budget thresholds', () => {
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, 'gpt-test', false).reasoning_effort, 'none');
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: -1 } } }, 'gpt-test', false).reasoning_effort, undefined);
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 2048 } } }, 'gpt-test', false).reasoning_effort, 'low');
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8192 } } }, 'gpt-test', false).reasoning_effort, 'medium');
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8193 } } }, 'gpt-test', false).reasoning_effort, 'high');
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, 'gpt-test').reasoning_effort, 'none');
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: -1 } } }, 'gpt-test').reasoning_effort, undefined);
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 2048 } } }, 'gpt-test').reasoning_effort, 'low');
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8192 } } }, 'gpt-test').reasoning_effort, 'medium');
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8193 } } }, 'gpt-test').reasoning_effort, 'high');
 });

@@ -208,7 +208,7 @@ export const translateMessagesToResponses = (payload: MessagesPayload): Response
     ...(payload.tools !== undefined ? { tools: translateTools(clientTools) } : {}),
     tool_choice: translateToolChoice(payload.tool_choice, clientTools),
     ...(payload.metadata ? { metadata: { ...payload.metadata } } : {}),
-    ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
+    stream: true,
     ...(reasoning ? { reasoning } : {}),
   };
 };

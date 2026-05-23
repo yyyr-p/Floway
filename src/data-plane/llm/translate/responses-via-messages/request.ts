@@ -257,7 +257,7 @@ export const translateResponsesToMessages = async (payload: ResponsesPayload, op
     ...(system ? { system } : {}),
     ...(payload.temperature != null ? { temperature: payload.temperature } : {}),
     ...(payload.top_p != null ? { top_p: payload.top_p } : {}),
-    ...(payload.stream != null ? { stream: payload.stream } : {}),
+    stream: true,
     tools,
     tool_choice: translateToolChoice(payload.tool_choice),
     ...(effort === 'none' ? { thinking: { type: 'disabled' as const } } : effort ? { output_config: { effort } } : {}),

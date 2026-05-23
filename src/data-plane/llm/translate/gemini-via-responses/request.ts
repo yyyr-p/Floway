@@ -171,10 +171,10 @@ const buildTools = (payload: GeminiGenerateContentRequest): ResponseTool[] | und
   return tools.length ? tools : undefined;
 };
 
-export const buildTargetRequest = (payload: GeminiGenerateContentRequest, model: string, wantsStream: boolean): ResponsesPayload => {
+export const buildTargetRequest = (payload: GeminiGenerateContentRequest, model: string): ResponsesPayload => {
   const request: ResponsesPayload = {
     model,
-    stream: wantsStream,
+    stream: true,
     input: [],
   };
   const unmatchedToolCallIds: GeminiToolCallIds = {};

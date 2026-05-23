@@ -16,7 +16,7 @@ test('buildTargetRequest maps instructions and multimodal user input without def
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', true), {
+  assertEquals(buildTargetRequest(payload, 'gpt-test'), {
     model: 'gpt-test',
     stream: true,
     instructions: 'Be precise.\n\nUse markdown.',
@@ -72,7 +72,7 @@ test('buildTargetRequest maps assistant reasoning, function calls, and call-orde
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false).input, [
+  assertEquals(buildTargetRequest(payload, 'gpt-test').input, [
     {
       type: 'reasoning',
       id: 'gemini_reasoning_0_0',
@@ -128,7 +128,7 @@ test('buildTargetRequest ignores thought signatures when translating to Response
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false).input, [
+  assertEquals(buildTargetRequest(payload, 'gpt-test').input, [
     {
       type: 'message',
       role: 'assistant',
@@ -161,9 +161,9 @@ test('buildTargetRequest maps generation config, JSON schema, and reasoning cont
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false), {
+  assertEquals(buildTargetRequest(payload, 'gpt-test'), {
     model: 'gpt-test',
-    stream: false,
+    stream: true,
     input: [],
     max_output_tokens: 512,
     temperature: 0.25,
@@ -177,7 +177,7 @@ test('buildTargetRequest maps generation config, JSON schema, and reasoning cont
     reasoning: { effort: 'medium', summary: 'detailed' },
   });
 
-  assertEquals(buildTargetRequest({ generationConfig: { responseMimeType: 'application/json' } }, 'gpt-test', false).text, { format: { type: 'json_object' } });
+  assertEquals(buildTargetRequest({ generationConfig: { responseMimeType: 'application/json' } }, 'gpt-test').text, { format: { type: 'json_object' } });
 });
 
 test('buildTargetRequest filters tools to allowed function names for ANY mode', () => {
@@ -202,7 +202,6 @@ test('buildTargetRequest filters tools to allowed function names for ANY mode', 
       },
     },
     'gpt-test',
-    false,
   );
 
   assertEquals(result.tools, [
@@ -223,9 +222,9 @@ test('buildTargetRequest filters tools to allowed function names for ANY mode', 
 });
 
 test('buildTargetRequest maps thinking budget thresholds and zero-budget disable', () => {
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 2048 } } }, 'gpt-test', false).reasoning, { effort: 'low' });
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8192 } } }, 'gpt-test', false).reasoning, { effort: 'medium' });
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8193 } } }, 'gpt-test', false).reasoning, { effort: 'high' });
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 2048 } } }, 'gpt-test').reasoning, { effort: 'low' });
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8192 } } }, 'gpt-test').reasoning, { effort: 'medium' });
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 8193 } } }, 'gpt-test').reasoning, { effort: 'high' });
   assertEquals(
     buildTargetRequest(
       {
@@ -234,11 +233,10 @@ test('buildTargetRequest maps thinking budget thresholds and zero-budget disable
         },
       },
       'gpt-test',
-      false,
     ).reasoning,
     { effort: 'none' },
   );
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: -1 } } }, 'gpt-test', false).reasoning, undefined);
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: -1 } } }, 'gpt-test').reasoning, undefined);
 });
 
 test('buildTargetRequest maps tool declarations and tool choice modes only when tools exist', () => {
@@ -268,9 +266,9 @@ test('buildTargetRequest maps tool declarations and tool choice modes only when 
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'gpt-test', false), {
+  assertEquals(buildTargetRequest(payload, 'gpt-test'), {
     model: 'gpt-test',
-    stream: false,
+    stream: true,
     input: [],
     tools: [
       {
@@ -294,7 +292,6 @@ test('buildTargetRequest maps tool declarations and tool choice modes only when 
         toolConfig: { functionCallingConfig: { mode: 'NONE' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'none',
   );
@@ -305,7 +302,6 @@ test('buildTargetRequest maps tool declarations and tool choice modes only when 
         toolConfig: { functionCallingConfig: { mode: 'AUTO' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'auto',
   );
@@ -316,7 +312,6 @@ test('buildTargetRequest maps tool declarations and tool choice modes only when 
         toolConfig: { functionCallingConfig: { mode: 'VALIDATED' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'auto',
   );
@@ -327,9 +322,8 @@ test('buildTargetRequest maps tool declarations and tool choice modes only when 
         toolConfig: { functionCallingConfig: { mode: 'ANY' } },
       },
       'gpt-test',
-      false,
     ).tool_choice,
     'required',
   );
-  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'ANY' } } }, 'gpt-test', false).tool_choice, undefined);
+  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'ANY' } } }, 'gpt-test').tool_choice, undefined);
 });

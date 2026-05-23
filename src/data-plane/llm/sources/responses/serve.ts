@@ -146,7 +146,7 @@ export const serveResponses = async (c: Context): Promise<Response> => {
         };
 
         result = await runInterceptors(invocation, request, [...responsesSourceInterceptors, ...(binding.sourceInterceptors?.responses ?? [])], () =>
-          emits[target](invocation.payload, { model, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
+          emits[target](invocation.payload, { model, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }
 

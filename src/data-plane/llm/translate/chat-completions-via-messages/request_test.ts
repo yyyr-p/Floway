@@ -761,24 +761,24 @@ test('stop array → stop_sequences array', async () => {
   assertEquals(result.stop_sequences, ['END', 'STOP']);
 });
 
-test('stream flag passed through', async () => {
-  const result = await translateChatCompletionsToMessages(
+test('always emits stream: true regardless of source stream flag', async () => {
+  // Translation assumes streaming upstream (provider forces stream=true);
+  // source `respond.ts` collects SSE when client wants non-stream.
+  const streamed = await translateChatCompletionsToMessages(
     mkPayload({
       messages: [{ role: 'user', content: 'Hi' }],
       stream: true,
     }),
   );
-  assertEquals(result.stream, true);
-});
+  assertEquals(streamed.stream, true);
 
-test('stream false → not set', async () => {
-  const result = await translateChatCompletionsToMessages(
+  const nonStreamed = await translateChatCompletionsToMessages(
     mkPayload({
       messages: [{ role: 'user', content: 'Hi' }],
       stream: false,
     }),
   );
-  assertEquals(result.stream, undefined);
+  assertEquals(nonStreamed.stream, true);
 });
 
 // ── Tool choice mapping ──

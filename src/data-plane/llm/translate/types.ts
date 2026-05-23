@@ -6,13 +6,19 @@ import type { ProtocolFrame } from '../shared/stream/types.ts';
  * the source payload itself. Concrete pair translators consume only the fields
  * they need.
  *
+ * Translation is transport-agnostic: the LLM upstream is always streamed
+ * (provider layer forces `stream: true` for streaming endpoints, target emit
+ * rejects non-SSE 200s), and the source `respond.ts` decides at the edge
+ * whether to collect the SSE back into a non-stream response. So
+ * `TranslationContext` does not carry the client's stream preference — every
+ * target payload built here unconditionally requests streaming.
+ *
  * `fallbackMaxOutputTokens` is the upstream-advertised max output, used by
  * source-to-messages translators when the source payload does not specify
  * `max_tokens` (Messages requires it; OpenAI Responses/Chat and Gemini do not).
  */
 export interface TranslationContext {
   readonly model: string;
-  readonly wantsStream: boolean;
   readonly fallbackMaxOutputTokens?: number;
 }
 

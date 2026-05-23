@@ -215,7 +215,7 @@ export const translateResponsesToChatCompletions = (payload: ResponsesPayload): 
     model: payload.model,
     messages,
     ...(payload.max_output_tokens !== undefined ? { max_tokens: payload.max_output_tokens } : {}),
-    ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
+    stream: true,
     ...(payload.temperature !== undefined ? { temperature: payload.temperature } : {}),
     ...(payload.top_p !== undefined ? { top_p: payload.top_p } : {}),
     ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {}),

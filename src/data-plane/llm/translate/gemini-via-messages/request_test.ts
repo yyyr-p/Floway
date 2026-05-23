@@ -21,7 +21,7 @@ test('buildTargetRequest maps system, default max tokens, and multimodal user co
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'claude-test', true, noCapabilities), {
+  assertEquals(buildTargetRequest(payload, 'claude-test', noCapabilities), {
     model: 'claude-test',
     stream: true,
     max_tokens: MESSAGES_FALLBACK_MAX_TOKENS,
@@ -46,7 +46,7 @@ test('buildTargetRequest maps system, default max tokens, and multimodal user co
 });
 
 test('buildTargetRequest prefers capabilities.maxOutputTokens over the gateway default when payload omits maxOutputTokens', () => {
-  const request = buildTargetRequest({}, 'claude-test', false, withMaxOutputTokens(6144));
+  const request = buildTargetRequest({}, 'claude-test', withMaxOutputTokens(6144));
   assertEquals(request.max_tokens, 6144);
 });
 
@@ -65,9 +65,9 @@ test('buildTargetRequest maps generation config and thinking controls', () => {
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'claude-test', false, noCapabilities), {
+  assertEquals(buildTargetRequest(payload, 'claude-test', noCapabilities), {
     model: 'claude-test',
-    stream: false,
+    stream: true,
     messages: [],
     max_tokens: 512,
     temperature: 0.25,
@@ -78,7 +78,7 @@ test('buildTargetRequest maps generation config and thinking controls', () => {
     output_config: { effort: 'high' },
   });
 
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, 'claude-test', false, noCapabilities).thinking, { type: 'disabled' });
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: 0 } } }, 'claude-test', noCapabilities).thinking, { type: 'disabled' });
 });
 
 test('buildTargetRequest maps assistant thinking signatures and tool calls', () => {
@@ -106,7 +106,7 @@ test('buildTargetRequest maps assistant thinking signatures and tool calls', () 
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'claude-test', false, noCapabilities).messages, [
+  assertEquals(buildTargetRequest(payload, 'claude-test', noCapabilities).messages, [
     {
       role: 'assistant',
       content: [
@@ -160,7 +160,7 @@ test('buildTargetRequest correlates omitted function response ids in call order'
     ],
   };
 
-  assertEquals(buildTargetRequest(payload, 'claude-test', false, noCapabilities).messages, [
+  assertEquals(buildTargetRequest(payload, 'claude-test', noCapabilities).messages, [
     {
       role: 'assistant',
       content: [
@@ -228,9 +228,9 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'claude-test', false, noCapabilities), {
+  assertEquals(buildTargetRequest(payload, 'claude-test', noCapabilities), {
     model: 'claude-test',
-    stream: false,
+    stream: true,
     messages: [],
     max_tokens: MESSAGES_FALLBACK_MAX_TOKENS,
     tools: [
@@ -247,10 +247,10 @@ test('buildTargetRequest maps tool declarations and tool choice modes', () => {
     tool_choice: { type: 'tool', name: 'lookup' },
   });
 
-  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'NONE' } } }, 'claude-test', false, noCapabilities).tool_choice, { type: 'none' });
-  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }, 'claude-test', false, noCapabilities).tool_choice, { type: 'auto' });
-  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'VALIDATED' } } }, 'claude-test', false, noCapabilities).tool_choice, { type: 'auto' });
-  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'ANY' } } }, 'claude-test', false, noCapabilities).tool_choice, { type: 'any' });
+  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'NONE' } } }, 'claude-test', noCapabilities).tool_choice, { type: 'none' });
+  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'AUTO' } } }, 'claude-test', noCapabilities).tool_choice, { type: 'auto' });
+  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'VALIDATED' } } }, 'claude-test', noCapabilities).tool_choice, { type: 'auto' });
+  assertEquals(buildTargetRequest({ toolConfig: { functionCallingConfig: { mode: 'ANY' } } }, 'claude-test', noCapabilities).tool_choice, { type: 'any' });
 });
 
 test('buildTargetRequest filters tools to multiple allowed names for ANY mode', () => {
@@ -268,9 +268,9 @@ test('buildTargetRequest filters tools to multiple allowed names for ANY mode', 
     },
   };
 
-  assertEquals(buildTargetRequest(payload, 'claude-test', false, noCapabilities), {
+  assertEquals(buildTargetRequest(payload, 'claude-test', noCapabilities), {
     model: 'claude-test',
-    stream: false,
+    stream: true,
     messages: [],
     max_tokens: MESSAGES_FALLBACK_MAX_TOKENS,
     tools: [
@@ -290,5 +290,5 @@ test('buildTargetRequest filters tools to multiple allowed names for ANY mode', 
 });
 
 test('buildTargetRequest maps dynamic thinking budget to adaptive thinking', () => {
-  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: -1 } } }, 'claude-test', false, noCapabilities).thinking, { type: 'adaptive' });
+  assertEquals(buildTargetRequest({ generationConfig: { thinkingConfig: { thinkingBudget: -1 } } }, 'claude-test', noCapabilities).thinking, { type: 'adaptive' });
 });

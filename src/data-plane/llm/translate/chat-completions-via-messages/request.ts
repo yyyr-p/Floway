@@ -171,7 +171,7 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
           stop_sequences: Array.isArray(payload.stop) ? payload.stop : [payload.stop],
         }
       : {}),
-    ...(payload.stream ? { stream: payload.stream } : {}),
+    stream: true,
     ...(payload.tools?.length ? { tools: translateChatCompletionsTools(payload.tools) } : {}),
     ...(payload.tool_choice != null ? { tool_choice: translateChatCompletionsToolChoice(payload.tool_choice) } : {}),
     ...(payload.reasoning_effort && payload.reasoning_effort !== 'none' ? { output_config: { effort: payload.reasoning_effort } } : {}),

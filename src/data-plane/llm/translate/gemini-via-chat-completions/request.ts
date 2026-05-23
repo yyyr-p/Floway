@@ -188,10 +188,10 @@ const buildTools = (payload: GeminiGenerateContentRequest): Tool[] | undefined =
   return tools.length ? tools : undefined;
 };
 
-export const buildTargetRequest = (payload: GeminiGenerateContentRequest, model: string, wantsStream: boolean): ChatCompletionsPayload => {
+export const buildTargetRequest = (payload: GeminiGenerateContentRequest, model: string): ChatCompletionsPayload => {
   const request: ChatCompletionsPayload = {
     model,
-    stream: wantsStream,
+    stream: true,
     messages: [],
   };
   const unmatchedToolCallIds: GeminiToolCallIds = {};

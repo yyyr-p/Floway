@@ -109,7 +109,7 @@ export const serveMessages = async (c: Context): Promise<Response> => {
         };
 
         result = await runInterceptors(invocation, request, [...messagesSourceInterceptors, ...(binding.sourceInterceptors?.messages ?? [])], () =>
-          emits[target](invocation.payload, { model, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
+          emits[target](invocation.payload, { model, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }
 

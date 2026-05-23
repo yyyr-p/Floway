@@ -48,8 +48,10 @@ export const countGeminiTokens = async (c: Context, model: string): Promise<Resp
     for (const binding of resolvedModel.providers) {
       if (!binding.upstreamModel.upstreamEndpoints.includes('messages_count_tokens')) continue;
 
-      const messagesPayload = buildMessagesTargetRequest(generateContentRequest, modelId, false, { fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens });
-      const { model: _model, ...body } = messagesPayload;
+      const messagesPayload = buildMessagesTargetRequest(generateContentRequest, modelId, { fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens });
+      // gemini-via-messages translator always emits `stream: true` (translation
+      // assumes streaming upstream); count_tokens is non-streaming, so strip it.
+      const { model: _model, stream: _stream, ...body } = messagesPayload;
       const result = await binding.provider.callMessagesCountTokens(binding.upstreamModel, body);
       response = result.response;
       break;

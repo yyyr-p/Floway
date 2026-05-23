@@ -7,6 +7,6 @@ import type { TranslateTrip } from '../types.ts';
 export const translateGeminiViaChatCompletions: TranslateTrip<
   GeminiGenerateContentRequest, GeminiStreamEvent, ChatCompletionsPayload, ChatCompletionChunk
 > = async (src, ctx) => ({
-  target: buildTargetRequest(src, ctx.model, ctx.wantsStream),
+  target: buildTargetRequest(src, ctx.model),
   events: translateToSourceEvents,
 });

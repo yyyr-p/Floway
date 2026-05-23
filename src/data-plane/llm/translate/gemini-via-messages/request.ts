@@ -208,7 +208,6 @@ const buildTools = (payload: GeminiGenerateContentRequest): MessagesTool[] | und
 export const buildTargetRequest = (
   payload: GeminiGenerateContentRequest,
   model: string,
-  wantsStream: boolean,
   options: { fallbackMaxOutputTokens?: number },
 ): MessagesPayload => {
   // Gemini can omit maxOutputTokens, but MessagesPayload requires max_tokens.
@@ -218,7 +217,7 @@ export const buildTargetRequest = (
   const fallbackMaxOutputTokens = options.fallbackMaxOutputTokens ?? MESSAGES_FALLBACK_MAX_TOKENS;
   const request: MessagesPayload = {
     model,
-    stream: wantsStream,
+    stream: true,
     max_tokens: fallbackMaxOutputTokens,
     messages: [],
   };

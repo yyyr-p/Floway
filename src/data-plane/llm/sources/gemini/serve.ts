@@ -96,7 +96,7 @@ export const serveGemini = async (c: Context, model: string, wantsStream: boolea
         };
 
         result = await runInterceptors(invocation, request, [...geminiSourceInterceptors, ...(binding.sourceInterceptors?.gemini ?? [])], () =>
-          emits[target](invocation.payload, { model: modelId, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
+          emits[target](invocation.payload, { model: modelId, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }
 

@@ -122,7 +122,7 @@ export const translateChatCompletionsToResponses = (payload: ChatCompletionsPayl
     // provider-specific policy filtering belongs at the target boundary, not in
     // pairwise translation.
     ...(payload.metadata !== undefined ? { metadata: payload.metadata } : {}),
-    ...(payload.stream !== undefined ? { stream: payload.stream } : {}),
+    stream: true,
     // Preserve Chat's omitted `store` as omitted instead of synthesizing
     // `store: false`. OpenAI's migration guide treats storage as the default
     // behavior for both Responses and new Chat Completions accounts; callers
