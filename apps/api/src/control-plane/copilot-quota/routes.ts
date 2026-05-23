@@ -54,7 +54,13 @@ export const copilotQuota = async (c: Context) => {
 
     if (!resp.ok) {
       const text = await resp.text();
-      return c.json({ error: `GitHub API error: ${resp.status} ${text}` }, resp.status as 400 | 401 | 403 | 404 | 500);
+      // Map upstream 401/403 to 502 so the dashboard client doesn't confuse
+      // "GitHub credential issue" with "your dashboard auth is invalid" and logout.
+      const status = resp.status === 401 || resp.status === 403 ? 502 : resp.status;
+      return c.json(
+        { error: `GitHub API error: ${resp.status} ${text}` },
+        status as 400 | 404 | 500 | 502,
+      );
     }
 
     const data = (await resp.json()) as CopilotUsageResponse;
