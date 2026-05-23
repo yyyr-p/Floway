@@ -683,7 +683,6 @@ test('/v1/messages keeps caller thinking and tool_choice unchanged on native ada
             {
               id: 'claude-adaptive',
               supported_endpoints: ['/v1/messages'],
-              adaptiveThinking: true,
             },
           ]),
         );
@@ -803,7 +802,6 @@ test('/v1/messages sends summarized thinking upstream while exposing 4.7 default
             {
               id: 'claude-opus-4.7-1m-internal',
               supported_endpoints: ['/v1/messages'],
-              adaptiveThinking: true,
             },
           ]),
         );
@@ -905,7 +903,6 @@ test('/v1/messages streams explicit omitted without thinking_delta while preserv
             {
               id: 'claude-opus-4.7',
               supported_endpoints: ['/v1/messages'],
-              adaptiveThinking: true,
             },
           ]),
         );

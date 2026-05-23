@@ -7,7 +7,7 @@ import { assertEquals } from '../../../test-assert.ts';
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
-const model = (id: string): CopilotRawModel => ({ id, name: id, version: '1', object: 'model' });
+const model = (id: string): CopilotRawModel => ({ id, name: id, version: '1' });
 const response = (...ids: string[]): CopilotModelsResponse => ({ object: 'list', data: ids.map(model) });
 
 test('emptyLedger returns a ledger with no models and fetchedAt 0', () => {

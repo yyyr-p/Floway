@@ -2,8 +2,7 @@ import type { UpstreamRecord } from '../../../repo/types.ts';
 import { assertAzureUpstreamRecord, createAzureUpstream, type AzureDeploymentConfig } from '../../../shared/upstream/azure.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
 import { messagesWebSearchShimInterceptors } from '../../llm/sources/messages/interceptors/index.ts';
-import { isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
-import { withModelInfoDefaults, type RawModelMetadata } from '../model-info.ts';
+import { endpointsIncludeLlmGeneration, isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
 import type { ModelEndpoint, ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 
 interface AzureProviderData {
@@ -22,15 +21,15 @@ const withMessagesCountTokens = (endpoints: readonly ModelEndpoint[]): ModelEndp
 
 const azureDeploymentEndpoints = (deployment: AzureDeploymentConfig): ModelEndpoint[] => withMessagesCountTokens(publicPathsToModelEndpoints(deployment.supportedEndpoints));
 
-const rawMetadata = (deployment: AzureDeploymentConfig): RawModelMetadata => {
-  const metadata: RawModelMetadata = {
+// Project an Azure deployment config row into the slim provider-neutral fields.
+// supports_generation/upstreamEndpoints/providerData are added by the caller.
+const azureInternalModel = (deployment: AzureDeploymentConfig): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> => {
+  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> = {
     id: publicModelId(deployment),
+    limits: { ...(deployment.limits ?? {}) },
   };
-
-  if (deployment.display_name !== undefined) metadata.display_name = deployment.display_name;
-  if (deployment.capabilities !== undefined) metadata.capabilities = deployment.capabilities;
-
-  return metadata;
+  if (deployment.display_name !== undefined) internal.display_name = deployment.display_name;
+  return internal;
 };
 
 export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstance => {
@@ -60,10 +59,11 @@ export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstan
   const provider: ModelProvider = {
     async getProvidedModels() {
       return azure.config.deployments.map(deployment => {
-        const model = withModelInfoDefaults(rawMetadata(deployment));
+        const upstreamEndpoints = azureDeploymentEndpoints(deployment);
         return {
-          ...model,
-          supportedEndpoints: azureDeploymentEndpoints(deployment),
+          ...azureInternalModel(deployment),
+          supports_generation: endpointsIncludeLlmGeneration(upstreamEndpoints),
+          upstreamEndpoints,
           providerData: {
             deployment: deployment.deployment,
           } satisfies AzureProviderData,

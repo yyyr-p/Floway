@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 
-import { compareModelIds, getCatalogModels, listModelProviders, resolveModelForRequest } from './registry.ts';
+import { compareModelIds, getInternalModels, listModelProviders, resolveModelForRequest } from './registry.ts';
 import { assertEquals } from '../../test-assert.ts';
 import { buildCopilotUpstreamRecord, buildCustomUpstreamRecord, copilotModels, jsonResponse, setupAppTest, withMockedFetch } from '../../test-helpers.ts';
 import { createCopilotProvider } from './copilot/provider.ts';
@@ -126,7 +126,7 @@ test('listModelProviders creates enabled provider instances with upstream row id
   assertEquals(providers.some(provider => provider.upstream.includes(':')), false);
 });
 
-test('getCatalogModels returns public catalog records without execution bindings', async () => {
+test('getInternalModels returns the catalog projection without execution bindings', async () => {
   const { repo } = await setupAppTest();
 
   await repo.upstreams.save(buildCustomUpstreamRecord());
@@ -172,16 +172,17 @@ test('getCatalogModels returns public catalog records without execution bindings
       throw new Error(`Unhandled fetch ${request.url}`);
     },
     async () => {
-      const catalog = await getCatalogModels();
+      const catalog = await getInternalModels();
       const model = catalog.find(candidate => candidate.id === 'shared-model');
 
       assertEquals(model?.display_name, 'Shared Model');
-      assertEquals(model?.supportedEndpoints, ['messages', 'messages_count_tokens', 'chat_completions']);
+      assertEquals(Object.hasOwn(model!, 'upstreamEndpoints'), false);
       assertEquals(model?.supports_generation, true);
       assertEquals(Object.hasOwn(model!, 'providers'), false);
       assertEquals(Object.hasOwn(model!, 'providerData'), false);
 
       const resolved = await resolveModelForRequest('shared-model');
+      assertEquals(resolved.model?.upstreamEndpoints, ['messages', 'messages_count_tokens', 'chat_completions']);
       assertEquals(
         resolved.model?.providers.map(({ upstream }) => upstream),
         ['up_copilot', 'up_custom'],
@@ -233,7 +234,7 @@ test('resolveModelForRequest applies provider-owned aliases only to that provide
       const resolved = await resolveModelForRequest('claude-opus-4-7-20300101');
 
       assertEquals(resolved.id, 'claude-opus-4-7');
-      assertEquals(resolved.model?.supportedEndpoints, ['messages', 'messages_count_tokens']);
+      assertEquals(resolved.model?.upstreamEndpoints, ['messages', 'messages_count_tokens']);
       assertEquals(
         resolved.model?.providers.map(({ upstream }) => upstream),
         ['up_copilot'],

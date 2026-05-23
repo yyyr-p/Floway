@@ -1,75 +1,43 @@
 import type { Context } from 'hono';
 
-import type { ModelInfo, ModelsResponse } from '../../data-plane/models/types.ts';
-import { modelEndpointsToPublicPaths } from '../../data-plane/providers/endpoints.ts';
+import { toPublicModel } from '../../data-plane/models/load.ts';
+import type { PublicModel, PublicModelsResponse } from '../../data-plane/models/types.ts';
 import { ProviderModelsUnavailableError } from '../../data-plane/providers/models-store.ts';
 import { getModels } from '../../data-plane/providers/registry.ts';
-import type { ModelMetadata, ResolvedModel } from '../../data-plane/providers/types.ts';
+import type { ResolvedModel } from '../../data-plane/providers/types.ts';
 import type { UpstreamProviderKind } from '../../repo/types.ts';
 
-interface ControlPlaneModelInfo extends ModelInfo {
-  // Compatibility hint for the existing dashboard picker grouping. Public
-  // data-plane model APIs deliberately do not emit provider identity.
-  name: string;
-  version: string;
-  display_name: string;
-  created_at?: string;
-  description?: string;
-  capabilities: ModelMetadata['capabilities'];
-  supported_endpoints: string[];
-  supports_generation: boolean;
-  provider: UpstreamProviderKind;
-  upstream_ids: string[];
-  billing?: ResolvedModel['billing'];
-  policy?: ResolvedModel['policy'];
-  model_picker_enabled?: boolean;
+// Same DTO as the public /models endpoint, plus one dashboard-only field:
+// `upstreams` lists every provider binding for this model as { kind, id }
+// pairs so the picker can group and the upstream rows can count their
+// bound models. A single model id can be served by mixed provider kinds
+// (e.g. one azure deployment + one custom upstream both expose `gpt-5.5`),
+// so a flat `provider`/`upstream_ids` split would misrepresent that.
+interface ControlPlaneModel extends PublicModel {
+  upstreams: { kind: UpstreamProviderKind; id: string }[];
 }
 
-interface ControlPlaneModelsResponse extends Omit<ModelsResponse, 'data'> {
-  data: ControlPlaneModelInfo[];
+interface ControlPlaneModelsResponse extends Omit<PublicModelsResponse, 'data'> {
+  data: ControlPlaneModel[];
 }
 
-const modelProvider = (model: ResolvedModel): UpstreamProviderKind => {
-  const first = model.providers[0];
-  if (!first) throw new Error(`Resolved model ${model.id} has no provider bindings`);
-  return first.providerKind;
-};
-
-const toControlPlaneModelInfo = (model: ResolvedModel): ControlPlaneModelInfo => {
-  const displayName = model.display_name ?? model.name ?? model.id;
-  const info: ControlPlaneModelInfo = {
-    id: model.id,
-    object: model.object,
-    name: displayName,
-    version: model.version,
-    display_name: displayName,
-    ...(model.owned_by !== undefined ? { owned_by: model.owned_by } : {}),
-    ...(model.created !== undefined ? { created: model.created } : {}),
-    ...(model.created_at !== undefined ? { created_at: model.created_at } : {}),
-    ...(model.description !== undefined ? { description: model.description } : {}),
-    capabilities: model.capabilities,
-    supported_endpoints: modelEndpointsToPublicPaths(model.supportedEndpoints),
-    supports_generation: model.supports_generation,
-    provider: modelProvider(model),
-    upstream_ids: [...new Set(model.providers.map(provider => provider.upstream))],
-    ...(model.cost ? { cost: model.cost } : {}),
-  };
-  if (model.billing) info.billing = model.billing;
-  if (model.policy) info.policy = model.policy;
-  if (model.model_picker_enabled !== undefined) {
-    info.model_picker_enabled = model.model_picker_enabled;
-  }
-  return info;
-};
+const toControlPlaneModel = (model: ResolvedModel): ControlPlaneModel => ({
+  ...toPublicModel(model),
+  upstreams: model.providers.map(binding => ({ kind: binding.providerKind, id: binding.upstream })),
+});
 
 const modelListingFailureMessage = 'Upstream model listing failed';
 
 export const controlPlaneModels = async (c: Context): Promise<Response> => {
   try {
     const models = await getModels();
+    const data = models.map(toControlPlaneModel);
     const response: ControlPlaneModelsResponse = {
       object: 'list',
-      data: models.map(toControlPlaneModelInfo),
+      has_more: false,
+      first_id: data[0]?.id ?? null,
+      last_id: data[data.length - 1]?.id ?? null,
+      data,
     };
     return Response.json(response);
   } catch (e: unknown) {

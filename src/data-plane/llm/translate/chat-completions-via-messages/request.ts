@@ -1,4 +1,3 @@
-import type { ModelCapabilities } from '../../../providers/capabilities.ts';
 import type { ChatCompletionsPayload, ContentPart, Message, Tool } from '../../../shared/protocol/chat-completions.ts';
 import { MESSAGES_FALLBACK_MAX_TOKENS, type MessagesAssistantContentBlock, type MessagesMessage, type MessagesPayload, type MessagesUserContentBlock } from '../../../shared/protocol/messages.ts';
 import { messagesThinkingBlockFromChatScalarReasoning } from '../shared/messages-chat-reasoning.ts';
@@ -179,7 +178,5 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
   };
 };
 
-export const buildTargetRequest = (payload: ChatCompletionsPayload, capabilities: ModelCapabilities): Promise<MessagesPayload> =>
-  translateChatCompletionsToMessages(payload, {
-    fallbackMaxOutputTokens: capabilities.maxOutputTokens,
-  });
+export const buildTargetRequest = (payload: ChatCompletionsPayload, options: { fallbackMaxOutputTokens?: number }): Promise<MessagesPayload> =>
+  translateChatCompletionsToMessages(payload, options);

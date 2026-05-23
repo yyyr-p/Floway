@@ -15,10 +15,7 @@ const azureRecord = (overrides: Partial<UpstreamRecord> = {}): UpstreamRecord =>
         publicModelId: 'gpt-public',
         supportedEndpoints: ['/chat/completions', '/responses', '/embeddings'],
         display_name: 'GPT Public',
-        capabilities: {
-          limits: { max_context_window_tokens: 128000 },
-          supports: { streaming: true },
-        },
+        limits: { max_context_window_tokens: 128000 },
       },
       {
         deployment: 'gpt-small',
@@ -51,26 +48,23 @@ test('createAzureProvider projects configured deployments into upstream models',
   assertEquals(instance.name, 'Azure Resource');
   assertEquals(instance.enabledFixes.has('deepseek-reasoning-dialect'), true);
   assertEquals(
-    models.map(model => ({ id: model.id, name: model.name, displayName: model.display_name, endpoints: model.supportedEndpoints, providerData: model.providerData })),
+    models.map(model => ({ id: model.id, displayName: model.display_name, endpoints: model.upstreamEndpoints, providerData: model.providerData })),
     [
       {
         id: 'gpt-public',
-        name: 'gpt-public',
         displayName: 'GPT Public',
         endpoints: ['chat_completions', 'responses', 'embeddings'],
         providerData: { deployment: 'gpt-prod' },
       },
       {
         id: 'gpt-small',
-        name: 'gpt-small',
         displayName: undefined,
         endpoints: ['chat_completions'],
         providerData: { deployment: 'gpt-small' },
       },
     ],
   );
-  assertEquals(models[0].capabilities.limits.max_context_window_tokens, 128000);
-  assertEquals(models[0].capabilities.supports.streaming, true);
+  assertEquals(models[0].limits.max_context_window_tokens, 128000);
 });
 
 test('createAzureProvider sends deployment names in OpenAI-shaped request bodies and model keys', async () => {
@@ -135,9 +129,9 @@ test('createAzureProvider supports Azure AI cross-provider deployments with expl
   const seen: Array<{ url: string; apiKey: string | null; body: Record<string, unknown> }> = [];
 
   assertEquals(chatModel.id, 'deepseek-v4-pro');
-  assertEquals(chatModel.supportedEndpoints, ['chat_completions']);
+  assertEquals(chatModel.upstreamEndpoints, ['chat_completions']);
   assertEquals(responsesModel.id, 'gpt-5.4-pro');
-  assertEquals(responsesModel.supportedEndpoints, ['responses']);
+  assertEquals(responsesModel.upstreamEndpoints, ['responses']);
 
   await withMockedFetch(
     async request => {
@@ -198,7 +192,7 @@ test('createAzureProvider supports native Azure Anthropic Messages deployments',
   const seen: Array<{ url: string; xApiKey: string | null; body: Record<string, unknown>; beta: string | null }> = [];
 
   assertEquals(model.id, 'claude-public');
-  assertEquals(model.supportedEndpoints, ['messages', 'messages_count_tokens']);
+  assertEquals(model.upstreamEndpoints, ['messages', 'messages_count_tokens']);
 
   await withMockedFetch(
     async request => {

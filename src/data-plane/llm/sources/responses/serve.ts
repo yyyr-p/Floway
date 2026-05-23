@@ -2,7 +2,6 @@ import type { Context } from 'hono';
 
 import { responsesSourceInterceptors } from './interceptors/index.ts';
 import { respondResponses } from './respond.ts';
-import { getModelCapabilities } from '../../../providers/capabilities.ts';
 import { resolveModelForRequest } from '../../../providers/registry.ts';
 import type { ModelEndpoint, ProviderModelRecord } from '../../../providers/types.ts';
 import type { ChatCompletionsPayload } from '../../../shared/protocol/chat-completions.ts';
@@ -119,8 +118,7 @@ export const serveResponses = async (c: Context): Promise<Response> => {
       for (const binding of resolved.providers) {
         const attemptPayload = structuredClone(payload);
         attemptPayload.model = model;
-        const capabilities = getModelCapabilities(binding.upstreamModel);
-        const target = pickTarget(binding.upstreamModel.supportedEndpoints);
+        const target = pickTarget(binding.upstreamModel.upstreamEndpoints);
         if (!target) continue;
 
         const invocation: ResponsesInvocation = responsesInvocation(binding, target, model, attemptPayload);
@@ -134,7 +132,7 @@ export const serveResponses = async (c: Context): Promise<Response> => {
         };
 
         result = await runInterceptors(invocation, request, responsesSourceInterceptorsForProvider(binding), () =>
-          emits[target](invocation.payload, { model, wantsStream, capabilities }));
+          emits[target](invocation.payload, { model, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }
 

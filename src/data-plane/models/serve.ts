@@ -1,18 +1,19 @@
-// GET /v1/models and /models — expose provider registry models in the public
-// protocol shape without leaking provider bindings or raw upstream variants.
+// GET /v1/models and /models — single superset handler.
+// OpenAI and Anthropic /models field names do not overlap, so one payload
+// satisfies both client shapes.
 
 import type { Context } from 'hono';
 
-import { loadAnthropicModels, loadMergedModels } from './load.ts';
+import { loadModels } from './load.ts';
 import { ProviderModelsUnavailableError } from '../providers/models-store.ts';
 
 const modelListingFailureMessage = 'Upstream model listing failed';
 
 const apiErrorResponse = (message: string, status: number): Response => Response.json({ error: { message, type: 'api_error' } }, { status });
 
-// Upstream HTTP/parse failures are squashed to a generic 502 to avoid leaking
-// upstream identity. Other errors (e.g. the registry's "no upstream configured"
-// hint) carry actionable operator guidance and should surface verbatim.
+// Upstream HTTP/parse failures are squashed to a generic 502 so we do not
+// leak upstream identity. Other errors (e.g. the registry's "no upstream
+// configured" hint) carry actionable operator guidance and surface verbatim.
 const modelLoadErrorResponse = (error: unknown): Response => {
   if (error instanceof ProviderModelsUnavailableError) {
     return apiErrorResponse(modelListingFailureMessage, 502);
@@ -22,15 +23,7 @@ const modelLoadErrorResponse = (error: unknown): Response => {
 
 export const models = async (_c: Context) => {
   try {
-    return Response.json(await loadMergedModels());
-  } catch (e) {
-    return modelLoadErrorResponse(e);
-  }
-};
-
-export const anthropicModels = async (_c: Context) => {
-  try {
-    return Response.json(await loadAnthropicModels());
+    return Response.json(await loadModels());
   } catch (e) {
     return modelLoadErrorResponse(e);
   }

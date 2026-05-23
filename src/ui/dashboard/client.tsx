@@ -265,19 +265,14 @@ export function dashboardAssets() {
         }
 
         const CLAUDE_TIER = { opus: 0, sonnet: 1, haiku: 2 };
-        const LLM_ENDPOINTS = ['/v1/messages', '/responses', '/chat/completions'];
 
         function modelContextWindow(model) {
-          const limits = model.capabilities?.limits;
+          const limits = model.limits;
           return limits?.max_context_window_tokens || (limits?.max_prompt_tokens || 0) + (limits?.max_output_tokens || 0);
         }
 
         function modelSupportsGeneration(model) {
-          if (model.supports_generation !== undefined) return model.supports_generation;
-          if (Array.isArray(model.supported_endpoints)) {
-            return model.supported_endpoints.some(endpoint => LLM_ENDPOINTS.includes(endpoint));
-          }
-          return model.capabilities?.type !== 'embeddings';
+          return model.supports_generation === true;
         }
 
         function claudeTier(id) {
@@ -358,21 +353,10 @@ export function dashboardAssets() {
             apiType: 'responses',
             supportedEndpoints: ['/responses'],
             display_name: '',
-            capabilities: {
-              limits: {
-                max_context_window_tokens: '',
-                max_non_streaming_output_tokens: '',
-                max_prompt_tokens: '',
-                max_output_tokens: '',
-              },
-              supports: {
-                tool_calls: false,
-                parallel_tool_calls: false,
-                streaming: false,
-                vision: false,
-                adaptive_thinking: false,
-                reasoning_effort: '',
-              },
+            limits: {
+              max_context_window_tokens: '',
+              max_prompt_tokens: '',
+              max_output_tokens: '',
             },
             cost: {
               input: '',
@@ -393,15 +377,9 @@ export function dashboardAssets() {
           return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
         }
 
-        function optionalStringArrayForInput(value) {
-          return Array.isArray(value) ? value.join(', ') : '';
-        }
-
         function normalizeAzureDeploymentForModal(deployment, open = false) {
           const source = cloneJson(deployment || {});
-          const capabilities = source.capabilities || {};
-          const limits = capabilities.limits || {};
-          const supports = capabilities.supports || {};
+          const limits = source.limits || {};
           return {
             ...blankAzureDeployment(),
             open,
@@ -410,21 +388,10 @@ export function dashboardAssets() {
             apiType: azureDeploymentApiTypeFromEndpoints(source.supportedEndpoints),
             supportedEndpoints: Array.isArray(source.supportedEndpoints) ? [...source.supportedEndpoints] : ['/responses'],
             display_name: optionalStringForInput(source.display_name),
-            capabilities: {
-              limits: {
-                max_context_window_tokens: optionalNumberForInput(limits.max_context_window_tokens),
-                max_non_streaming_output_tokens: optionalNumberForInput(limits.max_non_streaming_output_tokens),
-                max_prompt_tokens: optionalNumberForInput(limits.max_prompt_tokens),
-                max_output_tokens: optionalNumberForInput(limits.max_output_tokens),
-              },
-              supports: {
-                tool_calls: supports.tool_calls === true,
-                parallel_tool_calls: supports.parallel_tool_calls === true,
-                streaming: supports.streaming === true,
-                vision: supports.vision === true,
-                adaptive_thinking: supports.adaptive_thinking === true,
-                reasoning_effort: optionalStringArrayForInput(supports.reasoning_effort),
-              },
+            limits: {
+              max_context_window_tokens: optionalNumberForInput(limits.max_context_window_tokens),
+              max_prompt_tokens: optionalNumberForInput(limits.max_prompt_tokens),
+              max_output_tokens: optionalNumberForInput(limits.max_output_tokens),
             },
             cost: {
               input: optionalNumberForInput((source.cost || {}).input),
@@ -457,12 +424,6 @@ export function dashboardAssets() {
           return trimmed ? trimmed : undefined;
         }
 
-        function trimmedOptionalStringArray(value) {
-          if (typeof value !== 'string') return undefined;
-          const list = value.split(',').map(item => item.trim()).filter(Boolean);
-          return list.length > 0 ? list : undefined;
-        }
-
         function trimmedOptionalNumber(value, field) {
           if (value === undefined || value === null || value === '') return undefined;
           const number = Number(value);
@@ -478,22 +439,11 @@ export function dashboardAssets() {
           const metadata = {};
           assignDefined(metadata, 'display_name', trimmedOptionalString(deployment.display_name));
 
-          const capabilities = {};
-
           const limits = {};
-          assignDefined(limits, 'max_context_window_tokens', trimmedOptionalNumber(deployment.capabilities?.limits?.max_context_window_tokens, 'Context window'));
-          assignDefined(limits, 'max_non_streaming_output_tokens', trimmedOptionalNumber(deployment.capabilities?.limits?.max_non_streaming_output_tokens, 'Non-streaming output limit'));
-          assignDefined(limits, 'max_prompt_tokens', trimmedOptionalNumber(deployment.capabilities?.limits?.max_prompt_tokens, 'Prompt token limit'));
-          assignDefined(limits, 'max_output_tokens', trimmedOptionalNumber(deployment.capabilities?.limits?.max_output_tokens, 'Output token limit'));
-          if (Object.keys(limits).length > 0) capabilities.limits = limits;
-
-          const supports = {};
-          for (const key of ['tool_calls', 'parallel_tool_calls', 'streaming', 'vision', 'adaptive_thinking']) {
-            if (deployment.capabilities?.supports?.[key] === true) supports[key] = true;
-          }
-          assignDefined(supports, 'reasoning_effort', trimmedOptionalStringArray(deployment.capabilities?.supports?.reasoning_effort));
-          if (Object.keys(supports).length > 0) capabilities.supports = supports;
-          if (Object.keys(capabilities).length > 0) metadata.capabilities = capabilities;
+          assignDefined(limits, 'max_context_window_tokens', trimmedOptionalNumber(deployment.limits?.max_context_window_tokens, 'Context window'));
+          assignDefined(limits, 'max_prompt_tokens', trimmedOptionalNumber(deployment.limits?.max_prompt_tokens, 'Prompt token limit'));
+          assignDefined(limits, 'max_output_tokens', trimmedOptionalNumber(deployment.limits?.max_output_tokens, 'Output token limit'));
+          if (Object.keys(limits).length > 0) metadata.limits = limits;
 
           const cost = azureDeploymentCostFromInputs(deployment.cost);
           if (cost) metadata.cost = cost;
@@ -704,17 +654,6 @@ export function dashboardAssets() {
             return this.allModels.find(m => m.id === this.chatModelId) || null;
           },
 
-          get chatModelCaps() {
-            const s = this.chatModelInfo?.capabilities?.supports;
-            if (!s) return [];
-            const caps = [];
-            if (s.vision) caps.push('vision');
-            if (s.tool_calls) caps.push('tools');
-            if (s.streaming) caps.push('streaming');
-            if (s.adaptive_thinking) caps.push('thinking');
-            return caps;
-          },
-
           get generationModels() {
             return this.allModels.filter(modelSupportsGeneration);
           },
@@ -723,7 +662,7 @@ export function dashboardAssets() {
             let models = this.generationModels;
             if (this.modelsSearch.trim()) {
               const q = this.modelsSearch.toLowerCase();
-              models = models.filter(m => m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q) || (m.display_name || '').toLowerCase().includes(q));
+              models = models.filter(m => m.id.toLowerCase().includes(q) || (m.display_name || '').toLowerCase().includes(q));
             }
             return models;
           },
@@ -936,7 +875,7 @@ export function dashboardAssets() {
               const { data: rawData } = await resp.json();
               const data = rawData.map(m => ({
                 ...m,
-                name: m.display_name || m.name || m.id,
+                name: m.display_name || m.id,
                 supports_generation: modelSupportsGeneration(m),
               }));
 
@@ -953,14 +892,11 @@ export function dashboardAssets() {
               // ids, so we just dedupe and apply the picker-specific sort.
               const dedupeIds = ms => [...new Set(ms.map(m => m.id))];
 
-              this.claudeContextMap = Object.fromEntries(data.filter(m => m.id.startsWith('claude-') && m.supported_endpoints?.includes('/v1/messages')).map(m => [m.id, modelContextWindow(m)]));
+              this.claudeContextMap = Object.fromEntries(
+                data.filter(m => m.id.startsWith('claude-') && m.supports_generation).map(m => [m.id, modelContextWindow(m)]),
+              );
 
-              const messagesCapable = data.filter(m => {
-                if (!m.id.startsWith('claude-')) return false;
-                const eps = m.supported_endpoints ?? [];
-                return eps.includes('/v1/messages') || eps.includes('/responses') || eps.includes('/chat/completions');
-              });
-              const claudeIds = dedupeIds(messagesCapable);
+              const claudeIds = dedupeIds(data.filter(m => m.id.startsWith('claude-') && m.supports_generation));
               this.claudeModelsBig = [...claudeIds].sort(sortClaudeBig);
               this.claudeModelsSonnet = [...claudeIds].sort(sortClaudeSonnet);
               this.claudeModelsSmall = [...claudeIds].sort(sortClaudeSmall);
@@ -968,14 +904,10 @@ export function dashboardAssets() {
               this.claudeSonnetModel = this.claudeModelsSonnet[0] || '';
               this.claudeSmallModel = this.claudeModelsSmall[0] || '';
 
-              // Codex CLI talks the Responses protocol; any upstream that
-              // supports /responses natively or that can be served by
-              // responses-via-chat-completions translation qualifies.
-              const codexCapable = data.filter(m => {
-                if (!m.id.startsWith('gpt-') && !m.id.startsWith('codex-')) return false;
-                const eps = m.supported_endpoints ?? [];
-                return eps.includes('/responses') || eps.includes('/chat/completions');
-              });
+              // Codex CLI talks the Responses protocol. The data plane
+              // translates between protocols at runtime, so any
+              // generation-capable gpt-*/codex-* id qualifies.
+              const codexCapable = data.filter(m => (m.id.startsWith('gpt-') || m.id.startsWith('codex-')) && m.supports_generation);
               this.codexModels = dedupeIds(codexCapable).sort(sortCodex);
               this.codexModel = this.codexModels[0] || '';
 
@@ -1140,7 +1072,7 @@ export function dashboardAssets() {
           upstreamModelCount(upstream) {
             const config = this.upstreamConfig(upstream);
             if (upstream.provider === 'azure' && Array.isArray(config.deployments)) return config.deployments.length;
-            return this.allModels.filter(model => Array.isArray(model.upstream_ids) && model.upstream_ids.includes(upstream.id)).length;
+            return this.allModels.filter(model => Array.isArray(model.upstreams) && model.upstreams.some(binding => binding.id === upstream.id)).length;
           },
 
           upstreamModelSummary(upstream) {

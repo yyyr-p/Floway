@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
 
 import { ProviderModelsUnavailableError } from '../providers/models-store.ts';
-import { getCatalogModels } from '../providers/registry.ts';
-import type { CatalogModel, ModelPricing } from '../providers/types.ts';
+import { getInternalModels } from '../providers/registry.ts';
+import type { InternalModel, ModelPricing } from '../providers/types.ts';
 
 type GeminiGenerationMethod = 'generateContent' | 'streamGenerateContent' | 'countTokens';
 
@@ -22,20 +22,21 @@ interface GeminiModel {
   cost?: ModelPricing;
 }
 
-const toGeminiModel = (model: CatalogModel): GeminiModel => {
-  const methods: GeminiGenerationMethod[] = ['generateContent', 'streamGenerateContent'];
-  if (model.supportedEndpoints.includes('messages_count_tokens')) {
-    methods.push('countTokens');
-  }
-  const limits = model.capabilities.limits;
+// All three Gemini generation methods are always supported because the gateway
+// translates from Gemini to whichever native target shape the chosen provider
+// binding exposes; no upstream-level capability filter applies here.
+const GEMINI_GENERATION_METHODS: GeminiGenerationMethod[] = ['generateContent', 'streamGenerateContent', 'countTokens'];
+
+const toGeminiModel = (model: InternalModel): GeminiModel => {
+  const limits = model.limits;
   const inputTokenLimit = limits.max_prompt_tokens ?? limits.max_context_window_tokens;
-  const outputTokenLimit = limits.max_output_tokens ?? limits.max_non_streaming_output_tokens;
+  const outputTokenLimit = limits.max_output_tokens;
 
   return {
     name: `models/${model.id}`,
     baseModelId: model.id,
-    displayName: model.display_name ?? model.name,
-    supportedGenerationMethods: methods,
+    displayName: model.display_name ?? model.id,
+    supportedGenerationMethods: GEMINI_GENERATION_METHODS,
     ...(inputTokenLimit !== undefined ? { inputTokenLimit } : {}),
     ...(outputTokenLimit !== undefined ? { outputTokenLimit } : {}),
     temperature: 1,
@@ -87,7 +88,7 @@ const geminiModelLoadError = (error: unknown): Response => {
 };
 
 const loadGeminiModels = async (): Promise<GeminiModel[]> => {
-  const models = await getCatalogModels();
+  const models = await getInternalModels();
   return models.filter(model => model.supports_generation).map(toGeminiModel);
 };
 

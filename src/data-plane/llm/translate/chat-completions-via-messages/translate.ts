@@ -7,6 +7,6 @@ import type { TranslateTrip } from '../types.ts';
 export const translateChatCompletionsViaMessages: TranslateTrip<
   ChatCompletionsPayload, ChatCompletionChunk, MessagesPayload, MessagesStreamEventData
 > = async (src, ctx) => ({
-  target: await buildTargetRequest(src, ctx.capabilities),
+  target: await buildTargetRequest(src, { fallbackMaxOutputTokens: ctx.fallbackMaxOutputTokens }),
   events: translateToSourceEvents,
 });

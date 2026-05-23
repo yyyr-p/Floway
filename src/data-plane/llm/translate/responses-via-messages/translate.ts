@@ -17,7 +17,7 @@ export const translateResponsesViaMessages: TranslateTrip<
   // customToolNames is produced inside the request translator (it sees the
   // tools first) and read by the events translator so wrapped function calls
   // can be projected back into `custom_tool_call` outputs.
-  const { target, customToolNames } = await buildTargetRequest(src, ctx.capabilities);
+  const { target, customToolNames } = await buildTargetRequest(src, { fallbackMaxOutputTokens: ctx.fallbackMaxOutputTokens });
 
   return {
     target,

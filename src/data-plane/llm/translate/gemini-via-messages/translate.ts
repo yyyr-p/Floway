@@ -7,6 +7,6 @@ import type { TranslateTrip } from '../types.ts';
 export const translateGeminiViaMessages: TranslateTrip<
   GeminiGenerateContentRequest, GeminiStreamEvent, MessagesPayload, MessagesStreamEventData
 > = async (src, ctx) => ({
-  target: buildTargetRequest(src, ctx.model, ctx.wantsStream, ctx.capabilities),
+  target: buildTargetRequest(src, ctx.model, ctx.wantsStream, { fallbackMaxOutputTokens: ctx.fallbackMaxOutputTokens }),
   events: translateToSourceEvents,
 });

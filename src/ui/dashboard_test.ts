@@ -949,34 +949,25 @@ test('dashboardApp consumes merged model ids straight from /api/models', async (
             data: [
               {
                 id: 'claude-opus-4-7',
-                name: 'Claude Opus 4.7',
-                provider: 'copilot',
-                model_picker_enabled: true,
-                capabilities: {
-                  type: 'chat',
-                  limits: {
-                    max_context_window_tokens: 1000000,
-                    max_prompt_tokens: 936000,
-                    max_output_tokens: 64000,
-                  },
+                display_name: 'Claude Opus 4.7',
+                limits: {
+                  max_context_window_tokens: 1000000,
+                  max_prompt_tokens: 936000,
+                  max_output_tokens: 64000,
                 },
-                supported_endpoints: ['/v1/messages'],
+                supports_generation: true,
               },
               {
                 id: 'claude-sonnet-4-7',
-                name: 'Claude Sonnet 4.7',
-                provider: 'copilot',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/responses'],
+                display_name: 'Claude Sonnet 4.7',
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'gpt-5.5',
-                name: 'GPT 5.5',
-                provider: 'copilot',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/responses'],
+                display_name: 'GPT 5.5',
+                limits: {},
+                supports_generation: true,
               },
             ],
           }),
@@ -1020,43 +1011,33 @@ test('dashboardApp scopes pickers to claude- ids for Claude Code and gpt-/codex-
             data: [
               {
                 id: 'claude-opus-4-7',
-                name: 'Claude Opus 4.7',
-                provider: 'copilot',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/v1/messages'],
+                display_name: 'Claude Opus 4.7',
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'claude-haiku-4-7',
-                name: 'Claude Haiku 4.7',
-                provider: 'custom',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/v1/messages'],
+                display_name: 'Claude Haiku 4.7',
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'gpt-5.5',
-                name: 'GPT 5.5',
-                provider: 'copilot',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/responses'],
+                display_name: 'GPT 5.5',
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'codex-mini',
-                name: 'Codex Mini',
-                provider: 'custom',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/responses'],
+                display_name: 'Codex Mini',
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'azure-gpt-5.4',
-                name: 'Azure GPT 5.4',
-                provider: 'azure',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/responses'],
+                display_name: 'Azure GPT 5.4',
+                limits: {},
+                supports_generation: true,
               },
             ],
           }),
@@ -1102,12 +1083,7 @@ test('dashboardApp keeps supported Azure deployment metadata with a single endpo
           created: 1772496000,
           created_at: '2026-03-05',
           description: 'Unused catalog text',
-          capabilities: {
-            family: 'gpt-legacy',
-            type: 'chat',
-            limits: { max_context_window_tokens: 128000 },
-            supports: { streaming: true, reasoning_effort: ['low'] },
-          },
+          limits: { max_context_window_tokens: 128000 },
           billing: { multiplier: 2 },
           policy: { state: 'enabled', terms: 'legacy terms' },
           multiplier: 3,
@@ -1121,12 +1097,9 @@ test('dashboardApp keeps supported Azure deployment metadata with a single endpo
   assertEquals(app.upstreamModal.deployments[0].apiType, 'responses_chat');
   assertEquals(app.upstreamModal.deployments[0].open, false);
   const modalDeployment = app.upstreamModal.deployments[0];
-  for (const key of ['version', 'object', 'owned_by', 'created', 'created_at', 'description', 'billing', 'policy', 'model_picker_enabled', 'multiplier', 'restricted_to']) {
+  for (const key of ['version', 'object', 'owned_by', 'created', 'created_at', 'description', 'billing', 'policy', 'model_picker_enabled', 'multiplier', 'restricted_to', 'capabilities']) {
     assertFalse(key in modalDeployment);
   }
-  assertFalse('family' in modalDeployment.capabilities);
-  assertFalse('type' in modalDeployment.capabilities);
-  assertEquals(modalDeployment.capabilities.supports.streaming, true);
   app.upstreamModal.endpoint = ' https://example.services.ai.azure.com/openai/v1 ';
   app.upstreamModal.deployments[0].publicModelId = '';
   app.upstreamModal.deployments[0].apiType = 'responses';
@@ -1136,10 +1109,7 @@ test('dashboardApp keeps supported Azure deployment metadata with a single endpo
   assertEquals(payload.config, {
     deployments: [
       {
-        capabilities: {
-          limits: { max_context_window_tokens: 128000 },
-          supports: { streaming: true, reasoning_effort: ['low'] },
-        },
+        limits: { max_context_window_tokens: 128000 },
         deployment: 'gpt-prod',
         supportedEndpoints: ['/responses'],
       },
@@ -1156,34 +1126,18 @@ test('dashboardApp saves manually configured Azure deployment metadata', () => {
   deployment.deployment = ' gpt-5.4-pro ';
   deployment.publicModelId = ' gpt-5.4-pro-public ';
   deployment.display_name = ' GPT-5.4 Pro ';
-  deployment.capabilities.limits.max_context_window_tokens = '1050000';
-  deployment.capabilities.limits.max_prompt_tokens = '922000';
-  deployment.capabilities.limits.max_output_tokens = '128000';
-  deployment.capabilities.limits.max_non_streaming_output_tokens = '64000';
-  deployment.capabilities.supports.tool_calls = true;
-  deployment.capabilities.supports.parallel_tool_calls = true;
-  deployment.capabilities.supports.streaming = true;
-  deployment.capabilities.supports.vision = true;
-  deployment.capabilities.supports.reasoning_effort = 'low, medium, high';
+  deployment.limits.max_context_window_tokens = '1050000';
+  deployment.limits.max_prompt_tokens = '922000';
+  deployment.limits.max_output_tokens = '128000';
 
   const payload = app.buildUpstreamPayload();
 
   assertEquals(payload.config.deployments[0], {
     display_name: 'GPT-5.4 Pro',
-    capabilities: {
-      limits: {
-        max_context_window_tokens: 1050000,
-        max_non_streaming_output_tokens: 64000,
-        max_prompt_tokens: 922000,
-        max_output_tokens: 128000,
-      },
-      supports: {
-        tool_calls: true,
-        parallel_tool_calls: true,
-        streaming: true,
-        vision: true,
-        reasoning_effort: ['low', 'medium', 'high'],
-      },
+    limits: {
+      max_context_window_tokens: 1050000,
+      max_prompt_tokens: 922000,
+      max_output_tokens: 128000,
     },
     deployment: 'gpt-5.4-pro',
     publicModelId: 'gpt-5.4-pro-public',
@@ -1197,14 +1151,14 @@ test('dashboardApp edits Azure deployments as JSON and returns to structured UI'
   app.openNewUpstreamModal('azure');
   app.upstreamModal.deployments[0].deployment = 'gpt-5.4-pro';
   app.upstreamModal.deployments[0].display_name = 'GPT 5.4 Pro';
-  app.upstreamModal.deployments[0].capabilities.limits.max_context_window_tokens = '1050000';
+  app.upstreamModal.deployments[0].limits.max_context_window_tokens = '1050000';
 
   app.setAzureDeploymentsJsonMode(true);
   assertEquals(app.upstreamModal.deploymentsJsonMode, true);
   assertEquals(JSON.parse(app.upstreamModal.deploymentsJson), [
     {
       display_name: 'GPT 5.4 Pro',
-      capabilities: { limits: { max_context_window_tokens: 1050000 } },
+      limits: { max_context_window_tokens: 1050000 },
       deployment: 'gpt-5.4-pro',
       supportedEndpoints: ['/responses'],
     },
@@ -1221,9 +1175,9 @@ test('dashboardApp edits Azure deployments as JSON and returns to structured UI'
         capabilities: {
           family: 'ignored-family',
           type: 'ignored-type',
-          limits: { max_output_tokens: 64000 },
           supports: { vision: true, reasoning_effort: ['high'] },
         },
+        limits: { max_output_tokens: 64000 },
       },
     ],
     null,
@@ -1233,10 +1187,7 @@ test('dashboardApp edits Azure deployments as JSON and returns to structured UI'
   assertEquals(app.buildUpstreamPayload().config.deployments, [
     {
       display_name: 'JSON Model',
-      capabilities: {
-        limits: { max_output_tokens: 64000 },
-        supports: { vision: true, reasoning_effort: ['high'] },
-      },
+      limits: { max_output_tokens: 64000 },
       deployment: 'json-deploy',
       publicModelId: 'json-public',
       supportedEndpoints: ['/responses', '/chat/completions'],
@@ -1249,7 +1200,7 @@ test('dashboardApp edits Azure deployments as JSON and returns to structured UI'
   assertEquals(app.upstreamModal.deployments[0].publicModelId, 'json-public');
   assertEquals(app.upstreamModal.deployments[0].apiType, 'responses_chat');
   assertFalse('name' in app.upstreamModal.deployments[0]);
-  assertFalse('family' in app.upstreamModal.deployments[0].capabilities);
+  assertFalse('capabilities' in app.upstreamModal.deployments[0]);
 
   app.setAzureDeploymentsJsonMode(true);
   app.upstreamModal.deploymentsJson = '{';
@@ -1261,9 +1212,9 @@ test('dashboardApp edits Azure deployments as JSON and returns to structured UI'
 test('dashboardApp summarizes upstream model counts from provider bindings', () => {
   const { app } = createDashboardHarness();
   app.allModels = [
-    { id: 'custom-a', upstream_ids: ['up_custom_1'] },
-    { id: 'shared-model', upstream_ids: ['up_custom_1', 'up_copilot_1'] },
-    { id: 'copilot-only', upstream_ids: ['up_copilot_1'] },
+    { id: 'custom-a', upstreams: [{ kind: 'custom', id: 'up_custom_1' }] },
+    { id: 'shared-model', upstreams: [{ kind: 'custom', id: 'up_custom_1' }, { kind: 'copilot', id: 'up_copilot_1' }] },
+    { id: 'copilot-only', upstreams: [{ kind: 'copilot', id: 'up_copilot_1' }] },
   ];
 
   assertEquals(app.upstreamModelSummary({ id: 'up_custom_1', provider: 'custom', config: {} }), '2 models');
@@ -1333,17 +1284,15 @@ test('dashboardApp waits for model metadata before first usage chart render', as
             data: [
               {
                 id: 'model-a',
-                name: 'Model A',
-                model_picker_enabled: true,
-                capabilities: {},
-                supported_endpoints: [],
+                display_name: 'Model A',
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'model-b',
-                name: 'Model B',
-                model_picker_enabled: true,
-                capabilities: {},
-                supported_endpoints: [],
+                display_name: 'Model B',
+                limits: {},
+                supports_generation: true,
               },
             ],
           }),
@@ -1751,17 +1700,14 @@ test('dashboardApp model search does not crash when model.name is missing', asyn
             data: [
               {
                 id: 'custom-model-no-name',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/chat/completions'],
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'named-model',
-                name: 'Named Model',
                 display_name: 'Friendly Named Model',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/chat/completions'],
+                limits: {},
+                supports_generation: true,
               },
             ],
           }),
@@ -1805,20 +1751,19 @@ test('dashboardApp filteredChatModels excludes embedding-only models', async () 
               {
                 id: 'chat-model',
                 name: 'Chat Model',
-                model_picker_enabled: true,
-                capabilities: { type: 'chat', limits: {} },
-                supported_endpoints: ['/chat/completions'],
+                limits: {},
+                supports_generation: true,
               },
               {
                 id: 'embed-only',
                 name: 'Embed Only',
-                model_picker_enabled: true,
-                supported_endpoints: ['/embeddings'],
+                limits: {},
+                supports_generation: false,
               },
               {
                 id: 'no-caps-embed',
-                model_picker_enabled: true,
-                supported_endpoints: ['/embeddings'],
+                limits: {},
+                supports_generation: false,
               },
             ],
           }),

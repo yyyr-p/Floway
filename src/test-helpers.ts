@@ -295,21 +295,10 @@ export function copilotModels(
     id: string;
     display_name?: string;
     supported_endpoints?: string[];
-    adaptiveThinking?: boolean;
     reasoningEfforts?: string[];
     maxContextWindowTokens?: number;
     maxPromptTokens?: number;
     maxOutputTokens?: number;
-    billing?: {
-      is_premium?: boolean;
-      multiplier?: number;
-      restricted_to?: string[];
-    };
-    policy?: {
-      state?: string;
-      terms?: string;
-    };
-    model_picker_enabled?: boolean;
   }>,
 ) {
   return {
@@ -319,23 +308,15 @@ export function copilotModels(
       name: model.id,
       ...(model.display_name !== undefined ? { display_name: model.display_name } : {}),
       version: '1',
-      object: 'model',
       supported_endpoints: model.supported_endpoints ?? [],
-      ...(model.billing ? { billing: model.billing } : {}),
-      ...(model.policy ? { policy: model.policy } : {}),
-      ...(model.model_picker_enabled !== undefined ? { model_picker_enabled: model.model_picker_enabled } : {}),
       capabilities: {
-        family: 'test',
         type: 'chat',
         limits: {
           ...(model.maxContextWindowTokens !== undefined ? { max_context_window_tokens: model.maxContextWindowTokens } : {}),
           ...(model.maxPromptTokens !== undefined ? { max_prompt_tokens: model.maxPromptTokens } : {}),
           ...(model.maxOutputTokens !== undefined ? { max_output_tokens: model.maxOutputTokens } : {}),
         },
-        supports: {
-          adaptive_thinking: model.adaptiveThinking,
-          ...(model.reasoningEfforts !== undefined ? { reasoning_effort: model.reasoningEfforts } : {}),
-        },
+        ...(model.reasoningEfforts !== undefined ? { supports: { reasoning_effort: model.reasoningEfforts } } : {}),
       },
     })),
   };
@@ -355,16 +336,9 @@ export const stubUpstream = (overrides: Partial<Upstream> = {}): Upstream => ({
 
 export const stubUpstreamModel = (overrides: Partial<UpstreamModel> = {}): UpstreamModel => ({
   id: 'test-model',
-  name: 'test-model',
-  version: 'test-model',
-  object: 'model',
-  capabilities: {
-    family: 'test-model',
-    type: 'chat',
-    limits: {},
-    supports: {},
-  },
-  supportedEndpoints: ['chat_completions', 'responses', 'messages'],
+  limits: {},
+  supports_generation: true,
+  upstreamEndpoints: ['chat_completions', 'responses', 'messages'],
   ...overrides,
 });
 

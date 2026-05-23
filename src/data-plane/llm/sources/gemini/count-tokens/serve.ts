@@ -1,6 +1,5 @@
 import type { Context } from 'hono';
 
-import { getModelCapabilities } from '../../../../providers/capabilities.ts';
 import { ProviderModelsUnavailableError } from '../../../../providers/models-store.ts';
 import { resolveModelForRequest } from '../../../../providers/registry.ts';
 import type { GeminiContent, GeminiGenerateContentRequest } from '../../../../shared/protocol/gemini.ts';
@@ -47,10 +46,9 @@ export const countGeminiTokens = async (c: Context, model: string): Promise<Resp
 
     let response: Response | undefined;
     for (const binding of resolvedModel.providers) {
-      const capabilities = getModelCapabilities(binding.upstreamModel);
-      if (!binding.upstreamModel.supportedEndpoints.includes('messages_count_tokens')) continue;
+      if (!binding.upstreamModel.upstreamEndpoints.includes('messages_count_tokens')) continue;
 
-      const messagesPayload = buildMessagesTargetRequest(generateContentRequest, modelId, false, capabilities);
+      const messagesPayload = buildMessagesTargetRequest(generateContentRequest, modelId, false, { fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens });
       const { model: _model, ...body } = messagesPayload;
       const result = await binding.provider.callMessagesCountTokens(binding.upstreamModel, body);
       response = result.response;

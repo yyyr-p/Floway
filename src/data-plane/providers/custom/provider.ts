@@ -1,10 +1,9 @@
-import { fetchCustomModels, type CustomModelsResponse } from './fetch-models.ts';
+import { fetchCustomModels, type CustomModelsResponse, type CustomRawModel } from './fetch-models.ts';
 import type { UpstreamRecord } from '../../../repo/types.ts';
 import { createCustomUpstream } from '../../../shared/upstream/custom.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
 import { messagesWebSearchShimInterceptors } from '../../llm/sources/messages/interceptors/index.ts';
-import { isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
-import { withModelInfoDefaults } from '../model-info.ts';
+import { endpointsIncludeLlmGeneration, isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
 import { inProcessMemo, isProviderModelsHttpStatus, readModelsStore, writeModelsStore } from '../models-store.ts';
 import type { ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 
@@ -23,15 +22,28 @@ const L1_TTL_MS = 120_000;
 
 const providerData = (model: UpstreamModel): CustomProviderData => model.providerData as CustomProviderData;
 
+// Project an OpenAI-shaped raw model into the slim provider-neutral fields.
+// supports_generation/upstreamEndpoints/providerData are added by the caller.
+const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> => {
+  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> = {
+    id: model.id,
+    limits: {},
+  };
+  if (model.owned_by !== undefined) internal.owned_by = model.owned_by;
+  if (model.created !== undefined) internal.created = model.created;
+  if (model.name !== undefined) internal.display_name = model.name;
+  return internal;
+};
+
 const finalizeCustomModels = (response: CustomModelsResponse, configuredEndpoints: ReturnType<typeof publicPathsToModelEndpoints>): UpstreamModel[] => {
   const models: UpstreamModel[] = [];
   for (const rawModel of response.data) {
     if (!rawModel.id) continue;
-    const rawEndpoints = rawModel.supported_endpoints ? publicPathsToModelEndpoints(rawModel.supported_endpoints) : configuredEndpoints;
-    const model = withModelInfoDefaults(rawModel);
+    const upstreamEndpoints = rawModel.supported_endpoints ? publicPathsToModelEndpoints(rawModel.supported_endpoints) : configuredEndpoints;
     models.push({
-      ...model,
-      supportedEndpoints: rawEndpoints,
+      ...customInternalModel(rawModel),
+      supports_generation: endpointsIncludeLlmGeneration(upstreamEndpoints),
+      upstreamEndpoints,
       providerData: { rawModelId: rawModel.id } satisfies CustomProviderData,
     });
   }

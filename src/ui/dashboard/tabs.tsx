@@ -1027,22 +1027,18 @@ export function renderSettingsTab() {
 
                                   <div class="mt-4">
                                     <p class="mb-2 text-xs font-semibold text-gray-400">Context Limits</p>
-                                    <div class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
+                                    <div class="grid grid-cols-1 gap-3 md:grid-cols-3">
                                       <label class="min-w-0">
                                         <span class="mb-1 block text-[11px] font-medium text-gray-500">Context Window</span>
-                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 1050000" x-model="deployment.capabilities.limits.max_context_window_tokens" />
+                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 1050000" x-model="deployment.limits.max_context_window_tokens" />
                                       </label>
                                       <label class="min-w-0">
                                         <span class="mb-1 block text-[11px] font-medium text-gray-500">Prompt Tokens</span>
-                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 922000" x-model="deployment.capabilities.limits.max_prompt_tokens" />
+                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 922000" x-model="deployment.limits.max_prompt_tokens" />
                                       </label>
                                       <label class="min-w-0">
                                         <span class="mb-1 block text-[11px] font-medium text-gray-500">Output Tokens</span>
-                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 128000" x-model="deployment.capabilities.limits.max_output_tokens" />
-                                      </label>
-                                      <label class="min-w-0">
-                                        <span class="mb-1 block text-[11px] font-medium text-gray-500">Non-stream Output</span>
-                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 128000" x-model="deployment.capabilities.limits.max_non_streaming_output_tokens" />
+                                        <input type="number" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. 128000" x-model="deployment.limits.max_output_tokens" />
                                       </label>
                                     </div>
                                   </div>
@@ -1070,22 +1066,6 @@ export function renderSettingsTab() {
                                     <p class="mt-2 text-[11px] leading-relaxed text-gray-500">
                                       Per-million-token USD rates. Leave all four blank to omit pricing. <span class="text-gray-400">Input</span> and <span class="text-gray-400">Output</span> must both be filled or both blank; <span class="text-gray-400">Cache Read</span> / <span class="text-gray-400">Cache Write</span> are independently optional.
                                     </p>
-                                  </div>
-
-                                  <div class="mt-4">
-                                    <p class="mb-2 text-xs font-semibold text-gray-400">Capabilities</p>
-                                    <div class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                                      <template x-for="flag in ['tool_calls','parallel_tool_calls','streaming','vision','adaptive_thinking']" :key="flag">
-                                        <label class="flex items-center gap-2 rounded-md border border-white/5 bg-surface-900/40 px-2.5 py-2 text-[11px] text-gray-300">
-                                          <input type="checkbox" class="accent-accent-cyan" x-model="deployment.capabilities.supports[flag]" />
-                                          <span class="font-mono" x-text="flag"></span>
-                                        </label>
-                                      </template>
-                                    </div>
-                                    <label class="mt-3 block min-w-0 lg:max-w-md">
-                                      <span class="mb-1 block text-[11px] font-medium text-gray-500">Reasoning Effort</span>
-                                      <input type="text" class="!py-2 !px-2.5 !text-[11px] font-mono" placeholder="e.g. low, medium, high" x-model="deployment.capabilities.supports.reasoning_effort" />
-                                    </label>
                                   </div>
                                 </div>
                               </div>
@@ -1611,26 +1591,20 @@ export function renderModelsTab() {
                   <span x-show="chatModelInfo && chatModelInfo.name !== chatModelInfo.id" class="font-mono text-[11px] text-gray-500 break-all" x-text="chatModelInfo?.id"></span>
                 </div>
                 <div class="flex flex-wrap gap-1.5 mt-2">
-                  <template x-if="chatModelInfo?.capabilities?.limits?.max_context_window_tokens">
+                  <template x-if="chatModelInfo?.limits?.max_context_window_tokens">
                     <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-600 text-gray-400">
-                      context: <span x-text="formatTokenLimit(chatModelInfo.capabilities.limits.max_context_window_tokens)"></span>
+                      context: <span x-text="formatTokenLimit(chatModelInfo.limits.max_context_window_tokens)"></span>
                     </span>
                   </template>
-                  <template x-if="chatModelInfo?.capabilities?.limits?.max_prompt_tokens">
+                  <template x-if="chatModelInfo?.limits?.max_prompt_tokens">
                     <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-600 text-gray-400">
-                      prompt: <span x-text="formatTokenLimit(chatModelInfo.capabilities.limits.max_prompt_tokens)"></span>
+                      prompt: <span x-text="formatTokenLimit(chatModelInfo.limits.max_prompt_tokens)"></span>
                     </span>
                   </template>
-                  <template x-if="chatModelInfo?.capabilities?.limits?.max_output_tokens">
+                  <template x-if="chatModelInfo?.limits?.max_output_tokens">
                     <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-600 text-gray-400">
-                      output: <span x-text="formatTokenLimit(chatModelInfo.capabilities.limits.max_output_tokens)"></span>
+                      output: <span x-text="formatTokenLimit(chatModelInfo.limits.max_output_tokens)"></span>
                     </span>
-                  </template>
-                  <template x-for="cap in chatModelCaps" :key="cap">
-                    <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-accent-cyanGlow text-accent-cyanDim" x-text="cap"></span>
-                  </template>
-                  <template x-for="ep in (chatModelInfo?.supported_endpoints || [])" :key="ep">
-                    <span class="text-[10px] font-mono px-2 py-0.5 rounded bg-surface-700 text-gray-500" x-text="ep"></span>
                   </template>
                 </div>
               </div>

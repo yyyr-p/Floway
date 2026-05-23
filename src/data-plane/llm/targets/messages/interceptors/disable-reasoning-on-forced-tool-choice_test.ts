@@ -21,16 +21,9 @@ const stubProvider = (): ModelProvider => ({
 
 const stubUpstreamModel = (): UpstreamModel => ({
   id: 'test-model',
-  name: 'test-model',
-  version: 'test-model',
-  object: 'model',
-  capabilities: {
-    family: 'test-model',
-    type: 'chat',
-    limits: {},
-    supports: {},
-  },
-  supportedEndpoints: ['messages'],
+  limits: {},
+  supports_generation: true,
+  upstreamEndpoints: ['messages'],
 });
 
 const testTelemetryModelIdentity: TelemetryModelIdentity = {

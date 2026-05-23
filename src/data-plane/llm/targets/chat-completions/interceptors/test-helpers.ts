@@ -5,16 +5,9 @@ import type { ChatCompletionsInvocation, RequestContext } from '../../../interce
 
 export const stubUpstreamModel = (overrides: Partial<UpstreamModel> = {}): UpstreamModel => ({
   id: 'test-model',
-  name: 'test-model',
-  version: 'test-model',
-  object: 'model',
-  capabilities: {
-    family: 'test-model',
-    type: 'chat',
-    limits: {},
-    supports: {},
-  },
-  supportedEndpoints: ['chat_completions', 'responses', 'messages'],
+  limits: {},
+  supports_generation: true,
+  upstreamEndpoints: ['chat_completions', 'responses', 'messages'],
   ...overrides,
 });
 

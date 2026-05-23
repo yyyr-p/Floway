@@ -14,9 +14,8 @@ import type { EndpointKey } from '../../../shared/upstream/types.ts';
 import type { ChatCompletionsPayload } from '../../shared/protocol/chat-completions.ts';
 import type { MessagesPayload } from '../../shared/protocol/messages.ts';
 import type { ResponsesPayload } from '../../shared/protocol/responses.ts';
-import { isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
+import { endpointsIncludeLlmGeneration, isStreamingEndpoint, publicPathsToModelEndpoints } from '../endpoints.ts';
 import type { OptionalFixId } from '../fixes.ts';
-import { withModelInfoDefaults } from '../model-info.ts';
 import { inProcessMemo, readModelsStore, writeModelsStore } from '../models-store.ts';
 import type { ModelEndpoint, ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 
@@ -51,6 +50,26 @@ const SOFT_MS = 10 * 60 * 1000;
 const L1_TTL_MS = 120_000;
 
 const providerData = (model: UpstreamModel): CopilotProviderData => model.providerData as CopilotProviderData;
+
+// Project Copilot's raw `/models` shape into the slim provider-neutral fields
+// shared by every provider. supports_generation/upstreamEndpoints/providerData
+// are added by the caller because they depend on Copilot's endpoint knowledge.
+const copilotInternalModel = (model: CopilotRawModel): Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> => {
+  const limits: UpstreamModel['limits'] = {};
+  if (model.capabilities?.limits?.max_output_tokens !== undefined) limits.max_output_tokens = model.capabilities.limits.max_output_tokens;
+  if (model.capabilities?.limits?.max_context_window_tokens !== undefined) limits.max_context_window_tokens = model.capabilities.limits.max_context_window_tokens;
+  if (model.capabilities?.limits?.max_prompt_tokens !== undefined) limits.max_prompt_tokens = model.capabilities.limits.max_prompt_tokens;
+
+  const internal: Omit<UpstreamModel, 'supports_generation' | 'upstreamEndpoints' | 'providerData'> = {
+    id: model.id,
+    limits,
+  };
+  if (model.owned_by !== undefined) internal.owned_by = model.owned_by;
+  if (model.created !== undefined) internal.created = model.created;
+  const displayName = model.display_name ?? model.name;
+  if (displayName !== undefined) internal.display_name = displayName;
+  return internal;
+};
 
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
@@ -219,12 +238,12 @@ const finalizeCopilotModels = (rawModels: CopilotRawModel[]): UpstreamModel[] =>
   const models: UpstreamModel[] = [];
   for (const mergedModel of merged.data) {
     const variants = groups.get(mergedModel.id) ?? [mergedModel];
-    const endpoints = copilotModelEndpoints(mergedModel, variants);
-    const model = withModelInfoDefaults(mergedModel);
+    const upstreamEndpoints = copilotModelEndpoints(mergedModel, variants);
     const cost = pricingForCopilotPublicModelId(mergedModel.id);
     models.push({
-      ...model,
-      supportedEndpoints: endpoints,
+      ...copilotInternalModel(mergedModel),
+      supports_generation: endpointsIncludeLlmGeneration(upstreamEndpoints),
+      upstreamEndpoints,
       providerData: { rawModels: variants } satisfies CopilotProviderData,
       ...(cost ? { cost } : {}),
     });

@@ -29,7 +29,7 @@ export const countTokens = async (c: Context) => {
 
     let resp: Response | undefined;
     for (const binding of model.providers) {
-      if (!binding.upstreamModel.supportedEndpoints.includes('messages_count_tokens')) {
+      if (!binding.upstreamModel.upstreamEndpoints.includes('messages_count_tokens')) {
         continue;
       }
 

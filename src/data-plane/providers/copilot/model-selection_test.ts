@@ -14,10 +14,8 @@ const model = (
   id,
   name: id,
   version: id,
-  object: 'model',
   supported_endpoints: ['/v1/messages'],
   capabilities: {
-    family: id,
     type: 'chat',
     limits: {
       max_context_window_tokens: options.contextWindow ?? 200_000,

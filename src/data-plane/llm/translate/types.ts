@@ -1,4 +1,3 @@
-import type { ModelCapabilities } from '../../providers/capabilities.ts';
 import type { ExecuteResult } from '../shared/errors/result.ts';
 import type { ProtocolFrame } from '../shared/stream/types.ts';
 
@@ -6,11 +5,15 @@ import type { ProtocolFrame } from '../shared/stream/types.ts';
  * Per-trip context. Carries everything a translator might read that is not on
  * the source payload itself. Concrete pair translators consume only the fields
  * they need.
+ *
+ * `fallbackMaxOutputTokens` is the upstream-advertised max output, used by
+ * source-to-messages translators when the source payload does not specify
+ * `max_tokens` (Messages requires it; OpenAI Responses/Chat and Gemini do not).
  */
 export interface TranslationContext {
   readonly model: string;
   readonly wantsStream: boolean;
-  readonly capabilities: ModelCapabilities;
+  readonly fallbackMaxOutputTokens?: number;
 }
 
 /**

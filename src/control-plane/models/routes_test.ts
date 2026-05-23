@@ -26,7 +26,7 @@ const azureUpstream = (): UpstreamRecord => ({
   },
 });
 
-test('/api/models exposes provider kind and not legacy upstream_kind', async () => {
+test('/api/models exposes each binding as { kind, id } so multi-provider models are unambiguous', async () => {
   const { apiKey, repo } = await setupAppTest();
   await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_custom_models', sortOrder: 100 }));
   await repo.upstreams.save(azureUpstream());
@@ -51,12 +51,15 @@ test('/api/models exposes provider kind and not legacy upstream_kind', async () 
       assertEquals(response.status, 200);
       const body = (await response.json()) as { data: Array<Record<string, unknown>> };
 
-      assertEquals(body.data.find(model => model.id === 'claude-sonnet-4')?.provider, 'copilot');
-      assertEquals(body.data.find(model => model.id === 'custom-model')?.provider, 'custom');
-      assertEquals(body.data.find(model => model.id === 'azure-public')?.provider, 'azure');
-      assertEquals(body.data.find(model => model.id === 'custom-model')?.upstream_ids, ['up_custom_models']);
-      assertEquals(body.data.find(model => model.id === 'azure-public')?.upstream_ids, ['up_azure_models']);
-      assertEquals(body.data.some(model => Object.hasOwn(model, 'upstream_kind')), false);
+      assertEquals(body.data.find(model => model.id === 'claude-sonnet-4')?.upstreams, [{ kind: 'copilot', id: 'up_copilot' }]);
+      assertEquals(body.data.find(model => model.id === 'custom-model')?.upstreams, [{ kind: 'custom', id: 'up_custom_models' }]);
+      assertEquals(body.data.find(model => model.id === 'azure-public')?.upstreams, [{ kind: 'azure', id: 'up_azure_models' }]);
+      for (const model of body.data) {
+        // Legacy split fields must not reappear.
+        assertEquals(Object.hasOwn(model, 'provider'), false);
+        assertEquals(Object.hasOwn(model, 'upstream_ids'), false);
+        assertEquals(Object.hasOwn(model, 'upstream_kind'), false);
+      }
     },
   );
 });

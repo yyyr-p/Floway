@@ -1,27 +1,18 @@
 // Merge Claude reasoning-effort and 1M-context variants into a single base id
 // for /v1/models surfacing. The data plane keeps requesting upstream by their
 // real ids — each provider still resolves the raw variant from request fields
-// before calling upstream. This merge is purely an
-// outbound view so OpenAI/Anthropic-shaped clients see one Claude model id
-// per family.
+// before calling upstream. This merge is purely an outbound view so
+// OpenAI/Anthropic-shaped clients see one Claude model id per family.
 //
 // Field policy:
-//   id, version, capabilities.family                        -> public base id
+//   id, version                                             -> public base id
 //   name, display_name                                      -> base display fields
-//   policy.terms                                            -> base
 //   capabilities.limits.max_*_tokens                        -> max across siblings
-//   capabilities.supports.reasoning_effort                  -> union
-//   billing.multiplier                                      -> base
-//   billing.restricted_to                                   -> union
-//   everything else                                         -> identical across siblings, taken from base
-//
-// Notes on billing fields: the gateway's clients are OpenAI/Anthropic-shaped
-// SDKs that do not consume billing.* — Copilot's vscode client owns those
-// fields. The merged value cannot honestly represent the real per-effort
-// cost (e.g. 4.7 base/high/xhigh have multipliers 15/30/45), so we expose the
-// base value with this comment to head off "shouldn't this be max?" review
-// questions. restricted_to is a union for the same reason: a permissive view
-// for clients that do happen to read it; upstream still enforces real access.
+//   capabilities.supports.reasoning_effort                  -> union (consumed by
+//                                                             the raw selector)
+//   everything else                                         -> identical across
+//                                                             siblings, taken
+//                                                             from base
 
 import { copilotPublicModelId } from './model-name.ts';
 import type { CopilotModelsResponse, CopilotRawModel } from './types.ts';
@@ -34,9 +25,6 @@ const maxOf = (...values: (number | undefined)[]): number | undefined => {
 };
 
 const unionStrings = (...lists: (readonly string[] | undefined)[]): string[] | undefined => {
-  // Returns undefined when no source had the field at all, vs [] when at least
-  // one source had it explicitly empty. Callers (e.g. billing.restricted_to)
-  // use the absent/present distinction to decide whether to set the key.
   const seen: string[] = [];
   let saw = false;
   for (const list of lists) {
@@ -63,7 +51,7 @@ const mergeVariantGroup = (variants: CopilotRawModel[]): CopilotRawModel => {
   const limits = base.capabilities?.limits ?? {};
   const supports = base.capabilities?.supports ?? {};
 
-  const merged: CopilotRawModel = {
+  return {
     ...base,
     id: baseId,
     name: displayName,
@@ -71,7 +59,6 @@ const mergeVariantGroup = (variants: CopilotRawModel[]): CopilotRawModel => {
     display_name: displayName,
     capabilities: {
       ...base.capabilities,
-      family: baseId,
       limits: {
         ...limits,
         max_context_window_tokens: maxOf(...variants.map(v => v.capabilities?.limits?.max_context_window_tokens)),
@@ -84,16 +71,6 @@ const mergeVariantGroup = (variants: CopilotRawModel[]): CopilotRawModel => {
       },
     },
   };
-
-  if (base.billing) {
-    const restrictedUnion = unionStrings(...variants.map(v => v.billing?.restricted_to));
-    merged.billing = {
-      ...base.billing,
-      ...(restrictedUnion ? { restricted_to: restrictedUnion } : {}),
-    };
-  }
-
-  return merged;
 };
 
 export const mergeClaudeVariants = (models: CopilotModelsResponse): CopilotModelsResponse => {

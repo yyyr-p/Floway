@@ -51,9 +51,6 @@ test('/v1/models returns merged model list from Copilot and custom upstreams', a
               id: 'claude-sonnet-4',
               display_name: 'Claude Sonnet 4',
               supported_endpoints: ['/v1/messages'],
-              billing: { is_premium: true, multiplier: 3 },
-              policy: { state: 'enabled', terms: 'test terms' },
-              model_picker_enabled: true,
             },
           ]),
         );
@@ -77,21 +74,27 @@ test('/v1/models returns merged model list from Copilot and custom upstreams', a
         object: string;
         data: Array<{
           id: string;
-          name?: string;
+          object?: string;
+          type?: string;
           display_name?: string;
-          supported_endpoints?: string[];
           supports_generation?: boolean;
+          limits?: Record<string, number>;
           capabilities?: unknown;
           provider?: unknown;
           providerKind?: unknown;
           providers?: unknown;
           providerData?: unknown;
+          upstreamEndpoints?: unknown;
           supportedEndpoints?: unknown;
           upstream?: unknown;
           upstreamModel?: unknown;
+          name?: unknown;
+          version?: unknown;
           billing?: unknown;
           policy?: unknown;
-          model_picker_enabled?: boolean;
+          model_picker_enabled?: unknown;
+          description?: unknown;
+          owned_by?: unknown;
         }>;
       };
       assertEquals(body.object, 'list');
@@ -101,31 +104,43 @@ test('/v1/models returns merged model list from Copilot and custom upstreams', a
       assertEquals(ids.includes('gpt-4o'), true);
       assertEquals(ids.includes('gpt-4o-mini'), true);
 
-      const claude = body.data.find(m => m.id === 'claude-sonnet-4');
-      assertEquals(claude!.name, undefined);
-      assertEquals(claude!.display_name, undefined);
-      assertEquals(claude!.supported_endpoints, undefined);
-      assertEquals(claude!.supports_generation, undefined);
-      assertEquals(claude!.capabilities, undefined);
-      assertEquals(claude!.provider, undefined);
-      assertEquals(claude!.billing, undefined);
-      assertEquals(claude!.policy, undefined);
-      assertEquals(claude!.model_picker_enabled, undefined);
-
-      const gpt4o = body.data.find(m => m.id === 'gpt-4o');
-      assertEquals(gpt4o!.supported_endpoints, undefined);
-      assertEquals(gpt4o!.provider, undefined);
+      const claude = body.data.find(m => m.id === 'claude-sonnet-4')!;
+      // Superset DTO: OpenAI's object + Anthropic's type + Anthropic's display_name
+      // + our extras. Slim ModelMetadata fields only.
+      assertEquals(claude.object, 'model');
+      assertEquals(claude.type, 'model');
+      assertEquals(claude.display_name, 'Claude Sonnet 4');
+      assertEquals(claude.supports_generation, true);
+      assertEquals(claude.limits, {});
+      assertEquals(claude.capabilities, undefined);
 
       for (const model of body.data) {
+        // Provider / upstream identity is hidden on the public surface.
         assertEquals(model.provider, undefined);
         assertEquals(model.providerKind, undefined);
         assertEquals(model.providers, undefined);
         assertEquals(model.providerData, undefined);
+        assertEquals(model.upstreamEndpoints, undefined);
         assertEquals(model.supportedEndpoints, undefined);
         assertEquals(model.upstream, undefined);
         assertEquals(model.upstreamModel, undefined);
+        // Copilot-only raw fields never reach the public DTO.
+        assertEquals(model.name, undefined);
+        assertEquals(model.version, undefined);
+        assertEquals(model.billing, undefined);
+        assertEquals(model.policy, undefined);
+        assertEquals(model.model_picker_enabled, undefined);
+        assertEquals(model.description, undefined);
       }
 
+      // /models serves the exact same payload (same handler).
+      const anthropicResponse = await requestApp('/models', {
+        headers: { 'x-api-key': apiKey.key },
+      });
+      assertEquals(anthropicResponse.status, 200);
+      assertEquals(await anthropicResponse.json(), await (await requestApp('/v1/models', { headers: { 'x-api-key': apiKey.key } })).json());
+
+      // Dashboard adds two UI-only fields on top of the public DTO.
       const controlResponse = await requestApp('/api/models', {
         headers: { 'x-api-key': apiKey.key },
       });
@@ -133,32 +148,40 @@ test('/v1/models returns merged model list from Copilot and custom upstreams', a
       const controlBody = (await controlResponse.json()) as {
         data: Array<{
           id: string;
-          name: string;
           display_name: string;
-          supported_endpoints?: string[];
-          provider?: 'copilot' | 'custom' | 'azure';
+          upstreams?: Array<{ kind: 'copilot' | 'custom' | 'azure'; id: string }>;
+          provider?: unknown;
+          upstream_ids?: unknown;
           billing?: unknown;
           policy?: unknown;
-          model_picker_enabled?: boolean;
+          model_picker_enabled?: unknown;
+          name?: unknown;
+          version?: unknown;
+          supported_endpoints?: unknown;
+          description?: unknown;
         }>;
       };
       const controlClaude = controlBody.data.find(m => m.id === 'claude-sonnet-4')!;
-      assertEquals(controlClaude.name, 'Claude Sonnet 4');
       assertEquals(controlClaude.display_name, 'Claude Sonnet 4');
-      assertEquals(controlClaude.provider, 'copilot');
-      assertEquals(controlClaude.billing, { is_premium: true, multiplier: 3 });
-      assertEquals(controlClaude.policy, {
-        state: 'enabled',
-        terms: 'test terms',
-      });
-      assertEquals(controlClaude.model_picker_enabled, true);
-      assertEquals(controlClaude.supported_endpoints, ['/v1/messages']);
-      assertEquals(controlBody.data.find(m => m.id === 'gpt-4o')?.provider, 'custom');
+      assertEquals(controlClaude.upstreams, [{ kind: 'copilot', id: 'up_copilot' }]);
+      assertEquals(controlBody.data.find(m => m.id === 'gpt-4o')?.upstreams, [{ kind: 'custom', id: 'up_oai' }]);
+      // Legacy split fields and Copilot-only fields never reach the dashboard.
+      for (const model of controlBody.data) {
+        assertEquals(model.provider, undefined);
+        assertEquals(model.upstream_ids, undefined);
+        assertEquals(model.billing, undefined);
+        assertEquals(model.policy, undefined);
+        assertEquals(model.model_picker_enabled, undefined);
+        assertEquals(model.name, undefined);
+        assertEquals(model.version, undefined);
+        assertEquals(model.supported_endpoints, undefined);
+        assertEquals(model.description, undefined);
+      }
     },
   );
 });
 
-test('/models returns Anthropic-shaped model list', async () => {
+test('/models returns the same superset payload as /v1/models', async () => {
   const { apiKey } = await setupAppTest();
 
   await withMockedFetch(
@@ -200,17 +223,29 @@ test('/models returns Anthropic-shaped model list', async () => {
 
       assertEquals(response.status, 200);
       assertEquals(await response.json(), {
+        object: 'list',
+        has_more: false,
+        first_id: 'claude-opus-4-7',
+        last_id: 'embedding-only',
         data: [
           {
             id: 'claude-opus-4-7',
+            object: 'model',
             type: 'model',
             display_name: 'Claude Opus 4.7 XHigh',
+            limits: {},
+            supports_generation: true,
             cost: { input: 5, output: 25, cache_read: 0.5, cache_write: 6.25 },
           },
+          {
+            id: 'embedding-only',
+            object: 'model',
+            type: 'model',
+            display_name: 'embedding-only',
+            limits: {},
+            supports_generation: false,
+          },
         ],
-        has_more: false,
-        first_id: 'claude-opus-4-7',
-        last_id: 'claude-opus-4-7',
       });
     },
   );

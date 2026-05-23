@@ -2,7 +2,7 @@ import { createAzureProvider } from './azure/provider.ts';
 import { createCopilotProvider } from './copilot/provider.ts';
 import { createCustomProvider } from './custom/provider.ts';
 import { endpointsIncludeLlmGeneration } from './endpoints.ts';
-import type { CatalogModel, ModelEndpoint, ModelProviderInstance, ProviderModelRecord, ResolvedModel, UpstreamModel } from './types.ts';
+import type { InternalModel, ModelEndpoint, ModelProviderInstance, ProviderModelRecord, ResolvedModel, UpstreamModel } from './types.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { UpstreamProviderKind, UpstreamRecord } from '../../repo/types.ts';
 
@@ -40,14 +40,12 @@ const unionEndpoints = (a: readonly ModelEndpoint[], b: readonly ModelEndpoint[]
   return result;
 };
 
-const catalogModelFromUpstreamModel = (upstreamModel: UpstreamModel): CatalogModel => {
-  const { providerData: _providerData, supportedEndpoints: upstreamSupportedEndpoints, ...modelInfo } = upstreamModel;
-  const supportedEndpoints = [...upstreamSupportedEndpoints];
-
+const resolvedFromUpstreamModel = (upstreamModel: UpstreamModel, record: ProviderModelRecord): ResolvedModel => {
+  const { providerData: _providerData, upstreamEndpoints, ...internal } = upstreamModel;
   return {
-    ...modelInfo,
-    supportedEndpoints,
-    supports_generation: endpointsIncludeLlmGeneration(supportedEndpoints),
+    ...internal,
+    upstreamEndpoints: [...upstreamEndpoints],
+    providers: [record],
   };
 };
 
@@ -73,10 +71,7 @@ const collectProviderModels = async (providers: readonly ModelProviderInstance[]
         };
         const existing = byId.get(upstreamModel.id);
         if (!existing) {
-          byId.set(upstreamModel.id, {
-            ...catalogModelFromUpstreamModel(upstreamModel),
-            providers: [record],
-          });
+          byId.set(upstreamModel.id, resolvedFromUpstreamModel(upstreamModel, record));
           continue;
         }
 
@@ -85,11 +80,11 @@ const collectProviderModels = async (providers: readonly ModelProviderInstance[]
         // public /models metadata. Runtime execution still uses the selected
         // provider's own UpstreamModel, so capability-sensitive calls do not
         // depend on this merged view being perfectly representative.
-        const supportedEndpoints = unionEndpoints(existing.supportedEndpoints, upstreamModel.supportedEndpoints);
+        const upstreamEndpoints = unionEndpoints(existing.upstreamEndpoints, upstreamModel.upstreamEndpoints);
         byId.set(upstreamModel.id, {
           ...existing,
-          supportedEndpoints,
-          supports_generation: endpointsIncludeLlmGeneration(supportedEndpoints),
+          upstreamEndpoints,
+          supports_generation: endpointsIncludeLlmGeneration(upstreamEndpoints),
           providers: [...existing.providers, record],
         });
       }
@@ -104,12 +99,12 @@ const collectProviderModels = async (providers: readonly ModelProviderInstance[]
 const modelWithProviderInstances = (model: ResolvedModel, providers: ReadonlySet<ModelProviderInstance>): ResolvedModel => {
   const providerInstances = [...providers];
   const bindings = model.providers.filter(binding => providerInstances.some(instance => instance.upstream === binding.upstream && instance.provider === binding.provider));
-  const supportedEndpoints = bindings.reduce<ModelEndpoint[]>((endpoints, binding) => unionEndpoints(endpoints, binding.upstreamModel.supportedEndpoints), []);
+  const upstreamEndpoints = bindings.reduce<ModelEndpoint[]>((endpoints, binding) => unionEndpoints(endpoints, binding.upstreamModel.upstreamEndpoints), []);
 
   return {
     ...model,
-    supportedEndpoints,
-    supports_generation: endpointsIncludeLlmGeneration(supportedEndpoints),
+    upstreamEndpoints,
+    supports_generation: endpointsIncludeLlmGeneration(upstreamEndpoints),
     providers: bindings,
   };
 };
@@ -161,7 +156,10 @@ export const getModels = async (): Promise<ResolvedModel[]> => {
   return [];
 };
 
-export const getCatalogModels = async (): Promise<CatalogModel[]> => (await getModels()).map(({ providers: _providers, ...model }) => model);
+// Strips planner-only and provider-binding fields, leaving the InternalModel
+// shape consumed by the public /models DTO projection and the dashboard.
+export const getInternalModels = async (): Promise<InternalModel[]> =>
+  (await getModels()).map(({ providers: _providers, upstreamEndpoints: _upstreamEndpoints, ...model }) => model);
 
 export interface ModelResolution {
   id: string;

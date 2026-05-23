@@ -1,8 +1,22 @@
 import type { Upstream } from '../../../shared/upstream/types.ts';
-import type { RawModelsResponse } from '../model-info.ts';
 import { ProviderModelsUnavailableError } from '../models-store.ts';
 
-export type CustomModelsResponse = RawModelsResponse;
+// OpenAI-shaped /models response from any bearer-token upstream the admin
+// configures. The wire shape is OpenAI's own: id is required, name/owned_by/
+// created are optional metadata. `supported_endpoints` is a custom-gateway
+// convention some upstreams emit to declare per-model endpoint support.
+export interface CustomRawModel {
+  id: string;
+  name?: string;
+  owned_by?: string;
+  created?: number;
+  supported_endpoints?: string[];
+}
+
+export interface CustomModelsResponse {
+  object: string;
+  data: CustomRawModel[];
+}
 
 const isCustomModelsResponse = (value: unknown): value is CustomModelsResponse => {
   const response = value as CustomModelsResponse;

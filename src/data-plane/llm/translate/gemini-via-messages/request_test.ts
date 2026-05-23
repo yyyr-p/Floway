@@ -2,18 +2,12 @@ import { test } from 'vitest';
 
 import { buildTargetRequest } from './request.ts';
 import { assertEquals } from '../../../../test-assert.ts';
-import type { ModelCapabilities } from '../../../providers/capabilities.ts';
 import type { GeminiGenerateContentRequest } from '../../../shared/protocol/gemini.ts';
 import { MESSAGES_FALLBACK_MAX_TOKENS } from '../../../shared/protocol/messages.ts';
 
-const noCapabilities: ModelCapabilities = {
-  supportedEndpoints: ['messages'],
-};
+const noCapabilities = {} as const;
 
-const withMaxOutputTokens = (maxOutputTokens: number): ModelCapabilities => ({
-  ...noCapabilities,
-  maxOutputTokens,
-});
+const withMaxOutputTokens = (maxOutputTokens: number) => ({ fallbackMaxOutputTokens: maxOutputTokens });
 
 test('buildTargetRequest maps system, default max tokens, and multimodal user content', () => {
   const payload: GeminiGenerateContentRequest = {

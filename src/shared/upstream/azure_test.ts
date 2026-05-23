@@ -371,25 +371,6 @@ test('createAzureUpstream validates Azure opaque config strictly', () => {
     Error,
     'endpoint must be an http(s) URL without query or fragment',
   );
-
-  assertThrows(
-    () =>
-      createAzureUpstream({
-        ...baseRecord,
-        config: {
-          ...(baseRecord.config as Record<string, unknown>),
-          deployments: [
-            {
-              deployment: 'gpt-prod',
-              supportedEndpoints: ['/chat/completions'],
-              capabilities: { supports: { streaming: 'yes' } },
-            },
-          ],
-        },
-      }),
-    Error,
-    'deployments[0].capabilities.supports.streaming must be a boolean',
-  );
 });
 
 test('createAzureUpstream accepts deployment.cost with full pricing fields', () => {

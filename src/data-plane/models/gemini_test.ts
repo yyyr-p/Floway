@@ -73,7 +73,7 @@ test('/v1beta/models lists Copilot LLM models in Gemini model shape', async () =
           name: 'models/gpt-gemini-list',
           baseModelId: 'gpt-gemini-list',
           displayName: 'GPT Gemini List',
-          supportedGenerationMethods: ['generateContent', 'streamGenerateContent'],
+          supportedGenerationMethods: ['generateContent', 'streamGenerateContent', 'countTokens'],
           inputTokenLimit: 12345,
           outputTokenLimit: 678,
           temperature: 1,
@@ -172,7 +172,7 @@ test('/v1beta/models includes custom upstream LLM models', async () => {
       assertEquals(list.models.length, 1);
       assertEquals(list.models[0].name, 'models/custom-llm-model');
       assertEquals(list.models[0].displayName, 'Custom LLM Model');
-      assertEquals(list.models[0].supportedGenerationMethods, ['generateContent', 'streamGenerateContent']);
+      assertEquals(list.models[0].supportedGenerationMethods, ['generateContent', 'streamGenerateContent', 'countTokens']);
 
       const getResp = await requestApp('/v1beta/models/custom-llm-model', {
         headers: { 'x-api-key': apiKey.key },

@@ -1,42 +1,32 @@
-import type { AnthropicModelInfo, AnthropicModelsResponse, ModelInfo, ModelsResponse } from './types.ts';
-import { getCatalogModels } from '../providers/registry.ts';
-import type { CatalogModel } from '../providers/types.ts';
+import type { PublicModel, PublicModelsResponse } from './types.ts';
+import { getInternalModels } from '../providers/registry.ts';
+import type { InternalModel } from '../providers/types.ts';
 
-export const toPublicModelInfo = (model: CatalogModel): ModelInfo => {
-  return {
+export const toPublicModel = (model: InternalModel): PublicModel => {
+  const info: PublicModel = {
     id: model.id,
-    object: model.object,
-    ...(model.owned_by !== undefined ? { owned_by: model.owned_by } : {}),
-    ...(model.created !== undefined ? { created: model.created } : {}),
-    ...(model.cost ? { cost: model.cost } : {}),
-  };
-};
-
-export const toAnthropicModelInfo = (model: CatalogModel): AnthropicModelInfo => {
-  const createdAt = model.created_at ?? (model.created !== undefined ? new Date(model.created * 1000).toISOString() : undefined);
-  return {
-    id: model.id,
+    object: 'model',
     type: 'model',
-    display_name: model.display_name ?? model.name ?? model.id,
-    ...(createdAt !== undefined ? { created_at: createdAt } : {}),
-    ...(model.cost ? { cost: model.cost } : {}),
+    display_name: model.display_name ?? model.id,
+    limits: { ...model.limits },
+    supports_generation: model.supports_generation,
   };
+  if (model.owned_by !== undefined) info.owned_by = model.owned_by;
+  if (model.created !== undefined) {
+    info.created = model.created;
+    info.created_at = new Date(model.created * 1000).toISOString();
+  }
+  if (model.cost) info.cost = model.cost;
+  return info;
 };
 
-export const loadMergedModels = async (): Promise<ModelsResponse> => {
-  const models = await getCatalogModels();
+export const loadModels = async (): Promise<PublicModelsResponse> => {
+  const data = (await getInternalModels()).map(toPublicModel);
   return {
     object: 'list',
-    data: models.map(toPublicModelInfo),
-  };
-};
-
-export const loadAnthropicModels = async (): Promise<AnthropicModelsResponse> => {
-  const data = (await getCatalogModels()).filter(model => model.supports_generation).map(toAnthropicModelInfo);
-  return {
-    data,
     has_more: false,
     first_id: data[0]?.id ?? null,
     last_id: data[data.length - 1]?.id ?? null,
+    data,
   };
 };

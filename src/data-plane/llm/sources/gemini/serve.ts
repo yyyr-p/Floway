@@ -2,7 +2,6 @@ import type { Context } from 'hono';
 
 import { geminiSourceInterceptors } from './interceptors/index.ts';
 import { respondGemini } from './respond.ts';
-import { getModelCapabilities } from '../../../providers/capabilities.ts';
 import { resolveModelForRequest } from '../../../providers/registry.ts';
 import type { ModelEndpoint, ProviderModelRecord } from '../../../providers/types.ts';
 import type { ChatCompletionsPayload } from '../../../shared/protocol/chat-completions.ts';
@@ -82,8 +81,7 @@ export const serveGemini = async (c: Context, model: string, wantsStream: boolea
     } else {
       for (const binding of resolved.providers) {
         const attemptPayload = structuredClone(payload);
-        const capabilities = getModelCapabilities(binding.upstreamModel);
-        const target = pickTarget(binding.upstreamModel.supportedEndpoints);
+        const target = pickTarget(binding.upstreamModel.upstreamEndpoints);
         if (!target) continue;
 
         // Gemini source payload has no `model` field on the request body; the
@@ -100,7 +98,7 @@ export const serveGemini = async (c: Context, model: string, wantsStream: boolea
         };
 
         result = await runInterceptors(invocation, request, geminiSourceInterceptorsForProvider(binding), () =>
-          emits[target](invocation.payload, { model: modelId, wantsStream, capabilities }));
+          emits[target](invocation.payload, { model: modelId, wantsStream, fallbackMaxOutputTokens: binding.upstreamModel.limits.max_output_tokens }));
         break;
       }
 

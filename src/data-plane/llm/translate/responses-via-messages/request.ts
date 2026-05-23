@@ -1,4 +1,3 @@
-import type { ModelCapabilities } from '../../../providers/capabilities.ts';
 import {
   MESSAGES_FALLBACK_MAX_TOKENS,
   type MessagesAssistantContentBlock,
@@ -267,5 +266,5 @@ export const translateResponsesToMessages = async (payload: ResponsesPayload, op
   return { target, customToolNames };
 };
 
-export const buildTargetRequest = (payload: ResponsesPayload, capabilities: ModelCapabilities): Promise<ResponsesToMessagesResult> =>
-  translateResponsesToMessages(payload, { fallbackMaxOutputTokens: capabilities.maxOutputTokens });
+export const buildTargetRequest = (payload: ResponsesPayload, options: { fallbackMaxOutputTokens?: number }): Promise<ResponsesToMessagesResult> =>
+  translateResponsesToMessages(payload, options);

@@ -8,25 +8,14 @@ export interface AzureDeploymentConfig {
   publicModelId?: string;
   supportedEndpoints: string[];
   display_name?: string;
-  capabilities?: AzureDeploymentCapabilities;
+  limits?: AzureDeploymentLimits;
   cost?: ModelPricing;
 }
 
-export interface AzureDeploymentCapabilities {
-  limits?: {
-    max_context_window_tokens?: number;
-    max_non_streaming_output_tokens?: number;
-    max_prompt_tokens?: number;
-    max_output_tokens?: number;
-  };
-  supports?: {
-    tool_calls?: boolean;
-    parallel_tool_calls?: boolean;
-    streaming?: boolean;
-    vision?: boolean;
-    adaptive_thinking?: boolean;
-    reasoning_effort?: string[];
-  };
+export interface AzureDeploymentLimits {
+  max_context_window_tokens?: number;
+  max_prompt_tokens?: number;
+  max_output_tokens?: number;
 }
 
 export interface AzureUpstreamConfig {
@@ -136,57 +125,19 @@ const optionalNumberField = (value: unknown, field: string): number | undefined 
   return value;
 };
 
-const optionalBooleanField = (value: unknown, field: string): boolean | undefined => {
-  if (value === undefined) return undefined;
-  if (typeof value !== 'boolean') throw new Error(`Malformed azure upstream config: ${field} must be a boolean`);
-  return value;
-};
-
-const optionalStringArrayField = (value: unknown, field: string): string[] | undefined => {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
-    throw new Error(`Malformed azure upstream config: ${field} must be a string array`);
-  }
-  return [...value];
-};
-
 const optionalMetadataRecord = (value: unknown, field: string): Record<string, unknown> | undefined => {
   if (value === undefined) return undefined;
   if (!isRecord(value)) throw new Error(`Malformed azure upstream config: ${field} must be an object`);
   return value;
 };
 
-const capabilitiesField = (value: unknown, field: string): AzureDeploymentCapabilities | undefined => {
+const limitsField = (value: unknown, field: string): AzureDeploymentLimits | undefined => {
   const record = optionalMetadataRecord(value, field);
   if (!record) return undefined;
-
-  const limitsRecord = optionalMetadataRecord(record.limits, `${field}.limits`);
-  const supportsRecord = optionalMetadataRecord(record.supports, `${field}.supports`);
   return {
-    ...(limitsRecord
-      ? {
-          limits: {
-            ...(limitsRecord.max_context_window_tokens !== undefined ? { max_context_window_tokens: optionalNumberField(limitsRecord.max_context_window_tokens, `${field}.limits.max_context_window_tokens`) } : {}),
-            ...(limitsRecord.max_non_streaming_output_tokens !== undefined
-              ? { max_non_streaming_output_tokens: optionalNumberField(limitsRecord.max_non_streaming_output_tokens, `${field}.limits.max_non_streaming_output_tokens`) }
-              : {}),
-            ...(limitsRecord.max_prompt_tokens !== undefined ? { max_prompt_tokens: optionalNumberField(limitsRecord.max_prompt_tokens, `${field}.limits.max_prompt_tokens`) } : {}),
-            ...(limitsRecord.max_output_tokens !== undefined ? { max_output_tokens: optionalNumberField(limitsRecord.max_output_tokens, `${field}.limits.max_output_tokens`) } : {}),
-          },
-        }
-      : {}),
-    ...(supportsRecord
-      ? {
-          supports: {
-            ...(supportsRecord.tool_calls !== undefined ? { tool_calls: optionalBooleanField(supportsRecord.tool_calls, `${field}.supports.tool_calls`) } : {}),
-            ...(supportsRecord.parallel_tool_calls !== undefined ? { parallel_tool_calls: optionalBooleanField(supportsRecord.parallel_tool_calls, `${field}.supports.parallel_tool_calls`) } : {}),
-            ...(supportsRecord.streaming !== undefined ? { streaming: optionalBooleanField(supportsRecord.streaming, `${field}.supports.streaming`) } : {}),
-            ...(supportsRecord.vision !== undefined ? { vision: optionalBooleanField(supportsRecord.vision, `${field}.supports.vision`) } : {}),
-            ...(supportsRecord.adaptive_thinking !== undefined ? { adaptive_thinking: optionalBooleanField(supportsRecord.adaptive_thinking, `${field}.supports.adaptive_thinking`) } : {}),
-            ...(supportsRecord.reasoning_effort !== undefined ? { reasoning_effort: optionalStringArrayField(supportsRecord.reasoning_effort, `${field}.supports.reasoning_effort`) } : {}),
-          },
-        }
-      : {}),
+    ...(record.max_context_window_tokens !== undefined ? { max_context_window_tokens: optionalNumberField(record.max_context_window_tokens, `${field}.max_context_window_tokens`) } : {}),
+    ...(record.max_prompt_tokens !== undefined ? { max_prompt_tokens: optionalNumberField(record.max_prompt_tokens, `${field}.max_prompt_tokens`) } : {}),
+    ...(record.max_output_tokens !== undefined ? { max_output_tokens: optionalNumberField(record.max_output_tokens, `${field}.max_output_tokens`) } : {}),
   };
 };
 
@@ -223,7 +174,7 @@ const deploymentField = (value: unknown, index: number): AzureDeploymentConfig =
     ...(value.publicModelId !== undefined ? { publicModelId: optionalStringField(value.publicModelId, `deployments[${index}].publicModelId`) } : {}),
     supportedEndpoints: supportedEndpointsField(value.supportedEndpoints, `deployments[${index}].supportedEndpoints`),
     ...(value.display_name !== undefined ? { display_name: optionalStringField(value.display_name, `deployments[${index}].display_name`) } : {}),
-    ...(value.capabilities !== undefined ? { capabilities: capabilitiesField(value.capabilities, `deployments[${index}].capabilities`) } : {}),
+    ...(value.limits !== undefined ? { limits: limitsField(value.limits, `deployments[${index}].limits`) } : {}),
     ...(pricing ? { cost: pricing } : {}),
   };
 };

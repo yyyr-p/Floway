@@ -103,7 +103,7 @@ export const embeddings = async (c: Context): Promise<Response> => {
     }
 
     for (const binding of model.providers) {
-      if (!binding.upstreamModel.supportedEndpoints.includes('embeddings')) {
+      if (!binding.upstreamModel.upstreamEndpoints.includes('embeddings')) {
         continue;
       }
 

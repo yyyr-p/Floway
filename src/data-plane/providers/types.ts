@@ -18,49 +18,31 @@ export interface ModelPricing {
   cache_write?: number;
 }
 
-export interface ModelMetadata {
+// The internal model shape: what providers produce and what the registry
+// stores. Only fields the data plane actually consumes — to expose downstream
+// (id, display_name, owned_by, created, limits) or to drive request-time
+// decisions (max_output_tokens as the translation fallback). Provider-internal
+// raw fields stay inside that provider's own types and projections; nothing
+// upstream-shaped leaks onto this neutral type.
+//
+// `supports_generation` is derived from `upstreamEndpoints` at the producer
+// boundary (see endpointsIncludeLlmGeneration).
+export interface InternalModel {
   id: string;
-  name: string;
-  version: string;
-  object: string;
+  display_name?: string;
   owned_by?: string;
   created?: number;
-  display_name?: string;
-  created_at?: string;
-  description?: string;
-  capabilities: {
-    family: string;
-    type: string;
-    limits: {
-      max_context_window_tokens?: number;
-      max_non_streaming_output_tokens?: number;
-      max_prompt_tokens?: number;
-      max_output_tokens?: number;
-    };
-    supports: {
-      tool_calls?: boolean;
-      parallel_tool_calls?: boolean;
-      streaming?: boolean;
-      vision?: boolean;
-      adaptive_thinking?: boolean;
-      reasoning_effort?: string[];
-    };
+  limits: {
+    max_output_tokens?: number;
+    max_context_window_tokens?: number;
+    max_prompt_tokens?: number;
   };
-  billing?: {
-    is_premium?: boolean;
-    multiplier?: number;
-    restricted_to?: string[];
-  };
-  policy?: {
-    state?: string;
-    terms?: string;
-  };
+  supports_generation: boolean;
   cost?: ModelPricing;
-  model_picker_enabled?: boolean;
 }
 
-export interface UpstreamModel extends ModelMetadata {
-  supportedEndpoints: readonly ModelEndpoint[];
+export interface UpstreamModel extends InternalModel {
+  upstreamEndpoints: readonly ModelEndpoint[];
   providerData?: unknown;
 }
 
@@ -74,12 +56,13 @@ export interface ProviderModelRecord {
   targetInterceptors?: ProviderTargetInterceptors;
 }
 
-export interface CatalogModel extends ModelMetadata {
-  supportedEndpoints: readonly ModelEndpoint[];
-  supports_generation: boolean;
-}
-
-export interface ResolvedModel extends CatalogModel {
+// upstreamEndpoints describes which endpoints this model is served by on its
+// upstream side; it lives on ResolvedModel for planner-only use. The public
+// catalog does not expose upstream endpoint identity — the gateway always
+// translates between protocols on the data plane, so downstream clients see
+// all source endpoints as available for any generation-capable model.
+export interface ResolvedModel extends InternalModel {
+  upstreamEndpoints: readonly ModelEndpoint[];
   providers: readonly ProviderModelRecord[];
 }
 
