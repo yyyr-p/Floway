@@ -37,6 +37,7 @@ export interface UpstreamModel extends InternalModel {
 
 export interface ProviderModelRecord {
   upstream: string;
+  upstreamName: string;
   providerKind: UpstreamProviderKind;
   provider: ModelProvider;
   upstreamModel: UpstreamModel;

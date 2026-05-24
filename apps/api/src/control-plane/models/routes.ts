@@ -8,13 +8,16 @@ import type { UpstreamProviderKind } from '../../repo/types.ts';
 import type { PublicModel, PublicModelsResponse } from '@copilot-gateway/protocols/common';
 
 // Same DTO as the public /models endpoint, plus one dashboard-only field:
-// `upstreams` lists every provider binding for this model as { kind, id }
-// pairs so the picker can group and the upstream rows can count their
-// bound models. A single model id can be served by mixed provider kinds
-// (e.g. one azure deployment + one custom upstream both expose `gpt-5.5`),
-// so a flat `provider`/`upstream_ids` split would misrepresent that.
+// `upstreams` lists every provider binding for this model as { kind, id, name }
+// triples so the picker can group, the upstream rows can count their bound
+// models, and the chat panel can render each providing upstream as a labeled
+// badge without re-fetching the admin-only /api/upstreams endpoint (non-admin
+// users can see the models tab). A single model id can be served by mixed
+// provider kinds (e.g. one azure deployment + one custom upstream both expose
+// `gpt-5.5`), so a flat `provider`/`upstream_ids` split would misrepresent
+// that.
 interface ControlPlaneModel extends PublicModel {
-  upstreams: { kind: UpstreamProviderKind; id: string }[];
+  upstreams: { kind: UpstreamProviderKind; id: string; name: string }[];
 }
 
 interface ControlPlaneModelsResponse extends Omit<PublicModelsResponse, 'data'> {
@@ -23,7 +26,7 @@ interface ControlPlaneModelsResponse extends Omit<PublicModelsResponse, 'data'> 
 
 const toControlPlaneModel = (model: ResolvedModel): ControlPlaneModel => ({
   ...toPublicModel(model),
-  upstreams: model.providers.map(binding => ({ kind: binding.providerKind, id: binding.upstream })),
+  upstreams: model.providers.map(binding => ({ kind: binding.providerKind, id: binding.upstream, name: binding.upstreamName })),
 });
 
 const modelListingFailureMessage = 'Upstream model listing failed';

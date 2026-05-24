@@ -63,6 +63,7 @@ const collectProviderModels = async (providers: readonly ModelProviderInstance[]
         if (!upstreamModel.id) continue;
         const record: ProviderModelRecord = {
           upstream: instance.upstream,
+          upstreamName: instance.name,
           providerKind: instance.providerKind,
           provider: instance.provider,
           upstreamModel,

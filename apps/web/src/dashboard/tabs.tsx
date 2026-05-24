@@ -1637,6 +1637,14 @@ export function renderModelsTab() {
                   <span x-show="chatModelInfo && chatModelInfo.name !== chatModelInfo.id" class="font-mono text-[11px] text-gray-500 break-all" x-text="chatModelInfo?.id"></span>
                 </div>
                 <div class="flex flex-wrap gap-1.5 mt-2">
+                  <template x-for="binding in (chatModelInfo?.upstreams || [])" :key="binding.id">
+                    <span
+                      class="text-[10px] font-semibold px-2 py-0.5 rounded-full border"
+                      :class="providerBadgeClass(binding.kind)"
+                      :title="providerLabel(binding.kind) + ' · ' + binding.name"
+                      x-text="binding.name"
+                    ></span>
+                  </template>
                   <template x-if="chatModelInfo?.limits?.max_context_window_tokens">
                     <span class="text-[10px] font-mono px-2 py-0.5 rounded-full bg-surface-600 text-gray-400">
                       context: <span x-text="formatTokenLimit(chatModelInfo.limits.max_context_window_tokens)"></span>
