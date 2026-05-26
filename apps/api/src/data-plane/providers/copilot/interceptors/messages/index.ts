@@ -10,6 +10,7 @@ import { withVisionHeaderSet } from './set-vision-header.ts';
 import { stripBillingAttribution } from './strip-billing-attribution.ts';
 import { withCacheControlScopeStripped } from './strip-cache-control-scope.ts';
 import { withEagerInputStreamingStripped } from './strip-eager-input-streaming.ts';
+import { withToolStrictStripped } from './strip-tool-strict.ts';
 import type { MessagesCountTokensInterceptor, MessagesInterceptor } from '../../../../llm/interceptors.ts';
 
 // `withMessagesWebSearchShim` is intentionally NOT registered here. It runs
@@ -28,6 +29,7 @@ export const messagesCopilotInterceptors = [
   withThinkingDisplayPromoted,
   withCacheControlScopeStripped,
   withEagerInputStreamingStripped,
+  withToolStrictStripped,
   withVisionHeaderSet,
   withInitiatorHeaderSet,
   withAnthropicBetaHeaderFiltered,
