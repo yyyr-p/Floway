@@ -640,7 +640,11 @@ test('/v1/messages uses native endpoint and applies native request workarounds',
   assertEquals(assistantContent[2].type, 'thinking');
   assertEquals(assistantContent[2].thinking, 'second thought');
   assertEquals(assistantContent[3].type, 'text');
-  assertEquals(upstreamBeta, 'context-management-2025-06-27,interleaved-thinking-2025-05-14');
+  // Caller-supplied anthropic-beta is respected exactly: the filter keeps
+  // allow-listed values and never auto-adds `interleaved-thinking-2025-05-14`
+  // on the inbound branch, even when `thinking.budget_tokens` is set. The
+  // auto-add only fires when the caller sent NO inbound header.
+  assertEquals(upstreamBeta, 'context-management-2025-06-27');
   assertEquals(githubAccount.accountType, 'individual');
 });
 

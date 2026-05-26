@@ -30,6 +30,17 @@ const invocation = (payload: MessagesPayload, anthropicBeta?: readonly string[])
   ...(anthropicBeta !== undefined ? { anthropicBeta } : {}),
 });
 
+test('keeps only allow-listed anthropic-beta values when caller supplied a header', async () => {
+  const ctx = invocation(
+    { model: 'claude-test', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] },
+    ['interleaved-thinking-2025-05-14', 'unknown-beta', 'context-management-2025-06-27'],
+  );
+
+  await withAnthropicBetaHeaderFiltered(ctx, stubRequest, okEvents);
+
+  assertEquals(ctx.headers['anthropic-beta'], 'interleaved-thinking-2025-05-14,context-management-2025-06-27');
+});
+
 test('forwards inbound interleaved-thinking unchanged when paired with non-adaptive budget thinking', async () => {
   const ctx = invocation(
     {
@@ -46,11 +57,30 @@ test('forwards inbound interleaved-thinking unchanged when paired with non-adapt
   assertEquals(ctx.headers['anthropic-beta'], 'interleaved-thinking-2025-05-14');
 });
 
-test('drops inbound interleaved-thinking when adaptive thinking is requested', async () => {
-  // Adaptive thinking is incompatible with the interleaved-thinking beta;
-  // caozhiyuan/copilot-api's buildAnthropicBetaHeader filters it out at the
-  // inbound stage and never re-adds it (the auto-add branch only fires for
-  // non-adaptive budget thinking).
+test('respects the caller and does NOT auto-add interleaved-thinking when caller supplied only other betas', async () => {
+  const ctx = invocation(
+    {
+      model: 'claude-test',
+      max_tokens: 10,
+      messages: [{ role: 'user', content: 'hi' }],
+      thinking: { type: 'enabled', budget_tokens: 1024 },
+    },
+    ['context-management-2025-06-27'],
+  );
+
+  await withAnthropicBetaHeaderFiltered(ctx, stubRequest, okEvents);
+
+  // Even though non-adaptive thinking + budget_tokens would auto-add
+  // interleaved in the no-inbound branch, the caller already expressed
+  // intent by sending its own anthropic-beta header. Match VSCode behavior:
+  // do not silently inflate the caller's beta set.
+  assertEquals(ctx.headers['anthropic-beta'], 'context-management-2025-06-27');
+});
+
+test('keeps inbound interleaved-thinking even when adaptive thinking is requested', async () => {
+  // caozhiyuan's buildAnthropicBetaHeader only filters against the allow-list
+  // on the inbound branch; it never drops interleaved on adaptive thinking.
+  // We match that behavior rather than carrying a private exclusion rule.
   const ctx = invocation(
     {
       model: 'claude-test',
@@ -58,12 +88,12 @@ test('drops inbound interleaved-thinking when adaptive thinking is requested', a
       messages: [{ role: 'user', content: 'hi' }],
       thinking: { type: 'adaptive' },
     },
-    ['interleaved-thinking-2025-05-14'],
+    ['interleaved-thinking-2025-05-14', 'context-management-2025-06-27'],
   );
 
   await withAnthropicBetaHeaderFiltered(ctx, stubRequest, okEvents);
 
-  assertEquals('anthropic-beta' in ctx.headers, false);
+  assertEquals(ctx.headers['anthropic-beta'], 'interleaved-thinking-2025-05-14,context-management-2025-06-27');
 });
 
 test('auto-adds interleaved-thinking when caller sent no header and budget_tokens is set without adaptive thinking', async () => {
@@ -79,25 +109,6 @@ test('auto-adds interleaved-thinking when caller sent no header and budget_token
   assertEquals(ctx.headers['anthropic-beta'], 'interleaved-thinking-2025-05-14');
 });
 
-test('combines inbound context-management with auto-added interleaved-thinking on non-adaptive budget thinking', async () => {
-  // Combined-behavior fixture: caozhiyuan's helper runs the inbound filter
-  // and the budget-driven auto-add in sequence on the same set, so a caller
-  // that sent only context-management still gets interleaved appended.
-  const ctx = invocation(
-    {
-      model: 'claude-test',
-      max_tokens: 10,
-      messages: [{ role: 'user', content: 'hi' }],
-      thinking: { type: 'enabled', budget_tokens: 1024 },
-    },
-    ['context-management-2025-06-27'],
-  );
-
-  await withAnthropicBetaHeaderFiltered(ctx, stubRequest, okEvents);
-
-  assertEquals(ctx.headers['anthropic-beta'], 'context-management-2025-06-27,interleaved-thinking-2025-05-14');
-});
-
 test('does not auto-add interleaved-thinking when caller sent no header and thinking is adaptive', async () => {
   const ctx = invocation({
     model: 'claude-test',
@@ -111,7 +122,7 @@ test('does not auto-add interleaved-thinking when caller sent no header and thin
   assertEquals('anthropic-beta' in ctx.headers, false);
 });
 
-test('does not set the header when the inbound caller header has nothing allow-listed and no auto-add applies', async () => {
+test('does not set the header when the inbound caller header has nothing allow-listed', async () => {
   const ctx = invocation(
     { model: 'claude-test', max_tokens: 10, messages: [{ role: 'user', content: 'hi' }] },
     ['unknown-beta-only'],
