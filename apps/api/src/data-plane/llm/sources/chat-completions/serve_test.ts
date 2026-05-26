@@ -1516,7 +1516,7 @@ test('/v1/chat/completions via responses emits requested usage-only SSE chunk', 
   );
 });
 
-test('/v1/chat/completions via responses streams final HTTP cyber policy retry failure', async () => {
+test('/v1/chat/completions via responses surfaces final HTTP cyber policy retry failure as an internal error', async () => {
   const { apiKey } = await setupAppTest();
   const model = 'gpt-responses-chat-cyber-policy';
   let responseAttempts = 0;
@@ -1576,18 +1576,18 @@ test('/v1/chat/completions via responses streams final HTTP cyber policy retry f
       const events = parseSSEText(await response.text());
       assertEquals(responseAttempts, 11);
       assertEquals(events.length, 1);
+      assertEquals(events[0].event, 'error');
 
       const payload = JSON.parse(events[0].data);
-      assertEquals(payload.error, {
-        message: 'blocked 11',
-        type: 'invalid_request_error',
-        code: 'cyber_policy',
-      });
+      assertEquals(payload.error.type, 'internal_error');
+      assertStringIncludes(payload.error.message, 'HTTP 400');
+      assertStringIncludes(payload.error.message, 'blocked 11');
+      assertStringIncludes(payload.error.message, 'cyber_policy');
     },
   );
 });
 
-test('/v1/chat/completions via responses streams later HTTP retry failure', async () => {
+test('/v1/chat/completions via responses surfaces later HTTP retry failure as an internal error', async () => {
   const { apiKey } = await setupAppTest();
   const model = 'gpt-responses-chat-server-error';
   let responseAttempts = 0;
@@ -1647,13 +1647,13 @@ test('/v1/chat/completions via responses streams later HTTP retry failure', asyn
       const events = parseSSEText(await response.text());
       assertEquals(responseAttempts, 2);
       assertEquals(events.length, 1);
+      assertEquals(events[0].event, 'error');
 
       const payload = JSON.parse(events[0].data);
-      assertEquals(payload.error, {
-        message: 'upstream failed after retry',
-        type: 'server_error',
-        code: 'upstream_failed',
-      });
+      assertEquals(payload.error.type, 'internal_error');
+      assertStringIncludes(payload.error.message, 'HTTP 500');
+      assertStringIncludes(payload.error.message, 'upstream failed after retry');
+      assertStringIncludes(payload.error.message, 'upstream_failed');
     },
   );
 });
