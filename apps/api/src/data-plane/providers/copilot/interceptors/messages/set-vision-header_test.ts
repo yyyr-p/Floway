@@ -49,6 +49,31 @@ test('Messages vision header set when a top-level image block is present', async
   assertEquals(ctx.headers['copilot-vision-request'], 'true');
 });
 
+test('Messages vision header set when an image is nested inside tool_result.content', async () => {
+  const ctx = invocation({
+    model: 'claude-test',
+    max_tokens: 10,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_image',
+            content: [
+              { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+            ],
+          },
+        ],
+      },
+    ],
+  });
+
+  await withVisionHeaderSet(ctx, stubRequest, okEvents);
+
+  assertEquals(ctx.headers['copilot-vision-request'], 'true');
+});
+
 test('Messages vision header absent when no image is present', async () => {
   const ctx = invocation({
     model: 'claude-test',
@@ -56,7 +81,13 @@ test('Messages vision header absent when no image is present', async () => {
     messages: [
       {
         role: 'user',
-        content: [{ type: 'text', text: 'plain text only' }],
+        content: [
+          {
+            type: 'tool_result',
+            tool_use_id: 'toolu_text',
+            content: [{ type: 'text', text: 'plain result' }],
+          },
+        ],
       },
     ],
   });
