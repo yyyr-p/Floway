@@ -5,6 +5,7 @@
 import { withAnthropicBetaHeaderFiltered } from './filter-anthropic-beta-header.ts';
 import { withThinkingDisplayPromoted } from './promote-thinking-display.ts';
 import { rewriteContextWindowError } from './rewrite-context-window-error.ts';
+import { withCompactHeadersSet } from './set-compact-headers.ts';
 import { withInitiatorHeaderSet } from './set-initiator-header.ts';
 import { withVisionHeaderSet } from './set-vision-header.ts';
 import { stripBillingAttribution } from './strip-billing-attribution.ts';
@@ -20,6 +21,7 @@ import type { MessagesCountTokensInterceptor, MessagesInterceptor } from '../../
 export const messagesCopilotSourceInterceptors = [
   stripBillingAttribution,
   rewriteContextWindowError,
+  withCompactHeadersSet,
 ] as const satisfies readonly MessagesInterceptor[];
 
 // Order matters: payload-mutating interceptors run first so the header
