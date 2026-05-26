@@ -472,6 +472,19 @@ behavior. Protocol `events/to-sse.ts` serializers must stay pure: they convert
 source protocol frames to SSE frames and must not record usage, mutate external
 state, or accept callback listeners for accounting.
 
+LLM performance telemetry is written only after a provider binding has been
+selected and a target emitter has produced a `PerformanceTelemetryContext`.
+That context carries the resolved public model id (`model`), the upstream row
+id (`upstream`), and the provider-owned opaque execution id (`modelKey`); it
+must not be built from an unresolved client-supplied `payload.model`.
+Missing-model and unsupported-endpoint source errors have no performance
+context, so `recordRequestPerformanceForApiKey` no-ops for them. The
+performance repo keeps successful latency samples and failures separately:
+`requests` counts latency samples, `errors` counts failed attempts, and latency
+buckets exist only for successful samples. Control-plane performance display
+rows expose operator attempt counts as `requests + errors`, while `avgMs` and
+percentile fields are computed only from successful latency samples.
+
 Target emission is target-owned. Each concrete target emit file owns its forward
 order: force target-required streaming, run target interceptors, call the
 provider method, build model accounting, normalize the upstream response into

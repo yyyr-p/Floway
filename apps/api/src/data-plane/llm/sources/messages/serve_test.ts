@@ -320,6 +320,72 @@ test('/v1/messages rejects body anthropic_beta', async () => {
   assertEquals(body.error.param, 'anthropic_beta');
 });
 
+test('/v1/messages does not record performance for an unresolved bracket-suffixed client model string', async () => {
+  const { apiKey, repo } = await setupAppTest();
+  let generationFetchCalls = 0;
+
+  await withMockedFetch(
+    request => {
+      const url = new URL(request.url);
+
+      if (url.hostname === 'update.code.visualstudio.com') {
+        return jsonResponse(['1.110.1']);
+      }
+      if (url.pathname === '/copilot_internal/v2/token') {
+        return jsonResponse({
+          token: 'copilot-access-token',
+          expires_at: 4102444800,
+          refresh_in: 3600,
+        });
+      }
+      if (url.pathname === '/models') {
+        return jsonResponse(
+          copilotModels([
+            {
+              id: 'claude-opus-4.7',
+              supported_endpoints: ['/v1/messages'],
+              maxContextWindowTokens: 1_000_000,
+            },
+          ]),
+        );
+      }
+      if (url.pathname === '/v1/messages') {
+        generationFetchCalls++;
+        return sseMessagesResponse({
+          id: 'msg_unexpected',
+          type: 'message',
+          role: 'assistant',
+          content: [{ type: 'text', text: 'unexpected' }],
+          model: 'claude-opus-4.7',
+          stop_reason: 'end_turn',
+          stop_sequence: null,
+          usage: { input_tokens: 1, output_tokens: 1 },
+        });
+      }
+
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const response = await requestApp('/v1/messages', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey.key,
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-7[1m]',
+          max_tokens: 32,
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+
+      assertEquals(response.status, 404);
+      assertEquals(generationFetchCalls, 0);
+      assertEquals(await repo.performance.listAll(), []);
+    },
+  );
+});
+
 test('/v1/messages rejects body betas', async () => {
   const { apiKey } = await setupAppTest();
 

@@ -54,6 +54,66 @@ test('/v1/chat/completions malformed JSON returns structured internal debug erro
   assertExists(body.error.stack);
 });
 
+test('/v1/chat/completions does not record performance for an unresolved client model string', async () => {
+  const { apiKey, repo } = await setupAppTest();
+  let generationFetchCalls = 0;
+
+  await withMockedFetch(
+    request => {
+      const url = new URL(request.url);
+
+      if (url.hostname === 'update.code.visualstudio.com') {
+        return jsonResponse(['1.110.1']);
+      }
+      if (url.pathname === '/copilot_internal/v2/token') {
+        return jsonResponse({
+          token: 'copilot-access-token',
+          expires_at: 4102444800,
+          refresh_in: 3600,
+        });
+      }
+      if (url.pathname === '/models') {
+        return jsonResponse(
+          copilotModels([
+            {
+              id: 'gpt-real-model',
+              supported_endpoints: ['/chat/completions'],
+            },
+          ]),
+        );
+      }
+      if (url.pathname === '/chat/completions') {
+        generationFetchCalls++;
+        return sseChatCompletionsResponse({
+          id: 'chatcmpl_unexpected',
+          model: 'gpt-real-model',
+          choices: [{ message: { role: 'assistant', content: 'unexpected' }, finish_reason: 'stop' }],
+          usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        });
+      }
+
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const response = await requestApp('/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': apiKey.key,
+        },
+        body: JSON.stringify({
+          model: 'claude-opus-4-7[1m]',
+          messages: [{ role: 'user', content: 'Hi' }],
+        }),
+      });
+
+      assertEquals(response.status, 404);
+      assertEquals(generationFetchCalls, 0);
+      assertEquals(await repo.performance.listAll(), []);
+    },
+  );
+});
+
 test('/v1/chat/completions streams malformed upstream Chat SSE as an error event', async () => {
   const { apiKey } = await setupAppTest();
 
