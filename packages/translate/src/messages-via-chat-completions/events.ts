@@ -22,16 +22,32 @@ const mapChatCompletionsFinishReasonToMessagesStopReason = (finishReason: 'stop'
 interface ChatCompletionsUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
-  prompt_tokens_details?: { cached_tokens?: number };
+  prompt_tokens_details?: { cached_tokens?: number; cache_creation_input_tokens?: number };
 }
 
+// OpenAI-shaped upstreams piggyback Anthropic-style cache buckets on
+// `prompt_tokens_details`. `prompt_tokens` already includes both
+// `cached_tokens` (reads) and `cache_creation_input_tokens` (writes); we
+// subtract both to derive Anthropic's plain-input bucket and surface the cache
+// buckets separately so downstream Messages clients see the same split they
+// would have seen on a native Messages upstream. The reverse direction at
+// packages/translate/src/chat-completions-via-messages/events.ts (state init in
+// translateMessagesEventToChatCompletionsChunks) already folds both buckets back
+// into prompt_tokens, so this closes a real asymmetry. Ref:
+// https://github.com/caozhiyuan/copilot-api/commit/a99c23551b0f3198d78dd51142dd0096cc6da049
 export const mapChatCompletionsUsageToMessagesUsage = (usage?: ChatCompletionsUsage): MessagesResponse['usage'] => {
   const cachedTokens = usage?.prompt_tokens_details?.cached_tokens;
+  const cacheCreationTokens = usage?.prompt_tokens_details?.cache_creation_input_tokens;
 
   return {
-    input_tokens: (usage?.prompt_tokens ?? 0) - (cachedTokens ?? 0),
+    // `cached_tokens` and `cache_creation_input_tokens` are disjoint subsets of
+    // `prompt_tokens`, so the subtraction cannot go negative under any
+    // standards-conforming upstream. Do NOT clamp with Math.max(0, ...) — that
+    // would mask a real upstream contract violation rather than fix anything.
+    input_tokens: (usage?.prompt_tokens ?? 0) - (cachedTokens ?? 0) - (cacheCreationTokens ?? 0),
     output_tokens: usage?.completion_tokens ?? 0,
     ...(cachedTokens !== undefined ? { cache_read_input_tokens: cachedTokens } : {}),
+    ...(cacheCreationTokens !== undefined ? { cache_creation_input_tokens: cacheCreationTokens } : {}),
   };
 };
 

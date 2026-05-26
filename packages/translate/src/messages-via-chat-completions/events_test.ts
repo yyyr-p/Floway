@@ -347,3 +347,37 @@ test('mapChatCompletionsUsageToMessagesUsage omits cache_read_input_tokens when 
   assertEquals(usage.input_tokens, 100);
   assertEquals(usage.cache_read_input_tokens, undefined);
 });
+
+// OpenAI-shaped upstreams reuse prompt_tokens_details to surface Anthropic-style
+// cache_creation_input_tokens. The Chat-side total already includes both cache
+// buckets (cached_tokens reads + cache_creation writes), mirroring how
+// prompt_tokens already includes cached_tokens. We subtract both buckets from
+// input_tokens and surface cache_creation_input_tokens on the way out so
+// Anthropic clients see the same split they would have seen on a native
+// Messages upstream. The reverse direction at
+// packages/translate/src/chat-completions-via-messages/events.ts already adds
+// cache_creation_input_tokens back into prompt_tokens, so this closes a real
+// asymmetry. Ref:
+// https://github.com/caozhiyuan/copilot-api/commit/a99c23551b0f3198d78dd51142dd0096cc6da049
+test('mapChatCompletionsUsageToMessagesUsage surfaces cache_creation_input_tokens and subtracts it from input_tokens', () => {
+  const usage = mapChatCompletionsUsageToMessagesUsage({
+    prompt_tokens: 100,
+    completion_tokens: 20,
+    prompt_tokens_details: { cached_tokens: 30, cache_creation_input_tokens: 40 },
+  });
+  assertEquals(usage.input_tokens, 30);
+  assertEquals(usage.output_tokens, 20);
+  assertEquals(usage.cache_read_input_tokens, 30);
+  assertEquals(usage.cache_creation_input_tokens, 40);
+});
+
+test('mapChatCompletionsUsageToMessagesUsage surfaces cache_creation_input_tokens alone when cached_tokens is absent', () => {
+  const usage = mapChatCompletionsUsageToMessagesUsage({
+    prompt_tokens: 80,
+    completion_tokens: 10,
+    prompt_tokens_details: { cache_creation_input_tokens: 50 },
+  });
+  assertEquals(usage.input_tokens, 30);
+  assertEquals(usage.cache_read_input_tokens, undefined);
+  assertEquals(usage.cache_creation_input_tokens, 50);
+});
