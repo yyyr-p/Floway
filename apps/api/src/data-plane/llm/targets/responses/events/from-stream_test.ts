@@ -24,6 +24,8 @@ const makeResponse = (status: ResponsesResult['status'], overrides: Partial<Resp
       content: [{ type: 'output_text', text: 'hello' }],
     },
   ],
+  error: null,
+  incomplete_details: null,
   usage: {
     input_tokens: 3,
     output_tokens: 2,
@@ -250,8 +252,15 @@ test('responsesStreamFramesToEvents fast-paths response.failed terminal with err
   const frames = await collect(
     responsesStreamFramesToEvents(
       (async function* () {
-        const { error: _error, ...created } = failed;
-        yield sseFrame(JSON.stringify({ response: { ...created, status: 'in_progress' }, sequence_number: 0 }), 'response.created');
+        // The in-progress wrapper must carry `error: null` per spec
+        // (Response.error is required-nullable); upstreams that omit
+        // the field are normalized by `responseStartSnapshot`, which
+        // is also what the fast-path expansion uses. Pre-populate the
+        // null here so the assertion below reflects a single wire
+        // contract across raw and synthesized frames.
+        const { error: _error, ...rest } = failed;
+        const created = { ...rest, status: 'in_progress' as const, error: null };
+        yield sseFrame(JSON.stringify({ response: created, sequence_number: 0 }), 'response.created');
         yield sseFrame(JSON.stringify({ response: failed, sequence_number: 1 }), 'response.failed');
         yield sseFrame('[DONE]');
       })(),
@@ -260,9 +269,11 @@ test('responsesStreamFramesToEvents fast-paths response.failed terminal with err
 
   const events = frames.filter(frame => frame.type === 'event').map(frame => (frame.type === 'event' ? frame.event : undefined));
   assertEquals(events.map(event => event?.type), ['response.created', 'response.in_progress', 'response.failed']);
-  // Error payload must only be on the terminal response.failed, not the synthesized created/in_progress.
-  assertEquals((events[0] as { response: ResponsesResult }).response.error, undefined);
-  assertEquals((events[1] as { response: ResponsesResult }).response.error, undefined);
+  // Error payload must only be a real value on the terminal response.failed;
+  // the synthesized created/in_progress carry `error: null` per spec
+  // (Response.error is required-nullable).
+  assertEquals((events[0] as { response: ResponsesResult }).response.error, null);
+  assertEquals((events[1] as { response: ResponsesResult }).response.error, null);
   assertEquals((events[2] as { response: ResponsesResult }).response.error?.message, 'upstream failed');
 });
 

@@ -43,16 +43,19 @@ const appendAssistantToolCall = (
 };
 
 const translateResponseTools = (tools: ResponseTool[] | null | undefined, customToolNames: Set<string>): Tool[] | undefined => {
-  if (!tools || tools.length === 0) return undefined;
-
-  // Translated Chat Completions targets do not currently have a faithful bridge
-  // for hosted/deferred Responses tools (`web_search`, `tool_search`,
-  // `namespace`, `image_generation`, and future builtin names). Native
-  // Responses targets receive those entries unchanged; this translator narrows
-  // to function and Freeform `custom` tools until the translated semantics are
-  // defined.
+  // Translated Chat Completions targets do not currently have a faithful
+  // bridge for hosted/deferred Responses tools (`web_search`,
+  // `tool_search`, `namespace`, `image_generation`, and future builtin
+  // names). Native Responses targets receive those entries unchanged; this
+  // translator narrows to function and Freeform `custom` tools, recording
+  // the latter in `customToolNames` so the events translator can recover
+  // the freeform shape on the way back. The umbrella shim's web_search
+  // function tool is in `payload.tools` under its resolved name (the shim
+  // injects it on every request that uses hosted web_search) and reaches
+  // here as an ordinary function tool — no special carve-out needed.
   const out: Tool[] = [];
-  for (const tool of tools) {
+
+  for (const tool of tools ?? []) {
     if (tool.type === 'function') {
       out.push({
         type: 'function',
@@ -78,6 +81,7 @@ const translateResponseTools = (tools: ResponseTool[] | null | undefined, custom
       });
     }
   }
+
   return out.length > 0 ? out : undefined;
 };
 
@@ -129,10 +133,6 @@ export interface ResponsesToChatCompletionsResult {
 export const translateResponsesToChatCompletions = (payload: ResponsesPayload): ResponsesToChatCompletionsResult => {
   const customToolNames = new Set<string>();
   const responseFormat = buildChatResponseFormat(payload.text);
-  // Tools first so customToolNames is populated before input history processing
-  // sees the same trip's tool-name set (it doesn't currently consume the set,
-  // but ordering reflects the wrap-then-project flow at one place).
-  const tools = translateResponseTools(payload.tools, customToolNames);
   const messages: Message[] = payload.instructions ? [{ role: 'system', content: payload.instructions }] : [];
 
   if (typeof payload.input === 'string') {
@@ -195,6 +195,14 @@ export const translateResponsesToChatCompletions = (payload: ResponsesPayload): 
       // content to translate; skip them.
       if (item.type === 'item_reference') continue;
 
+      // The shim must translate echoed web_search_call input items
+      // into function_call + function_call_output pairs before this
+      // translator runs. Reaching here means the reverse path was
+      // skipped.
+      if (item.type === 'web_search_call') {
+        throw new Error('Responses → Chat Completions translator does not accept web_search_call input items; their reverse-path translation must happen before this translator runs.');
+      }
+
       if (item.role === 'assistant') {
         assistant = appendAssistantText(assistant, responsesContentToText(item.content));
         continue;
@@ -210,6 +218,7 @@ export const translateResponsesToChatCompletions = (payload: ResponsesPayload): 
     flushAssistant();
   }
 
+  const tools = translateResponseTools(payload.tools, customToolNames);
   // Same-purpose OpenAI fields pass through directly here, while broader
   // Responses-only state such as `previous_response_id` remains native-only.
   const target: ChatCompletionsPayload = {

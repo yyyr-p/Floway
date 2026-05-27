@@ -474,6 +474,8 @@ test('translateResponsesToMessagesResponse omits signature for text-only reasoni
     ],
     output_text: '',
     status: 'completed',
+    error: null,
+    incomplete_details: null,
     usage: {
       input_tokens: 10,
       output_tokens: 2,
@@ -500,6 +502,8 @@ test('translateResponsesToMessagesResponse drops opaque-only reasoning output', 
     ],
     output_text: '',
     status: 'completed',
+    error: null,
+    incomplete_details: null,
     usage: {
       input_tokens: 10,
       output_tokens: 2,
@@ -525,6 +529,8 @@ test('translateResponsesToMessagesResponse drops reasoning with no summary', () 
     ],
     output_text: 'hello',
     status: 'completed',
+    error: null,
+    incomplete_details: null,
     usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 },
   });
 
@@ -545,6 +551,8 @@ test('translateResponsesToMessagesResponse drops reasoning with no readable summ
     ],
     output_text: '',
     status: 'completed',
+    error: null,
+    incomplete_details: null,
     usage: { input_tokens: 5, output_tokens: 0, total_tokens: 5 },
   });
 
@@ -565,6 +573,8 @@ test('translateResponsesToMessagesResponse drops whitespace-only reasoning summa
     ],
     output_text: '',
     status: 'completed',
+    error: null,
+    incomplete_details: null,
     usage: { input_tokens: 5, output_tokens: 0, total_tokens: 5 },
   });
 

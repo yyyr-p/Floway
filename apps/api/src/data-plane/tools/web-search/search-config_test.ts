@@ -1,10 +1,10 @@
 import { test } from 'vitest';
 
-import { DEFAULT_SEARCH_CONFIG, FIXED_SEARCH_CONFIG_TEST_QUERY, loadSearchConfig, saveSearchConfig } from './search-config.ts';
+import { DEFAULT_SEARCH_CONFIG, FIXED_SEARCH_CONFIG_TEST_QUERY, loadSearchConfig, parseSearchConfigDefault, parseSearchConfigStrict, saveSearchConfig } from './search-config.ts';
 import { type D1Database, D1Repo } from '../../../repo/d1.ts';
 import { initRepo } from '../../../repo/index.ts';
 import { InMemoryRepo } from '../../../repo/memory.ts';
-import { assertEquals } from '../../../test-assert.ts';
+import { assertEquals, assertRejects, assertThrows } from '../../../test-assert.ts';
 
 class FakeD1PreparedStatement {
   private binds: unknown[] = [];
@@ -71,7 +71,7 @@ test('search config repo defaults to disabled and round-trips provider keys', as
   assertEquals(FIXED_SEARCH_CONFIG_TEST_QUERY, 'React documentation');
 });
 
-test('loadSearchConfig normalizes raw stored objects above the repo boundary', async () => {
+test('loadSearchConfig strict-parses a stored row and rejects unknown provider values', async () => {
   const repo = new InMemoryRepo();
   initRepo(repo);
 
@@ -81,19 +81,55 @@ test('loadSearchConfig normalizes raw stored objects above the repo boundary', a
     microsoftGrounding: { apiKey: '  ms-test  ' },
   });
 
+  await assertRejects(() => loadSearchConfig(), Error, 'provider');
+});
+
+test('loadSearchConfig strict-parses a stored row and trims valid api keys', async () => {
+  const repo = new InMemoryRepo();
+  initRepo(repo);
+
+  await repo.searchConfig.save({
+    provider: 'tavily',
+    tavily: { apiKey: '  tvly-trim  ' },
+    microsoftGrounding: { apiKey: '  ms-trim  ' },
+  });
+
   assertEquals(await loadSearchConfig(), {
-    provider: 'disabled',
-    tavily: { apiKey: 'tvly-test' },
-    microsoftGrounding: { apiKey: 'ms-test' },
+    provider: 'tavily',
+    tavily: { apiKey: 'tvly-trim' },
+    microsoftGrounding: { apiKey: 'ms-trim' },
   });
 });
 
-test('loadSearchConfig falls back to defaults for malformed D1 stored data', async () => {
+test('parseSearchConfigDefault returns a fresh deep copy so callers cannot corrupt the singleton', () => {
+  const a = parseSearchConfigDefault();
+  const b = parseSearchConfigDefault();
+  a.tavily.apiKey = 'mutated';
+  assertEquals(b.tavily.apiKey, '');
+  assertEquals(DEFAULT_SEARCH_CONFIG.tavily.apiKey, '');
+});
+
+test('parseSearchConfigStrict throws on missing required fields', () => {
+  assertThrows(() => parseSearchConfigStrict({}), Error);
+  assertThrows(() => parseSearchConfigStrict({ provider: 'disabled' }), Error);
+  assertThrows(
+    () => parseSearchConfigStrict({ provider: 'disabled', tavily: { apiKey: '' } }),
+    Error,
+    'microsoftGrounding',
+  );
+  assertThrows(
+    () => parseSearchConfigStrict({ provider: 'disabled', tavily: {}, microsoftGrounding: { apiKey: '' } }),
+    Error,
+    'tavily.apiKey',
+  );
+});
+
+test('loadSearchConfig surfaces malformed D1 stored JSON instead of silently defaulting', async () => {
   const db = new FakeD1Database();
   db.config.set('search_config', 'not-json');
   initRepo(new D1Repo(db));
 
-  assertEquals(await loadSearchConfig(), DEFAULT_SEARCH_CONFIG);
+  await assertRejects(() => loadSearchConfig(), Error, 'Malformed search_config JSON');
 });
 
 test('saveSearchConfig stores normalized D1 JSON', async () => {

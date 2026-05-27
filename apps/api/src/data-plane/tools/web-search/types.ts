@@ -11,6 +11,12 @@ export interface SearchConfig {
 
 export const DEFAULT_WEB_SEARCH_RESULT_COUNT = 10;
 
+// Hard cap (UTF-8 bytes) on a single page returned by `fetchPage`. The shim's
+// downstream function_call_output strings carry this content, so the cap keeps
+// model-visible tool output bounded regardless of upstream page size. Same cap
+// for every provider so the shim's truncation handling is provider-agnostic.
+export const MAX_FETCH_PAGE_BYTES = 10_240;
+
 export type WebSearchProviderErrorCode = Exclude<MessagesWebSearchErrorCode, 'max_uses_exceeded'>;
 
 export interface WebSearchProviderRequest {
@@ -23,6 +29,14 @@ export interface WebSearchProviderRequest {
     country?: string;
     timezone?: string;
   };
+  // When undefined, the provider applies its own default count. The Responses
+  // shim populates this from the client tool's `search_context_size` field.
+  maxResults?: number;
+  // Aborted when the downstream client disconnects. Providers MUST
+  // pass this through to the underlying HTTP fetch so a cancelled
+  // request stops generating upstream load instead of running to
+  // completion.
+  signal?: AbortSignal;
 }
 
 export type WebSearchProviderResult =
@@ -48,7 +62,40 @@ export interface WebSearchPreviewResult {
   previewText: string;
 }
 
-export type WebSearchProvider = (request: WebSearchProviderRequest) => Promise<WebSearchProviderResult>;
+export interface WebSearchFetchPageRequest {
+  urls: string[];
+  // See WebSearchProviderRequest.signal — same semantics: providers
+  // must thread this into their underlying fetch / sleep so a
+  // disconnected client cancels in-flight upstream work.
+  signal?: AbortSignal;
+}
+
+export type WebSearchFetchPageResult =
+  | {
+    type: 'ok';
+    pages: Array<{
+      url: string;
+      title?: string;
+      content: string;
+      truncated: boolean;
+      fullContentBytes: number;
+    }>;
+    failures: Array<{
+      url: string;
+      errorCode: WebSearchProviderErrorCode;
+      message?: string;
+    }>;
+  }
+  | {
+    type: 'error';
+    errorCode: WebSearchProviderErrorCode;
+    message?: string;
+  };
+
+export interface WebSearchProvider {
+  search(request: WebSearchProviderRequest): Promise<WebSearchProviderResult>;
+  fetchPage(request: WebSearchFetchPageRequest): Promise<WebSearchFetchPageResult>;
+}
 
 export type ConfiguredWebSearchProvider =
   | { type: 'disabled' }
@@ -56,7 +103,7 @@ export type ConfiguredWebSearchProvider =
   | {
     type: 'enabled';
     provider: WebSearchProviderName;
-    search: WebSearchProvider;
+    impl: WebSearchProvider;
   };
 
 export type SearchConfigConnectionTestResult =

@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 
 import { translateResponsesToMessages } from './request.ts';
-import { assertEquals, assertFalse } from '../test-assert.ts';
+import { assert, assertEquals, assertFalse, assertRejects } from '../test-assert.ts';
 import { MESSAGES_FALLBACK_MAX_TOKENS } from '@floway-dev/protocols/messages';
 
 const stubRemoteImageLoader = (result: { mediaType: string | null; data: Uint8Array } | null) => () => Promise.resolve(result);
@@ -321,4 +321,65 @@ test('translateResponsesToMessages projects custom_tool_call history into wrappe
       },
     ],
   });
+});
+
+test('translateResponsesToMessages keeps plain-text function_call_output as string content', async () => {
+  const result = await translateResponsesToMessages({
+    model: 'claude-test',
+    input: [
+      { type: 'function_call', call_id: 'call_1', name: 'tool', arguments: '{}', status: 'completed' },
+      { type: 'function_call_output', call_id: 'call_1', output: 'plain text body' },
+    ],
+    instructions: null,
+    temperature: null,
+    top_p: null,
+    max_output_tokens: 256,
+    tools: null,
+    tool_choice: 'auto',
+    metadata: null,
+    stream: null,
+    store: false,
+    parallel_tool_calls: true,
+  });
+
+  const userMessage = result.target.messages[1];
+  assert(userMessage.role === 'user');
+  assert(Array.isArray(userMessage.content));
+  const toolResult = userMessage.content[0];
+  assert(toolResult.type === 'tool_result');
+  assertEquals(toolResult.content, 'plain text body');
+});
+
+test('translateResponsesToMessages throws on a stray web_search_call input item (shim owns the reverse path)', async () => {
+  // The Responses web-search shim rewrites web_search_call input items into
+  // upstream function_call + function_call_output pairs before this
+  // translator runs. Reaching the translator with a raw web_search_call
+  // means the shim regressed; the translator surfaces a loud error so the
+  // bug is caught rather than silently dropping search context.
+  await assertRejects(
+    () => translateResponsesToMessages({
+      model: 'claude-test',
+      input: [
+        { type: 'message', role: 'user', content: 'hi' },
+        {
+          type: 'web_search_call',
+          id: 'ws_x',
+          status: 'completed',
+          action: { type: 'search', queries: ['q'] },
+        },
+      ],
+      instructions: null,
+      temperature: null,
+      top_p: null,
+      max_output_tokens: 256,
+      tools: null,
+      tool_choice: 'auto',
+      metadata: null,
+      stream: null,
+      store: false,
+      parallel_tool_calls: true,
+    }),
+    Error,
+    'Responses → Messages translator does not accept web_search_call input items',
+  );
 });

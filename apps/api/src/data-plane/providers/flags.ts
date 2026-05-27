@@ -51,6 +51,12 @@ export const OPTIONAL_FLAGS = [
     defaultFor: ['copilot', 'azure'],
   },
   {
+    id: 'responses-web-search-shim',
+    label: 'Responses web search shim',
+    description: "Execute the Responses `web_search` hosted tool through the gateway's configured search provider instead of forwarding it to a Responses upstream. (When a Responses request is routed to a non-Responses backend, the shim always runs regardless of this flag, because those targets cannot carry hosted web_search.)",
+    defaultFor: [],
+  },
+  {
     id: 'deepseek-reasoning-dialect',
     label: 'DeepSeek reasoning dialect',
     description: "On Chat Completions, use DeepSeek's legacy reasoning_content field instead of OpenAI's reasoning_text.",

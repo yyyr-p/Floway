@@ -24,7 +24,7 @@ test('createMicrosoftGroundingWebSearchProvider calls v3 search/web with passage
     },
     async () => {
       const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
-      const result = await provider({
+      const result = await provider.search({
         query: 'React documentation',
         allowedDomains: ['react.dev', 'example.com OR site:evil.com'],
         blockedDomains: ['example.com', 'bad.com test'],
@@ -50,6 +50,22 @@ test('createMicrosoftGroundingWebSearchProvider calls v3 search/web with passage
   );
 });
 
+test('createMicrosoftGroundingWebSearchProvider forwards maxResults to upstream count', async () => {
+  let request: Request | undefined;
+  await withMockedFetch(
+    incoming => {
+      request = incoming;
+      return jsonResponse({ webResults: [] });
+    },
+    async () => {
+      const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
+      await provider.search({ query: 'React documentation', maxResults: 4 });
+      const body = JSON.parse(await request!.text());
+      assertEquals(body.count, 4);
+    },
+  );
+});
+
 test('createMicrosoftGroundingWebSearchProvider rejects blank and overlong queries before fetch', async () => {
   let called = false;
 
@@ -61,13 +77,13 @@ test('createMicrosoftGroundingWebSearchProvider rejects blank and overlong queri
     async () => {
       const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
 
-      assertEquals(await provider({ query: '   ' }), {
+      assertEquals(await provider.search({ query: '   ' }), {
         type: 'error',
         errorCode: 'invalid_tool_input',
         message: 'Search query must not be empty.',
       });
 
-      assertEquals(await provider({ query: 'x'.repeat(1001) }), {
+      assertEquals(await provider.search({ query: 'x'.repeat(1001) }), {
         type: 'error',
         errorCode: 'query_too_long',
         message: 'Search query must be at most 1000 characters.',
@@ -105,7 +121,7 @@ test('createMicrosoftGroundingWebSearchProvider retries 429 with by-design 1s/2s
       },
       async () => {
         const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
-        const resultPromise = provider({ query: 'React documentation' });
+        const resultPromise = provider.search({ query: 'React documentation' });
 
         fakeTime.runMicrotasks();
         assertEquals(attemptTimes.length, 1);
@@ -147,7 +163,7 @@ test('createMicrosoftGroundingWebSearchProvider returns too_many_requests after 
       },
       async () => {
         const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
-        const resultPromise = provider({ query: 'React documentation' });
+        const resultPromise = provider.search({ query: 'React documentation' });
 
         fakeTime.runMicrotasks();
         assertEquals(attemptTimes.length, 1);
@@ -185,11 +201,113 @@ test('createMicrosoftGroundingWebSearchProvider maps 413 to request_too_large', 
     () => jsonResponse({ message: 'too large' }, 413),
     async () => {
       const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
-      assertEquals(await provider({ query: 'React documentation' }), {
+      assertEquals(await provider.search({ query: 'React documentation' }), {
         type: 'error',
         errorCode: 'request_too_large',
         message: 'too large',
       });
     },
   );
+});
+
+test('createMicrosoftGroundingWebSearchProvider surfaces malformed payload as an error', async () => {
+  await withMockedFetch(
+    () => jsonResponse({ message: 'unexpected' }),
+    async () => {
+      const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
+      const result = await provider.search({ query: 'React documentation' });
+      assertEquals(result.type, 'error');
+      if (result.type !== 'error') throw new Error('expected error');
+      assertEquals(result.errorCode, 'unavailable');
+    },
+  );
+});
+
+test('Microsoft Grounding fetchPage issues one /v3/browse call per URL in parallel', async () => {
+  const callBodies: Array<Record<string, unknown>> = [];
+
+  await withMockedFetch(
+    async incoming => {
+      const body = JSON.parse(await incoming.text());
+      callBodies.push(body);
+      return jsonResponse({
+        url: body.url,
+        title: 'T',
+        content: `body of ${body.url}`,
+        crawledAt: '2026-05-24T00:00:00Z',
+      });
+    },
+    async () => {
+      const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
+      const result = await provider.fetchPage({ urls: ['https://a.com', 'https://b.com'] });
+
+      assertEquals(callBodies.length, 2);
+      const urlsCalled = callBodies.map(b => b.url).sort();
+      assertEquals(urlsCalled, ['https://a.com', 'https://b.com']);
+      for (const body of callBodies) {
+        assertEquals(body.renderDynamicPages, true);
+        assertEquals(body.liveCrawl, 'fallback');
+        assertEquals(body.contentFormat, 'markdown');
+        assertEquals(body.maxLength, 50_000);
+      }
+      if (result.type !== 'ok') throw new Error('expected ok');
+      assertEquals(result.pages.length, 2);
+      assertEquals(result.failures, []);
+      const pagesByUrl = Object.fromEntries(result.pages.map(p => [p.url, p]));
+      assertEquals(pagesByUrl['https://a.com'].content, 'body of https://a.com');
+      assertEquals(pagesByUrl['https://a.com'].title, 'T');
+      assertEquals(pagesByUrl['https://a.com'].truncated, false);
+    },
+  );
+});
+
+test('Microsoft Grounding fetchPage treats HTTP 202 as a per-URL failure (cold cache)', async () => {
+  await withMockedFetch(
+    () => jsonResponse({ retryAfter: '30' }, 202),
+    async () => {
+      const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
+      const result = await provider.fetchPage({ urls: ['https://cold.com'] });
+      if (result.type !== 'ok') throw new Error('expected ok');
+      assertEquals(result.failures, [{ url: 'https://cold.com', errorCode: 'unavailable', message: 'live crawl pending' }]);
+      assertEquals(result.pages, []);
+    },
+  );
+});
+
+test('Microsoft Grounding fetchPage truncates long pages to MAX_FETCH_PAGE_BYTES', async () => {
+  const long = 'y'.repeat(30_000);
+  await withMockedFetch(
+    async incoming => {
+      const body = JSON.parse(await incoming.text());
+      return jsonResponse({ url: body.url, title: 'T', content: long });
+    },
+    async () => {
+      const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
+      const result = await provider.fetchPage({ urls: ['https://a.com'] });
+      if (result.type !== 'ok') throw new Error('expected ok');
+      assertEquals(result.pages[0].truncated, true);
+      assertEquals(result.pages[0].content.length, 10_240);
+      assertEquals(result.pages[0].fullContentBytes, 30_000);
+    },
+  );
+});
+
+test('Microsoft Grounding fetchPage returns whole-batch error on HTTP 5xx after retry exhaustion', async () => {
+  const fakeTime = new FakeTime();
+  try {
+    await withMockedFetch(
+      () => new Response('upstream broken', { status: 502 }),
+      async () => {
+        const provider = createMicrosoftGroundingWebSearchProvider('ms-test');
+        const resultPromise = provider.fetchPage({ urls: ['https://a.com'] });
+        await fakeTime.tickAsync(15_000);
+        const result = await resultPromise;
+        assertEquals(result.type, 'error');
+        if (result.type !== 'error') throw new Error('expected error');
+        assertEquals(result.errorCode, 'unavailable');
+      },
+    );
+  } finally {
+    fakeTime.restore();
+  }
 });

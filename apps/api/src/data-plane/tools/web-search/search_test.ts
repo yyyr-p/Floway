@@ -1,9 +1,15 @@
 import { test } from 'vitest';
 
-import { searchWebAndRecordUsage, searchWebWithoutRecordingUsage } from './search.ts';
+import { searchWebAndRecordUsage } from './search.ts';
+import type { WebSearchProvider, WebSearchProviderResult } from './types.ts';
 import { initRepo } from '../../../repo/index.ts';
 import { InMemoryRepo } from '../../../repo/memory.ts';
 import { assertEquals, assertRejects } from '../../../test-assert.ts';
+
+const stubProvider = (search: WebSearchProvider['search']): WebSearchProvider => ({
+  search,
+  fetchPage: () => Promise.reject(new Error('fetchPage should not be called from search test')),
+});
 
 test('searchWebAndRecordUsage records successful provider calls', async () => {
   const repo = new InMemoryRepo();
@@ -13,7 +19,7 @@ test('searchWebAndRecordUsage records successful provider calls', async () => {
     providerName: 'tavily',
     keyId: 'key_a',
     request: { query: 'React' },
-    provider: () => Promise.resolve({ type: 'ok', results: [] }),
+    provider: stubProvider(() => Promise.resolve({ type: 'ok', results: [] })),
   });
 
   assertEquals(result, { type: 'ok', results: [] });
@@ -32,12 +38,12 @@ test('searchWebAndRecordUsage records provider error results', async () => {
     providerName: 'microsoft-grounding',
     keyId: 'key_b',
     request: { query: 'React' },
-    provider: () =>
-      Promise.resolve({
+    provider: stubProvider(() =>
+      Promise.resolve<WebSearchProviderResult>({
         type: 'error',
         errorCode: 'unavailable',
         message: 'provider unavailable',
-      }),
+      })),
   });
 
   assertEquals(result.type, 'error');
@@ -58,7 +64,7 @@ test('searchWebAndRecordUsage records when a provider throws', async () => {
         providerName: 'tavily',
         keyId: 'key_c',
         request: { query: 'React' },
-        provider: () => Promise.reject(new Error('network failed')),
+        provider: stubProvider(() => Promise.reject(new Error('network failed'))),
       }),
     Error,
     'network failed',
@@ -88,7 +94,7 @@ test('searchWebAndRecordUsage returns provider result when recording fails', asy
       providerName: 'tavily',
       keyId: 'key_d',
       request: { query: 'React' },
-      provider: () => Promise.resolve({ type: 'ok', results: [] }),
+      provider: stubProvider(() => Promise.resolve({ type: 'ok', results: [] })),
     });
   } finally {
     console.error = originalConsoleError;
@@ -96,17 +102,4 @@ test('searchWebAndRecordUsage returns provider result when recording fails', asy
 
   assertEquals(result, { type: 'ok', results: [] });
   assertEquals(loggedErrors.length, 1);
-});
-
-test('searchWebWithoutRecordingUsage does not record', async () => {
-  const repo = new InMemoryRepo();
-  initRepo(repo);
-
-  const result = await searchWebWithoutRecordingUsage({
-    request: { query: 'React' },
-    provider: () => Promise.resolve({ type: 'ok', results: [] }),
-  });
-
-  assertEquals(result, { type: 'ok', results: [] });
-  assertEquals(await repo.searchUsage.listAll(), []);
 });

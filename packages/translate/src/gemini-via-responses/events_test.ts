@@ -13,6 +13,8 @@ const response = (status: ResponsesResult['status'], extra: Partial<ResponsesRes
   output: [],
   output_text: '',
   status,
+  error: null,
+  incomplete_details: null,
   ...extra,
 });
 

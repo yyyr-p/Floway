@@ -17,6 +17,8 @@ const completedResponse: ResponsesResult = {
       content: [{ type: 'output_text', text: 'Hello' }],
     },
   ],
+  error: null,
+  incomplete_details: null,
   usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
 };
 
@@ -57,9 +59,17 @@ test('responsesResultToEvents starts JSON fallback streams with an empty in-prog
   assertEquals(created.sequence_number, 0);
   assertEquals(created.response.status, 'in_progress');
   assertEquals(created.response.output, []);
-  assertEquals(created.response.output_text, '');
-  assertFalse('error' in created.response);
-  assertFalse('incomplete_details' in created.response);
+  // `output_text` is an SDK-only convenience alias absent from the
+  // real wire; the start snapshot strips it. Producers that send it
+  // through `result()` (which still emits the field on the terminal
+  // frame) are preserved by the spread.
+  assertFalse('output_text' in created.response);
+  // `error` and `incomplete_details` are spec-required on every
+  // Response (both nullable). The start snapshot defaults both to
+  // null so typed-SDK clients that probe for the field's presence
+  // (rather than its truthiness) keep working.
+  assertEquals(created.response.error, null);
+  assertEquals(created.response.incomplete_details, null);
 
   assertEquals(completed?.type, 'response.completed');
 });
@@ -83,7 +93,9 @@ test('responsesResultToEvents keeps incomplete details only on the terminal even
     response: ResponsesResult;
   };
 
-  assertFalse('incomplete_details' in created.response);
+  // Snapshot strips terminal-only incomplete_details and defaults it
+  // to null so the spec-required field is still present.
+  assertEquals(created.response.incomplete_details, null);
   assertEquals(terminal.type, 'response.incomplete');
   assertEquals(terminal.response.incomplete_details?.reason, 'max_output_tokens');
 });
@@ -102,6 +114,7 @@ test('responsesResultToEvents keeps failure details only on the terminal event',
         type: 'server_error',
         code: 'boom',
       },
+      incomplete_details: null,
       usage: { input_tokens: 1, output_tokens: 0, total_tokens: 1 },
     }),
   );
@@ -115,7 +128,47 @@ test('responsesResultToEvents keeps failure details only on the terminal event',
     response: ResponsesResult;
   };
 
-  assertFalse('error' in created.response);
+  // Snapshot strips the terminal error and defaults to null so the
+  // spec-required field is present on the in-progress snapshot.
+  assertEquals(created.response.error, null);
   assertEquals(terminal.type, 'response.failed');
   assertEquals(terminal.response.error?.message, 'upstream failed');
+});
+
+test('responsesResultToEvents expands a web_search_call with the full 5-event lifecycle', () => {
+  const frames = Array.from(
+    responsesResultToEvents({
+      id: 'resp_ws',
+      object: 'response',
+      model: 'gpt-test',
+      status: 'completed',
+      output_text: '',
+      output: [
+        {
+          type: 'web_search_call',
+          id: 'ws_1',
+          status: 'completed',
+          action: { type: 'search', queries: ['hello'] },
+          results: [],
+        },
+      ],
+      error: null,
+      incomplete_details: null,
+      usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+    }),
+  );
+
+  assertEquals(
+    frames.map(frame => frame.event.type),
+    [
+      'response.created',
+      'response.in_progress',
+      'response.output_item.added',
+      'response.web_search_call.in_progress',
+      'response.web_search_call.searching',
+      'response.web_search_call.completed',
+      'response.output_item.done',
+      'response.completed',
+    ],
+  );
 });

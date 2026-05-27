@@ -2,7 +2,7 @@ import { test } from 'vitest';
 
 import { translateResponsesToChatCompletions } from './request.ts';
 import { createResponsesToChatCompletionsStreamState, translateResponsesEventToChatCompletionsChunks } from '../chat-completions-via-responses/events.ts';
-import { assertEquals } from '../test-assert.ts';
+import { assertEquals, assertThrows } from '../test-assert.ts';
 import type { ResponseTool, ResponseToolChoice } from '@floway-dev/protocols/responses';
 
 test('translateResponsesToChatCompletions merges adjacent assistant reasoning text and tool calls', () => {
@@ -257,6 +257,8 @@ test('translateResponsesEventToChatCompletionsChunks drops reasoning items witho
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -288,6 +290,8 @@ test('translateResponsesEventToChatCompletionsChunks drops reasoning items witho
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
         usage: {
           input_tokens: 1,
           output_tokens: 2,
@@ -323,6 +327,8 @@ test('translateResponsesEventToChatCompletionsChunks does not fill scalar opaque
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -375,6 +381,8 @@ test('translateResponsesEventToChatCompletionsChunks does not fill scalar opaque
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -400,6 +408,8 @@ test('translateResponsesEventToChatCompletionsChunks drops multiple reasoning it
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -440,6 +450,8 @@ test('translateResponsesEventToChatCompletionsChunks drops multiple reasoning it
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
         usage: {
           input_tokens: 1,
           output_tokens: 2,
@@ -476,6 +488,8 @@ test('translateResponsesEventToChatCompletionsChunks projects done-only summary 
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -513,6 +527,8 @@ test('translateResponsesEventToChatCompletionsChunks projects done-only summary 
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -542,6 +558,8 @@ test('translateResponsesEventToChatCompletionsChunks projects output_item.done s
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -569,6 +587,8 @@ test('translateResponsesEventToChatCompletionsChunks projects output_item.done s
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -598,6 +618,8 @@ test('translateResponsesEventToChatCompletionsChunks emits stream usage as a usa
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -613,6 +635,8 @@ test('translateResponsesEventToChatCompletionsChunks emits stream usage as a usa
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
         usage: {
           input_tokens: 12,
           output_tokens: 4,
@@ -649,6 +673,8 @@ test('translateResponsesEventToChatCompletionsChunks preserves text order around
           status: 'in_progress',
           output: [],
           output_text: '',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -704,6 +730,8 @@ test('translateResponsesEventToChatCompletionsChunks preserves text order around
             },
           ],
           output_text: 'answer',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -733,6 +761,8 @@ test('translateResponsesEventToChatCompletionsChunks preserves later text after 
           status: 'in_progress',
           output: [],
           output_text: '',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -788,6 +818,8 @@ test('translateResponsesEventToChatCompletionsChunks preserves later text after 
             },
           ],
           output_text: 'answer',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -817,6 +849,8 @@ test('translateResponsesEventToChatCompletionsChunks emits output_text.done when
           status: 'in_progress',
           output: [],
           output_text: '',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -852,6 +886,8 @@ test('translateResponsesEventToChatCompletionsChunks emits function_call_argumen
           status: 'in_progress',
           output: [],
           output_text: '',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -920,6 +956,8 @@ test('translateResponsesEventToChatCompletionsChunks emits all done-only reasoni
           status: 'in_progress',
           output: [],
           output_text: '',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -988,6 +1026,8 @@ test('translateResponsesEventToChatCompletionsChunks flushes pending done-only r
         status: 'in_progress',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -1012,6 +1052,8 @@ test('translateResponsesEventToChatCompletionsChunks flushes pending done-only r
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     },
     state,
@@ -1036,6 +1078,8 @@ test('translateResponsesEventToChatCompletionsChunks keeps first scalar reasonin
           status: 'in_progress',
           output: [],
           output_text: '',
+          error: null,
+          incomplete_details: null,
         },
       },
       state,
@@ -1343,4 +1387,38 @@ test('translateResponsesToChatCompletions projects custom_tool_call history into
     tool_call_id: 'call_1',
     content: 'ok',
   });
+});
+
+test('translateResponsesToChatCompletions throws on a stray web_search_call input item (shim owns the reverse path)', () => {
+  // The Responses web-search shim rewrites web_search_call input items into
+  // upstream function_call + function_call_output pairs before this
+  // translator runs. Reaching the translator with a raw web_search_call
+  // means the shim regressed; the translator surfaces a loud error so the
+  // bug is caught rather than silently dropping search context.
+  assertThrows(
+    () => translateResponsesToChatCompletions({
+      model: 'gpt-test',
+      input: [
+        { type: 'message', role: 'user', content: 'hi' },
+        {
+          type: 'web_search_call',
+          id: 'ws_x',
+          status: 'completed',
+          action: { type: 'search', queries: ['q'] },
+        },
+      ],
+      instructions: null,
+      temperature: null,
+      top_p: null,
+      max_output_tokens: 256,
+      tools: null,
+      tool_choice: 'auto',
+      metadata: null,
+      stream: null,
+      store: false,
+      parallel_tool_calls: true,
+    }),
+    Error,
+    'Responses → Chat Completions translator does not accept web_search_call input items',
+  );
 });

@@ -119,6 +119,8 @@ test('withConnectionMismatchRetried rewrites already-spotted ids before the firs
               status: 'completed',
               output_text: 'ok',
               output: [],
+              error: null,
+              incomplete_details: null,
               usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
             },
           });

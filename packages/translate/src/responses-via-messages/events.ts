@@ -8,6 +8,7 @@ import type {
   MessagesMessageDeltaEvent,
   MessagesMessageStartEvent,
   MessagesStreamEventData,
+  MessagesTextCitation,
 } from '@floway-dev/protocols/messages';
 import type { ResponseOutputItem, ResponsesResult, ResponsesStreamEvent, ResponseStreamEvent } from '@floway-dev/protocols/responses';
 
@@ -38,6 +39,12 @@ type OutputBlockInfo =
     outputIndex: number;
     itemId: string;
     blockText: string;
+    // Monotonic counter of url_citation annotations for this text
+    // content part. The Responses protocol requires per-content-part
+    // ordering and Responses targets always use content_index=0 for our
+    // single-part assistant message, so one counter per text block
+    // matches the spec.
+    annotationIndex: number;
   }
   | {
     type: 'tool_use';
@@ -81,6 +88,11 @@ const buildResult = (state: MessagesToResponsesStreamState, status: ResponsesRes
     output: state.completedItems,
     outputText: state.accumulatedText,
     status,
+    // Messages signals "ran out of tokens" with `stop_reason: 'max_tokens'`,
+    // which the caller maps to `status === 'incomplete'` (see
+    // `handleMessageStop` in this file). Other Anthropic stop_reasons
+    // don't map to incomplete.
+    ...(status === 'incomplete' ? { incompleteDetails: { reason: 'max_output_tokens' as const } } : {}),
     usage: responses.usage(inputTokens, state.outputTokens, state.cacheReadInputTokens),
   });
 };
@@ -119,6 +131,7 @@ const handleContentBlockStart = (event: MessagesContentBlockStartEvent, state: M
       outputIndex,
       itemId,
       blockText: '',
+      annotationIndex: 0,
     });
 
     return responses.textStart(state, outputIndex, itemId);
@@ -157,6 +170,62 @@ const handleContentBlockStart = (event: MessagesContentBlockStartEvent, state: M
   }
 };
 
+// Anthropic emits `citations_delta` against a text content block when the
+// model cites a structured `search_result` / `web_search_result` tool
+// result. We surface these as Responses
+// `response.output_text.annotation.added` events with inline
+// `url_citation` annotations.
+//
+// Offset approximation: Anthropic gives `start_block_index` /
+// `end_block_index` referring to indices inside our
+// `MessagesSearchResultBlock.content` (the cited source's text, not the
+// model's reply). Responses url_citation indices are character offsets
+// inside the model's reply. We approximate using cited_text length:
+// `end_index = blockText.length` (running char count emitted so far on
+// this content part), `start_index = max(0, end_index - cited_text.length)`.
+// Citation deltas without `cited_text` are dropped — we have no way to
+// anchor them. The chat-completions-via-messages translator
+// blanket-drops every `citations_delta` because Chat Completions has no
+// url_citation equivalent.
+const handleTextCitation = (info: Extract<OutputBlockInfo, { type: 'text' }>, citation: MessagesTextCitation, state: MessagesToResponsesStreamState): ResponseStreamEvent[] => {
+  // Future citation variants (`char_location`, `page_location`,
+  // `content_block_location` from Anthropic native long-document
+  // citations) are not in the current `MessagesTextCitation` union; if
+  // they're added, this branch needs to either skip or map them.
+  if (citation.type !== 'search_result_location' && citation.type !== 'web_search_result_location') {
+    return [];
+  }
+
+  if (!citation.cited_text) {
+    // A present cited_text on an empty blockText (citation arriving
+    // BEFORE any text_delta on this block) yields end_index=0,
+    // start_index=0; in practice Anthropic emits citation deltas after
+    // the triggering text chunk so this corner is unreachable.
+    return [];
+  }
+
+  const endIndex = info.blockText.length;
+  const startIndex = Math.max(0, endIndex - citation.cited_text.length);
+  const annotationIndex = info.annotationIndex++;
+
+  return responses.seq(state, [
+    {
+      type: 'response.output_text.annotation.added',
+      output_index: info.outputIndex,
+      content_index: 0,
+      item_id: info.itemId,
+      annotation_index: annotationIndex,
+      annotation: {
+        type: 'url_citation',
+        url: citation.url,
+        title: citation.title,
+        start_index: startIndex,
+        end_index: endIndex,
+      },
+    },
+  ]);
+};
+
 const handleContentBlockDelta = (event: MessagesContentBlockDeltaEvent, state: MessagesToResponsesStreamState): ResponseStreamEvent[] => {
   const info = state.blockMap.get(event.index);
   if (!info) return [];
@@ -169,6 +238,9 @@ const handleContentBlockDelta = (event: MessagesContentBlockDeltaEvent, state: M
     }
     return [];
   case 'text':
+    if (event.delta.type === 'citations_delta') {
+      return handleTextCitation(info, event.delta.citation, state);
+    }
     if (event.delta.type !== 'text_delta') return [];
     info.blockText += event.delta.text;
     state.accumulatedText += event.delta.text;

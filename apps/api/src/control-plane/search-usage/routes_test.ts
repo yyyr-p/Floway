@@ -28,13 +28,23 @@ const KEY_B: ApiKey = {
 const SEARCH_USAGE_A: SearchUsageRecord = {
   provider: 'tavily',
   keyId: KEY_A.id,
+  action: 'search',
   hour: '2026-03-15T10',
   requests: 2,
+};
+
+const SEARCH_USAGE_A_FETCH: SearchUsageRecord = {
+  provider: 'tavily',
+  keyId: KEY_A.id,
+  action: 'fetch_page',
+  hour: '2026-03-15T10',
+  requests: 3,
 };
 
 const SEARCH_USAGE_B: SearchUsageRecord = {
   provider: 'microsoft-grounding',
   keyId: KEY_B.id,
+  action: 'search',
   hour: '2026-03-15T11',
   requests: 4,
 };
@@ -48,12 +58,17 @@ const setup = async () => {
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save(KEY_B);
   await repo.searchUsage.set(SEARCH_USAGE_A);
+  await repo.searchUsage.set(SEARCH_USAGE_A_FETCH);
   await repo.searchUsage.set(SEARCH_USAGE_B);
 
   return { app, repo };
 };
 
-test('/api/search-usage returns records with key metadata and active provider', async () => {
+test('/api/search-usage sums requests across actions and includes key metadata', async () => {
+  // The dashboard sees one row per (provider, keyId, hour) with
+  // search and fetch_page request counts summed. KEY_A has both a `search`
+  // (2 req) and a `fetch_page` (3 req) record at the same hour; the
+  // aggregated row exposes 5.
   const { app, repo } = await setup();
   await repo.searchConfig.save({
     provider: 'microsoft-grounding',
@@ -73,12 +88,18 @@ test('/api/search-usage returns records with key metadata and active provider', 
   ]);
   assertEquals(body.records, [
     {
-      ...SEARCH_USAGE_A,
+      provider: 'tavily',
+      keyId: KEY_A.id,
+      hour: '2026-03-15T10',
+      requests: 5,
       keyName: KEY_A.name,
       keyCreatedAt: KEY_A.createdAt,
     },
     {
-      ...SEARCH_USAGE_B,
+      provider: 'microsoft-grounding',
+      keyId: KEY_B.id,
+      hour: '2026-03-15T11',
+      requests: 4,
       keyName: KEY_B.name,
       keyCreatedAt: KEY_B.createdAt,
     },
@@ -88,13 +109,17 @@ test('/api/search-usage returns records with key metadata and active provider', 
 test('/api/search-usage filters by provider and rejects invalid provider', async () => {
   const { app } = await setup();
 
+  // Without include_key_metadata=1 the response is the bare aggregated
+  // records — no per-record keyName/keyCreatedAt enrichment and no
+  // apiKeys.list() round-trip.
   const filtered = await app.request('/api/search-usage?start=2026-03-15T00&end=2026-03-16T00&provider=tavily');
   assertEquals(filtered.status, 200);
   assertEquals(await filtered.json(), [
     {
-      ...SEARCH_USAGE_A,
-      keyName: KEY_A.name,
-      keyCreatedAt: KEY_A.createdAt,
+      provider: 'tavily',
+      keyId: KEY_A.id,
+      hour: '2026-03-15T10',
+      requests: 5,
     },
   ]);
 

@@ -70,6 +70,8 @@ const completedResponse = (): ResponsesResult => ({
   status: 'completed',
   output_text: 'ok',
   output: [],
+  error: null,
+  incomplete_details: null,
   usage: { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
 });
 
@@ -80,6 +82,8 @@ const inProgressResponse = (id: string): ResponsesResult => ({
   status: 'in_progress',
   output_text: '',
   output: [],
+  error: null,
+  incomplete_details: null,
 });
 
 const failedResponse = (id: string, message: string): ResponsesResult => ({
@@ -94,6 +98,7 @@ const failedResponse = (id: string, message: string): ResponsesResult => ({
     type: 'invalid_request_error',
     code: 'cyber_policy',
   },
+  incomplete_details: null,
 });
 
 const completedEvent = (sequence_number = 1): ResponsesStreamEvent => ({

@@ -125,6 +125,7 @@ const USAGE_2: UsageRecord = {
 const SEARCH_USAGE_1: SearchUsageRecord = {
   provider: 'tavily',
   keyId: 'key-a',
+  action: 'search',
   hour: '2026-01-01T10',
   requests: 2,
 };
@@ -132,6 +133,7 @@ const SEARCH_USAGE_1: SearchUsageRecord = {
 const SEARCH_USAGE_2: SearchUsageRecord = {
   provider: 'microsoft-grounding',
   keyId: 'key-b',
+  action: 'fetch_page',
   hour: '2026-01-01T11',
   requests: 4,
 };
@@ -432,7 +434,7 @@ test('import rejects invalid records before clearing existing data', async () =>
   assertEquals(badFixes.status, 400);
   assertEquals(badFixes.body.error, 'invalid upstreams at index 0: Unknown flag_overrides ids: made-up-fix');
   assertEquals(badSearchUsage.status, 400);
-  assertEquals(badSearchUsage.body.error, 'invalid searchUsage record at index 0');
+  assertEquals(badSearchUsage.body.error, 'invalid searchUsage at index 0: invalid provider');
   assertEquals(await repo.apiKeys.list(), [KEY_A]);
   assertEquals(await repo.upstreams.list(), [CUSTOM_UPSTREAM]);
   assertEquals(await repo.searchUsage.listAll(), [SEARCH_USAGE_1]);

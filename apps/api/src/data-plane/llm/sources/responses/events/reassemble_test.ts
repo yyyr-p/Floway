@@ -36,6 +36,8 @@ test('reassembleResponsesEvents extracts response from completed event', async (
         content: [{ type: 'output_text', text: 'Hello' }],
       },
     ],
+    error: null,
+    incomplete_details: null,
     usage: { input_tokens: 5, output_tokens: 3, total_tokens: 8 },
   };
 
@@ -79,6 +81,7 @@ test('reassembleResponsesEvents handles incomplete event', async () => {
     status: 'incomplete',
     output_text: '',
     output: [],
+    error: null,
     incomplete_details: { reason: 'max_tokens' },
   };
 

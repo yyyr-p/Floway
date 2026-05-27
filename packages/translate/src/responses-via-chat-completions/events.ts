@@ -108,6 +108,12 @@ const buildResult = (state: ChatCompletionsToResponsesStreamState, status: Respo
     output: state.completedItems.filter((item): item is ResponseOutputItem => item !== undefined),
     outputText: state.outputText,
     status,
+    // Chat Completions surfaces "ran out of tokens" via
+    // `finish_reason === 'length'`, which the caller has already mapped
+    // to `status === 'incomplete'`. Other finish reasons that could map
+    // to `incomplete` (`content_filter`) emit a separate envelope in
+    // Chat Completions and don't reach this builder.
+    ...(status === 'incomplete' ? { incompleteDetails: { reason: 'max_output_tokens' as const } } : {}),
     ...(state.usage !== undefined ? { usage: state.usage } : {}),
   });
 

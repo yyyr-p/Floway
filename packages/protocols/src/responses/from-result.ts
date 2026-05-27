@@ -1,7 +1,8 @@
-import type { ResponseOutputCustomToolCall, ResponseOutputFunctionCall, ResponseOutputItem, ResponseOutputMessage, ResponseOutputReasoning, ResponsesResult, ResponseStreamEvent, SequencedResponsesStreamEvent } from './index.ts';
+import type { ResponseOutputCustomToolCall, ResponseOutputFunctionCall, ResponseOutputItem, ResponseOutputMessage, ResponseOutputReasoning, ResponseOutputWebSearchCall, ResponsesResult, ResponseStreamEvent, SequencedResponsesStreamEvent } from './index.ts';
+import { webSearchCallLifecycleEvents } from './web-search-lifecycle.ts';
 import { type EventFrame, eventFrame } from '../common/index.ts';
 
-const getTerminalEventName = (response: ResponsesResult): string => {
+const getTerminalEventName = (response: ResponsesResult): 'response.failed' | 'response.incomplete' | 'response.in_progress' | 'response.completed' => {
   if (response.status === 'failed') return 'response.failed';
   if (response.status === 'incomplete') return 'response.incomplete';
   if (response.status === 'in_progress') return 'response.in_progress';
@@ -14,11 +15,16 @@ const responseStartSnapshot = (response: ResponsesResult): ResponsesResult => {
   // JSON fallback has no upstream incremental frames, so synthesize the same
   // empty in-progress envelope that a real stream would start with. Emitting
   // terminal output or errors here would duplicate later item/terminal events.
+  // `output_text` is not synthesized — it's an SDK-only convenience alias
+  // and absent from real upstream wire frames. `error` and
+  // `incomplete_details` are required-nullable per the Responses spec; on
+  // a success-path in-progress envelope they MUST be present as null.
   return {
     ...snapshot,
     status: 'in_progress',
     output: [],
-    output_text: '',
+    error: null,
+    incomplete_details: null,
   };
 };
 
@@ -229,12 +235,18 @@ const responseCustomToolCallEvents = (item: ResponseOutputCustomToolCall, output
   return events;
 };
 
+const responseWebSearchCallEvents = (item: ResponseOutputWebSearchCall, outputIndex: number): ResponseStreamEvent[] => {
+  const { startFrames, endFrames } = webSearchCallLifecycleEvents(item, outputIndex);
+  return [...startFrames, ...endFrames];
+};
+
 const responseOutputItemEvents = (item: ResponseOutputItem, outputIndex: number): ResponseStreamEvent[] => {
   switch (item.type) {
   case 'message': return responseMessageEvents(item, outputIndex);
   case 'reasoning': return responseReasoningEvents(item, outputIndex);
   case 'function_call': return responseFunctionCallEvents(item, outputIndex);
   case 'custom_tool_call': return responseCustomToolCallEvents(item, outputIndex);
+  case 'web_search_call': return responseWebSearchCallEvents(item, outputIndex);
   }
 };
 

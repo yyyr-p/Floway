@@ -158,6 +158,17 @@ export const translateMessagesEventToChatCompletionsChunks = (event: MessagesStr
         }),
       ];
     case 'citations_delta':
+      // Chat Completions has no equivalent of Anthropic's structured citation
+      // annotations (no `output_text.annotation.added` event, no
+      // `url_citation` annotation type, no `tool_result.search_result` block
+      // shape). Blanket-drop every citation delta — the cited text already
+      // appears inline in earlier `text_delta` events that the model wrote,
+      // so the downstream Chat client still sees the substantive content,
+      // just without per-span source attribution. Permanent limitation; the
+      // Responses-shape translator at
+      // `responses-via-messages/events.ts:handleTextCitation` DOES translate
+      // these into `url_citation` annotations because Responses has the
+      // annotation surface.
       return [];
     }
 

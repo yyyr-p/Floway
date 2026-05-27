@@ -413,6 +413,154 @@ the binding's effective flag set. The flag is a default for `copilot` and
 `azure` (declared via the catalog's `defaultFor` field); Custom upstreams
 opt in per-upstream, and Azure can additionally override per-deployment.
 
+Responses web-search behavior mirrors the Messages shim. The
+`withResponsesWebSearchShim` source interceptor (attached unconditionally
+on every binding) activates when the planned target is NOT `responses`
+(Messages and Chat Completions cannot carry the hosted `web_search`
+tool), OR when `responses-web-search-shim` is in the chosen upstream
+binding's effective flag set for a `responses` target. The catalog
+`defaultFor` is `[]` — the GPT-5.x family supports `web_search`
+natively on the Responses upstream, so the flag is an operator override
+to force shim usage regardless. The shim rewrites the hosted tool into
+ONE umbrella function tool named `web_search` (collision fallback
+`web_search_2` / `web_search_3` / ... when a client already declared a
+function tool by the same name) whose schema mirrors the model's
+training-time umbrella shape with three sub-properties (`search_query[]`,
+`open[]`, `find[]`). One upstream function_call may populate multiple
+arrays at once, producing N logical operations dispatched in parallel;
+each logical op produces one synthesized `web_search_call` IR item that
+flows through both the downstream wire (a five-event lifecycle per item,
+with `action.type ∈ {search, open_page, find_in_page}`) and the upstream
+function_call_output text used for the next internal turn. Two
+gateway-internal counters guard the shim against runaway models, and
+they count different things:
+
+- The 30-iteration backend cap and the 50-iteration outer hard cap
+  both count upstream `run()` invocations (one per outer-loop turn).
+  They bound the per-request backend / upstream spend regardless of
+  the client's own settings. See `04-iteration-loop.md`.
+- The client-supplied `max_tool_calls` counts umbrella `function_call`
+  items emitted across all turns of the request, not logical
+  operations expanded from each umbrella's sub-property arrays. One
+  umbrella = one built-in tool call from the model's perspective, the
+  same accounting native uses.
+
+`ref_id` must be a fully qualified URL; a non-URL ref produces a
+runtime-error IR the model can recover from. When a turn mixes the
+umbrella with a client tool call (either `function_call` or
+`custom_tool_call`), the shim executes its searches server-side and
+exits to the client; the client round-trips its own tool's output
+normally, and the synthesized `web_search_call` items remain visible to
+the model on the next request through native Responses' persistent
+web_search_call semantics. Echoed `web_search_call` items in incoming
+request input are translated back into umbrella function_call +
+function_call_output pairs so upstream — which only knows the umbrella
+as a plain function tool — receives the search context in a shape it
+recognizes.
+
+Shim divergences from native hosted web_search (canonical statement
+lives in `docs/superpowers/specs/responses-web-search-shim-final/
+11-shim-divergences.md`, mirrored in shorter form at the file-header
+of `web-search-shim.ts`):
+
+- Results are ALWAYS included in synthesized `web_search_call` items;
+  native makes them opt-in via `include: ["web_search_call.results"]`,
+  and probing confirmed native NEVER emits `results` on the `.done`
+  half regardless. The shim drives a multi-turn internal loop and
+  needs the results both there and on the client-roundtrip path to
+  retain search context across turns, so the always-include is a
+  hard requirement rather than a UX nicety.
+- The `web_search_call` envelope has no `error` field (`status: 'failed'`
+  is in the enum but not observed in practice). The shim encodes every
+  error state by riding the successful-response shape: `status:
+  'completed'` with an explanatory snippet in `results[0]`. Action
+  carrier per failure class (the done frame names the action; native
+  omits action on `.added` and the shim follows suit):
+  - `open` with an invalid (non-URL) `ref_id`: done frame carries
+    `{type:'search', queries:[<ref_id>]}` — there is no URL to
+    populate an `open_page` action with, and the search carrier with
+    the bad ref in `queries` reads as the model's attempted intent.
+  - `open` with a valid URL whose fetch failed: done frame carries
+    `{type:'open_page', url}` with the original URL preserved.
+  - `find` runtime errors (invalid ref, fetch fail, no-match) keep
+    the native `{type:'find_in_page', url, pattern}` action.
+  - Shim-only errors (unknown sub-property, malformed args, capped
+    budget, exhausted client `max_tool_calls`) use
+    `action.type: 'search'` as the neutral carrier.
+- Native handles schema-validation errors via a spec-external item
+  type (`type: 'other'` carrying a schema dump). The shim folds these
+  into the spec-compliant `web_search_call` envelope to keep typed-SDK
+  clients from breaking, at the cost of giving the model a one-line
+  snippet instead of the full schema.
+- Unsupported hosted-tool fields (`external_web_access`,
+  `search_content_types`, `return_token_budget`, anything else
+  upstream might add later) are silently stripped along with the
+  hosted entry. The shim replaces the hosted tool with its umbrella
+  function tool, so any hosted-only field never reaches upstream
+  regardless. `filters.allowed_domains` /
+  `filters.blocked_domains` entries still reject the request with a
+  single 400 (`param: 'tools'`) on the first malformed entry — the
+  shim DOES act on these, and silently dropping a malformed entry
+  would let traffic the client believed was outside the filter
+  through.
+- `response.id` on every synthesized envelope is a single
+  shim-synthesized value (`resp_shim_<uuid>`) generated once at
+  activation. Native quotes upstream's `response.id` verbatim, but a
+  shim response spans multiple upstream turns whose ids may rotate,
+  so a stable cross-turn shim id is the only honest identity the
+  downstream client can correlate against. Upstream's id is not
+  exposed downstream.
+- `output_text` on terminal envelopes is rebuilt by the shim from
+  `accumulatedOutput` (walking message items and concatenating
+  output_text content blocks). Native's per-turn `output_text` on a
+  terminal snapshot only describes that one turn, so on multi-turn
+  shim responses the snapshot value would desync from the cross-turn
+  aggregated `output`. In-progress envelopes still flow the snapshot
+  value through verbatim.
+- `url_citation` annotations are NOT emitted alongside synthesized
+  `web_search_call` items. Producing real citations needs the model
+  to nominate result URLs through a structured channel; the umbrella
+  exposes results to the model as text only, so heuristic synthesis
+  would risk fabricating attributions the model never made. The
+  separate `responses-via-messages` translator does forward Anthropic
+  `citation_delta` events into Responses `url_citation` annotations
+  — that path is unrelated. See `12-out-of-scope.md` for the
+  rationale.
+- The four hosted-type aliases (`web_search`,
+  `web_search_2025_08_26`, `web_search_preview`,
+  `web_search_preview_2025_03_11`) are accepted and treated
+  identically. `filters`, `user_location`, and `search_context_size`
+  flow through the same way regardless of which alias the client
+  used; post-rewrite the umbrella shape is the same. Native preview
+  may reject `filters`; the shim accepts uniformly because making
+  preview reject controls that current accepts would create a
+  per-alias behavioral split with no implementation backing.
+
+`response.id` is the once-per-request synthesized `resp_shim_<uuid>`;
+the shim never re-quotes upstream's id. `model` is last-wins across
+turns: each upstream `response.created` overwrites
+`merge.lastSeenModel`, and synthesized envelopes read it at emit
+time. A turn 2 substitution (Copilot's alias → raw-id resolution) is
+the user-visible final identity. Terminal frames don't reliably
+carry `model`, so the shim never refreshes from them.
+
+If upstream's first `response.created` is missing `model`, the
+synthesizer throws when it eventually tries to read `lastSeenModel` —
+refusing to invent a value is a deliberate "no fallback" contract,
+surfacing the upstream protocol violation instead of silently lying
+about the served identity. The throw escapes the events generator
+and the source responder reports it upward.
+
+The `responses-via-messages` events translator forwards any
+`search_result_location` / `web_search_result_location` `citation_delta`
+events as Responses `response.output_text.annotation.added` events with
+`url_citation` annotations. Character offsets are approximated from the
+running text length and `cited_text.length` because the source indices
+refer to positions inside the cited block, not the model's reply;
+deltas without `cited_text` are dropped. Chat Completions has no
+equivalent for `url_citation` annotations, so its `annotations` array
+stays empty.
+
 Backoff is intentionally disabled for now. Control-plane status returns empty
 temporary-unavailability data until a provider-level backoff design lands.
 

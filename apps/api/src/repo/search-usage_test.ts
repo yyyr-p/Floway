@@ -5,15 +5,19 @@ import { type D1Database, D1Repo } from './d1.ts';
 import { InMemoryRepo } from './memory.ts';
 import type { SearchUsageRecord, SearchUsageRepo } from './types.ts';
 
-const sortSearchUsageRecords = (records: SearchUsageRecord[]) => records.toSorted((a, b) => a.hour.localeCompare(b.hour) || a.provider.localeCompare(b.provider) || a.keyId.localeCompare(b.keyId));
+const sortSearchUsageRecords = (records: SearchUsageRecord[]) =>
+  records.toSorted(
+    (a, b) =>
+      a.hour.localeCompare(b.hour) || a.provider.localeCompare(b.provider) || a.keyId.localeCompare(b.keyId) || a.action.localeCompare(b.action),
+  );
 
 const exerciseSearchUsageRepo = async (repo: SearchUsageRepo) => {
   await repo.deleteAll();
-  await repo.record('tavily', 'key_a', '2026-04-25T10', 1);
-  await repo.record('tavily', 'key_a', '2026-04-25T10', 2);
-  await repo.record('microsoft-grounding', 'key_a', '2026-04-25T11', 4);
-  await repo.record('tavily', 'key_b', '2026-04-25T12', 8);
-  await repo.record('tavily', 'key_a', '2026-04-25T13', 16);
+  await repo.record({ provider: 'tavily', keyId: 'key_a', action: 'search', hour: '2026-04-25T10', requests: 1 });
+  await repo.record({ provider: 'tavily', keyId: 'key_a', action: 'search', hour: '2026-04-25T10', requests: 2 });
+  await repo.record({ provider: 'microsoft-grounding', keyId: 'key_a', action: 'search', hour: '2026-04-25T11', requests: 4 });
+  await repo.record({ provider: 'tavily', keyId: 'key_b', action: 'search', hour: '2026-04-25T12', requests: 8 });
+  await repo.record({ provider: 'tavily', keyId: 'key_a', action: 'search', hour: '2026-04-25T13', requests: 16 });
 
   assertEquals(
     await repo.query({
@@ -25,12 +29,14 @@ const exerciseSearchUsageRepo = async (repo: SearchUsageRepo) => {
       {
         provider: 'tavily',
         keyId: 'key_a',
+        action: 'search',
         hour: '2026-04-25T10',
         requests: 3,
       },
       {
         provider: 'tavily',
         keyId: 'key_b',
+        action: 'search',
         hour: '2026-04-25T12',
         requests: 8,
       },
@@ -47,18 +53,21 @@ const exerciseSearchUsageRepo = async (repo: SearchUsageRepo) => {
       {
         provider: 'tavily',
         keyId: 'key_a',
+        action: 'search',
         hour: '2026-04-25T10',
         requests: 3,
       },
       {
         provider: 'microsoft-grounding',
         keyId: 'key_a',
+        action: 'search',
         hour: '2026-04-25T11',
         requests: 4,
       },
       {
         provider: 'tavily',
         keyId: 'key_a',
+        action: 'search',
         hour: '2026-04-25T13',
         requests: 16,
       },
@@ -68,6 +77,7 @@ const exerciseSearchUsageRepo = async (repo: SearchUsageRepo) => {
   await repo.set({
     provider: 'tavily',
     keyId: 'key_a',
+    action: 'search',
     hour: '2026-04-25T10',
     requests: 7,
   });
@@ -82,6 +92,7 @@ const exerciseSearchUsageRepo = async (repo: SearchUsageRepo) => {
       {
         provider: 'tavily',
         keyId: 'key_a',
+        action: 'search',
         hour: '2026-04-25T10',
         requests: 7,
       },
@@ -92,16 +103,100 @@ const exerciseSearchUsageRepo = async (repo: SearchUsageRepo) => {
   assertEquals(await repo.listAll(), []);
 };
 
+const exerciseActionDimension = async (repo: SearchUsageRepo) => {
+  await repo.deleteAll();
+
+  // Distinct rows per action under the same (provider, keyId, hour).
+  await repo.record({ provider: 'tavily', keyId: 'key_a', action: 'search', hour: '2026-05-01T10', requests: 5 });
+  await repo.record({ provider: 'tavily', keyId: 'key_a', action: 'fetch_page', hour: '2026-05-01T10', requests: 3 });
+  await repo.record({ provider: 'tavily', keyId: 'key_a', action: 'search', hour: '2026-05-01T10', requests: 2 }); // sums into the existing search row
+
+  const all = await repo.listAll();
+  assertEquals(all.length, 2);
+  assertEquals(sortSearchUsageRecords(all), [
+    {
+      provider: 'tavily',
+      keyId: 'key_a',
+      action: 'fetch_page',
+      hour: '2026-05-01T10',
+      requests: 3,
+    },
+    {
+      provider: 'tavily',
+      keyId: 'key_a',
+      action: 'search',
+      hour: '2026-05-01T10',
+      requests: 7,
+    },
+  ]);
+
+  // query() filters by action when provided.
+  const onlyFetch = await repo.query({ action: 'fetch_page', start: '2026-05-01T10', end: '2026-05-01T11' });
+  assertEquals(onlyFetch, [
+    {
+      provider: 'tavily',
+      keyId: 'key_a',
+      action: 'fetch_page',
+      hour: '2026-05-01T10',
+      requests: 3,
+    },
+  ]);
+
+  const onlySearch = await repo.query({ action: 'search', start: '2026-05-01T10', end: '2026-05-01T11' });
+  assertEquals(onlySearch, [
+    {
+      provider: 'tavily',
+      keyId: 'key_a',
+      action: 'search',
+      hour: '2026-05-01T10',
+      requests: 7,
+    },
+  ]);
+
+  // No action filter → returns both rows.
+  const both = await repo.query({ start: '2026-05-01T10', end: '2026-05-01T11' });
+  assertEquals(both.length, 2);
+
+  // set() with action distinguishes from existing record under the same hour/provider/keyId.
+  await repo.set({
+    provider: 'tavily',
+    keyId: 'key_a',
+    action: 'fetch_page',
+    hour: '2026-05-01T10',
+    requests: 99,
+  });
+  const afterSet = sortSearchUsageRecords(await repo.listAll());
+  assertEquals(afterSet, [
+    {
+      provider: 'tavily',
+      keyId: 'key_a',
+      action: 'fetch_page',
+      hour: '2026-05-01T10',
+      requests: 99,
+    },
+    {
+      provider: 'tavily',
+      keyId: 'key_a',
+      action: 'search',
+      hour: '2026-05-01T10',
+      requests: 7,
+    },
+  ]);
+
+  await repo.deleteAll();
+};
+
 const assertRejectsInvalidProvider = async (repo: SearchUsageRepo) => {
   await repo.deleteAll();
 
-  await assertRejects(() => repo.record('disabled' as SearchUsageRecord['provider'], 'key_a', '2026-04-25T10', 1), TypeError, 'Invalid web search provider');
+  await assertRejects(() => repo.record({ provider: 'disabled' as SearchUsageRecord['provider'], keyId: 'key_a', action: 'search', hour: '2026-04-25T10', requests: 1 }), TypeError, 'Invalid web search provider');
 
   await assertRejects(
     () =>
       repo.set({
         provider: 'disabled' as SearchUsageRecord['provider'],
         keyId: 'key_a',
+        action: 'search',
         hour: '2026-04-25T10',
         requests: 1,
       }),
@@ -112,6 +207,10 @@ const assertRejectsInvalidProvider = async (repo: SearchUsageRepo) => {
 
 test('memory search usage repo records, queries, overwrites, and clears', async () => {
   await exerciseSearchUsageRepo(new InMemoryRepo().searchUsage);
+});
+
+test('memory search usage repo distinguishes search vs fetch_page rows', async () => {
+  await exerciseActionDimension(new InMemoryRepo().searchUsage);
 });
 
 test('memory search usage repo rejects invalid provider names', async () => {
@@ -162,6 +261,7 @@ class FakeD1Database implements D1Database {
   rows: Array<{
     provider: string;
     key_id: string;
+    action: string;
     hour: string;
     requests: number;
   }> = [];
@@ -171,12 +271,12 @@ class FakeD1Database implements D1Database {
   }
 
   upsert(query: string, binds: unknown[]): void {
-    const [provider, keyId, hour, requests] = binds as [string, string, string, number];
-    const existing = this.rows.find(r => r.provider === provider && r.key_id === keyId && r.hour === hour);
+    const [provider, keyId, action, hour, requests] = binds as [string, string, string, string, number];
+    const existing = this.rows.find(r => r.provider === provider && r.key_id === keyId && r.action === action && r.hour === hour);
     if (existing) {
       existing.requests = query.includes('requests + excluded.requests') ? existing.requests + requests : requests;
     } else {
-      this.rows.push({ provider, key_id: keyId, hour, requests });
+      this.rows.push({ provider, key_id: keyId, action, hour, requests });
     }
   }
 
@@ -186,34 +286,42 @@ class FakeD1Database implements D1Database {
         this.rows.map(r => ({
           provider: r.provider as SearchUsageRecord['provider'],
           keyId: r.key_id,
+          action: r.action as SearchUsageRecord['action'],
           hour: r.hour,
           requests: r.requests,
         })),
       ).map(r => ({
         provider: r.provider,
         key_id: r.keyId,
+        action: r.action,
         hour: r.hour,
         requests: r.requests,
       }));
     }
 
+    // Predicate combinations matched by D1SearchUsageRepo.query():
+    // - hour bounds always present (start, end)
+    // - provider may be prepended (unshifted)
+    // - keyId may be appended
+    // - action may be appended (after keyId if both)
     let provider: string | undefined;
-    let start: string;
-    let end: string;
     let keyId: string | undefined;
-    if (query.includes('provider = ?') && query.includes('key_id = ?')) {
-      [provider, start, end, keyId] = binds as [string, string, string, string];
-    } else if (query.includes('provider = ?')) {
-      [provider, start, end] = binds as [string, string, string];
-    } else if (query.includes('key_id = ?')) {
-      [start, end, keyId] = binds as [string, string, string];
-    } else {
-      [start, end] = binds as [string, string];
-    }
+    let action: string | undefined;
+    const hasProvider = query.includes('provider = ?');
+    const hasKeyId = query.includes('key_id = ?');
+    const hasAction = query.includes('action = ?');
+
+    const bindsCopy = [...binds] as string[];
+    if (hasProvider) provider = bindsCopy.shift();
+    const start = bindsCopy.shift()!;
+    const end = bindsCopy.shift()!;
+    if (hasKeyId) keyId = bindsCopy.shift();
+    if (hasAction) action = bindsCopy.shift();
 
     return this.rows
       .filter(r => !provider || r.provider === provider)
       .filter(r => !keyId || r.key_id === keyId)
+      .filter(r => !action || r.action === action)
       .filter(r => r.hour >= start && r.hour < end)
       .sort((a, b) => a.hour.localeCompare(b.hour));
   }
@@ -221,6 +329,10 @@ class FakeD1Database implements D1Database {
 
 test('D1 search usage repo records, queries, overwrites, and clears', async () => {
   await exerciseSearchUsageRepo(new D1Repo(new FakeD1Database()).searchUsage);
+});
+
+test('D1 search usage repo distinguishes search vs fetch_page rows', async () => {
+  await exerciseActionDimension(new D1Repo(new FakeD1Database()).searchUsage);
 });
 
 test('D1 search usage repo rejects invalid provider names', async () => {
@@ -232,9 +344,23 @@ test('D1 search usage repo rejects invalid stored provider names', async () => {
   db.rows.push({
     provider: 'disabled',
     key_id: 'key_a',
+    action: 'search',
     hour: '2026-04-25T10',
     requests: 1,
   });
 
   await assertRejects(() => new D1Repo(db).searchUsage.listAll(), TypeError, 'Invalid web search provider');
+});
+
+test('D1 search usage repo rejects invalid stored action values', async () => {
+  const db = new FakeD1Database();
+  db.rows.push({
+    provider: 'tavily',
+    key_id: 'key_a',
+    action: 'bogus',
+    hour: '2026-04-25T10',
+    requests: 1,
+  });
+
+  await assertRejects(() => new D1Repo(db).searchUsage.listAll(), TypeError, 'Invalid search usage action');
 });

@@ -35,8 +35,58 @@ export const validateWebSearchQuery = (query: string): ValidatedWebSearchQuery =
 export const toWebSearchTextBlocks = (content: unknown): Array<{ type: 'text'; text: string }> =>
   typeof content === 'string' && content.trim().length > 0 ? [{ type: 'text', text: content.trim() }] : [];
 
+// Cap the diagnostic body read at 8 KiB so a hostile or runaway
+// provider can't pin arbitrary memory before we slice it down. Streaming
+// from `response.body` stops the read at the cap regardless of
+// Content-Length.
+const MAX_PROVIDER_ERROR_BODY_BYTES = 8 * 1024;
+
+const readBodyCapped = async (response: Response, maxBytes: number): Promise<string> => {
+  // Some Response shims (test doubles, oddball runtimes) leave `body`
+  // null even when `text()` works; fall back to a post-read slice.
+  if (response.body === null) {
+    return (await response.text()).slice(0, maxBytes);
+  }
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  try {
+    while (totalBytes < maxBytes) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (value === undefined) continue;
+      const remaining = maxBytes - totalBytes;
+      if (value.byteLength <= remaining) {
+        chunks.push(value);
+        totalBytes += value.byteLength;
+      } else {
+        chunks.push(value.subarray(0, remaining));
+        totalBytes = maxBytes;
+      }
+    }
+  } finally {
+    // Drop the reader lock so cancel() can release the body; otherwise
+    // cancel() rejects.
+    reader.releaseLock();
+    await response.body.cancel().catch(() => undefined);
+  }
+
+  return new TextDecoder().decode(concatChunks(chunks, totalBytes));
+};
+
+const concatChunks = (chunks: Uint8Array[], totalBytes: number): Uint8Array => {
+  const out = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    out.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return out;
+};
+
 export const extractWebSearchProviderErrorMessage = async (response: Response): Promise<string | undefined> => {
-  const text = await response.text();
+  const text = await readBodyCapped(response, MAX_PROVIDER_ERROR_BODY_BYTES);
   if (text.length === 0) {
     return undefined;
   }

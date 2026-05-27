@@ -19,6 +19,8 @@ test('collectResponsesProtocolEventsToResult reassembles synthetic Responses eve
         content: [{ type: 'output_text', text: 'Hello' }],
       },
     ],
+    error: null,
+    incomplete_details: null,
     usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 },
   };
 
@@ -40,6 +42,8 @@ test('collectResponsesProtocolEventsToResult rejects streams without terminal ev
         model: 'gpt-test',
         status: 'in_progress',
         output: [],
+        error: null,
+        incomplete_details: null,
       },
     } satisfies ResponsesStreamEvent);
   }

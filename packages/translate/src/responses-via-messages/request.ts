@@ -115,6 +115,10 @@ const appendUserBlock = (messages: MessagesMessage[], block: MessagesToolResultB
   messages.push({ role: 'user', content: [block] });
 };
 
+const unexpectedResponsesInputItem = (value: never): never => {
+  throw new Error(`Unexpected Responses input item variant: ${JSON.stringify(value)}`);
+};
+
 const translateResponsesInput = async (input: string | ResponseInputItem[], loadRemoteImage: RemoteImageLoader): Promise<{ messages: MessagesMessage[]; systemParts: string[] }> => {
   if (typeof input === 'string') {
     return {
@@ -175,6 +179,20 @@ const translateResponsesInput = async (input: string | ResponseInputItem[], load
       if (block) appendAssistantBlock(messages, block);
       break;
     }
+    case 'item_reference':
+      // Connection-bound pointer with no inline content to translate; drop it.
+      // Mirrors the responses-via-chat-completions translator behaviour.
+      break;
+    case 'web_search_call':
+      // The shim must translate echoed web_search_call input items
+      // into function_call + function_call_output pairs before this
+      // translator runs. Reaching here means the reverse path was
+      // skipped.
+      throw new Error('Responses → Messages translator does not accept web_search_call input items; their reverse-path translation must happen before this translator runs.');
+    default:
+      // Exhaustiveness guard: a future ResponseInputItem variant must
+      // explicitly opt into translator behavior.
+      unexpectedResponsesInputItem(item);
     }
   }
 
@@ -182,15 +200,18 @@ const translateResponsesInput = async (input: string | ResponseInputItem[], load
 };
 
 const translateTools = (tools: ResponseTool[] | null | undefined, customToolNames: Set<string>): MessagesTool[] | undefined => {
-  if (!tools || tools.length === 0) return undefined;
-
-  // Translated Messages targets do not currently have a faithful bridge for
-  // hosted/deferred Responses tools (`web_search`, `tool_search`, `namespace`,
-  // `image_generation`, and future builtin names). Native Responses targets
-  // receive those entries unchanged; this translator narrows to function and
-  // Freeform `custom` tools until the translated semantics are defined.
+  // Translated Messages targets do not currently have a faithful bridge
+  // for hosted/deferred Responses tools (`web_search`, `tool_search`,
+  // `namespace`, `image_generation`, and future builtin names). Native
+  // Responses targets receive those entries unchanged; this translator
+  // narrows to function and Freeform `custom` tools, recording the latter
+  // in `customToolNames` so the events translator can reverse the wrap.
+  // The umbrella shim's web_search function tool reaches this code under
+  // its resolved name as an ordinary function tool — no special carve-out
+  // needed.
   const out: MessagesTool[] = [];
-  for (const tool of tools) {
+
+  for (const tool of tools ?? []) {
     if (tool.type === 'function') {
       out.push({
         name: tool.name,
@@ -209,6 +230,7 @@ const translateTools = (tools: ResponseTool[] | null | undefined, customToolName
       });
     }
   }
+
   return out.length > 0 ? out : undefined;
 };
 
@@ -238,18 +260,15 @@ const translateToolChoice = (toolChoice: ResponseToolChoice | undefined): Messag
 
 export const translateResponsesToMessages = async (payload: ResponsesPayload, options: TranslateResponsesToMessagesOptions = {}): Promise<ResponsesToMessagesResult> => {
   const customToolNames = new Set<string>();
-  // Tools first so customToolNames is populated before input history processing
-  // sees the same trip's tool-name set (it doesn't currently consume the set,
-  // but ordering reflects the wrap-then-project flow at one place).
-  const tools = translateTools(payload.tools, customToolNames);
   const { messages, systemParts } = await translateResponsesInput(payload.input, options.loadRemoteImage ?? fetchRemoteImage);
+  const tools = translateTools(payload.tools, customToolNames);
   const system = [payload.instructions, ...systemParts].filter((part): part is string => Boolean(part)).join('\n\n');
   const effort = payload.reasoning?.effort;
   const maxTokens = payload.max_output_tokens ?? options.fallbackMaxOutputTokens ?? MESSAGES_FALLBACK_MAX_TOKENS;
 
-  // Responses `metadata` is intentionally omitted on the Messages path instead
-  // of being coerced into Anthropic `metadata.user_id`, prompt-cache, or safety
-  // semantics.
+  // Responses `metadata` is intentionally omitted on the Messages
+  // path; not coerced into Anthropic metadata.user_id, prompt-cache,
+  // or safety semantics.
   const target: MessagesPayload = {
     model: payload.model,
     messages,

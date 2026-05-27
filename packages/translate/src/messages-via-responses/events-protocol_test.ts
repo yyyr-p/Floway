@@ -19,6 +19,8 @@ const makeResponse = (status: ResponsesResult['status']): ResponsesResult => ({
       content: [{ type: 'output_text', text: 'hello' }],
     },
   ],
+  error: null,
+  incomplete_details: null,
   usage: {
     input_tokens: 3,
     output_tokens: 2,
@@ -104,6 +106,8 @@ test('translateToSourceEvents preserves refusal text from JSON fallback', async 
           content: [{ type: 'refusal', refusal: 'No.' }],
         },
       ],
+      error: null,
+      incomplete_details: null,
       usage: {
         input_tokens: 3,
         output_tokens: 1,

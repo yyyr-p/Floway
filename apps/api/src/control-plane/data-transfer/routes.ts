@@ -2,7 +2,7 @@
 
 import { parseFlagOverridesWire } from '../../data-plane/providers/flags.ts';
 import { invalidateModelsStore } from '../../data-plane/providers/models-store.ts';
-import { normalizeSearchConfig } from '../../data-plane/tools/web-search/search-config.ts';
+import { parseSearchConfigDefault, parseSearchConfigStrict } from '../../data-plane/tools/web-search/search-config.ts';
 import type { SearchConfig } from '../../data-plane/tools/web-search/types.ts';
 import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
@@ -242,57 +242,43 @@ const parseUsageRecords = (value: unknown): { type: 'ok'; records: UsageRecord[]
   return { type: 'ok', records };
 };
 
-const parseSearchUsageRecords = (value: unknown): { type: 'ok'; records: SearchUsageRecord[] } | { type: 'invalid'; index: number } => {
-  if (!Array.isArray(value)) return { type: 'invalid', index: -1 };
+const parseSearchUsageRecords = (value: unknown): { type: 'ok'; records: SearchUsageRecord[] } | { type: 'invalid'; index: number; error: string } => {
+  if (!Array.isArray(value)) return { type: 'invalid', index: -1, error: 'searchUsage must be an array' };
 
   const records: SearchUsageRecord[] = [];
   for (let i = 0; i < value.length; i++) {
     const record = value[i];
-    if (!record || typeof record !== 'object') return { type: 'invalid', index: i };
+    if (!record || typeof record !== 'object') return { type: 'invalid', index: i, error: 'record must be an object' };
 
     const item = record as Record<string, unknown>;
     const provider = item.provider;
     const keyId = item.keyId;
+    const action = item.action;
     const hour = item.hour;
     const requests = item.requests;
-    if (
-      !isWebSearchProviderName(provider) ||
-      typeof keyId !== 'string' ||
-      keyId.length === 0 ||
-      typeof hour !== 'string' ||
-      !SEARCH_USAGE_HOUR_PATTERN.test(hour) ||
-      typeof requests !== 'number' ||
-      !Number.isSafeInteger(requests) ||
-      requests < 0
-    ) {
-      return { type: 'invalid', index: i };
-    }
+    if (!isWebSearchProviderName(provider)) return { type: 'invalid', index: i, error: 'invalid provider' };
+    if (typeof keyId !== 'string' || keyId.length === 0) return { type: 'invalid', index: i, error: 'keyId must be a non-empty string' };
+    if (action !== 'search' && action !== 'fetch_page') return { type: 'invalid', index: i, error: 'action must be "search" or "fetch_page"' };
+    if (typeof hour !== 'string' || !SEARCH_USAGE_HOUR_PATTERN.test(hour)) return { type: 'invalid', index: i, error: 'hour must match the SEARCH_USAGE_HOUR_PATTERN' };
+    if (typeof requests !== 'number' || !Number.isSafeInteger(requests) || requests < 0) return { type: 'invalid', index: i, error: 'requests must be a non-negative safe integer' };
 
-    records.push({ provider, keyId, hour, requests });
+    records.push({ provider, keyId, action, hour, requests });
   }
 
   return { type: 'ok', records };
 };
 
 const parseSearchConfig = (value: unknown): { type: 'ok'; config: SearchConfig } | { type: 'invalid'; error: string } => {
-  if (!isRecord(value)) return { type: 'invalid', error: 'searchConfig must be an object' };
-  const provider = value.provider;
-  if (provider !== 'disabled' && !isWebSearchProviderName(provider)) {
-    return { type: 'invalid', error: 'searchConfig.provider must be disabled, tavily, or microsoft-grounding' };
+  // Delegate to the shared strict parser so the import layer and the
+  // load/save helpers cannot drift on what counts as a valid stored
+  // config. The strict parser throws a descriptive Error; we map that
+  // back into the route's structured invalid envelope here.
+  try {
+    return { type: 'ok', config: parseSearchConfigStrict(value) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { type: 'invalid', error: message };
   }
-  if (!isRecord(value.tavily)) return { type: 'invalid', error: 'searchConfig.tavily must be an object' };
-  if (typeof value.tavily.apiKey !== 'string') return { type: 'invalid', error: 'searchConfig.tavily.apiKey must be a string' };
-  if (!isRecord(value.microsoftGrounding)) return { type: 'invalid', error: 'searchConfig.microsoftGrounding must be an object' };
-  if (typeof value.microsoftGrounding.apiKey !== 'string') return { type: 'invalid', error: 'searchConfig.microsoftGrounding.apiKey must be a string' };
-
-  return {
-    type: 'ok',
-    config: {
-      provider,
-      tavily: { apiKey: value.tavily.apiKey },
-      microsoftGrounding: { apiKey: value.microsoftGrounding.apiKey },
-    },
-  };
 };
 
 const parsePerformanceIncluded = (data: Record<string, unknown>): { type: 'ok'; included: boolean } | { type: 'invalid'; error: string } => {
@@ -397,7 +383,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
       usage,
       searchUsage,
       performanceIncluded: includePerformance,
-      searchConfig: normalizeSearchConfig(rawSearchConfig),
+      searchConfig: rawSearchConfig === null ? parseSearchConfigDefault() : parseSearchConfigStrict(rawSearchConfig),
     },
   };
   if (includePerformance) payload.data.performance = performance;
@@ -435,7 +421,8 @@ export const importData = async (c: CtxWithJson<typeof importBody>) => {
 
   const searchUsageResult = parseSearchUsageRecords(data.searchUsage);
   if (searchUsageResult.type === 'invalid') {
-    return c.json({ error: searchUsageResult.index >= 0 ? `invalid searchUsage record at index ${searchUsageResult.index}` : 'invalid searchUsage: searchUsage must be an array' }, 400);
+    const location = searchUsageResult.index >= 0 ? ` at index ${searchUsageResult.index}` : '';
+    return c.json({ error: `invalid searchUsage${location}: ${searchUsageResult.error}` }, 400);
   }
   const searchUsage = searchUsageResult.records;
 

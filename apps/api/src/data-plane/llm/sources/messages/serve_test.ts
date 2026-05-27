@@ -1585,6 +1585,8 @@ test('/v1/messages falls back to responses and preserves readable reasoning with
         content: [{ type: 'output_text', text: 'Answer text' }],
       },
     ],
+    error: null,
+    incomplete_details: null,
     usage: {
       input_tokens: 30,
       output_tokens: 9,
@@ -2913,6 +2915,7 @@ test('/v1/messages rewrites native web search to an upstream client tool without
     {
       provider: 'tavily',
       keyId: apiKey.id,
+      action: 'search',
       hour: new Date().toISOString().slice(0, 13),
       requests: 1,
     },

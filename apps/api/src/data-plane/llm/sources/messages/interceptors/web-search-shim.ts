@@ -55,7 +55,7 @@ interface ReplayAwareMessagesWebSearchShimState {
 
 interface ActiveMessagesWebSearchProvider {
   providerName: WebSearchProviderName;
-  search: WebSearchProvider;
+  impl: WebSearchProvider;
   apiKeyId?: string;
 }
 
@@ -633,13 +633,13 @@ const buildNativeWebSearchResultBlockFromProviderResult = (result: WebSearchProv
 const searchWithActiveMessagesWebSearchProvider = (provider: ActiveMessagesWebSearchProvider, request: WebSearchProviderRequest): Promise<WebSearchProviderResult> =>
   provider.apiKeyId
     ? searchWebAndRecordUsage({
-        provider: provider.search,
+        provider: provider.impl,
         providerName: provider.providerName,
         keyId: provider.apiKeyId,
         request,
       })
     : searchWebWithoutRecordingUsage({
-        provider: provider.search,
+        provider: provider.impl,
         request,
       });
 
@@ -946,7 +946,7 @@ const resolveActiveMessagesWebSearchProvider = async (apiKeyId: string | undefin
       type: 'ok',
       provider: {
         providerName: configuredProvider.provider,
-        search: configuredProvider.search,
+        impl: configuredProvider.impl,
         ...(apiKeyId ? { apiKeyId } : {}),
       },
     };

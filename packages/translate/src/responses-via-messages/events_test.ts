@@ -3,7 +3,7 @@ import { test } from 'vitest';
 import { createMessagesToResponsesStreamState, translateMessagesEventToResponsesEvents } from './events.ts';
 import { assertEquals } from '../test-assert.ts';
 import type { MessagesStreamEventData } from '@floway-dev/protocols/messages';
-import type { ResponsesResult, ResponseStreamEvent } from '@floway-dev/protocols/responses';
+import type { ResponsesResult, ResponsesStreamEvent, ResponseStreamEvent } from '@floway-dev/protocols/responses';
 
 type ResponseOutputItemAddedEvent = Extract<ResponseStreamEvent, { type: 'response.output_item.added' }>;
 
@@ -11,7 +11,7 @@ type ResponseOutputItemDoneEvent = Extract<ResponseStreamEvent, { type: 'respons
 
 // ── Helpers ──
 
-function runToCompletion(usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }): ResponsesResult {
+const runToCompletion = (usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }): ResponsesResult => {
   const state = createMessagesToResponsesStreamState('resp_test', 'claude-sonnet-4-20250514');
 
   translateMessagesEventToResponsesEvents(
@@ -74,7 +74,7 @@ function runToCompletion(usage: { input_tokens: number; output_tokens: number; c
       response: ResponsesResult;
     }
   ).response;
-}
+};
 
 // ── cache_creation_input_tokens ──
 
@@ -369,4 +369,324 @@ test('unwraps wrapped custom tool calls into custom_tool_call shape', () => {
   if (itemDone.item.type !== 'custom_tool_call') throw new Error('expected custom_tool_call item');
   assertEquals(itemDone.item.input, '*** Begin Patch\n*** End Patch');
   assertEquals(itemDone.item.call_id, 'call_ctc');
+});
+
+// ── citation_delta → response.output_text.annotation.added ──
+
+type AnnotationAddedEvent = Extract<ResponsesStreamEvent, { type: 'response.output_text.annotation.added' }>;
+
+const startTextBlockWithMessage = (state: ReturnType<typeof createMessagesToResponsesStreamState>): void => {
+  translateMessagesEventToResponsesEvents(
+    {
+      type: 'message_start',
+      message: {
+        id: 'msg_cite',
+        type: 'message',
+        role: 'assistant',
+        content: [],
+        model: 'claude-test',
+        stop_reason: null,
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 0 },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+  translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_start',
+      index: 0,
+      content_block: { type: 'text', text: '' },
+    } as MessagesStreamEventData,
+    state,
+  );
+};
+
+const pushTextDelta = (state: ReturnType<typeof createMessagesToResponsesStreamState>, text: string): void => {
+  translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text },
+    } as MessagesStreamEventData,
+    state,
+  );
+};
+
+test('search_result_location citation_delta becomes one url_citation annotation', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  pushTextDelta(state, 'See the docs cited inline.');
+
+  const events = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'search_result_location',
+          url: 'https://docs.example.com/page-1',
+          title: 'Example Docs · Page 1',
+          search_result_index: 0,
+          start_block_index: 0,
+          end_block_index: 1,
+          cited_text: 'cited inline',
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const annotations = events.filter((e): e is AnnotationAddedEvent => e.type === 'response.output_text.annotation.added');
+  assertEquals(annotations.length, 1);
+  const [annotation] = annotations;
+  assertEquals(annotation.output_index, 0);
+  assertEquals(annotation.content_index, 0);
+  assertEquals(annotation.item_id, 'msg_0');
+  assertEquals(annotation.annotation_index, 0);
+  assertEquals(annotation.annotation, {
+    type: 'url_citation',
+    url: 'https://docs.example.com/page-1',
+    title: 'Example Docs · Page 1',
+    // 'See the docs cited inline.' is 26 chars; 'cited inline' is 12 chars.
+    start_index: 14,
+    end_index: 26,
+  });
+});
+
+test('web_search_result_location citation_delta becomes one url_citation annotation', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  pushTextDelta(state, 'According to MDN.');
+
+  const events = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'web_search_result_location',
+          url: 'https://developer.mozilla.org/en-US/',
+          title: 'MDN Web Docs',
+          encrypted_index: 'opaque-blob',
+          cited_text: 'MDN',
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const annotations = events.filter((e): e is AnnotationAddedEvent => e.type === 'response.output_text.annotation.added');
+  assertEquals(annotations.length, 1);
+  assertEquals(annotations[0].annotation, {
+    type: 'url_citation',
+    url: 'https://developer.mozilla.org/en-US/',
+    title: 'MDN Web Docs',
+    // 'According to MDN.' is 17 chars; 'MDN' is 3 chars.
+    start_index: 14,
+    end_index: 17,
+  });
+});
+
+test('citation_delta without cited_text is skipped', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  pushTextDelta(state, 'Some text.');
+
+  const events = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'search_result_location',
+          url: 'https://example.com/',
+          title: 'Example',
+          search_result_index: 0,
+          start_block_index: 0,
+          end_block_index: 1,
+          // cited_text intentionally omitted
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  assertEquals(events, []);
+});
+
+test('unknown citation variant is skipped without throwing', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  pushTextDelta(state, 'Some text.');
+
+  // `char_location` is not currently in our MessagesTextCitation union — it
+  // is one of Anthropic's native long-document citation variants. Casting
+  // through `unknown` simulates a future protocol addition the translator
+  // hasn't been taught about yet; it must drop, not throw.
+  const events = translateMessagesEventToResponsesEvents(
+    ({
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'char_location',
+          document_index: 0,
+          document_title: 'A Book',
+          start_char_index: 0,
+          end_char_index: 5,
+          cited_text: 'hello',
+        },
+      },
+    } as unknown) as MessagesStreamEventData,
+    state,
+  );
+
+  assertEquals(events, []);
+});
+
+test('multiple citations on the same text content part get monotonic annotation_index', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  pushTextDelta(state, 'First quote here.');
+  const firstEvents = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'search_result_location',
+          url: 'https://example.com/a',
+          title: 'A',
+          search_result_index: 0,
+          start_block_index: 0,
+          end_block_index: 1,
+          cited_text: 'quote here',
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  pushTextDelta(state, ' Then a second one.');
+  const secondEvents = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'web_search_result_location',
+          url: 'https://example.com/b',
+          title: 'B',
+          encrypted_index: 'blob',
+          cited_text: 'second one',
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const [firstAnn] = firstEvents.filter((e): e is AnnotationAddedEvent => e.type === 'response.output_text.annotation.added');
+  const [secondAnn] = secondEvents.filter((e): e is AnnotationAddedEvent => e.type === 'response.output_text.annotation.added');
+
+  assertEquals(firstAnn.annotation_index, 0);
+  assertEquals(secondAnn.annotation_index, 1);
+  // Sequence numbers must keep advancing across the two citations.
+  assertEquals((firstAnn.sequence_number ?? -1) < (secondAnn.sequence_number ?? -1), true);
+});
+
+test('citation offsets reflect running text length up to the citation_delta', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  pushTextDelta(state, 'Intro text. ');
+  pushTextDelta(state, 'Then "quoted text"');
+
+  const events = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'search_result_location',
+          url: 'https://example.com/q',
+          title: 'Q',
+          search_result_index: 0,
+          start_block_index: 0,
+          end_block_index: 1,
+          cited_text: '"quoted text"',
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const [annotation] = events.filter((e): e is AnnotationAddedEvent => e.type === 'response.output_text.annotation.added');
+  // 'Intro text. Then "quoted text"' is 30 chars; '"quoted text"' is 13.
+  assertEquals(annotation.annotation.start_index, 17);
+  assertEquals(annotation.annotation.end_index, 30);
+});
+
+test('text_delta events on a text block with citations still emit text deltas unchanged', () => {
+  const state = createMessagesToResponsesStreamState('resp_cite', 'claude-test');
+  startTextBlockWithMessage(state);
+
+  const deltaEvents = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text: 'Hello world.' },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const textDeltas = deltaEvents.filter(e => e.type === 'response.output_text.delta');
+  assertEquals(textDeltas.length, 1);
+
+  // A citation arriving afterwards must not interfere with the next text
+  // delta on the same block.
+  translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: {
+        type: 'citations_delta',
+        citation: {
+          type: 'search_result_location',
+          url: 'https://example.com/',
+          title: 'X',
+          search_result_index: 0,
+          start_block_index: 0,
+          end_block_index: 1,
+          cited_text: 'world',
+        },
+      },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const more = translateMessagesEventToResponsesEvents(
+    {
+      type: 'content_block_delta',
+      index: 0,
+      delta: { type: 'text_delta', text: ' More.' },
+    } as MessagesStreamEventData,
+    state,
+  );
+
+  const moreTextDeltas = more.filter(e => e.type === 'response.output_text.delta');
+  assertEquals(moreTextDeltas.length, 1);
+  assertEquals(state.accumulatedText, 'Hello world. More.');
 });

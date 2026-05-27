@@ -10,6 +10,10 @@
     },
     "./app-type": {
       "types": "./src/app.ts"
+    },
+    "./data-plane/tools/web-search/types": {
+      "import": "./src/data-plane/tools/web-search/types.ts",
+      "types": "./src/data-plane/tools/web-search/types.ts"
     }
   },
   "scripts": {
@@ -20,6 +24,7 @@
     "@floway-dev/translate": "workspace:*",
     "@hono/zod-validator": "^0.8.0",
     "hono": "^4",
+    "jsonrepair": "^3.14.0",
     "zod": "^4.4.3"
   }
 }

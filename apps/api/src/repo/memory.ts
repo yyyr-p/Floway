@@ -119,29 +119,30 @@ class MemoryUsageRepo implements UsageRepo {
 class MemorySearchUsageRepo implements SearchUsageRepo {
   private store = new Map<string, SearchUsageRecord>();
 
-  private key(r: { provider: SearchUsageRecord['provider']; keyId: string; hour: string }): string {
-    return `${r.provider}\0${r.keyId}\0${r.hour}`;
+  private key(r: { provider: SearchUsageRecord['provider']; keyId: string; action: SearchUsageRecord['action']; hour: string }): string {
+    return `${r.provider}\0${r.keyId}\0${r.action}\0${r.hour}`;
   }
 
-  record(provider: SearchUsageRecord['provider'], keyId: string, hour: string, requests: number): Promise<void> {
+  record(args: { provider: SearchUsageRecord['provider']; keyId: string; action: SearchUsageRecord['action']; hour: string; requests: number }): Promise<void> {
     return Promise.resolve().then(() => {
-      const validProvider = assertWebSearchProviderName(provider);
-      const k = this.key({ provider: validProvider, keyId, hour });
+      const validProvider = assertWebSearchProviderName(args.provider);
+      const k = this.key({ provider: validProvider, keyId: args.keyId, action: args.action, hour: args.hour });
       const existing = this.store.get(k);
       if (existing) {
-        existing.requests += requests;
+        existing.requests += args.requests;
       } else {
-        this.store.set(k, { provider: validProvider, keyId, hour, requests });
+        this.store.set(k, { provider: validProvider, keyId: args.keyId, action: args.action, hour: args.hour, requests: args.requests });
       }
     });
   }
 
-  query(opts: { provider?: SearchUsageRecord['provider']; keyId?: string; start: string; end: string }): Promise<SearchUsageRecord[]> {
+  query(opts: { provider?: SearchUsageRecord['provider']; keyId?: string; action?: SearchUsageRecord['action']; start: string; end: string }): Promise<SearchUsageRecord[]> {
     return Promise.resolve().then(() => {
       const provider = opts.provider ? assertWebSearchProviderName(opts.provider) : undefined;
       return [...this.store.values()]
         .filter(r => !provider || r.provider === provider)
         .filter(r => !opts.keyId || r.keyId === opts.keyId)
+        .filter(r => !opts.action || r.action === opts.action)
         .filter(r => r.hour >= opts.start && r.hour < opts.end)
         .map(r => ({ ...r }))
         .sort((a, b) => a.hour.localeCompare(b.hour));

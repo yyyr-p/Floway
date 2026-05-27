@@ -17,6 +17,8 @@ test('responsesProtocolFrameToSSEFrame serializes events without owning terminat
         status: 'completed',
         output: [],
         output_text: '',
+        error: null,
+        incomplete_details: null,
       },
     } satisfies ResponsesStreamEvent),
     eventFrame({

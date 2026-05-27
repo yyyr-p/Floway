@@ -257,19 +257,19 @@ const toUsageRecord = (row: UsageRow): UsageRecord => ({
 class D1SearchUsageRepo implements SearchUsageRepo {
   constructor(private db: D1Database) {}
 
-  async record(provider: SearchUsageRecord['provider'], keyId: string, hour: string, requests: number): Promise<void> {
-    const validProvider = assertWebSearchProviderName(provider);
+  async record(args: { provider: SearchUsageRecord['provider']; keyId: string; action: SearchUsageRecord['action']; hour: string; requests: number }): Promise<void> {
+    const validProvider = assertWebSearchProviderName(args.provider);
     await this.db
       .prepare(
-        `INSERT INTO search_usage (provider, key_id, hour, requests) VALUES (?, ?, ?, ?)
-         ON CONFLICT (provider, key_id, hour) DO UPDATE SET
+        `INSERT INTO search_usage (provider, key_id, action, hour, requests) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (provider, key_id, action, hour) DO UPDATE SET
            requests = requests + excluded.requests`,
       )
-      .bind(validProvider, keyId, hour, requests)
+      .bind(validProvider, args.keyId, args.action, args.hour, args.requests)
       .run();
   }
 
-  async query(opts: { provider?: SearchUsageRecord['provider']; keyId?: string; start: string; end: string }): Promise<SearchUsageRecord[]> {
+  async query(opts: { provider?: SearchUsageRecord['provider']; keyId?: string; action?: SearchUsageRecord['action']; start: string; end: string }): Promise<SearchUsageRecord[]> {
     const filters = ['hour >= ?', 'hour < ?'];
     const binds: unknown[] = [opts.start, opts.end];
     if (opts.provider) {
@@ -281,13 +281,18 @@ class D1SearchUsageRepo implements SearchUsageRepo {
       filters.push('key_id = ?');
       binds.push(opts.keyId);
     }
+    if (opts.action) {
+      filters.push('action = ?');
+      binds.push(opts.action);
+    }
 
     const { results } = await this.db
-      .prepare(`SELECT provider, key_id, hour, requests FROM search_usage WHERE ${filters.join(' AND ')} ORDER BY hour`)
+      .prepare(`SELECT provider, key_id, action, hour, requests FROM search_usage WHERE ${filters.join(' AND ')} ORDER BY hour`)
       .bind(...binds)
       .all<{
       provider: string;
       key_id: string;
+      action: string;
       hour: string;
       requests: number;
     }>();
@@ -295,9 +300,10 @@ class D1SearchUsageRepo implements SearchUsageRepo {
   }
 
   async listAll(): Promise<SearchUsageRecord[]> {
-    const { results } = await this.db.prepare('SELECT provider, key_id, hour, requests FROM search_usage ORDER BY hour').all<{
+    const { results } = await this.db.prepare('SELECT provider, key_id, action, hour, requests FROM search_usage ORDER BY hour').all<{
       provider: string;
       key_id: string;
+      action: string;
       hour: string;
       requests: number;
     }>();
@@ -308,11 +314,11 @@ class D1SearchUsageRepo implements SearchUsageRepo {
     const provider = assertWebSearchProviderName(record.provider);
     await this.db
       .prepare(
-        `INSERT INTO search_usage (provider, key_id, hour, requests) VALUES (?, ?, ?, ?)
-         ON CONFLICT (provider, key_id, hour) DO UPDATE SET
+        `INSERT INTO search_usage (provider, key_id, action, hour, requests) VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT (provider, key_id, action, hour) DO UPDATE SET
            requests = excluded.requests`,
       )
-      .bind(provider, record.keyId, record.hour, record.requests)
+      .bind(provider, record.keyId, record.action, record.hour, record.requests)
       .run();
   }
 
@@ -587,10 +593,14 @@ function comparePerformanceTelemetryRecords(a: PerformanceTelemetryRecord, b: Pe
   );
 }
 
-function toSearchUsageRecord(row: { provider: string; key_id: string; hour: string; requests: number }): SearchUsageRecord {
+function toSearchUsageRecord(row: { provider: string; key_id: string; action: string; hour: string; requests: number }): SearchUsageRecord {
+  if (row.action !== 'search' && row.action !== 'fetch_page') {
+    throw new TypeError(`Invalid search usage action: ${row.action}`);
+  }
   return {
     provider: assertWebSearchProviderName(row.provider),
     keyId: row.key_id,
+    action: row.action,
     hour: row.hour,
     requests: row.requests,
   };
@@ -627,10 +637,16 @@ class D1SearchConfigRepo implements SearchConfigRepo {
       return null;
     }
 
+    // Surface stored-JSON corruption rather than masking it as "no row" —
+    // a malformed value column means D1 holds bytes the gateway can never
+    // interpret, and silently returning null would hide that from
+    // operators behind the load helper's default-fallback path. The
+    // project policy is to expose errors over fabricating recovery.
     try {
       return JSON.parse(row.value);
-    } catch {
-      return null;
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : String(cause);
+      throw new Error(`Malformed search_config JSON in repo storage: ${message}`, { cause });
     }
   }
 

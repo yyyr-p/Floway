@@ -1,8 +1,12 @@
+import { withResponsesWebSearchShim } from './web-search-shim.ts';
 import type { ResponsesInterceptor } from '../../../interceptors.ts';
 
 // Source-side Responses interceptors. Every entry is attached to every
 // binding; each interceptor's body decides whether to act (flag-gated entries
-// early-return on `ctx.enabledFlags.has(flagId)`). There are no
-// protocol-shape source workarounds today — provider-specific tool stripping
-// runs on the target side instead.
-export const responsesSourceInterceptors: readonly ResponsesInterceptor[] = [];
+// early-return on `ctx.enabledFlags.has(flagId)`). Provider-specific
+// tool-shape stripping runs on the target side; this list carries only
+// behaviors that must observe the source-side payload (e.g., the
+// `web_search` hosted tool the shim rewrites before upstream sees it).
+export const responsesSourceInterceptors: readonly ResponsesInterceptor[] = [
+  withResponsesWebSearchShim,
+];

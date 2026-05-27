@@ -1,7 +1,6 @@
 import { createMicrosoftGroundingWebSearchProvider } from './providers/microsoft-grounding.ts';
 import { createTavilyWebSearchProvider } from './providers/tavily.ts';
 import { FIXED_SEARCH_CONFIG_TEST_QUERY } from './search-config.ts';
-import { searchWebWithoutRecordingUsage } from './search.ts';
 import type { ConfiguredWebSearchProvider, SearchConfig, SearchConfigConnectionTestResult } from './types.ts';
 
 const toPreviewText = (content: Array<{ type: 'text'; text: string }>): string =>
@@ -20,7 +19,7 @@ export const resolveConfiguredWebSearchProvider = (config: SearchConfig): Config
       ? {
           type: 'enabled',
           provider: 'tavily',
-          search: createTavilyWebSearchProvider(config.tavily.apiKey),
+          impl: createTavilyWebSearchProvider(config.tavily.apiKey),
         }
       : { type: 'missing-credential', provider: 'tavily' };
   }
@@ -29,7 +28,7 @@ export const resolveConfiguredWebSearchProvider = (config: SearchConfig): Config
     ? {
         type: 'enabled',
         provider: 'microsoft-grounding',
-        search: createMicrosoftGroundingWebSearchProvider(config.microsoftGrounding.apiKey),
+        impl: createMicrosoftGroundingWebSearchProvider(config.microsoftGrounding.apiKey),
       }
     : { type: 'missing-credential', provider: 'microsoft-grounding' };
 };
@@ -61,10 +60,7 @@ export const testSearchConfigConnection = async (config: SearchConfig): Promise<
     };
   }
 
-  const result = await searchWebWithoutRecordingUsage({
-    provider: resolved.search,
-    request: { query: FIXED_SEARCH_CONFIG_TEST_QUERY },
-  });
+  const result = await resolved.impl.search({ query: FIXED_SEARCH_CONFIG_TEST_QUERY });
 
   if (result.type === 'error') {
     return {

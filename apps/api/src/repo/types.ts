@@ -46,9 +46,12 @@ export interface TokenUsage {
   cacheCreationTokens: number;
 }
 
+export type SearchUsageAction = 'search' | 'fetch_page';
+
 export interface SearchUsageRecord {
   provider: WebSearchProviderName;
   keyId: string;
+  action: SearchUsageAction;
   hour: string;
   requests: number;
 }
@@ -106,8 +109,8 @@ export interface UsageRepo {
 }
 
 export interface SearchUsageRepo {
-  record(provider: WebSearchProviderName, keyId: string, hour: string, requests: number): Promise<void>;
-  query(opts: { provider?: WebSearchProviderName; keyId?: string; start: string; end: string }): Promise<SearchUsageRecord[]>;
+  record(args: { provider: WebSearchProviderName; keyId: string; action: SearchUsageAction; hour: string; requests: number }): Promise<void>;
+  query(opts: { provider?: WebSearchProviderName; keyId?: string; action?: SearchUsageAction; start: string; end: string }): Promise<SearchUsageRecord[]>;
   listAll(): Promise<SearchUsageRecord[]>;
   set(record: SearchUsageRecord): Promise<void>;
   deleteAll(): Promise<void>;
