@@ -7,9 +7,10 @@ import { emitToChatCompletions } from '../../targets/chat-completions/emit.ts';
 import { emitToMessages } from '../../targets/messages/emit.ts';
 import { emitToResponses } from '../../targets/responses/emit.ts';
 import { createRequestContext } from '../request-context.ts';
-import { jsonUpstreamErrorResult, sourceErrorResult, type LlmServeFailure, type LlmSourceTraits } from '../traits.ts';
+import { plainResultFromResponse } from '../respond.ts';
+import { type LlmEndpoint, type LlmEndpointName, jsonUpstreamErrorResult, sourceErrorResult, type LlmServeFailure, type LlmSourceTraits } from '../traits.ts';
 import type { ChatCompletionsPayload } from '@floway-dev/protocols/chat-completions';
-import type { ModelEndpoint, ProtocolFrame } from '@floway-dev/protocols/common';
+import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { MessagesMessage, MessagesPayload, MessagesStreamEvent } from '@floway-dev/protocols/messages';
 import type { ResponsesPayload } from '@floway-dev/protocols/responses';
 import { type SourceEmit, translateMessagesViaChatCompletions, translateMessagesViaResponses, viaTranslation } from '@floway-dev/translate';
@@ -79,13 +80,6 @@ const messagesInvocation = <TPayload extends { model: string }>(
   ...(anthropicBeta !== undefined ? { anthropicBeta } : {}),
 });
 
-const pickTarget = (endpoints: readonly ModelEndpoint[]): LlmTargetApi | null => {
-  if (endpoints.includes('messages')) return 'messages';
-  if (endpoints.includes('responses')) return 'responses';
-  if (endpoints.includes('chat_completions')) return 'chat-completions';
-  return null;
-};
-
 // Maps a serve failure to the Messages (Anthropic) error envelope, shared with
 // the count_tokens path which answers in the same shape under a different
 // endpoint label. `internal` is excluded — it is rendered with a stack trace by
@@ -105,14 +99,13 @@ export const messagesFailureEnvelope = (
   return { status, body: { type: 'error', error: { type, message } } };
 };
 
-const renderMessagesFailure = (failure: LlmServeFailure): ExecuteResult<ProtocolFrame<MessagesStreamEvent>> => {
+const renderMessagesFailure = (failure: LlmServeFailure, endpoint: LlmEndpointName): ExecuteResult<ProtocolFrame<MessagesStreamEvent>> => {
   if (failure.kind === 'internal') return sourceErrorResult<MessagesStreamEvent>(failure.error, { sourceApi: 'messages', internalStatus: 502 });
-  const { status, body } = messagesFailureEnvelope(failure, '/messages');
+  const { status, body } = messagesFailureEnvelope(failure, endpoint === 'countTokens' ? '/messages/count_tokens' : '/messages');
   return jsonUpstreamErrorResult(status, body);
 };
 
-export const messagesTraits: LlmSourceTraits<readonly MessagesMessage[], MessagesStreamEvent> = {
-  renderFailure: renderMessagesFailure,
+const messagesGenerate: LlmEndpoint<readonly MessagesMessage[], MessagesStreamEvent> = {
   respond: async ({ c, result, request, wantsStream, downstreamAbortController }) =>
     await respondMessages(c, result, wantsStream, request, downstreamAbortController),
   setup: async c => {
@@ -131,7 +124,7 @@ export const messagesTraits: LlmSourceTraits<readonly MessagesMessage[], Message
       store: undefined,
       model: payload.model,
       downstreamAbortController,
-      pickTarget,
+      pickTarget: endpoints => endpoints.messages ? 'messages' : endpoints.responses ? 'responses' : endpoints.chatCompletions ? 'chat-completions' : null,
       attempt: async ({ binding, target, model, rewriteItems }) => {
         const attemptPayload = structuredClone(payload);
         attemptPayload.model = model;
@@ -151,4 +144,50 @@ export const messagesTraits: LlmSourceTraits<readonly MessagesMessage[], Message
       },
     };
   },
+};
+
+// count_tokens shares the Messages input and provider walk but produces a
+// measurement, not a stream: it gates on the `messages.countTokens` upstream
+// capability, calls that endpoint through the same count_tokens interceptors,
+// and proxies the upstream body back as a plain result.
+const messagesCountTokens: LlmEndpoint<readonly MessagesMessage[], MessagesStreamEvent> = {
+  respond: async ({ c, result, request, wantsStream, downstreamAbortController }) =>
+    await respondMessages(c, result, wantsStream, request, downstreamAbortController),
+  setup: async c => {
+    const payload = await c.req.json<MessagesPayload>();
+    const rejectedBetaParam = bodyBetaParam(payload);
+    if (rejectedBetaParam) return bodyAnthropicBetaResponse(rejectedBetaParam);
+    const request = createRequestContext(c, undefined, false);
+    const anthropicBeta = parseAnthropicBeta(c.req.header('anthropic-beta'));
+    return {
+      request,
+      items: payload.messages,
+      responsesItemsView: messagesViaResponsesItemsView,
+      wantsStream: false,
+      store: undefined,
+      model: payload.model,
+      downstreamAbortController: undefined,
+      pickTarget: endpoints => endpoints.messages?.countTokens ? 'messages' : null,
+      attempt: async ({ binding, model, rewriteItems }) => {
+        const attemptPayload = structuredClone(payload);
+        attemptPayload.model = model;
+        attemptPayload.messages = await rewriteItems(attemptPayload.messages);
+        // targetApi is 'messages' because count_tokens hits the Messages
+        // endpoint family; the same provider count_tokens interceptors run so
+        // Copilot's vision/initiator/anthropic-beta header workarounds apply.
+        const invocation: MessagesInvocation = messagesInvocation(binding, 'messages', model, attemptPayload, anthropicBeta, {});
+        const response = await runInterceptors(invocation, request, invocation.targetInterceptors?.messagesCountTokens ?? [], async () => {
+          const { model: _model, ...body } = invocation.payload;
+          const { response } = await binding.provider.callMessagesCountTokens(invocation.upstreamModel, body, undefined, invocation.headers, invocation.anthropicBeta);
+          return response;
+        });
+        return await plainResultFromResponse(response);
+      },
+    };
+  },
+};
+
+export const messagesTraits: LlmSourceTraits<readonly MessagesMessage[], MessagesStreamEvent> = {
+  renderFailure: renderMessagesFailure,
+  endpoints: { generate: messagesGenerate, countTokens: messagesCountTokens },
 };

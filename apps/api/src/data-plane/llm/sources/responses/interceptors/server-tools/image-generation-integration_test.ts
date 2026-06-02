@@ -30,10 +30,10 @@ vi.mock('../../../../../providers/registry.ts', () => ({
     id: 'gpt-image-2',
     model: {
       id: 'gpt-image-2',
-      upstreamEndpoints: ['images_generations', 'images_edits'],
+      endpoints: { imagesGenerations: {}, imagesEdits: {} },
       providers: [{
         upstream: 'u',
-        upstreamModel: { id: 'gpt-image-2', upstreamEndpoints: ['images_generations', 'images_edits'] },
+        upstreamModel: { id: 'gpt-image-2', endpoints: { imagesGenerations: {}, imagesEdits: {} } },
         provider: {
           getPricingForModelKey: () => null,
           callImagesGenerations: async (_model: unknown, body: Record<string, unknown>) => {

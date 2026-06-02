@@ -1,9 +1,9 @@
 import { test } from 'vitest';
 
-import { clearCopilotTokenCache } from '../../../../../shared/copilot.ts';
-import { assertEquals, assertExists } from '../../../../../test-assert.ts';
-import { buildCustomUpstreamRecord, copilotModels, jsonResponse, requestApp, setupAppTest, withMockedFetch } from '../../../../../test-helpers.ts';
-import { clearModelsStore } from '../../../../providers/models-store.ts';
+import { clearCopilotTokenCache } from '../../../../shared/copilot.ts';
+import { assertEquals, assertExists } from '../../../../test-assert.ts';
+import { buildCustomUpstreamRecord, copilotModels, jsonResponse, requestApp, setupAppTest, withMockedFetch } from '../../../../test-helpers.ts';
+import { clearModelsStore } from '../../../providers/models-store.ts';
 
 test('/v1beta/models/:model:countTokens translates Gemini request to Messages count_tokens', async () => {
   const { apiKey } = await setupAppTest();
@@ -168,7 +168,7 @@ test('/v1beta/models/:model:countTokens rejects custom-upstream-only models', as
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',
-      supportedEndpoints: ['/chat/completions'],
+      endpoints: { chatCompletions: {} },
     },
   }));
 
@@ -223,7 +223,7 @@ test('/v1beta/models/:model:countTokens preserves custom upstream /models HTTP e
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',
-      supportedEndpoints: ['/chat/completions'],
+      endpoints: { chatCompletions: {} },
     },
   }));
 

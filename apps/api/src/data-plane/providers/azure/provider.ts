@@ -3,10 +3,11 @@ import { assertAzureUpstreamRecord, createAzureUpstream } from '../../../shared/
 import { publicModelId, type UpstreamModelConfig } from '../../../shared/upstream/model-config.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
 import { mergeAnthropicBetaHeader } from '../anthropic-beta.ts';
-import { isStreamingEndpoint, kindForEndpoints, modelConfigEndpoints } from '../endpoints.ts';
+import { isStreamingEndpoint, modelConfigEndpoints } from '../endpoints.ts';
 import { resolveEffectiveFlags } from '../flags-resolve.ts';
 import { defaultsForProvider } from '../flags.ts';
 import type { ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
+import { kindForEndpoints } from '@floway-dev/protocols/common';
 
 interface AzureProviderData {
   upstreamModelId: string;
@@ -15,9 +16,9 @@ interface AzureProviderData {
 const providerData = (model: UpstreamModel): AzureProviderData => model.providerData as AzureProviderData;
 
 // Project an Azure model config row into the slim provider-neutral fields.
-// kind/upstreamEndpoints/providerData/enabledFlags are added by the caller.
-const azureInternalModel = (model: UpstreamModelConfig): Omit<UpstreamModel, 'kind' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> => {
-  const internal: Omit<UpstreamModel, 'kind' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> = {
+// kind/endpoints/providerData/enabledFlags are added by the caller.
+const azureInternalModel = (model: UpstreamModelConfig): Omit<UpstreamModel, 'kind' | 'endpoints' | 'providerData' | 'enabledFlags'> => {
+  const internal: Omit<UpstreamModel, 'kind' | 'endpoints' | 'providerData' | 'enabledFlags'> = {
     id: publicModelId(model),
     limits: { ...(model.limits ?? {}) },
   };
@@ -49,11 +50,11 @@ export const createAzureProvider = (record: UpstreamRecord): ModelProviderInstan
         // defaults or the upstream. See `resolveEffectiveFlags` for layer semantics.
         const modelLayer = model.flagOverrides?.enabled ? model.flagOverrides.values : undefined;
         const effective = resolveEffectiveFlags(defaultsForProvider('azure'), [azure.flagOverrides, modelLayer]);
-        const upstreamEndpoints = modelConfigEndpoints(model);
+        const endpoints = modelConfigEndpoints(model);
         return {
           ...azureInternalModel(model),
-          kind: kindForEndpoints(upstreamEndpoints),
-          upstreamEndpoints,
+          kind: kindForEndpoints(endpoints),
+          endpoints,
           providerData: {
             upstreamModelId: model.upstreamModelId,
           } satisfies AzureProviderData,

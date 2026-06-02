@@ -7,9 +7,9 @@ import { emitToChatCompletions } from '../../targets/chat-completions/emit.ts';
 import { emitToMessages } from '../../targets/messages/emit.ts';
 import { emitToResponses } from '../../targets/responses/emit.ts';
 import { createRequestContext } from '../request-context.ts';
-import { jsonUpstreamErrorResult, sourceErrorResult, type LlmServeFailure, type LlmSourceTraits } from '../traits.ts';
+import { type LlmEndpoint, jsonUpstreamErrorResult, sourceErrorResult, type LlmServeFailure, type LlmSourceTraits } from '../traits.ts';
 import type { ChatCompletionsStreamEvent, ChatCompletionsPayload, ChatCompletionsMessage } from '@floway-dev/protocols/chat-completions';
-import type { ModelEndpoint, ProtocolFrame } from '@floway-dev/protocols/common';
+import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { MessagesPayload } from '@floway-dev/protocols/messages';
 import type { ResponsesPayload } from '@floway-dev/protocols/responses';
 import { type SourceEmit, translateChatCompletionsViaMessages, translateChatCompletionsViaResponses, viaTranslation } from '@floway-dev/translate';
@@ -32,13 +32,6 @@ const chatCompletionsInvocation = <TPayload extends { model: string }>(
   payload,
   headers: {} as Record<string, string>,
 });
-
-const pickTarget = (endpoints: readonly ModelEndpoint[]): LlmTargetApi | null => {
-  if (endpoints.includes('chat_completions')) return 'chat-completions';
-  if (endpoints.includes('messages')) return 'messages';
-  if (endpoints.includes('responses')) return 'responses';
-  return null;
-};
 
 // OpenAI error envelope. `param`/`code` reproduce OpenAI's native fields; a
 // stored-item miss must byte-match OpenAI's own "not found" body.
@@ -67,8 +60,7 @@ const renderChatCompletionsFailure = (failure: LlmServeFailure): ExecuteResult<P
 // state.
 const INCLUDE_USAGE_CHUNK_KEY = 'chatCompletionsIncludeUsageChunk';
 
-export const chatCompletionsTraits: LlmSourceTraits<readonly ChatCompletionsMessage[], ChatCompletionsStreamEvent> = {
-  renderFailure: renderChatCompletionsFailure,
+const chatCompletionsGenerate: LlmEndpoint<readonly ChatCompletionsMessage[], ChatCompletionsStreamEvent> = {
   respond: async ({ c, result, request, wantsStream, downstreamAbortController }) =>
     await respondChatCompletions(c, result, wantsStream, c.get(INCLUDE_USAGE_CHUNK_KEY) === true, request, downstreamAbortController),
   setup: async c => {
@@ -85,7 +77,7 @@ export const chatCompletionsTraits: LlmSourceTraits<readonly ChatCompletionsMess
       store: payload.store,
       model: payload.model,
       downstreamAbortController,
-      pickTarget,
+      pickTarget: endpoints => endpoints.chatCompletions ? 'chat-completions' : endpoints.messages ? 'messages' : endpoints.responses ? 'responses' : null,
       attempt: async ({ binding, target, model, rewriteItems }) => {
         const attemptPayload = structuredClone(payload);
         attemptPayload.model = model;
@@ -104,4 +96,9 @@ export const chatCompletionsTraits: LlmSourceTraits<readonly ChatCompletionsMess
       },
     };
   },
+};
+
+export const chatCompletionsTraits: LlmSourceTraits<readonly ChatCompletionsMessage[], ChatCompletionsStreamEvent> = {
+  renderFailure: renderChatCompletionsFailure,
+  endpoints: { generate: chatCompletionsGenerate },
 };

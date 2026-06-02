@@ -12,13 +12,13 @@ import type { UpstreamRecord } from '../../../repo/types.ts';
 import { isCopilotAccountType, type CopilotAccountType } from '../../../shared/copilot.ts';
 import { createCopilotUpstream } from '../../../shared/upstream/copilot.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
-import { isStreamingEndpoint, kindForEndpoints, publicPathsToModelEndpoints, withMessagesCountTokens } from '../endpoints.ts';
+import { isStreamingEndpoint, withMessagesCountTokens } from '../endpoints.ts';
 import { resolveEffectiveFlags } from '../flags-resolve.ts';
 import { defaultsForProvider } from '../flags.ts';
 import { inProcessMemo, readModelsStore, writeModelsStore } from '../models-store.ts';
 import type { ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
 import type { ChatCompletionsPayload } from '@floway-dev/protocols/chat-completions';
-import type { ModelEndpoint } from '@floway-dev/protocols/common';
+import { type ModelEndpointKey, type ModelEndpoints, kindForEndpoints } from '@floway-dev/protocols/common';
 import type { MessagesPayload } from '@floway-dev/protocols/messages';
 import type { ResponsesPayload } from '@floway-dev/protocols/responses';
 
@@ -50,16 +50,16 @@ const L1_TTL_MS = 120_000;
 const providerData = (model: UpstreamModel): CopilotProviderData => model.providerData as CopilotProviderData;
 
 // Project Copilot's raw `/models` shape into the slim provider-neutral fields
-// shared by every provider. kind/upstreamEndpoints/providerData/
-// enabledFlags are added by the caller because they depend on Copilot's
-// endpoint knowledge and the upstream-level flag layer.
-const copilotInternalModel = (model: CopilotRawModel): Omit<UpstreamModel, 'kind' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> => {
+// shared by every provider. kind/endpoints/providerData/enabledFlags are added
+// by the caller because they depend on Copilot's endpoint knowledge and the
+// upstream-level flag layer.
+const copilotInternalModel = (model: CopilotRawModel): Omit<UpstreamModel, 'kind' | 'endpoints' | 'providerData' | 'enabledFlags'> => {
   const limits: UpstreamModel['limits'] = {};
   if (model.capabilities?.limits?.max_output_tokens !== undefined) limits.max_output_tokens = model.capabilities.limits.max_output_tokens;
   if (model.capabilities?.limits?.max_context_window_tokens !== undefined) limits.max_context_window_tokens = model.capabilities.limits.max_context_window_tokens;
   if (model.capabilities?.limits?.max_prompt_tokens !== undefined) limits.max_prompt_tokens = model.capabilities.limits.max_prompt_tokens;
 
-  const internal: Omit<UpstreamModel, 'kind' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> = {
+  const internal: Omit<UpstreamModel, 'kind' | 'endpoints' | 'providerData' | 'enabledFlags'> = {
     id: model.id,
     limits,
   };
@@ -122,36 +122,63 @@ const inferredChatCompletionsSupport = (model: CopilotRawModel): boolean => mode
 
 const inferredEmbeddingSupport = (model: CopilotRawModel): boolean => model.supported_endpoints === undefined && model.capabilities?.type === 'embeddings';
 
-const rawModelSupportsEndpoint = (model: CopilotRawModel, endpoint: ModelEndpoint): boolean => {
-  const normalized = endpoint === 'messages_count_tokens' ? 'messages' : endpoint;
-  const declared = publicPathsToModelEndpoints(model.supported_endpoints ?? []);
-  if (declared.includes(normalized)) return true;
+// Copilot's `/models` reports each model's served endpoints as public paths; map
+// one onto our structured endpoint key. Both `/x` and `/v1/x` spellings appear.
+// Copilot is the only upstream whose catalog speaks paths — operator config and
+// our own constants are structured — so this lives here, not in a shared helper.
+const copilotPathToModelEndpoint = (path: string): ModelEndpointKey | undefined => {
+  switch (path) {
+  case '/chat/completions':
+  case '/v1/chat/completions':
+    return 'chatCompletions';
+  case '/responses':
+  case '/v1/responses':
+    return 'responses';
+  case '/v1/messages':
+  case '/messages':
+    return 'messages';
+  case '/embeddings':
+  case '/v1/embeddings':
+    return 'embeddings';
+  case '/images/generations':
+  case '/v1/images/generations':
+    return 'imagesGenerations';
+  case '/images/edits':
+  case '/v1/images/edits':
+    return 'imagesEdits';
+  default:
+    return undefined;
+  }
+};
+
+const rawModelSupportsEndpoint = (model: CopilotRawModel, endpoint: ModelEndpointKey): boolean => {
+  if ((model.supported_endpoints ?? []).some(path => copilotPathToModelEndpoint(path) === endpoint)) return true;
   // Copilot's Anthropic-family entries have historically under-reported their
   // native Messages path. Treating claude-* as Messages-capable is a
   // Copilot-provider workaround only; custom providers must declare their own
   // supported endpoints.
-  if (normalized === 'messages' && model.id.startsWith('claude-')) return true;
-  if (normalized === 'chat_completions') {
+  if (endpoint === 'messages' && model.id.startsWith('claude-')) return true;
+  if (endpoint === 'chatCompletions') {
     return inferredChatCompletionsSupport(model);
   }
-  if (normalized === 'embeddings') return inferredEmbeddingSupport(model);
+  if (endpoint === 'embeddings') return inferredEmbeddingSupport(model);
   return false;
 };
 
-const copilotModelEndpoints = (publicModel: CopilotRawModel, rawModels: readonly CopilotRawModel[]): ModelEndpoint[] => {
+const copilotModelEndpoints = (publicModel: CopilotRawModel, rawModels: readonly CopilotRawModel[]): ModelEndpoints => {
   if (rawModels.some(model => rawModelSupportsEndpoint(model, 'responses'))) {
-    return ['responses'];
+    return { responses: {} };
   }
 
   if (publicModel.id.startsWith('claude-') || rawModels.some(model => rawModelSupportsEndpoint(model, 'messages'))) {
-    return withMessagesCountTokens(['messages']);
+    return withMessagesCountTokens({ messages: {} });
   }
 
-  if (rawModels.some(model => rawModelSupportsEndpoint(model, 'chat_completions'))) {
-    return ['chat_completions'];
+  if (rawModels.some(model => rawModelSupportsEndpoint(model, 'chatCompletions'))) {
+    return { chatCompletions: {} };
   }
 
-  return rawModels.some(model => rawModelSupportsEndpoint(model, 'embeddings')) ? ['embeddings'] : [];
+  return rawModels.some(model => rawModelSupportsEndpoint(model, 'embeddings')) ? { embeddings: {} } : {};
 };
 
 const chatReasoningEffort = (body: Omit<ChatCompletionsPayload, 'model'>): string | undefined => (body.reasoning_effort && body.reasoning_effort !== 'none' ? body.reasoning_effort : undefined);
@@ -160,7 +187,7 @@ const messagesReasoningEffort = (body: Omit<MessagesPayload, 'model'>): string |
 
 const responsesReasoningEffort = (body: Omit<ResponsesPayload, 'model'>): string | undefined => (body.reasoning?.effort && body.reasoning.effort !== 'none' ? body.reasoning.effort : undefined);
 
-const rawModelFor = (model: UpstreamModel, endpoint: ModelEndpoint, hints: ModelSelectionHints = {}): CopilotRawModel => {
+const rawModelFor = (model: UpstreamModel, endpoint: ModelEndpointKey, hints: ModelSelectionHints = {}): CopilotRawModel => {
   // Copilot exposes one canonical public Claude model id per family. Raw
   // variant selection is derived from request fields such as reasoning effort
   // and anthropic-beta, not from the client's original model alias string.
@@ -203,12 +230,12 @@ const finalizeCopilotModels = (rawModels: CopilotRawModel[], enabledFlags: Reado
   const models: UpstreamModel[] = [];
   for (const mergedModel of merged.data) {
     const variants = groups.get(mergedModel.id) ?? [mergedModel];
-    const upstreamEndpoints = copilotModelEndpoints(mergedModel, variants);
+    const endpoints = copilotModelEndpoints(mergedModel, variants);
     const cost = pricingForCopilotPublicModelId(mergedModel.id);
     models.push({
       ...copilotInternalModel(mergedModel),
-      kind: kindForEndpoints(upstreamEndpoints),
-      upstreamEndpoints,
+      kind: kindForEndpoints(endpoints),
+      endpoints,
       providerData: { rawModels: variants } satisfies CopilotProviderData,
       ...(cost ? { cost } : {}),
       enabledFlags,
@@ -246,7 +273,9 @@ export const createCopilotProvider = async (record: UpstreamRecord): Promise<Mod
 
   const callMessagesEndpoint =
     (endpoint: 'messages' | 'messages_count_tokens') => (model: UpstreamModel, body: Omit<MessagesPayload, 'model'>, signal?: AbortSignal, headers?: Record<string, string>, anthropicBeta?: readonly string[]) => {
-      const rawModel = rawModelFor(model, endpoint, {
+      // Both the native Messages call and count_tokens select the same raw
+      // `messages` variant; they differ only in the upstream endpoint path.
+      const rawModel = rawModelFor(model, 'messages', {
         context1m: hasContext1mBeta(anthropicBeta),
         reasoningEffort: messagesReasoningEffort(body),
       });
@@ -274,7 +303,7 @@ export const createCopilotProvider = async (record: UpstreamRecord): Promise<Mod
       }),
     getPricingForModelKey: pricingForCopilotModelKey,
     callChatCompletions: (model, body, signal, headers) => {
-      const rawModel = rawModelFor(model, 'chat_completions', {
+      const rawModel = rawModelFor(model, 'chatCompletions', {
         reasoningEffort: chatReasoningEffort(body),
       });
       return call('chat_completions', body, signal, rawModel, headers);

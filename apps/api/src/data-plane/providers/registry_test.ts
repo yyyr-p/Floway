@@ -108,7 +108,7 @@ test('listModelProviders creates enabled provider instances with upstream row id
       models: [
         {
           upstreamModelId: 'gpt-prod',
-          supportedEndpoints: ['/chat/completions'],
+          endpoints: { chatCompletions: {} },
         },
       ],
     },
@@ -177,13 +177,13 @@ test('getInternalModels returns the catalog projection without execution binding
       const model = catalog.find(candidate => candidate.id === 'shared-model');
 
       assertEquals(model?.display_name, 'Shared Model');
-      assertEquals(Object.hasOwn(model!, 'upstreamEndpoints'), false);
+      assertEquals(Object.hasOwn(model!, 'endpoints'), false);
       assertEquals(model?.kind, 'chat');
       assertEquals(Object.hasOwn(model!, 'providers'), false);
       assertEquals(Object.hasOwn(model!, 'providerData'), false);
 
       const resolved = await resolveModelForRequest('shared-model');
-      assertEquals(resolved.model?.upstreamEndpoints, ['messages', 'messages_count_tokens', 'chat_completions']);
+      assertEquals(resolved.model?.endpoints, { messages: { countTokens: true }, chatCompletions: {} });
       assertEquals(
         resolved.model?.providers.map(({ upstream }) => upstream),
         ['up_copilot', 'up_custom'],
@@ -200,7 +200,7 @@ test('resolveModelForRequest applies provider-owned aliases only to that provide
       config: {
         baseUrl: 'https://custom.example.com',
         bearerToken: 'sk-custom',
-        supportedEndpoints: ['/v1/messages'],
+        endpoints: { messages: {} },
       },
     }),
   );
@@ -235,7 +235,7 @@ test('resolveModelForRequest applies provider-owned aliases only to that provide
       const resolved = await resolveModelForRequest('claude-opus-4-7-20300101');
 
       assertEquals(resolved.id, 'claude-opus-4-7');
-      assertEquals(resolved.model?.upstreamEndpoints, ['messages', 'messages_count_tokens']);
+      assertEquals(resolved.model?.endpoints, { messages: { countTokens: true } });
       assertEquals(
         resolved.model?.providers.map(({ upstream }) => upstream),
         ['up_copilot'],
@@ -251,13 +251,13 @@ test('resolveModelForProvider only loads the selected provider catalog', async (
     id: 'up_first',
     name: 'First',
     sortOrder: 0,
-    config: { baseUrl: 'https://first.example.com', bearerToken: 'sk-first', supportedEndpoints: ['/responses'] },
+    config: { baseUrl: 'https://first.example.com', bearerToken: 'sk-first', endpoints: { responses: {} } },
   }));
   await repo.upstreams.save(buildCustomUpstreamRecord({
     id: 'up_second',
     name: 'Second',
     sortOrder: 100,
-    config: { baseUrl: 'https://second.example.com', bearerToken: 'sk-second', supportedEndpoints: ['/responses'] },
+    config: { baseUrl: 'https://second.example.com', bearerToken: 'sk-second', endpoints: { responses: {} } },
   }));
 
   const providers = await listModelProviders();
@@ -324,7 +324,7 @@ test('disabledPublicModelIds hides models from the catalog and routing, per upst
     config: {
       endpoint: 'https://example.openai.azure.com',
       apiKey: 'az-key',
-      models: over.models.map(m => ({ ...m, supportedEndpoints: ['/chat/completions'] })),
+      models: over.models.map(m => ({ ...m, endpoints: { chatCompletions: {} } })),
     },
     flagOverrides: {},
     disabledPublicModelIds: over.disabledPublicModelIds,
@@ -381,8 +381,8 @@ test('resolveModelForProvider rejects a model id disabled on that upstream (filt
       endpoint: 'https://example.openai.azure.com',
       apiKey: 'az-key',
       models: [
-        { upstreamModelId: 'enabled-model', supportedEndpoints: ['/chat/completions'] },
-        { upstreamModelId: 'disabled-model', supportedEndpoints: ['/chat/completions'] },
+        { upstreamModelId: 'enabled-model', endpoints: { chatCompletions: {} } },
+        { upstreamModelId: 'disabled-model', endpoints: { chatCompletions: {} } },
       ],
     },
     flagOverrides: {},

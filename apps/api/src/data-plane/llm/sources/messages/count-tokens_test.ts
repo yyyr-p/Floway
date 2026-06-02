@@ -1,10 +1,10 @@
 import { test } from 'vitest';
 
-import { clearCopilotTokenCache } from '../../../../../shared/copilot.ts';
-import { assertEquals } from '../../../../../test-assert.ts';
-import { buildCustomUpstreamRecord, copilotModels, jsonResponse, requestApp, setupAppTest, withMockedFetch } from '../../../../../test-helpers.ts';
-import { clearModelsStore } from '../../../../providers/models-store.ts';
-import { createStoredResponsesItemId } from '../../responses/items/format.ts';
+import { clearCopilotTokenCache } from '../../../../shared/copilot.ts';
+import { assertEquals } from '../../../../test-assert.ts';
+import { buildCustomUpstreamRecord, copilotModels, jsonResponse, requestApp, setupAppTest, withMockedFetch } from '../../../../test-helpers.ts';
+import { clearModelsStore } from '../../../providers/models-store.ts';
+import { createStoredResponsesItemId } from '../responses/items/format.ts';
 
 const packReasoningSignature = (id: string): string => `@${id}`;
 
@@ -158,7 +158,7 @@ test('/v1/messages/count_tokens proxies to Azure Foundry Anthropic endpoint', as
         {
           upstreamModelId: 'claude-prod',
           publicModelId: 'claude-azure',
-          supportedEndpoints: ['/v1/messages'],
+          endpoints: { messages: {} },
         },
       ],
     },
@@ -222,7 +222,7 @@ test('/v1/messages/count_tokens rewrites stored Responses reasoning signatures b
         {
           upstreamModelId: 'claude-count-prod',
           publicModelId: 'claude-count-stored',
-          supportedEndpoints: ['/v1/messages'],
+          endpoints: { messages: {} },
         },
       ],
     },
@@ -359,7 +359,7 @@ test('/v1/messages/count_tokens rejects custom-upstream-only models', async () =
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',
-      supportedEndpoints: ['/chat/completions'],
+      endpoints: { chatCompletions: {} },
     },
   }));
 
@@ -415,7 +415,7 @@ test('/v1/messages/count_tokens preserves custom upstream /models HTTP errors', 
     config: {
       baseUrl: 'https://custom.example.com',
       bearerToken: 'sk-custom',
-      supportedEndpoints: ['/chat/completions'],
+      endpoints: { chatCompletions: {} },
     },
   }));
 

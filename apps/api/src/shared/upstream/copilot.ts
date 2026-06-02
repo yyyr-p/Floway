@@ -4,6 +4,7 @@
 
 import { copilotFetch, isCopilotTokenFetchError, type CopilotAccountType } from '../copilot.ts';
 import type { EndpointKey, Upstream, UpstreamFetchOptions } from './types.ts';
+import type { ModelEndpoints } from '@floway-dev/protocols/common';
 
 export interface CopilotUpstream extends Upstream {
   fetch(endpoint: EndpointKey, init: RequestInit, options?: UpstreamFetchOptions): Promise<Response>;
@@ -25,14 +26,14 @@ const COPILOT_PATHS: Record<EndpointKey, string> = {
   models: '/models',
 };
 
-export const COPILOT_SUPPORTED_ENDPOINTS = ['/chat/completions', '/responses', '/v1/messages', '/embeddings'];
+export const COPILOT_ENDPOINTS: ModelEndpoints = { chatCompletions: {}, responses: {}, messages: {}, embeddings: {} };
 
 export const createCopilotUpstream = (id: string, name: string, githubToken: string, accountType: CopilotAccountType): CopilotUpstream => {
   return {
     id,
     name,
     kind: 'copilot',
-    supportedEndpoints: COPILOT_SUPPORTED_ENDPOINTS,
+    endpoints: COPILOT_ENDPOINTS,
     fetch: async (endpoint, init, options) => {
       try {
         return await copilotFetch(COPILOT_PATHS[endpoint], init, githubToken, accountType, options?.extraHeaders ? { headers: options.extraHeaders } : undefined);

@@ -540,20 +540,21 @@ const resolveImageBinding = async (
   isEdit: boolean,
   state: ShimState,
 ): Promise<{ ok: true; binding: ProviderModelRecord } | { ok: false; error: ImageError }> => {
-  const endpoint = isEdit ? 'images_edits' : 'images_generations';
+  const endpointKey = isEdit ? 'imagesEdits' : 'imagesGenerations';
+  const endpointPath = isEdit ? '/images/edits' : '/images/generations';
   let resolution;
   try {
     resolution = await resolveModelForRequest(state.config.model, state.apiKeyUpstreamIds);
   } catch (e) {
     return { ok: false, error: serverError(e) };
   }
-  const binding = resolution.model?.providers.find(b => b.upstreamModel.upstreamEndpoints.includes(endpoint));
+  const binding = resolution.model?.providers.find(b => b.upstreamModel.endpoints[endpointKey] !== undefined);
   if (binding === undefined) {
     return {
       ok: false,
       error: {
         type: 'image_generation_error',
-        message: `No upstream provides model '${state.config.model}' for the /${endpoint.replace('_', '/')} endpoint.`,
+        message: `No upstream provides model '${state.config.model}' for the ${endpointPath} endpoint.`,
         code: 'model_not_found',
         retryable: false,
       },

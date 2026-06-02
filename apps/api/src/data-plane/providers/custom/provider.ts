@@ -1,16 +1,16 @@
 import { fetchCustomModels, type CustomModelsResponse, type CustomRawModel } from './fetch-models.ts';
-import { inferKindFromModelId } from './infer-kind.ts';
+import { inferEndpointsFromModelId } from './infer-endpoints.ts';
 import type { UpstreamRecord } from '../../../repo/types.ts';
 import { assertCustomUpstreamRecord, createCustomUpstream } from '../../../shared/upstream/custom.ts';
 import { publicModelId } from '../../../shared/upstream/model-config.ts';
 import type { EndpointKey } from '../../../shared/upstream/types.ts';
 import { mergeAnthropicBetaHeader } from '../anthropic-beta.ts';
-import { isStreamingEndpoint, kindForEndpoints, modelConfigEndpoints, publicPathsToModelEndpoints } from '../endpoints.ts';
+import { isStreamingEndpoint, modelConfigEndpoints } from '../endpoints.ts';
 import { resolveEffectiveFlags } from '../flags-resolve.ts';
 import { defaultsForProvider } from '../flags.ts';
 import { inProcessMemo, isProviderModelsHttpStatus, readModelsStore, writeModelsStore } from '../models-store.ts';
 import type { ModelProvider, ModelProviderInstance, ProviderCallResult, UpstreamModel } from '../types.ts';
-import type { ModelEndpoint, ModelKind, ModelPricing } from '@floway-dev/protocols/common';
+import { type ModelEndpoints, type ModelPricing, kindForEndpoints } from '@floway-dev/protocols/common';
 
 interface CustomProviderData {
   rawModelId: string;
@@ -26,15 +26,12 @@ const HARD_MS = 2 * 60 * 60 * 1000;
 const L1_TTL_MS = 120_000;
 const providerData = (model: UpstreamModel): CustomProviderData => model.providerData as CustomProviderData;
 
-// Endpoint routing for auto-fetched custom models is decided per-model:
-// `kind` comes from a tiered detector (Tier 1: upstream /models published
-// `kind`; Tier 2: id heuristic; default: 'chat'), and `upstreamEndpoints` is
-// then derived from kind + the per-upstream `supportedEndpoints` config (which
-// only declares chat-protocol availability). Display metadata (display_name /
-// created) and `cost` are surfaced through to the public catalog when the
-// upstream chose to publish them.
-const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'kind' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> => {
-  const internal: Omit<UpstreamModel, 'kind' | 'upstreamEndpoints' | 'providerData' | 'enabledFlags'> = {
+// Projects a raw custom model into the slim provider-neutral fields; the
+// caller adds kind / endpoints / providerData / enabledFlags. Display metadata
+// (display_name / created) and `cost` pass through to the public catalog when
+// the upstream chose to publish them.
+const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'kind' | 'endpoints' | 'providerData' | 'enabledFlags'> => {
+  const internal: Omit<UpstreamModel, 'kind' | 'endpoints' | 'providerData' | 'enabledFlags'> = {
     id: model.id,
     limits: model.limits ? { ...model.limits } : {},
   };
@@ -56,25 +53,33 @@ const customInternalModel = (model: CustomRawModel): Omit<UpstreamModel, 'kind' 
   return internal;
 };
 
-const resolveModelKind = (model: CustomRawModel): ModelKind => model.kind ?? inferKindFromModelId(model.id);
+// A published kind of 'embedding'/'image' (Tier 1) maps directly to its
+// endpoints; a published 'chat' takes the upstream's configured endpoints
+// verbatim. With no/unrecognized published kind, the id heuristic (Tier 2) runs
+// and falls back to the configured endpoints when it does not match. The
+// configured set may be empty, leaving the model listed but unroutable until
+// the operator declares an endpoint. The result is the model's `endpoints`;
+// `kind` is derived back from it.
+const autoModelEndpoints = (model: CustomRawModel, configured: ModelEndpoints): ModelEndpoints => {
+  if (model.kind === 'embedding') return { embeddings: {} };
+  if (model.kind === 'image') return { imagesGenerations: {}, imagesEdits: {} };
+  if (model.kind === 'chat') return configured;
+  return inferEndpointsFromModelId(model.id) ?? configured;
+};
 
 const finalizeCustomModels = (
   response: CustomModelsResponse,
-  configuredChatEndpoints: readonly ModelEndpoint[],
+  configuredEndpoints: ModelEndpoints,
   enabledFlags: ReadonlySet<string>,
 ): UpstreamModel[] => {
   const models: UpstreamModel[] = [];
   for (const rawModel of response.data) {
     if (!rawModel.id) continue;
-    const kind = resolveModelKind(rawModel);
-    const upstreamEndpoints: readonly ModelEndpoint[] =
-      kind === 'embedding' ? ['embeddings']
-        : kind === 'image' ? ['images_generations', 'images_edits']
-          : configuredChatEndpoints;
+    const endpoints = autoModelEndpoints(rawModel, configuredEndpoints);
     models.push({
       ...customInternalModel(rawModel),
-      kind,
-      upstreamEndpoints,
+      kind: kindForEndpoints(endpoints),
+      endpoints,
       providerData: { rawModelId: rawModel.id } satisfies CustomProviderData,
       enabledFlags,
     });
@@ -93,7 +98,7 @@ const pricingByRawIdFromResponse = (response: CustomModelsResponse): Map<string,
 export const createCustomProvider = (record: UpstreamRecord): ModelProviderInstance => {
   const { config } = assertCustomUpstreamRecord(record);
   const upstream = createCustomUpstream(record);
-  const configuredChatEndpoints = publicPathsToModelEndpoints(upstream.supportedEndpoints);
+  const configuredEndpoints = upstream.endpoints;
   // Computed once for the auto-fetch layer: only the upstream layer applies to
   // auto models (no per-model override layer). Manual models layer their own
   // flag overrides on top, resolved per-model below.
@@ -108,12 +113,12 @@ export const createCustomProvider = (record: UpstreamRecord): ModelProviderInsta
     // `resolveEffectiveFlags` for layer semantics.
     const modelLayer = model.flagOverrides?.enabled ? model.flagOverrides.values : undefined;
     const enabledFlags = resolveEffectiveFlags(defaultsForProvider('custom'), [record.flagOverrides, modelLayer]);
-    const upstreamEndpoints = modelConfigEndpoints(model);
+    const endpoints = modelConfigEndpoints(model);
     const internal: UpstreamModel = {
       id: publicModelId(model),
       limits: { ...(model.limits ?? {}) },
-      kind: kindForEndpoints(upstreamEndpoints),
-      upstreamEndpoints,
+      kind: kindForEndpoints(endpoints),
+      endpoints,
       providerData: { rawModelId: model.upstreamModelId } satisfies CustomProviderData,
       enabledFlags,
     };
@@ -138,7 +143,7 @@ export const createCustomProvider = (record: UpstreamRecord): ModelProviderInsta
   // manual copy is the only one emitted for that id.
   const autoFromResponse = (response: CustomModelsResponse): UpstreamModel[] => {
     const filtered: CustomModelsResponse = { data: response.data.filter(raw => !overriddenIds.has(raw.id)) };
-    return finalizeCustomModels(filtered, configuredChatEndpoints, upstreamFlags);
+    return finalizeCustomModels(filtered, configuredEndpoints, upstreamFlags);
   };
 
   // The emitted list is always manual-first: manual overrides precede any auto
