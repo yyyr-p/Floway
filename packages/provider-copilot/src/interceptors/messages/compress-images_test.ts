@@ -1,14 +1,15 @@
 import { test } from 'vitest';
 
 import { claudeImageCaps, withInlineImagesCompressed } from './compress-images.ts';
+import type { MessagesBoundaryCtx } from './types.ts';
 import { fitWithin, type ImageDimensions, type ImageProcessor, initImageProcessor } from '@floway-dev/platform';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { MessagesPayload, MessagesStreamEvent } from '@floway-dev/protocols/messages';
-import type { ExecuteResult, InterceptorRequest, MessagesInvocation } from '@floway-dev/provider';
+import type { ExecuteResult } from '@floway-dev/provider';
 import { eventResult } from '@floway-dev/provider';
-import { assertEquals, stubProvider, stubUpstreamModel, testTelemetryModelIdentity } from '@floway-dev/test-utils';
+import { assertEquals, stubUpstreamModel, testTelemetryModelIdentity } from '@floway-dev/test-utils';
 
-const stubRequest: InterceptorRequest = {};
+const stubRequest = {};
 
 const okEvents = (): Promise<ExecuteResult<ProtocolFrame<MessagesStreamEvent>>> =>
   Promise.resolve(eventResult((async function* (): AsyncGenerator<ProtocolFrame<MessagesStreamEvent>> {})(), testTelemetryModelIdentity));
@@ -28,16 +29,10 @@ const spyProcessor = (): { processor: ImageProcessor; inputs: Uint8Array[]; targ
   return { processor, inputs, targets };
 };
 
-const invocation = (payload: MessagesPayload, upstreamModelId = 'claude-test'): MessagesInvocation => ({
-  sourceApi: 'messages',
-  targetApi: 'messages',
-  model: payload.model,
-  upstream: 'test-upstream',
+const invocation = (payload: MessagesPayload, upstreamModelId = 'claude-test'): MessagesBoundaryCtx => ({
   payload,
-  provider: stubProvider(),
-  upstreamModel: stubUpstreamModel({ id: upstreamModelId }),
-  enabledFlags: new Set<string>(),
   headers: {},
+  model: stubUpstreamModel({ id: upstreamModelId, endpoints: { messages: {} } }),
 });
 
 test('compresses a top-level image block to WebP', async () => {

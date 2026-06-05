@@ -1,16 +1,9 @@
 export type {
   ChatCompletionsInvocation,
   GeminiInvocation,
-  InterceptorRequest,
-  Invocation,
-  LlmSourceApi,
   LlmTargetApi,
   MessagesInvocation,
-  ProviderChatCompletionsInterceptor,
-  ProviderGeminiInterceptor,
-  ProviderMessagesCountTokensInterceptor,
-  ProviderMessagesInterceptor,
-  ProviderResponsesInterceptor,
+  ProviderCandidate,
   ResponsesInvocation,
 } from './invocation.ts';
 
@@ -53,9 +46,7 @@ export type {
   ProviderCallResult,
   ProviderCompactionResult,
   ProviderModelRecord,
-  ProviderSourceInterceptors,
   ProviderStreamResult,
-  ProviderTargetInterceptors,
   ResolvedModel,
 } from './provider.ts';
 export { streamingProviderCall, type ProviderStreamParser } from './streaming.ts';

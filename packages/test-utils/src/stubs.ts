@@ -1,4 +1,4 @@
-import type { CacheRepo, ModelProvider, TelemetryModelIdentity, UpstreamModel } from '@floway-dev/provider';
+import type { CacheRepo, LlmTargetApi, ModelProvider, ModelProviderInstance, ProviderCandidate, ProviderModelRecord, TelemetryModelIdentity, UpstreamModel } from '@floway-dev/provider';
 
 export const memoryCacheRepo = (): CacheRepo => {
   const store = new Map<string, string>();
@@ -48,3 +48,36 @@ export const stubProvider = (overrides: Partial<ModelProvider> = {}): ModelProvi
   callImagesEdits: () => Promise.reject(new Error('stubProvider.callImagesEdits was called')),
   ...overrides,
 });
+
+export const stubProviderInstance = (overrides: Partial<ModelProviderInstance> = {}): ModelProviderInstance => ({
+  upstream: 'test-upstream',
+  providerKind: 'custom',
+  name: 'Test Upstream',
+  disabledPublicModelIds: [],
+  provider: stubProvider(),
+  supportsResponsesItemReference: false,
+  ...overrides,
+});
+
+export const stubProviderModelRecord = (overrides: Partial<ProviderModelRecord> = {}): ProviderModelRecord => {
+  const provider = overrides.provider ?? stubProvider();
+  return {
+    upstream: 'test-upstream',
+    upstreamName: 'Test Upstream',
+    providerKind: 'custom',
+    provider,
+    upstreamModel: stubUpstreamModel(),
+    enabledFlags: new Set<string>(),
+    supportsResponsesItemReference: false,
+    ...overrides,
+  };
+};
+
+export const stubProviderCandidate = (overrides: { targetApi?: LlmTargetApi; binding?: Partial<ProviderModelRecord>; provider?: ModelProviderInstance } = {}): ProviderCandidate => {
+  const provider = overrides.provider ?? stubProviderInstance();
+  return {
+    provider,
+    binding: stubProviderModelRecord({ provider: provider.provider, ...(overrides.binding ?? {}) }),
+    targetApi: overrides.targetApi ?? 'messages',
+  };
+};

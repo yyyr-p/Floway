@@ -237,8 +237,6 @@ const providerModelRecord = (instance: ModelProviderInstance, upstreamModel: Ups
   upstreamModel,
   enabledFlags: upstreamModel.enabledFlags,
   supportsResponsesItemReference: instance.supportsResponsesItemReference,
-  sourceInterceptors: instance.sourceInterceptors,
-  targetInterceptors: instance.targetInterceptors,
 });
 
 export const resolveModelForProvider = async (
