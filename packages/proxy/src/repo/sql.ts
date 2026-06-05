@@ -1,6 +1,6 @@
 import { normalizeDisabledPublicModelIds } from './disabled-public-models.ts';
 import { normalizeFlagOverrides } from './flag-overrides.ts';
-import { deleteAllResponsesItemPayloadFiles, parseStoredResponsesPayload, serializeStoredResponsesPayload } from './responses-payload.ts';
+import { deleteAllResponsesItemPayloadFiles, parseStoredResponsesPayload, RESPONSES_REFRESH_DEBOUNCE_MS, serializeStoredResponsesPayload } from './responses-payload.ts';
 import type {
   ApiKey,
   ApiKeyRepo,
@@ -724,7 +724,7 @@ class SqlResponsesItemsRepo implements ResponsesItemsRepo {
       const placeholders = chunk.map(() => '?').join(', ');
       return await this.db
         .prepare(`UPDATE responses_items SET refreshed_at = ? WHERE ${RESPONSES_ITEM_ID_SCOPE_SQL} AND id IN (${placeholders}) AND refreshed_at < ?`)
-        .bind(refreshedAt, apiKeyId, ...chunk, refreshedAt)
+        .bind(refreshedAt, apiKeyId, ...chunk, refreshedAt - RESPONSES_REFRESH_DEBOUNCE_MS)
         .run();
     }));
     return results.reduce((sum, result) => sum + ((result.meta.changes as number | undefined) ?? 0), 0);
@@ -798,7 +798,7 @@ class SqlResponsesSnapshotsRepo implements ResponsesSnapshotsRepo {
   async refresh(apiKeyId: string | null, id: string, refreshedAt: number): Promise<boolean> {
     const result = await this.db
       .prepare('UPDATE responses_snapshots SET refreshed_at = ? WHERE id = ? AND COALESCE(api_key_id, \'\') = COALESCE(?, \'\') AND refreshed_at < ?')
-      .bind(refreshedAt, id, apiKeyId, refreshedAt)
+      .bind(refreshedAt, id, apiKeyId, refreshedAt - RESPONSES_REFRESH_DEBOUNCE_MS)
       .run();
     return ((result.meta.changes as number | undefined) ?? 0) > 0;
   }

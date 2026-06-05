@@ -7,6 +7,24 @@ import type { ResponsesItemsRepo, StoredResponsesItem } from './types.ts';
 import { initFileProvider, MemoryFileProvider, type SqlDatabase } from '@floway-dev/platform';
 import { assert, assertEquals, assertRejects } from '@floway-dev/test-utils';
 
+// `refreshMany` debounces writes within a 24h window, so refresh-related
+// assertions need timestamps that span more than a day to actually exercise
+// the update path. Scaling every numeric timestamp by DAY_MS keeps the
+// existing assertions ordering and arithmetic intact while making refresh
+// gaps comfortably exceed the debounce.
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// gzip flattens long runs of a single character almost to nothing; spill tests
+// need a body that resists compression so it actually crosses the inline
+// threshold.
+const incompressibleString = (approxBytes: number): string => {
+  const bytes = new Uint8Array(Math.ceil(approxBytes / 2));
+  crypto.getRandomValues(bytes);
+  let hex = '';
+  for (const byte of bytes) hex += byte.toString(16).padStart(2, '0');
+  return hex.slice(0, approxBytes);
+};
+
 const storedItem = (overrides: Partial<StoredResponsesItem> & Pick<StoredResponsesItem, 'id' | 'apiKeyId' | 'createdAt'>): StoredResponsesItem => ({
   upstreamId: null,
   upstreamItemId: null,
@@ -28,7 +46,7 @@ const exerciseResponsesItemsRepo = async (repo: ResponsesItemsRepo) => {
     upstreamItemId: 'upstream_msg_a',
     itemType: 'message',
     contentHash: 'content_hash_a',
-    createdAt: 1_000,
+    createdAt: 1_000 * DAY_MS,
   });
   const second = storedItem({
     id: 'rs_mFBDiA_Lh1uXb7nD_bQb4I1CUYH2w',
@@ -37,14 +55,14 @@ const exerciseResponsesItemsRepo = async (repo: ResponsesItemsRepo) => {
     upstreamItemId: 'opaque_reasoning_id',
     itemType: 'reasoning',
     payload: { item: { id: 'rs_mFBDiA_Lh1uXb7nD_bQb4I1CUYH2w', type: 'reasoning', summary: [] } },
-    createdAt: 2_000,
+    createdAt: 2_000 * DAY_MS,
   });
   const adminScoped = storedItem({
     id: 'ws_WGRXTA_sVlhxg6BAV0BUzj0KkWSqA',
     apiKeyId: null,
     itemType: 'web_search_call',
     payload: { item: { id: 'ws_WGRXTA_sVlhxg6BAV0BUzj0KkWSqA', type: 'web_search_call', status: 'completed' } },
-    createdAt: 3_000,
+    createdAt: 3_000 * DAY_MS,
   });
 
   await repo.insertMany([first, second, adminScoped]);
@@ -56,31 +74,35 @@ const exerciseResponsesItemsRepo = async (repo: ResponsesItemsRepo) => {
   assertEquals(await repo.lookupManyByContentHash('key_a', ['content_hash_a']), [first]);
   assertEquals(await repo.lookupManyByContentHash('key_b', ['content_hash_a']), []);
 
-  assertEquals(await repo.refreshMany('key_a', [first.id, first.id, second.id, adminScoped.id, 'missing'], 4_000), 2);
+  assertEquals(await repo.refreshMany('key_a', [first.id, first.id, second.id, adminScoped.id, 'missing'], 4_000 * DAY_MS), 2);
   assertEquals(
     await repo.lookupMany('key_a', [first.id, second.id]),
     [
-      { ...first, refreshedAt: 4_000 },
-      { ...second, refreshedAt: 4_000 },
+      { ...first, refreshedAt: 4_000 * DAY_MS },
+      { ...second, refreshedAt: 4_000 * DAY_MS },
     ],
   );
-  assertEquals(await repo.refreshMany('key_a', [first.id], 3_500), 0);
-  assertEquals(await repo.refreshMany(null, [adminScoped.id], 5_000), 1);
-  const refreshedAdminScoped = { ...adminScoped, refreshedAt: 5_000 };
+  // Smaller-than-stored refreshedAt: rejected for two overlapping reasons —
+  // the never-go-backwards guard, and (since 3_500*DAY < 4_000*DAY - debounce)
+  // the debounce. Both block, so this assertion holds regardless of which
+  // fires first. The dedicated debounce test below isolates the boundary.
+  assertEquals(await repo.refreshMany('key_a', [first.id], 3_500 * DAY_MS), 0);
+  assertEquals(await repo.refreshMany(null, [adminScoped.id], 5_000 * DAY_MS), 1);
+  const refreshedAdminScoped = { ...adminScoped, refreshedAt: 5_000 * DAY_MS };
 
-  assertEquals(await repo.clearPayloadOlderThan(500), 0);
-  assertEquals(await repo.clearPayloadOlderThan(2_500), 2);
+  assertEquals(await repo.clearPayloadOlderThan(500 * DAY_MS), 0);
+  assertEquals(await repo.clearPayloadOlderThan(2_500 * DAY_MS), 2);
   assertEquals(
     await repo.lookupMany('key_a', [first.id, second.id]),
     [
-      { ...first, payload: null, refreshedAt: 4_000 },
-      { ...second, payload: null, refreshedAt: 4_000 },
+      { ...first, payload: null, refreshedAt: 4_000 * DAY_MS },
+      { ...second, payload: null, refreshedAt: 4_000 * DAY_MS },
     ],
   );
   assertEquals(await repo.lookupMany(null, [adminScoped.id]), [refreshedAdminScoped]);
 
-  assertEquals(await repo.deleteOlderThan(3_000), 0);
-  assertEquals(await repo.deleteOlderThan(4_500), 2);
+  assertEquals(await repo.deleteOlderThan(3_000 * DAY_MS), 0);
+  assertEquals(await repo.deleteOlderThan(4_500 * DAY_MS), 2);
   assertEquals(await repo.lookupMany('key_a', [first.id, second.id]), []);
   assertEquals(await repo.lookupMany(null, [adminScoped.id]), [refreshedAdminScoped]);
 
@@ -90,6 +112,59 @@ const exerciseResponsesItemsRepo = async (repo: ResponsesItemsRepo) => {
 
 test('memory responses items repo inserts, looks up by scope, cleans payloads, deletes rows, and clears', async () => {
   await exerciseResponsesItemsRepo(new InMemoryRepo().responsesItems);
+});
+
+const exerciseRefreshManyDebounce = async (repo: ResponsesItemsRepo) => {
+  initFileProvider(new MemoryFileProvider());
+  const base = Date.UTC(2026, 0, 1);
+  const item = storedItem({
+    id: 'msg_z1mVjw_0xVvS8c_KjD1sBkZk5qbdA',
+    apiKeyId: 'key_a',
+    createdAt: base,
+  });
+  await repo.insertMany([item]);
+
+  // First touch lifts refreshed_at into the future, where it'll act as the
+  // anchor every subsequent attempt is measured against.
+  assertEquals(await repo.refreshMany('key_a', [item.id], base + 30 * DAY_MS), 1);
+
+  // Within the 24h debounce window the row shouldn't change.
+  assertEquals(await repo.refreshMany('key_a', [item.id], base + 30 * DAY_MS + 12 * 60 * 60 * 1000), 0);
+  assertEquals(await repo.refreshMany('key_a', [item.id], base + 31 * DAY_MS - 1), 0);
+  // Right at the window boundary the cutoff equals refreshed_at, still no
+  // update because the comparison is strictly less-than.
+  assertEquals(await repo.refreshMany('key_a', [item.id], base + 31 * DAY_MS), 0);
+  assertEquals((await repo.lookupMany('key_a', [item.id]))[0].refreshedAt, base + 30 * DAY_MS);
+
+  // Past the window the row advances.
+  assertEquals(await repo.refreshMany('key_a', [item.id], base + 31 * DAY_MS + 1), 1);
+  assertEquals((await repo.lookupMany('key_a', [item.id]))[0].refreshedAt, base + 31 * DAY_MS + 1);
+};
+
+test('memory responses items refreshMany debounces writes within 24h', async () => {
+  await exerciseRefreshManyDebounce(new InMemoryRepo().responsesItems);
+});
+
+test('SQL responses items refreshMany debounces writes within 24h', async () => {
+  await exerciseRefreshManyDebounce(new SqlRepo(new FakeResponsesItemsSqlDatabase()).responsesItems);
+});
+
+test('memory responses snapshots refresh debounces writes within 24h', async () => {
+  const repo = new InMemoryRepo().responsesSnapshots;
+  const base = Date.UTC(2026, 0, 1);
+  await repo.insert({
+    id: 'resp_dbnc',
+    apiKeyId: 'key_a',
+    itemIds: ['msg_a'],
+    createdAt: base,
+    refreshedAt: base,
+  });
+
+  assertEquals(await repo.refresh('key_a', 'resp_dbnc', base + 30 * DAY_MS), true);
+  assertEquals(await repo.refresh('key_a', 'resp_dbnc', base + 30 * DAY_MS + 12 * 60 * 60 * 1000), false);
+  assertEquals(await repo.refresh('key_a', 'resp_dbnc', base + 31 * DAY_MS), false);
+  assertEquals(await repo.refresh('key_a', 'resp_dbnc', base + 31 * DAY_MS + 1), true);
+  assertEquals((await repo.lookup('key_a', 'resp_dbnc'))?.refreshedAt, base + 31 * DAY_MS + 1);
 });
 
 test('memory responses items repo clones item JSON at the repo boundary', async () => {
@@ -217,7 +292,7 @@ test('SQL responses items repo spills large payloads through the runtime file pr
   const files = new MemoryFileProvider();
   initFileProvider(files);
   const repo = new SqlRepo(db).responsesItems;
-  const payload = { item: { type: 'message', id: 'msg_large', content: 'x'.repeat(600 * 1024) } };
+  const payload = { item: { type: 'message', id: 'msg_large', content: incompressibleString(96 * 1024) } };
   const item = storedItem({
     id: 'msg_z1mVjw_0xVvS8c_KjD1sBkZk5qbdA',
     apiKeyId: 'key_a',
@@ -244,7 +319,7 @@ test('SQL responses items deleteAll removes spilled payload files alongside the 
   const item = storedItem({
     id: 'msg_z1mVjw_0xVvS8c_KjD1sBkZk5qbdA',
     apiKeyId: 'key_a',
-    payload: { item: { type: 'message', id: 'msg_large', content: 'x'.repeat(600 * 1024) } },
+    payload: { item: { type: 'message', id: 'msg_large', content: incompressibleString(96 * 1024) } },
     createdAt: Date.UTC(2026, 4, 28, 12),
   });
 

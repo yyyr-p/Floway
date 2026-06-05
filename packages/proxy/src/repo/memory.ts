@@ -2,6 +2,7 @@
 
 import { normalizeDisabledPublicModelIds } from './disabled-public-models.ts';
 import { normalizeFlagOverrides } from './flag-overrides.ts';
+import { RESPONSES_REFRESH_DEBOUNCE_MS } from './responses-payload.ts';
 import type {
   ApiKey,
   ApiKeyRepo,
@@ -469,9 +470,10 @@ class MemoryResponsesItemsRepo implements ResponsesItemsRepo {
 
   refreshMany(apiKeyId: string | null, ids: readonly string[], refreshedAt: number): Promise<number> {
     let changes = 0;
+    const cutoff = refreshedAt - RESPONSES_REFRESH_DEBOUNCE_MS;
     for (const id of new Set(ids)) {
       const row = this.store.get(responsesItemStoreKey(apiKeyId, id));
-      if (row && row.refreshedAt < refreshedAt) {
+      if (row && row.refreshedAt < cutoff) {
         row.refreshedAt = refreshedAt;
         changes += 1;
       }
@@ -527,7 +529,7 @@ class MemoryResponsesSnapshotsRepo implements ResponsesSnapshotsRepo {
 
   refresh(apiKeyId: string | null, id: string, refreshedAt: number): Promise<boolean> {
     const snapshot = this.store.get(responsesItemStoreKey(apiKeyId, id));
-    if (!snapshot || snapshot.refreshedAt >= refreshedAt) return Promise.resolve(false);
+    if (!snapshot || snapshot.refreshedAt >= refreshedAt - RESPONSES_REFRESH_DEBOUNCE_MS) return Promise.resolve(false);
     snapshot.refreshedAt = refreshedAt;
     return Promise.resolve(true);
   }
