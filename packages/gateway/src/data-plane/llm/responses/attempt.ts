@@ -1,6 +1,7 @@
 import { responsesInterceptors } from './interceptors/index.ts';
 import type { ResponsesAttemptResult, ResponsesInvocation } from './interceptors/types.ts';
 import { createStoredResponseId } from './items/format.ts';
+import { normalizeAssistantInputText } from './items/normalize-assistant-content.ts';
 import { drainAsync, syntheticEventsFromResult, wrapResponsesOutputForStorage } from './items/output.ts';
 import { rewriteResponsesItemsForCandidate, type RewrittenResponsesPayload } from './items/rewrite.ts';
 import type { ResponsesSnapshotMode, StatefulResponsesStore } from './items/store.ts';
@@ -62,7 +63,15 @@ export const responsesAttempt = {
       // can recover real prior-turn results instead of placeholder fallbacks.
       store.beginAttempt(rewritten.references);
 
-      return await dispatchResponses(rewritten.payload, ctx, store, candidate, invocation.headers);
+      // Copilot compaction and Azure-native compaction both emit assistant
+      // messages whose content blocks have `type: 'input_text'`, then refuse
+      // the same items echoed back as input on the next turn. Normalising
+      // here, after the rewrite has expanded any `item_reference` items
+      // from the snapshot store, catches both the direct-echo and
+      // store-replay paths in one place.
+      const normalized: ResponsesPayload = { ...rewritten.payload, input: normalizeAssistantInputText(rewritten.payload.input) };
+
+      return await dispatchResponses(normalized, ctx, store, candidate, invocation.headers);
     });
 
     if (chainResult.type !== 'events') return chainResult;
@@ -101,7 +110,8 @@ export const responsesAttempt = {
       const rewritten = await rewriteOrRenderFailure(invocation.payload, store, candidate);
       if (!('payload' in rewritten)) return rewritten.failure;
       store.beginAttempt(rewritten.references);
-      return await callResponsesCompactAsExecuteResult(rewritten.payload, ctx, candidate, invocation.headers);
+      const normalized: ResponsesPayload = { ...rewritten.payload, input: normalizeAssistantInputText(rewritten.payload.input) };
+      return await callResponsesCompactAsExecuteResult(normalized, ctx, candidate, invocation.headers);
     });
 
     if (chainResult.type !== 'events') return chainResult;
