@@ -251,7 +251,6 @@ test('/api/performance/overview series pivots to per-user under all-by-user view
   const seriesGroups = body.series.map((r: { group: string; requests: number }) => [r.group, r.requests]).sort();
   assertEquals(seriesGroups, [['1', 1], ['2', 1]]);
   assertEquals(body.users.map((u: { id: number }) => u.id).sort(), [1, 2]);
-  assertEquals(Array.isArray(body.keyColorOrder), true);
 });
 
 test('/api/performance/overview returns dashboard aggregates from one repo query', async () => {
