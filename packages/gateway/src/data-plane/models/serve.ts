@@ -5,10 +5,8 @@
 import type { Context } from 'hono';
 
 import { loadModels } from './load.ts';
-import { apiKeyUpstreamIdsFromContext } from '../../middleware/auth.ts';
+import { effectiveUpstreamIdsFromContext } from '../../middleware/auth.ts';
 import { ProviderModelsUnavailableError } from '@floway-dev/provider';
-
-const modelListingFailureMessage = 'Upstream model listing failed';
 
 const apiErrorResponse = (message: string, status: number): Response => Response.json({ error: { message, type: 'api_error' } }, { status });
 
@@ -17,14 +15,14 @@ const apiErrorResponse = (message: string, status: number): Response => Response
 // configured" hint) carry actionable operator guidance and surface verbatim.
 const modelLoadErrorResponse = (error: unknown): Response => {
   if (error instanceof ProviderModelsUnavailableError) {
-    return apiErrorResponse(modelListingFailureMessage, 502);
+    return apiErrorResponse('Upstream model listing failed', 502);
   }
   return apiErrorResponse(error instanceof Error ? error.message : String(error), 502);
 };
 
 export const models = async (c: Context) => {
   try {
-    return Response.json(await loadModels(apiKeyUpstreamIdsFromContext(c)));
+    return Response.json(await loadModels(effectiveUpstreamIdsFromContext(c)));
   } catch (e) {
     return modelLoadErrorResponse(e);
   }
