@@ -261,9 +261,11 @@ works across the 100 most recent versions, but Cloudflare blocks rollback
 when intervening deployments changed Durable Object migrations or removed
 referenced KV/R2/Queue bindings. The Worker's bindings (D1, R2, Images,
 KV) only ever grow, never shrink — `pnpm run deploy` runs
-`scripts/check-bindings.ts` first and refuses to publish if
-wrangler.jsonc drops any of them — so plain code rollback stays safe; D1
-state is rolled back separately as above.
+`pnpm install --frozen-lockfile` first (so a fast-forward that introduced
+a new workspace package wires its symlinks before the build runs) then
+`scripts/check-bindings.ts` and refuses to publish if wrangler.jsonc
+drops any of them — so plain code rollback stays safe; D1 state is
+rolled back separately as above.
 
 A complete deploy fits in a strict turn budget: **three agent turns when
 migrations are pending** (Step 1 = gather, Step 2 = backup + report + two
