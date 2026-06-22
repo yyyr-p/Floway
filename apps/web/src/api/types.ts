@@ -21,9 +21,11 @@ export interface ModelEndpoints {
 
 export type ModelEndpointKey = keyof ModelEndpoints;
 
-// USD per million tokens, keyed by billing dimension.
-export type BillingDimension = 'input' | 'input_cache_read' | 'input_cache_write' | 'input_cache_write_1h' | 'input_image' | 'output' | 'output_image';
-export type ModelPricing = Partial<Record<BillingDimension, number>>;
+// USD per million tokens, keyed by billing dimension. Imported from the
+// gateway so the dashboard's pricing form stays locked to the same definition
+// the backend writes against — same pattern as `ProxyRecord` below.
+import type { BillingDimension, ModelPricing } from '@floway-dev/gateway/control-plane/pricing/types';
+export type { BillingDimension, ModelPricing };
 
 export interface UpstreamModelConfig {
   upstreamModelId: string;
