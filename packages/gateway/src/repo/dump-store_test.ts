@@ -22,7 +22,7 @@ import { assertEquals, assertExists } from '@floway-dev/test-utils';
 // both tables present; we synthesise a minimal `upstreams` shape (only
 // the columns the join reads) so the test stays decoupled from the full
 // production upstreams migration.
-const MIGRATION_PATH = resolve(fileURLToPath(import.meta.url), '..', '..', '..', 'migrations', '0037_dump_records.sql');
+const MIGRATION_PATH = resolve(fileURLToPath(import.meta.url), '..', '..', '..', 'migrations', '0041_dump_records.sql');
 const UPSTREAMS_STUB_SQL = `
   CREATE TABLE upstreams (
     id TEXT PRIMARY KEY,
