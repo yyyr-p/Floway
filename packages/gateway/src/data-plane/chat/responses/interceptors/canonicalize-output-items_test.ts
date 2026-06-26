@@ -22,6 +22,7 @@ const stubCtx: GatewayCtx = {
 
 const invocation = (): ResponsesInvocation => ({
   payload: { model: 'gpt-test', input: 'hi' } as ResponsesPayload,
+  action: 'generate',
   candidate: stubProviderCandidate({ targetApi: 'responses' }),
   store: new LayeredStatefulResponsesStore({
     apiKeyId: 'test-key',
