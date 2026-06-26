@@ -1,6 +1,6 @@
 import { messagesThinkingBlockFromChatCompletionsScalarReasoning } from '../shared/chat-completions-and-messages/reasoning.ts';
 import { parseToolArgumentsObject } from '../shared/messages/tool-arguments.ts';
-import { applyLastMessageCacheBreakpoint, applyLastToolCacheBreakpoint } from '../shared/via-messages/cache-breakpoints.ts';
+import { applyLastMessageCacheBreakpoint, applyLastToolCacheBreakpoint, EPHEMERAL_CACHE_CONTROL } from '../shared/via-messages/cache-breakpoints.ts';
 import { fetchRemoteImage, type RemoteImageLoader, resolveImageUrlToMessagesImage } from '../shared/via-messages/remote-images.ts';
 import type { ChatCompletionsPayload, ChatCompletionsContentPart, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
 import { MESSAGES_FALLBACK_MAX_TOKENS, type MessagesAssistantContentBlock, type MessagesMessage, type MessagesPayload, type MessagesTextBlock, type MessagesUserContentBlock } from '@floway-dev/protocols/messages';
@@ -122,11 +122,6 @@ const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemote
       break;
     case 'system':
     case 'developer':
-      // Both Chat Completions system and developer messages map to Messages
-      // role: 'system' inline. The Messages role enum admits 'system'
-      // (https://platform.claude.com/docs/en/api/messages); developer content
-      // is the same intent layer and normalizes to system on the Messages
-      // wire.
       result.push({
         role: 'system',
         content: convertSystemContent(message.content),
@@ -161,12 +156,34 @@ const CHAT_TOOL_CHOICES = {
 } satisfies Record<Extract<ChatCompletionsPayload['tool_choice'], string>, MessagesPayload['tool_choice']>;
 
 export const translateChatCompletionsToMessages = async (payload: ChatCompletionsPayload, options: TranslateChatCompletionsToMessagesOptions = {}): Promise<MessagesPayload> => {
-  // System / developer messages pass through inline as Messages role: 'system'
-  // items (the Messages role enum supports it). Chat Completions has no
-  // canonical top-level system field, so nothing is hoisted to MessagesPayload.system.
-  const messages = await buildMessagesInput(payload.messages, options.loadRemoteImage ?? fetchRemoteImage);
+  // Hoist the leading contiguous run of system/developer messages to
+  // MessagesPayload.system. Non-leading system/developer messages stay inline
+  // as MessagesSystemMessage; upstreams that reject them can be handled by the
+  // `demote-interleaved-system-to-user` interceptor.
+  const systemParts: string[] = [];
+  let prefixEnd = 0;
+  for (const message of payload.messages) {
+    if (message.role !== 'system' && message.role !== 'developer') break;
+    const text =
+      typeof message.content === 'string'
+        ? message.content
+        : Array.isArray(message.content)
+          ? message.content
+              .filter((part): part is Extract<ChatCompletionsContentPart, { type: 'text' }> => part.type === 'text')
+              .map(part => part.text)
+              .join('')
+          : '';
+    if (text) systemParts.push(text);
+    prefixEnd++;
+  }
+
+  const messages = await buildMessagesInput(payload.messages.slice(prefixEnd), options.loadRemoteImage ?? fetchRemoteImage);
 
   const maxTokens = payload.max_tokens ?? options.fallbackMaxOutputTokens ?? MESSAGES_FALLBACK_MAX_TOKENS;
+  const systemText = systemParts.length > 0 ? systemParts.join('\n\n') : '';
+  const systemBlocks: MessagesTextBlock[] | undefined = systemText
+    ? [{ type: 'text', text: systemText, cache_control: EPHEMERAL_CACHE_CONTROL }]
+    : undefined;
   const tools = payload.tools?.length ? translateChatCompletionsTools(payload.tools) : undefined;
   applyLastToolCacheBreakpoint(tools);
   applyLastMessageCacheBreakpoint(messages);
@@ -204,6 +221,7 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
     model: payload.model,
     messages,
     max_tokens: maxTokens,
+    ...(systemBlocks ? { system: systemBlocks } : {}),
     ...(payload.temperature != null ? { temperature: payload.temperature } : {}),
     ...(payload.top_p != null ? { top_p: payload.top_p } : {}),
     ...(payload.stop != null

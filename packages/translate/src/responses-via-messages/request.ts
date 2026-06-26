@@ -107,11 +107,13 @@ const translateAssistantMessage = (message: ResponsesInputMessage): MessagesAssi
   return { role: 'assistant', content: content.length > 0 ? content : '' };
 };
 
-// Both `role: 'system'` and `role: 'developer'` Responses input messages flow
-// through as Messages system items. The Messages role enum admits 'system'
-// directly (https://platform.claude.com/docs/en/api/messages); developer
-// content is the same intent layer and normalizes to 'system' on the
-// Messages wire.
+const extractSystemText = (message: ResponsesInputMessage): string => {
+  if (typeof message.content === 'string') return message.content;
+  if (!Array.isArray(message.content)) return '';
+
+  return message.content.map(block => ('text' in block ? block.text : '')).join('');
+};
+
 const translateSystemMessage = (message: ResponsesInputMessage): MessagesSystemMessage => {
   if (typeof message.content === 'string') {
     return { role: 'system', content: message.content };
@@ -153,14 +155,29 @@ const unexpectedResponsesInputItem = (value: ResponsesInputItem): never => {
   throw new Error(`Unexpected Responses input item variant: ${JSON.stringify(value)}`);
 };
 
-const translateResponsesInput = async (input: string | ResponsesInputItem[], loadRemoteImage: RemoteImageLoader): Promise<MessagesMessage[]> => {
+const translateResponsesInput = async (input: string | ResponsesInputItem[], loadRemoteImage: RemoteImageLoader): Promise<{ messages: MessagesMessage[]; systemParts: string[] }> => {
   if (typeof input === 'string') {
-    return [{ role: 'user', content: input }];
+    return {
+      messages: [{ role: 'user', content: input }],
+      systemParts: [],
+    };
+  }
+
+  // Hoist the leading contiguous run of system/developer input messages to
+  // systemParts (→ top-level Messages.system). Non-leading system/developer
+  // messages stay inline as MessagesSystemMessage.
+  const systemParts: string[] = [];
+  let prefixEnd = 0;
+  for (const item of input) {
+    if (item.type !== 'message' || (item.role !== 'system' && item.role !== 'developer')) break;
+    const text = extractSystemText(item);
+    if (text) systemParts.push(text);
+    prefixEnd++;
   }
 
   const messages: MessagesMessage[] = [];
 
-  for (const item of input) {
+  for (const item of input.slice(prefixEnd)) {
     switch (item.type) {
     case 'message':
       switch (item.role) {
@@ -235,7 +252,7 @@ const translateResponsesInput = async (input: string | ResponsesInputItem[], loa
     }
   }
 
-  return messages;
+  return { messages, systemParts };
 };
 
 const translateTools = (tools: ResponsesTool[] | null | undefined, customToolNames: Set<string>): MessagesTool[] | undefined => {
@@ -299,13 +316,13 @@ const translateToolChoice = (toolChoice: ResponsesToolChoice | undefined): Messa
 
 export const translateResponsesToMessages = async (payload: ResponsesPayload, options: TranslateResponsesToMessagesOptions = {}): Promise<ResponsesToMessagesResult> => {
   const customToolNames = new Set<string>();
-  const messages = await translateResponsesInput(payload.input, options.loadRemoteImage ?? fetchRemoteImage);
+  const { messages, systemParts } = await translateResponsesInput(payload.input, options.loadRemoteImage ?? fetchRemoteImage);
   const tools = translateTools(payload.tools, customToolNames);
-  // `payload.instructions` is the Responses canonical system field; it maps
-  // to the Messages top-level `system`. Any `role: 'system'`/`'developer'`
-  // input items are emitted inline as MessagesSystemMessage by the input
-  // translator, preserving chronology.
-  const system = payload.instructions ?? '';
+  // `payload.instructions` is the Responses canonical system field; leading
+  // system/developer input items are hoisted into `systemParts`. Combine
+  // both into the Messages top-level `system`. Non-leading system items stay
+  // inline as MessagesSystemMessage.
+  const system = [payload.instructions, ...systemParts].filter((part): part is string => Boolean(part)).join('\n\n');
   const effort = payload.reasoning?.effort;
   const maxTokens = payload.max_output_tokens ?? options.fallbackMaxOutputTokens ?? MESSAGES_FALLBACK_MAX_TOKENS;
   const systemBlocks: MessagesTextBlock[] | undefined = system
