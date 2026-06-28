@@ -138,11 +138,9 @@ const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemote
       // been hoisted to MessagesPayload.system by
       // translateChatCompletionsToMessages before buildMessagesInput runs,
       // so anything reaching this branch was deliberately placed mid-history
-      // by the caller and we preserve that chronological position. Developer
-      // is the same intent layer as system on the Chat Completions wire and
-      // normalizes to role:'system' here. Anthropic upstreams diverge on
-      // inline role:'system' (Bedrock accepts it under placement rules;
-      // Vertex rejects it outright), so the gateway's
+      // by the caller and we preserve that chronological position. Anthropic
+      // upstreams diverge on inline role:'system' (Bedrock accepts it under
+      // placement rules; Vertex rejects it outright), so the gateway's
       // `demote-interleaved-system-to-user` interceptor flag is the safety
       // net for any inline system that would otherwise reach an upstream
       // that does not accept it.

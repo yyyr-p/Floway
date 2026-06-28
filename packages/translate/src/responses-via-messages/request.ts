@@ -133,13 +133,11 @@ const responsesSystemBlocks = (message: ResponsesInputMessage): MessagesTextBloc
 // MessagesSystemMessage at their chronological position. The leading
 // contiguous prefix has already been hoisted to MessagesPayload.system by
 // translateResponsesToMessages before translateResponsesInput's per-item
-// loop hits this branch. Developer is the same intent layer as system on
-// the Responses wire and normalizes to role:'system' here. Anthropic
-// upstreams diverge on inline role:'system' (Bedrock accepts it under
-// placement rules; Vertex rejects it outright), so the gateway's
-// `demote-interleaved-system-to-user` interceptor flag is the safety net
-// for any inline system that would otherwise reach an upstream that does
-// not accept it.
+// loop hits this branch. Anthropic upstreams diverge on inline
+// role:'system' (Bedrock accepts it under placement rules; Vertex rejects
+// it outright), so the gateway's `demote-interleaved-system-to-user`
+// interceptor flag is the safety net for any inline system that would
+// otherwise reach an upstream that does not accept it.
 const translateSystemMessage = (message: ResponsesInputMessage): MessagesSystemMessage => {
   if (typeof message.content === 'string') {
     return { role: 'system', content: message.content };
