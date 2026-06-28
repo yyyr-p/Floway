@@ -122,9 +122,14 @@ const responsesSystemBlocks = (message: ResponsesInputMessage): MessagesTextBloc
     if (block.type === 'input_image') {
       throw new Error(`Responses → Messages translator does not accept image content parts in ${message.role} messages — Anthropic Messages only permits text in the system field.`);
     }
-    if (block.type === 'input_text' || block.type === 'output_text') {
-      blocks.push({ type: 'text', text: (block as ResponsesInputText).text });
+    if (block.type !== 'input_text' && block.type !== 'output_text') {
+      // Exhaustiveness guard: today ResponsesInputContent is
+      // input_text|input_image|output_text; a future variant must opt into
+      // translator behavior rather than be silently dropped from system
+      // content.
+      throw new Error(`Responses → Messages translator: unexpected content block variant ${(block as { type: string }).type} in ${message.role} message.`);
     }
+    blocks.push({ type: 'text', text: (block as ResponsesInputText).text });
   }
   return blocks;
 };
