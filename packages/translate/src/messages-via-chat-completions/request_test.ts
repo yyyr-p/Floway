@@ -472,6 +472,18 @@ test('translateMessagesToChatCompletions preserves top-level system text blocks 
   });
 });
 
+test('translateMessagesToChatCompletions skips system message when top-level system is empty array', () => {
+  const result = translateMessagesToChatCompletions({
+    model: 'gpt-test',
+    max_tokens: 256,
+    system: [],
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+
+  assertEquals(result.messages.length, 1);
+  assertEquals(result.messages[0].role, 'user');
+});
+
 test('translateMessagesToChatCompletions preserves chronology of multiple in-array system messages', () => {
   const result = translateMessagesToChatCompletions({
     model: 'gpt-test',

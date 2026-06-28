@@ -129,7 +129,7 @@ const responsesSystemBlocks = (message: ResponsesInputMessage): MessagesTextBloc
       // content.
       throw new Error(`Responses → Messages translator: unexpected content block variant ${(block as { type: string }).type} in ${message.role} message.`);
     }
-    blocks.push({ type: 'text', text: (block as ResponsesInputText).text });
+    blocks.push({ type: 'text', text: block.text });
   }
   return blocks;
 };
