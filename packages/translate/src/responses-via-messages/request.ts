@@ -129,15 +129,13 @@ const responsesSystemBlocks = (message: ResponsesInputMessage): MessagesTextBloc
   return blocks;
 };
 
-// Non-leading system / developer Responses input messages stay inline as
-// MessagesSystemMessage at their chronological position. The leading
-// contiguous prefix has already been hoisted to MessagesPayload.system by
-// translateResponsesToMessages before translateResponsesInput's per-item
-// loop hits this branch. Anthropic upstreams diverge on inline
-// role:'system' (Bedrock accepts it under placement rules; Vertex rejects
-// it outright), so the gateway's `demote-interleaved-system-to-user`
-// interceptor flag is the safety net for any inline system that would
-// otherwise reach an upstream that does not accept it.
+// Inline path for non-leading system / developer Responses input messages
+// (the leading prefix was hoisted earlier). Anthropic upstreams diverge on
+// inline role:'system' here (Bedrock accepts it under placement rules;
+// Vertex rejects it outright), so the gateway's
+// `demote-interleaved-system-to-user` interceptor flag is the safety net
+// for any inline system that would otherwise reach an upstream that does
+// not accept it.
 const translateSystemMessage = (message: ResponsesInputMessage): MessagesSystemMessage => {
   if (typeof message.content === 'string') {
     return { role: 'system', content: message.content };
@@ -184,8 +182,6 @@ const translateResponsesInput = async (input: string | ResponsesInputItem[], loa
   // systemBlocks (→ top-level Messages.system), preserving each input_text
   // part as its own MessagesTextBlock so part boundaries survive the hoist.
   // Non-leading system/developer messages stay inline as MessagesSystemMessage.
-  // An empty-content leading message still extends the contiguous prefix
-  // even though it contributes no block.
   const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const item of input) {
@@ -342,8 +338,7 @@ export const translateResponsesToMessages = async (payload: ResponsesPayload, op
   // after it. Each source — the instructions field and each leading input
   // message — is preserved as its own MessagesTextBlock so the boundary
   // between "canonical instructions" and "leading input system" survives
-  // and the downstream prompt cache sees stable per-source segments. The
-  // cache breakpoint lands on the last block via applyLastSystemCacheBreakpoint.
+  // and the downstream prompt cache sees stable per-source segments.
   const systemBlocks: MessagesTextBlock[] = [
     ...(payload.instructions ? [{ type: 'text' as const, text: payload.instructions }] : []),
     ...hoistedSystemBlocks,

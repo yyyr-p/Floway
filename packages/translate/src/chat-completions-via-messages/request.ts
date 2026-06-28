@@ -133,14 +133,10 @@ const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemote
       break;
     case 'system':
     case 'developer':
-      // Non-leading system / developer messages stay inline as
-      // MessagesSystemMessage: their leading contiguous prefix has already
-      // been hoisted to MessagesPayload.system by
-      // translateChatCompletionsToMessages before buildMessagesInput runs,
-      // so anything reaching this branch was deliberately placed mid-history
-      // by the caller and we preserve that chronological position. Anthropic
-      // upstreams diverge on inline role:'system' (Bedrock accepts it under
-      // placement rules; Vertex rejects it outright), so the gateway's
+      // Inline path for non-leading system / developer (the leading prefix
+      // was hoisted earlier). Anthropic upstreams diverge on inline
+      // role:'system' here (Bedrock accepts it under placement rules;
+      // Vertex rejects it outright), so the gateway's
       // `demote-interleaved-system-to-user` interceptor flag is the safety
       // net for any inline system that would otherwise reach an upstream
       // that does not accept it.
@@ -184,8 +180,7 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
   // system/developer messages stay inline as MessagesSystemMessage at their
   // chronological position; the gateway's
   // `demote-interleaved-system-to-user` interceptor flag handles upstreams
-  // that reject inline system. An empty-content leading message still
-  // extends the contiguous prefix even though it contributes no block.
+  // that reject inline system.
   const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const message of payload.messages) {
