@@ -133,7 +133,7 @@ test('non-leading system stays inline, leading is hoisted', async () => {
   assertEquals(result.system, [{ type: 'text', text: 'First', cache_control: { type: 'ephemeral' } }]);
   assertEquals(result.messages.length, 3);
   assertEquals(result.messages[0].role, 'user');
-  assertEquals(result.messages[1], { role: 'system', content: 'Second' });
+  assertEquals(result.messages[1], { role: 'system', content: [{ type: 'text', text: 'Second' }] });
   assertEquals(result.messages[2].role, 'user');
 });
 

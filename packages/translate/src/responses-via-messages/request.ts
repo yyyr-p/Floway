@@ -137,9 +137,6 @@ const responsesSystemBlocks = (message: ResponsesInputMessage): MessagesTextBloc
 // for any inline system that would otherwise reach an upstream that does
 // not accept it.
 const translateSystemMessage = (message: ResponsesInputMessage): MessagesSystemMessage => {
-  if (typeof message.content === 'string') {
-    return { role: 'system', content: message.content };
-  }
   const blocks = responsesSystemBlocks(message);
   return { role: 'system', content: blocks.length > 0 ? blocks : '' };
 };

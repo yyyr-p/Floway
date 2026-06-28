@@ -655,7 +655,7 @@ test('translateResponsesToMessages keeps non-leading role:"system" inline', asyn
 
   assertEquals(result.target.messages.length, 3);
   assertEquals(result.target.messages[0].role, 'user');
-  assertEquals(result.target.messages[1], { role: 'system', content: 'be terse' });
+  assertEquals(result.target.messages[1], { role: 'system', content: [{ type: 'text', text: 'be terse' }] });
   assertEquals(result.target.messages[2].role, 'user');
   assertFalse('system' in result.target);
 });
@@ -717,7 +717,7 @@ test('translateResponsesToMessages preserves payload.instructions and leading sy
   ]);
   assertEquals(result.target.messages.length, 3);
   assertEquals(result.target.messages[0].role, 'user');
-  assertEquals(result.target.messages[1], { role: 'system', content: 'mid-array note' });
+  assertEquals(result.target.messages[1], { role: 'system', content: [{ type: 'text', text: 'mid-array note' }] });
   assertEquals(result.target.messages[2].role, 'user');
 });
 

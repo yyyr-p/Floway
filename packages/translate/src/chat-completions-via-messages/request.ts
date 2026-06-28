@@ -86,10 +86,13 @@ const convertUserContent = async (message: ChatCompletionsMessage, loadRemoteIma
 // inline `MessagesSystemMessage.content`) accepts only text. Image parts in
 // system / developer messages are rejected here at the translator boundary so
 // the caller hits an explicit failure instead of having the image silently
-// dropped on the wire.
-const convertSystemContent = (content: ChatCompletionsMessage['content']): string | MessagesTextBlock[] => {
-  if (typeof content === 'string') return content;
-  if (!Array.isArray(content)) return '';
+// dropped on the wire. Returns blocks (possibly empty) so the hoist and
+// inline call sites share one shape.
+const convertSystemContent = (content: ChatCompletionsMessage['content']): MessagesTextBlock[] => {
+  if (typeof content === 'string') {
+    return content ? [{ type: 'text', text: content }] : [];
+  }
+  if (!Array.isArray(content)) return [];
 
   const blocks: MessagesTextBlock[] = [];
   for (const part of content) {
@@ -101,7 +104,7 @@ const convertSystemContent = (content: ChatCompletionsMessage['content']): strin
     }
   }
 
-  return blocks.length > 0 ? blocks : '';
+  return blocks;
 };
 
 const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemoteImage: RemoteImageLoader): Promise<MessagesMessage[]> => {
@@ -132,7 +135,7 @@ const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemote
       ]);
       break;
     case 'system':
-    case 'developer':
+    case 'developer': {
       // Inline path for non-leading system / developer (the leading prefix
       // was hoisted earlier). Anthropic upstreams diverge on inline
       // role:'system' here (Bedrock accepts it under placement rules;
@@ -140,11 +143,13 @@ const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemote
       // `demote-interleaved-system-to-user` interceptor flag is the safety
       // net for any inline system that would otherwise reach an upstream
       // that does not accept it.
+      const blocks = convertSystemContent(message.content);
       result.push({
         role: 'system',
-        content: convertSystemContent(message.content),
+        content: blocks.length > 0 ? blocks : '',
       });
       break;
+    }
     default:
       throw new Error(`Chat Completions → Messages translator does not accept ${message.role} messages.`);
     }
@@ -183,12 +188,7 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
   let prefixEnd = 0;
   for (const message of payload.messages) {
     if (message.role !== 'system' && message.role !== 'developer') break;
-    const converted = convertSystemContent(message.content);
-    if (typeof converted === 'string') {
-      if (converted) systemBlocks.push({ type: 'text', text: converted });
-    } else {
-      systemBlocks.push(...converted);
-    }
+    systemBlocks.push(...convertSystemContent(message.content));
     prefixEnd++;
   }
 
