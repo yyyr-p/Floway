@@ -178,9 +178,7 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
   // MessagesPayload.system, preserving each ContentPart text as its own
   // MessagesTextBlock so part boundaries survive the hoist. Non-leading
   // system/developer messages stay inline as MessagesSystemMessage at their
-  // chronological position; the gateway's
-  // `demote-interleaved-system-to-user` interceptor flag handles upstreams
-  // that reject inline system.
+  // chronological position.
   const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const message of payload.messages) {

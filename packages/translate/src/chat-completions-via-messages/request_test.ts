@@ -150,7 +150,7 @@ test('empty leading system content is not hoisted', async () => {
   assertEquals(result.messages.length, 1);
 });
 
-test('leading empty + non-empty system: empty consumes its prefix slot, non-empty contributes its block', async () => {
+test('leading empty system is skipped, leading non-empty is still hoisted', async () => {
   const result = await translateChatCompletionsToMessages(
     mkPayload({
       messages: [
