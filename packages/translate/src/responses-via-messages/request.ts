@@ -186,9 +186,8 @@ const translateResponsesInput = async (input: string | ResponsesInputItem[], loa
   // systemBlocks (→ top-level Messages.system), preserving each input_text
   // part as its own MessagesTextBlock so part boundaries survive the hoist.
   // Non-leading system/developer messages stay inline as MessagesSystemMessage.
-  // Empty system content contributes zero blocks — its prefix slot is still
-  // consumed so a subsequent non-empty leading system stays part of the same
-  // prefix.
+  // An empty-content leading message still extends the contiguous prefix
+  // even though it contributes no block.
   const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const item of input) {

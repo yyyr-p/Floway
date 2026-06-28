@@ -52,10 +52,6 @@ type CacheableContentBlock = MessagesTextBlock | MessagesImageBlock | MessagesTo
 const isCacheableBlock = (block: MessagesUserContentBlock | MessagesAssistantContentBlock): block is CacheableContentBlock =>
   block.type === 'text' || block.type === 'image' || block.type === 'tool_use' || block.type === 'tool_result';
 
-// Apply ephemeral cache breakpoint to the last text block of the top-level
-// system field. The system field is part of the stable per-request prefix,
-// so the cache breakpoint anchors at its tail to maximise reuse across
-// subsequent turns that build on the same system + tools + history chain.
 export const applyLastSystemCacheBreakpoint = (system: MessagesTextBlock[] | undefined): void => {
   if (!system || system.length === 0) return;
   system[system.length - 1].cache_control = EPHEMERAL_CACHE_CONTROL;

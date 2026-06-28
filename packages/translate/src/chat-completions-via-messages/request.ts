@@ -186,10 +186,8 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
   // system/developer messages stay inline as MessagesSystemMessage at their
   // chronological position; the gateway's
   // `demote-interleaved-system-to-user` interceptor flag handles upstreams
-  // that reject inline system. Empty system content contributes zero
-  // blocks — its prefix slot is consumed (so a subsequent non-empty leading
-  // system still counts as part of the same prefix) but it does not produce
-  // an empty top-level system entry.
+  // that reject inline system. An empty-content leading message still
+  // extends the contiguous prefix even though it contributes no block.
   const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const message of payload.messages) {
