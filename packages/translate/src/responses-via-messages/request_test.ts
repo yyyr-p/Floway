@@ -687,7 +687,7 @@ test('translateResponsesToMessages hoists leading role:"developer" to top-level 
   assertEquals(result.target.system, [{ type: 'text', text: 'dev rule', cache_control: { type: 'ephemeral' } }]);
 });
 
-test('translateResponsesToMessages merges payload.instructions with leading system into top-level, non-leading stays inline', async () => {
+test('translateResponsesToMessages preserves payload.instructions and leading system as separate blocks; non-leading stays inline', async () => {
   const result = await translateResponsesToMessages(
     {
       model: 'claude-test',
@@ -712,10 +712,81 @@ test('translateResponsesToMessages merges payload.instructions with leading syst
   );
 
   assertEquals(result.target.system, [
-    { type: 'text', text: 'canonical top-level instructions\n\nleading note', cache_control: { type: 'ephemeral' } },
+    { type: 'text', text: 'canonical top-level instructions' },
+    { type: 'text', text: 'leading note', cache_control: { type: 'ephemeral' } },
   ]);
   assertEquals(result.target.messages.length, 3);
   assertEquals(result.target.messages[0].role, 'user');
   assertEquals(result.target.messages[1], { role: 'system', content: 'mid-array note' });
   assertEquals(result.target.messages[2].role, 'user');
+});
+
+test('translateResponsesToMessages throws when a system input message contains an image part', async () => {
+  await assertRejects(
+    () =>
+      translateResponsesToMessages(
+        {
+          model: 'claude-test',
+          input: [
+            {
+              type: 'message',
+              role: 'system',
+              content: [
+                { type: 'input_text', text: 'You are helpful.' },
+                { type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=', detail: 'auto' },
+              ],
+            },
+            { type: 'message', role: 'user', content: 'hi' },
+          ],
+          instructions: null,
+          temperature: null,
+          top_p: null,
+          max_output_tokens: 256,
+          tools: null,
+          tool_choice: 'auto',
+          metadata: null,
+          stream: null,
+          store: false,
+          parallel_tool_calls: true,
+        },
+        { loadRemoteImage: stubRemoteImageLoader(null) },
+      ),
+    Error,
+    'does not accept image content parts in system messages',
+  );
+});
+
+test('translateResponsesToMessages throws when a non-leading developer input message contains an image part', async () => {
+  await assertRejects(
+    () =>
+      translateResponsesToMessages(
+        {
+          model: 'claude-test',
+          input: [
+            { type: 'message', role: 'user', content: 'hi' },
+            {
+              type: 'message',
+              role: 'developer',
+              content: [
+                { type: 'input_image', image_url: 'data:image/png;base64,iVBORw0KGgo=', detail: 'auto' },
+              ],
+            },
+            { type: 'message', role: 'user', content: 'bye' },
+          ],
+          instructions: null,
+          temperature: null,
+          top_p: null,
+          max_output_tokens: 256,
+          tools: null,
+          tool_choice: 'auto',
+          metadata: null,
+          stream: null,
+          store: false,
+          parallel_tool_calls: true,
+        },
+        { loadRemoteImage: stubRemoteImageLoader(null) },
+      ),
+    Error,
+    'does not accept image content parts in developer messages',
+  );
 });

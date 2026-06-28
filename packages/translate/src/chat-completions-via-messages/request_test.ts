@@ -150,7 +150,7 @@ test('empty leading system content is not hoisted', async () => {
   assertEquals(result.messages.length, 1);
 });
 
-test('leading system with ContentPart array text parts joined and hoisted', async () => {
+test('leading system with ContentPart array preserves text parts as separate blocks', async () => {
   const result = await translateChatCompletionsToMessages(
     mkPayload({
       messages: [
@@ -165,8 +165,72 @@ test('leading system with ContentPart array text parts joined and hoisted', asyn
       ],
     }),
   );
-  assertEquals(result.system, [{ type: 'text', text: 'AB', cache_control: { type: 'ephemeral' } }]);
+  assertEquals(result.system, [
+    { type: 'text', text: 'A' },
+    { type: 'text', text: 'B', cache_control: { type: 'ephemeral' } },
+  ]);
   assertEquals(result.messages.length, 1);
+});
+
+test('multiple consecutive leading system messages accumulate as separate blocks', async () => {
+  const result = await translateChatCompletionsToMessages(
+    mkPayload({
+      messages: [
+        { role: 'system', content: 'First' },
+        { role: 'developer', content: 'Second' },
+        { role: 'user', content: 'Hi' },
+      ],
+    }),
+  );
+  assertEquals(result.system, [
+    { type: 'text', text: 'First' },
+    { type: 'text', text: 'Second', cache_control: { type: 'ephemeral' } },
+  ]);
+  assertEquals(result.messages.length, 1);
+});
+
+test('image content part in leading system message throws', async () => {
+  await assertRejects(
+    () =>
+      translateChatCompletionsToMessages(
+        mkPayload({
+          messages: [
+            {
+              role: 'system',
+              content: [
+                { type: 'text', text: 'You are helpful.' },
+                { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+              ],
+            },
+            { role: 'user', content: 'Hi' },
+          ],
+        }),
+      ),
+    Error,
+    'does not accept image content parts in system or developer messages',
+  );
+});
+
+test('image content part in non-leading system message throws', async () => {
+  await assertRejects(
+    () =>
+      translateChatCompletionsToMessages(
+        mkPayload({
+          messages: [
+            { role: 'user', content: 'Hi' },
+            {
+              role: 'system',
+              content: [
+                { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+              ],
+            },
+            { role: 'user', content: 'Bye' },
+          ],
+        }),
+      ),
+    Error,
+    'does not accept image content parts in system or developer messages',
+  );
 });
 
 // ── Basic message mapping ──

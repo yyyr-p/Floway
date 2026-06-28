@@ -1,7 +1,7 @@
 import { parseToolArgumentsObject } from '../shared/messages/tool-arguments.ts';
 import { responsesReasoningToMessagesUpstreamBlock } from '../shared/messages-and-responses/reasoning.ts';
 import { buildCustomToolInputSchema } from '../shared/responses-via/custom-tool-wrap.ts';
-import { applyLastMessageCacheBreakpoint, applyLastToolCacheBreakpoint, EPHEMERAL_CACHE_CONTROL } from '../shared/via-messages/cache-breakpoints.ts';
+import { applyLastMessageCacheBreakpoint, applyLastSystemCacheBreakpoint, applyLastToolCacheBreakpoint } from '../shared/via-messages/cache-breakpoints.ts';
 import { fetchRemoteImage, type RemoteImageLoader, resolveImageUrlToMessagesImage } from '../shared/via-messages/remote-images.ts';
 import {
   MESSAGES_FALLBACK_MAX_TOKENS,
@@ -107,26 +107,45 @@ const translateAssistantMessage = (message: ResponsesInputMessage): MessagesAssi
   return { role: 'assistant', content: content.length > 0 ? content : '' };
 };
 
-const extractSystemText = (message: ResponsesInputMessage): string => {
-  if (typeof message.content === 'string') return message.content;
-  if (!Array.isArray(message.content)) return '';
+// Anthropic's Messages system field (top-level `MessagesPayload.system` and
+// inline `MessagesSystemMessage.content`) accepts only text. Image parts in
+// system / developer Responses input messages are rejected here at the
+// translator boundary so the caller hits an explicit failure instead of
+// having the image silently dropped on the wire.
+const responsesSystemBlocks = (message: ResponsesInputMessage): MessagesTextBlock[] => {
+  if (typeof message.content === 'string') {
+    return message.content ? [{ type: 'text', text: message.content }] : [];
+  }
 
-  return message.content.map(block => ('text' in block ? block.text : '')).join('');
+  const blocks: MessagesTextBlock[] = [];
+  for (const block of message.content) {
+    if (block.type === 'input_image') {
+      throw new Error(`Responses → Messages translator does not accept image content parts in ${message.role} messages — Anthropic Messages only permits text in the system field.`);
+    }
+    if (block.type === 'input_text' || block.type === 'output_text') {
+      blocks.push({ type: 'text', text: (block as ResponsesInputText).text });
+    }
+  }
+  return blocks;
 };
 
+// Non-leading system / developer Responses input messages stay inline as
+// MessagesSystemMessage at their chronological position. The leading
+// contiguous prefix has already been hoisted to MessagesPayload.system by
+// translateResponsesToMessages before translateResponsesInput's per-item
+// loop hits this branch. Developer is the same intent layer as system on
+// the Responses wire and normalizes to role:'system' here. Anthropic
+// upstreams diverge on inline role:'system' (Bedrock accepts it under
+// placement rules; Vertex rejects it outright), so the gateway's
+// `demote-interleaved-system-to-user` interceptor flag is the safety net
+// for any inline system that would otherwise reach an upstream that does
+// not accept it.
 const translateSystemMessage = (message: ResponsesInputMessage): MessagesSystemMessage => {
   if (typeof message.content === 'string') {
     return { role: 'system', content: message.content };
   }
-
-  const content: MessagesTextBlock[] = [];
-  for (const block of message.content) {
-    if (block.type === 'input_text' || block.type === 'output_text') {
-      content.push({ type: 'text', text: (block as ResponsesInputText).text });
-    }
-  }
-
-  return { role: 'system', content: content.length > 0 ? content : '' };
+  const blocks = responsesSystemBlocks(message);
+  return { role: 'system', content: blocks.length > 0 ? blocks : '' };
 };
 
 const appendAssistantBlock = (messages: MessagesMessage[], block: MessagesAssistantContentBlock): void => {
@@ -155,23 +174,26 @@ const unexpectedResponsesInputItem = (value: ResponsesInputItem): never => {
   throw new Error(`Unexpected Responses input item variant: ${JSON.stringify(value)}`);
 };
 
-const translateResponsesInput = async (input: string | ResponsesInputItem[], loadRemoteImage: RemoteImageLoader): Promise<{ messages: MessagesMessage[]; systemParts: string[] }> => {
+const translateResponsesInput = async (input: string | ResponsesInputItem[], loadRemoteImage: RemoteImageLoader): Promise<{ messages: MessagesMessage[]; systemBlocks: MessagesTextBlock[] }> => {
   if (typeof input === 'string') {
     return {
       messages: [{ role: 'user', content: input }],
-      systemParts: [],
+      systemBlocks: [],
     };
   }
 
-  // Hoist the leading contiguous run of system/developer input messages to
-  // systemParts (→ top-level Messages.system). Non-leading system/developer
-  // messages stay inline as MessagesSystemMessage.
-  const systemParts: string[] = [];
+  // Hoist the leading contiguous run of system/developer input messages into
+  // systemBlocks (→ top-level Messages.system), preserving each input_text
+  // part as its own MessagesTextBlock so part boundaries survive the hoist.
+  // Non-leading system/developer messages stay inline as MessagesSystemMessage.
+  // Empty system content contributes zero blocks — its prefix slot is still
+  // consumed so a subsequent non-empty leading system stays part of the same
+  // prefix.
+  const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const item of input) {
     if (item.type !== 'message' || (item.role !== 'system' && item.role !== 'developer')) break;
-    const text = extractSystemText(item);
-    if (text) systemParts.push(text);
+    systemBlocks.push(...responsesSystemBlocks(item));
     prefixEnd++;
   }
 
@@ -252,7 +274,7 @@ const translateResponsesInput = async (input: string | ResponsesInputItem[], loa
     }
   }
 
-  return { messages, systemParts };
+  return { messages, systemBlocks };
 };
 
 const translateTools = (tools: ResponsesTool[] | null | undefined, customToolNames: Set<string>): MessagesTool[] | undefined => {
@@ -316,18 +338,22 @@ const translateToolChoice = (toolChoice: ResponsesToolChoice | undefined): Messa
 
 export const translateResponsesToMessages = async (payload: ResponsesPayload, options: TranslateResponsesToMessagesOptions = {}): Promise<ResponsesToMessagesResult> => {
   const customToolNames = new Set<string>();
-  const { messages, systemParts } = await translateResponsesInput(payload.input, options.loadRemoteImage ?? fetchRemoteImage);
+  const { messages, systemBlocks: hoistedSystemBlocks } = await translateResponsesInput(payload.input, options.loadRemoteImage ?? fetchRemoteImage);
   const tools = translateTools(payload.tools, customToolNames);
   // `payload.instructions` is the Responses canonical system field; leading
-  // system/developer input items are hoisted into `systemParts`. Combine
-  // both into the Messages top-level `system`. Non-leading system items stay
-  // inline as MessagesSystemMessage.
-  const system = [payload.instructions, ...systemParts].filter((part): part is string => Boolean(part)).join('\n\n');
+  // system/developer input items contribute additional blocks immediately
+  // after it. Each source — the instructions field and each leading input
+  // message — is preserved as its own MessagesTextBlock so the boundary
+  // between "canonical instructions" and "leading input system" survives
+  // and the downstream prompt cache sees stable per-source segments. The
+  // cache breakpoint lands on the last block via applyLastSystemCacheBreakpoint.
+  const systemBlocks: MessagesTextBlock[] = [
+    ...(payload.instructions ? [{ type: 'text' as const, text: payload.instructions }] : []),
+    ...hoistedSystemBlocks,
+  ];
   const effort = payload.reasoning?.effort;
   const maxTokens = payload.max_output_tokens ?? options.fallbackMaxOutputTokens ?? MESSAGES_FALLBACK_MAX_TOKENS;
-  const systemBlocks: MessagesTextBlock[] | undefined = system
-    ? [{ type: 'text', text: system, cache_control: EPHEMERAL_CACHE_CONTROL }]
-    : undefined;
+  applyLastSystemCacheBreakpoint(systemBlocks);
   applyLastToolCacheBreakpoint(tools);
   applyLastMessageCacheBreakpoint(messages);
 
@@ -366,7 +392,7 @@ export const translateResponsesToMessages = async (payload: ResponsesPayload, op
     model: payload.model,
     messages,
     max_tokens: maxTokens,
-    ...(systemBlocks ? { system: systemBlocks } : {}),
+    ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
     ...(payload.temperature != null ? { temperature: payload.temperature } : {}),
     ...(payload.top_p != null ? { top_p: payload.top_p } : {}),
     stream: true,

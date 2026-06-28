@@ -1,8 +1,8 @@
 import { messagesThinkingBlockFromChatCompletionsScalarReasoning } from '../shared/chat-completions-and-messages/reasoning.ts';
 import { parseToolArgumentsObject } from '../shared/messages/tool-arguments.ts';
-import { applyLastMessageCacheBreakpoint, applyLastToolCacheBreakpoint, EPHEMERAL_CACHE_CONTROL } from '../shared/via-messages/cache-breakpoints.ts';
+import { applyLastMessageCacheBreakpoint, applyLastSystemCacheBreakpoint, applyLastToolCacheBreakpoint } from '../shared/via-messages/cache-breakpoints.ts';
 import { fetchRemoteImage, type RemoteImageLoader, resolveImageUrlToMessagesImage } from '../shared/via-messages/remote-images.ts';
-import type { ChatCompletionsPayload, ChatCompletionsContentPart, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
+import type { ChatCompletionsPayload, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
 import { MESSAGES_FALLBACK_MAX_TOKENS, type MessagesAssistantContentBlock, type MessagesMessage, type MessagesPayload, type MessagesTextBlock, type MessagesUserContentBlock } from '@floway-dev/protocols/messages';
 
 interface TranslateChatCompletionsToMessagesOptions {
@@ -82,13 +82,24 @@ const convertUserContent = async (message: ChatCompletionsMessage, loadRemoteIma
   return blocks.length > 0 ? blocks : [{ type: 'text', text: '' }];
 };
 
+// Anthropic's Messages system field (top-level `MessagesPayload.system` and
+// inline `MessagesSystemMessage.content`) accepts only text. Image parts in
+// system / developer messages are rejected here at the translator boundary so
+// the caller hits an explicit failure instead of having the image silently
+// dropped on the wire.
 const convertSystemContent = (content: ChatCompletionsMessage['content']): string | MessagesTextBlock[] => {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
 
-  const blocks: MessagesTextBlock[] = content
-    .filter((part): part is Extract<ChatCompletionsContentPart, { type: 'text' }> => part.type === 'text')
-    .map(part => ({ type: 'text', text: part.text }));
+  const blocks: MessagesTextBlock[] = [];
+  for (const part of content) {
+    if (part.type === 'image_url') {
+      throw new Error('Chat Completions → Messages translator does not accept image content parts in system or developer messages — Anthropic Messages only permits text in the system field.');
+    }
+    if (part.type === 'text') {
+      blocks.push({ type: 'text', text: part.text });
+    }
+  }
 
   return blocks.length > 0 ? blocks : '';
 };
@@ -122,6 +133,19 @@ const buildMessagesInput = async (messages: ChatCompletionsMessage[], loadRemote
       break;
     case 'system':
     case 'developer':
+      // Non-leading system / developer messages stay inline as
+      // MessagesSystemMessage: their leading contiguous prefix has already
+      // been hoisted to MessagesPayload.system by
+      // translateChatCompletionsToMessages before buildMessagesInput runs,
+      // so anything reaching this branch was deliberately placed mid-history
+      // by the caller and we preserve that chronological position. Developer
+      // is the same intent layer as system on the Chat Completions wire and
+      // normalizes to role:'system' here. Anthropic upstreams diverge on
+      // inline role:'system' (Bedrock accepts it under placement rules;
+      // Vertex rejects it outright), so the gateway's
+      // `demote-interleaved-system-to-user` interceptor flag is the safety
+      // net for any inline system that would otherwise reach an upstream
+      // that does not accept it.
       result.push({
         role: 'system',
         content: convertSystemContent(message.content),
@@ -157,34 +181,33 @@ const CHAT_TOOL_CHOICES = {
 
 export const translateChatCompletionsToMessages = async (payload: ChatCompletionsPayload, options: TranslateChatCompletionsToMessagesOptions = {}): Promise<MessagesPayload> => {
   // Hoist the leading contiguous run of system/developer messages to
-  // MessagesPayload.system. Non-leading system/developer messages stay inline
-  // as MessagesSystemMessage; upstreams that reject them can be handled by the
-  // `demote-interleaved-system-to-user` interceptor.
-  const systemParts: string[] = [];
+  // MessagesPayload.system, preserving each ContentPart text as its own
+  // MessagesTextBlock so part boundaries survive the hoist. Non-leading
+  // system/developer messages stay inline as MessagesSystemMessage at their
+  // chronological position; the gateway's
+  // `demote-interleaved-system-to-user` interceptor flag handles upstreams
+  // that reject inline system. Empty system content contributes zero
+  // blocks — its prefix slot is consumed (so a subsequent non-empty leading
+  // system still counts as part of the same prefix) but it does not produce
+  // an empty top-level system entry.
+  const systemBlocks: MessagesTextBlock[] = [];
   let prefixEnd = 0;
   for (const message of payload.messages) {
     if (message.role !== 'system' && message.role !== 'developer') break;
-    const text =
-      typeof message.content === 'string'
-        ? message.content
-        : Array.isArray(message.content)
-          ? message.content
-              .filter((part): part is Extract<ChatCompletionsContentPart, { type: 'text' }> => part.type === 'text')
-              .map(part => part.text)
-              .join('')
-          : '';
-    if (text) systemParts.push(text);
+    const converted = convertSystemContent(message.content);
+    if (typeof converted === 'string') {
+      if (converted) systemBlocks.push({ type: 'text', text: converted });
+    } else {
+      systemBlocks.push(...converted);
+    }
     prefixEnd++;
   }
 
   const messages = await buildMessagesInput(payload.messages.slice(prefixEnd), options.loadRemoteImage ?? fetchRemoteImage);
 
   const maxTokens = payload.max_tokens ?? options.fallbackMaxOutputTokens ?? MESSAGES_FALLBACK_MAX_TOKENS;
-  const systemText = systemParts.length > 0 ? systemParts.join('\n\n') : '';
-  const systemBlocks: MessagesTextBlock[] | undefined = systemText
-    ? [{ type: 'text', text: systemText, cache_control: EPHEMERAL_CACHE_CONTROL }]
-    : undefined;
   const tools = payload.tools?.length ? translateChatCompletionsTools(payload.tools) : undefined;
+  applyLastSystemCacheBreakpoint(systemBlocks);
   applyLastToolCacheBreakpoint(tools);
   applyLastMessageCacheBreakpoint(messages);
 
@@ -221,7 +244,7 @@ export const translateChatCompletionsToMessages = async (payload: ChatCompletion
     model: payload.model,
     messages,
     max_tokens: maxTokens,
-    ...(systemBlocks ? { system: systemBlocks } : {}),
+    ...(systemBlocks.length > 0 ? { system: systemBlocks } : {}),
     ...(payload.temperature != null ? { temperature: payload.temperature } : {}),
     ...(payload.top_p != null ? { top_p: payload.top_p } : {}),
     ...(payload.stop != null
