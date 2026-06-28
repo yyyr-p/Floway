@@ -425,7 +425,7 @@ test('translateMessagesToChatCompletions emits in-array role:"system" inline as 
   assertEquals(result.messages[2].role, 'user');
 });
 
-test('translateMessagesToChatCompletions joins in-array system text blocks with double newline', () => {
+test('translateMessagesToChatCompletions preserves in-array system text blocks as separate content parts', () => {
   const result = translateMessagesToChatCompletions({
     model: 'gpt-test',
     max_tokens: 256,
@@ -441,7 +441,35 @@ test('translateMessagesToChatCompletions joins in-array system text blocks with 
     ],
   });
 
-  assertEquals(result.messages[0], { role: 'system', content: 'Para A\n\nPara B' });
+  assertEquals(result.messages[0], {
+    role: 'system',
+    content: [
+      { type: 'text', text: 'Para A' },
+      { type: 'text', text: 'Para B' },
+    ],
+  });
+});
+
+test('translateMessagesToChatCompletions preserves top-level system text blocks as separate content parts', () => {
+  const result = translateMessagesToChatCompletions({
+    model: 'gpt-test',
+    max_tokens: 256,
+    system: [
+      { type: 'text', text: 'instructions' },
+      { type: 'text', text: 'extra context' },
+    ],
+    messages: [
+      { role: 'user', content: 'hi' },
+    ],
+  });
+
+  assertEquals(result.messages[0], {
+    role: 'system',
+    content: [
+      { type: 'text', text: 'instructions' },
+      { type: 'text', text: 'extra context' },
+    ],
+  });
 });
 
 test('translateMessagesToChatCompletions preserves chronology of multiple in-array system messages', () => {
