@@ -150,6 +150,21 @@ test('empty leading system content is not hoisted', async () => {
   assertEquals(result.messages.length, 1);
 });
 
+test('leading empty + non-empty system: empty consumes its prefix slot, non-empty contributes its block', async () => {
+  const result = await translateChatCompletionsToMessages(
+    mkPayload({
+      messages: [
+        { role: 'system', content: '' },
+        { role: 'developer', content: 'Be terse.' },
+        { role: 'user', content: 'Hi' },
+      ],
+    }),
+  );
+  assertEquals(result.system, [{ type: 'text', text: 'Be terse.', cache_control: { type: 'ephemeral' } }]);
+  assertEquals(result.messages.length, 1);
+  assertEquals(result.messages[0].role, 'user');
+});
+
 test('leading system with ContentPart array preserves text parts as separate blocks', async () => {
   const result = await translateChatCompletionsToMessages(
     mkPayload({
