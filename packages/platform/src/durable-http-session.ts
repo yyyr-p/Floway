@@ -20,6 +20,15 @@ export interface DurableHttpSessionInit {
   url: string;
   headers: Record<string, string>;
   body?: Uint8Array;
+  /**
+   * Ordered proxy configs (opaque `@floway-dev/proxy` ProxyConfig) to dial the
+   * upstream through, tried in order; empty/absent = direct. The contract keeps
+   * this opaque so the platform package doesn't depend on @floway-dev/proxy —
+   * the concrete impls cast and call runProxiedRequest. Streaming responses
+   * (RunSSE) can't go through the gateway's buffered proxy Fetcher, so the
+   * session does its own proxied dial.
+   */
+  proxies?: unknown[];
 }
 
 export interface DurableHttpSessionHandle {

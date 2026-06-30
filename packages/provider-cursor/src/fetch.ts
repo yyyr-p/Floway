@@ -306,11 +306,16 @@ const performOpen = async (
   const requestId = crypto.randomUUID();
   transport.seed(requestId, 0n);
 
+  // Resolve the upstream's proxies so the DurableHttpSession dials RunSSE
+  // through them (the buffered Fetcher can't stream through a proxy). Empty =
+  // direct. Absent resolver (test mocks) = direct.
+  const proxies = (await getProviderRepo().proxies?.resolveForUpstream(opts.upstreamId)) ?? [];
+
   const broker = getDurableHttpSession();
   let handle: DurableHttpSessionHandle | null;
   try {
     handle = await opts.call.recordUpstreamLatency(
-      broker.acquire(sessionKey, transport.runSseInit(requestId), { signal: opts.signal }),
+      broker.acquire(sessionKey, { ...transport.runSseInit(requestId), proxies }, { signal: opts.signal }),
     );
   } catch (err) {
     const m = err instanceof Error ? err.message : String(err);

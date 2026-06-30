@@ -1,11 +1,42 @@
 import {
+  getSocketDial,
+  normalizeDialHost,
   type DurableHttpSession,
   type DurableHttpSessionAcquireOptions,
   type DurableHttpSessionHandle,
   type DurableHttpSessionInit,
 } from '@floway-dev/platform';
+import { runProxiedRequest, type ProxyConfig } from '@floway-dev/proxy';
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+
+// Dial the upstream: direct via globalThis.fetch (undici), or — when the init
+// carries proxies — through them in order via runProxiedRequest (which streams,
+// unlike the gateway's buffered proxy Fetcher), falling back to the next on a
+// dial failure.
+const dialUpstream = async (init: DurableHttpSessionInit): Promise<Response> => {
+  const proxies = (init.proxies ?? []) as ProxyConfig[];
+  if (proxies.length === 0) {
+    return await globalThis.fetch(init.url, {
+      method: init.method,
+      headers: init.headers,
+      body: init.body ? (init.body as BodyInit) : null,
+    });
+  }
+  const u = new URL(init.url);
+  const target = { host: normalizeDialHost(u.hostname), port: u.port ? Number(u.port) : (u.protocol === 'https:' ? 443 : 80), tls: u.protocol === 'https:' };
+  const request = { method: init.method, path: `${u.pathname}${u.search}`, headers: init.headers, body: init.body };
+  const socketDial = getSocketDial();
+  let lastErr: unknown;
+  for (const config of proxies) {
+    try {
+      return await runProxiedRequest(config, target, request, { socketDial });
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw lastErr ?? new Error('all proxies failed for DurableHttpSession dial');
+};
 
 interface Entry {
   response: Response;
@@ -39,11 +70,7 @@ export class InProcessDurableHttpSession implements DurableHttpSession {
     if (!entry) {
       if (init === null) return null;
       const lock = (async (): Promise<Entry> => {
-        const response = await globalThis.fetch(init.url, {
-          method: init.method,
-          headers: init.headers,
-          body: init.body ? (init.body as BodyInit) : null,
-        });
+        const response = await dialUpstream(init);
         if (!response.body) {
           throw new Error(`InProcessDurableHttpSession: ${init.method} ${init.url} returned no body`);
         }
@@ -160,6 +187,13 @@ export class InProcessDurableHttpSession implements DurableHttpSession {
       else signal.addEventListener('abort', onAbort, { once: true });
     }
 
+    // highWaterMark 0: the stream only pulls to satisfy an active read() — it
+    // never speculatively reads ahead. Without this, the default hWM of 1 makes
+    // the stream pull a chunk into its own internal queue (or park a waiter)
+    // right after the consumer's last read, so at the exec_mcp pause a chunk the
+    // upstream sends next can land in the about-to-be-discarded view instead of
+    // the shared entry buffer — lost across the turn handoff, wedging the
+    // upstream. Pulling 1:1 with reads mirrors reading the socket directly.
     const body = new ReadableStream<Uint8Array>({
       async pull(controller): Promise<void> {
         if (released) { controller.close(); return; }
@@ -171,7 +205,7 @@ export class InProcessDurableHttpSession implements DurableHttpSession {
         released = true;
         if (signal) signal.removeEventListener('abort', onAbort);
       },
-    });
+    }, { highWaterMark: 0 });
 
     return {
       status: entry.response.status,
@@ -180,6 +214,16 @@ export class InProcessDurableHttpSession implements DurableHttpSession {
       async release(): Promise<void> {
         released = true;
         if (signal) signal.removeEventListener('abort', onAbort);
+        // Abandon any dequeue this view left pending. The stream pulls ahead, so
+        // at the pause point view A is usually parked on an empty-buffer waiter.
+        // If we leave it, the pump delivers the next chunk (the first byte the
+        // upstream sends after the tool result) to this dead stream — it is lost
+        // and never acked, wedging the upstream. Close view A's pull and null the
+        // slot so the next chunk buffers for the next acquirer instead.
+        if (entry.waiter) {
+          entry.waiter.resolve({ done: true });
+          entry.waiter = null;
+        }
       },
       async discard(reason: string): Promise<void> {
         released = true;

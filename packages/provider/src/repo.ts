@@ -37,6 +37,18 @@ export interface CursorSessionsRepoSlim {
 export interface ProviderRepo {
   upstreams: UpstreamsRepoSlim;
   cursorSessions: CursorSessionsRepoSlim;
+  /**
+   * Resolve an upstream's proxy fallback list into ordered, opaque
+   * `@floway-dev/proxy` ProxyConfig objects (direct entries dropped) for a
+   * provider that must dial a streaming upstream through the proxy itself
+   * (cursor's RunSSE — see DurableHttpSessionInit.proxies). Optional so test
+   * mocks that don't exercise proxying can omit it (callers fall back to direct).
+   */
+  proxies?: ProxyResolverSlim;
+}
+
+export interface ProxyResolverSlim {
+  resolveForUpstream(upstreamId: string): Promise<unknown[]>;
 }
 
 let _accessor: (() => ProviderRepo) | null = null;

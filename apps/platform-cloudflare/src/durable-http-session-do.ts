@@ -3,6 +3,8 @@ import { DurableObject } from 'cloudflare:workers';
 import { HeldSocket } from './_held-socket.ts';
 import { cloudflareSocketDial } from './socket-dial.ts';
 import { fetchOnStream } from '@floway-dev/http';
+import { normalizeDialHost } from '@floway-dev/platform';
+import { runProxiedRequest, type ProxyConfig } from '@floway-dev/proxy';
 
 // DurableHttpSessionDO — one instance per sessionKey. It is the first actor in
 // the workspace that owns a live OUTBOUND socket: it dials the upstream with
@@ -26,6 +28,8 @@ export interface DurableHttpSessionStartInit {
   url: string;
   headers: Record<string, string>;
   body?: Uint8Array;
+  /** Opaque ProxyConfig[] to dial through (see DurableHttpSessionInit.proxies). */
+  proxies?: unknown[];
 }
 
 export interface DurableHttpSessionStartResult {
@@ -84,21 +88,37 @@ export class DurableHttpSessionDO extends DurableObject {
     const tls = url.protocol === 'https:';
     const port = url.port ? Number(url.port) : (tls ? 443 : 80);
 
-    const dialed = await cloudflareSocketDial.connect(url.hostname, port, { tls });
-    this.held = new HeldSocket(dialed);
-
     const path = `${url.pathname}${url.search}`;
     // Host is mandatory on HTTP/1.1; derive it from the URL rather than
     // trusting the caller to pass it (fetchOnStream validates/forwards the rest).
     const headers: Record<string, string> = { Host: url.host, ...init.headers };
     let response: Response;
     try {
-      response = await fetchOnStream(this.held.asDuplex(), {
-        method: init.method,
-        path,
-        headers,
-        body: init.body,
-      });
+      const proxies = (init.proxies ?? []) as ProxyConfig[];
+      if (proxies.length > 0) {
+        // Proxied dial (streaming): runProxiedRequest composes dial → TLS →
+        // fetch-on-stream over the CF socket dial. Try each in order. No
+        // HeldSocket: discard cancels the response body, which tears down the
+        // proxied transport.
+        const target = { host: normalizeDialHost(url.hostname), port, tls };
+        const request = { method: init.method, path, headers, body: init.body };
+        let lastErr: unknown;
+        let proxied: Response | null = null;
+        for (const config of proxies) {
+          try { proxied = await runProxiedRequest(config, target, request, { socketDial: cloudflareSocketDial }); break; } catch (err) { lastErr = err; }
+        }
+        if (!proxied) throw lastErr ?? new Error('all proxies failed for DurableHttpSessionDO dial');
+        response = proxied;
+      } else {
+        const dialed = await cloudflareSocketDial.connect(url.hostname, port, { tls });
+        this.held = new HeldSocket(dialed);
+        response = await fetchOnStream(this.held.asDuplex(), {
+          method: init.method,
+          path,
+          headers,
+          body: init.body,
+        });
+      }
     } catch (err) {
       await this.discard(`upstream dial/request failed: ${err instanceof Error ? err.message : String(err)}`);
       throw err;
@@ -203,6 +223,13 @@ export class DurableHttpSessionDO extends DurableObject {
    * consumer reference also clears on its own WS 'close' event.
    */
   async release(): Promise<void> {
+    // Detach synchronously rather than waiting for the WS 'close' event. If we
+    // left this.consumer set, a chunk the pump reads in the gap between release
+    // and the close event would be safeSent to the detaching socket — and
+    // safeSend drops (does not buffer) a chunk whose send throws, losing it
+    // across the turn handoff. Nulling now makes the pump buffer for the next
+    // acquire instead. The provider side closes its WS end independently.
+    this.consumer = null;
     this.touch();
   }
 
