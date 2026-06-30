@@ -5,6 +5,7 @@ import AzureConfigPanel from './AzureConfigPanel.vue';
 import ClaudeCodeConfigPanel from './ClaudeCodeConfigPanel.vue';
 import CodexConfigPanel from './CodexConfigPanel.vue';
 import CopilotConfigPanel from './CopilotConfigPanel.vue';
+import CursorConfigPanel from './CursorConfigPanel.vue';
 import type { AzureDraft, CustomDraft, OllamaDraft } from './customConfig.ts';
 import CustomConfigPanel from './CustomConfigPanel.vue';
 import FlagOverridesEditor from './FlagOverridesEditor.vue';
@@ -69,6 +70,7 @@ defineEmits<{
 type CodexRecord = Extract<UpstreamRecord, { provider: 'codex' }>;
 type ClaudeCodeRecord = Extract<UpstreamRecord, { provider: 'claude-code' }>;
 type CopilotRecord = Extract<UpstreamRecord, { provider: 'copilot' }>;
+type CursorRecord = Extract<UpstreamRecord, { provider: 'cursor' }>;
 type PanelMode<R> = { mode: 'create'; record: null } | { mode: 'edit'; record: R };
 
 const codexPanel = computed<PanelMode<CodexRecord> | null>(() => {
@@ -82,6 +84,10 @@ const claudeCodePanel = computed<PanelMode<ClaudeCodeRecord> | null>(() => {
 const copilotPanel = computed<PanelMode<CopilotRecord> | null>(() => {
   if (props.mode === 'create') return { mode: 'create', record: null };
   return props.record.provider === 'copilot' ? { mode: 'edit', record: props.record } : null;
+});
+const cursorPanel = computed<PanelMode<CursorRecord> | null>(() => {
+  if (props.mode === 'create') return { mode: 'create', record: null };
+  return props.record.provider === 'cursor' ? { mode: 'edit', record: props.record } : null;
 });
 
 // Intrinsic floor for the aside: smallest height at which every
@@ -145,7 +151,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
 
     <div ref="contentRef" class="flex min-h-0 flex-1 flex-col gap-6 px-5 py-5">
 
-      <section v-if="!(mode === 'create' && (provider === 'copilot' || provider === 'codex' || provider === 'claude-code'))" class="shrink-0">
+      <section v-if="!(mode === 'create' && (provider === 'copilot' || provider === 'codex' || provider === 'claude-code' || provider === 'cursor'))" class="shrink-0">
         <label class="mb-1.5 block text-xs font-medium text-gray-500">Name</label>
         <Input v-model="name" placeholder="e.g. OpenAI Production" />
       </section>
@@ -221,6 +227,15 @@ onBeforeUnmount(() => floorObserver?.disconnect());
           :proxy-fallback-list="proxyFallbackList"
           @imported="u => $emit('imported', u)"
           @quota-refreshed="u => $emit('claude-code-quota-refreshed', u)"
+          @error="m => $emit('error', m)"
+        />
+      </section>
+
+      <section v-else-if="provider === 'cursor' && cursorPanel" class="shrink-0">
+        <CursorConfigPanel
+          v-bind="cursorPanel"
+          :proxy-fallback-list="proxyFallbackList"
+          @imported="u => $emit('imported', u)"
           @error="m => $emit('error', m)"
         />
       </section>

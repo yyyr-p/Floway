@@ -158,7 +158,7 @@ test('call* methods POST to /v1/<endpoint> with the upstream model id and Bearer
         model,
         { messages: [{ role: 'user', content: 'hi' }] },
         undefined,
-        { fetcher: directFetcher, recordUpstreamLatency: p => p, waitUntil: () => {}, headers: new Headers() },
+        { fetcher: directFetcher, recordUpstreamLatency: p => p, waitUntil: () => {}, headers: new Headers(), apiKeyId: 'test-api-key' },
       );
       assertEquals(result.modelKey, 'gpt-oss:120b');
     },

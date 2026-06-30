@@ -85,7 +85,7 @@ export const parseCallbackPaste = (input: string): { code: string; state: string
 // preparing one does not overwrite another in-flight one. codex has a
 // single flow; claude-code has two (`oauth`, `setup-token`) — pass the
 // kind there.
-export const pkceStorageKey = (provider: 'codex' | 'claude-code', kind?: string): string =>
+export const pkceStorageKey = (provider: 'codex' | 'claude-code' | 'cursor', kind?: string): string =>
   kind ? `floway:pkce:${provider}:${kind}` : `floway:pkce:${provider}`;
 
 interface StashedPkce {

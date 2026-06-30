@@ -319,6 +319,7 @@ const enforcingRecorder = () => {
       recordUpstreamLatency: record,
       waitUntil: () => {},
       headers: new Headers(),
+      apiKeyId: 'test-api-key',
     },
     invocations: () => wrappedPromises.length,
     durationMs: (): number => {

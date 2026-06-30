@@ -313,7 +313,7 @@ const upstreamBaseFields = {
 // `sort_order` are optional — the handler defaults them to `true` and
 // `nextSortOrder()` respectively when omitted.
 //
-// `codex` and `claude-code` are listed here so the handler can return the
+// `codex`, `claude-code`, and `cursor` are listed here so the handler can return the
 // canonical "use POST /api/upstreams/<provider>-import" 400 instead of the
 // cryptic zod "invalid discriminator value" message. The `config` slot is
 // `unknown()` because the real config is derived from the OAuth flow, not
@@ -324,6 +324,7 @@ export const createUpstreamBody = z.discriminatedUnion('provider', [
   z.object({ provider: z.literal('copilot'), ...upstreamBaseFields, config: copilotConfigSchema }),
   z.object({ provider: z.literal('codex'), ...upstreamBaseFields, config: z.unknown() }),
   z.object({ provider: z.literal('claude-code'), ...upstreamBaseFields, config: z.unknown() }),
+  z.object({ provider: z.literal('cursor'), ...upstreamBaseFields, config: z.unknown() }),
   z.object({ provider: z.literal('ollama'), ...upstreamBaseFields, config: ollamaConfigSchema }),
 ]);
 
@@ -337,7 +338,7 @@ export const createUpstreamBody = z.discriminatedUnion('provider', [
 // without this field the schema would silently strip it and the API would
 // look like it had accepted the change.
 export const updateUpstreamBody = z.object({
-  provider: z.enum(['custom', 'azure', 'copilot', 'codex', 'claude-code', 'ollama']).optional(),
+  provider: z.enum(['custom', 'azure', 'copilot', 'codex', 'claude-code', 'cursor', 'ollama']).optional(),
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
@@ -450,6 +451,37 @@ export const codexReimportBody = z.object({
 export const codexRefreshNowBody = z.object({
   // Edit-form override; absent falls back to the persisted row's list. See
   // proxy-resolution.ts.
+  proxy_fallback_list: proxyFallbackListSchema.optional(),
+});
+
+// --- cursor import / authorize-url / poll / refresh ---
+//
+// Cursor login is poll-based (not callback-paste): the dashboard gets an
+// authorize URL + a uuid/verifier pair, opens the URL, then polls the gateway
+// which in turn polls api2.cursor.sh/auth/poll until the operator completes
+// login. PKCE state (verifier + uuid) is generated server-side by
+// buildCursorAuthorizeUrl and returned to the dashboard so the poll step can
+// echo it back.
+export const cursorAuthorizeUrlBody = z.object({
+  proxy_fallback_list: proxyFallbackListSchema.optional(),
+});
+
+export const cursorPollBody = z.object({
+  uuid: z.string().min(1),
+  verifier: z.string().min(1),
+  name: z.string().min(1).optional(),
+  sort_order: z.number().int().optional(),
+  proxy_fallback_list: proxyFallbackListSchema.optional(),
+});
+
+export const cursorReimportBody = z.object({
+  uuid: z.string().min(1),
+  verifier: z.string().min(1),
+  name: z.string().min(1).optional(),
+  proxy_fallback_list: proxyFallbackListSchema.optional(),
+});
+
+export const cursorRefreshNowBody = z.object({
   proxy_fallback_list: proxyFallbackListSchema.optional(),
 });
 

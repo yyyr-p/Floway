@@ -271,6 +271,9 @@ importers:
       '@floway-dev/provider-copilot':
         specifier: workspace:*
         version: link:../provider-copilot
+      '@floway-dev/provider-cursor':
+        specifier: workspace:*
+        version: link:../provider-cursor
       '@floway-dev/provider-custom':
         specifier: workspace:*
         version: link:../provider-custom
@@ -413,6 +416,28 @@ importers:
 
   packages/provider-copilot:
     dependencies:
+      '@floway-dev/interceptor':
+        specifier: workspace:*
+        version: link:../interceptor
+      '@floway-dev/platform':
+        specifier: workspace:*
+        version: link:../platform
+      '@floway-dev/protocols':
+        specifier: workspace:*
+        version: link:../protocols
+      '@floway-dev/provider':
+        specifier: workspace:*
+        version: link:../provider
+    devDependencies:
+      '@floway-dev/test-utils':
+        specifier: workspace:*
+        version: link:../test-utils
+
+  packages/provider-cursor:
+    dependencies:
+      '@floway-dev/http':
+        specifier: workspace:*
+        version: link:../http
       '@floway-dev/interceptor':
         specifier: workspace:*
         version: link:../interceptor

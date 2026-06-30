@@ -12,7 +12,7 @@ import type { AddressableForm, ModelPrefixConfig } from '@floway-dev/provider/mo
 export type { BillingDimension, ModelEndpointKey, ModelEndpoints, ModelKind, ModelPricing };
 export type { AddressableForm, ModelPrefixConfig };
 
-export type UpstreamProviderKind = 'custom' | 'azure' | 'copilot' | 'codex' | 'claude-code' | 'ollama';
+export type UpstreamProviderKind = 'custom' | 'azure' | 'copilot' | 'codex' | 'claude-code' | 'cursor' | 'ollama';
 
 export interface ProxyFallbackEntry {
   id: string;
@@ -135,6 +135,34 @@ export interface CodexAccountCredentialState {
 
 export interface CodexUpstreamState {
   accounts: CodexAccountCredentialState[];
+}
+
+export interface CursorAccountIdentity {
+  email: string;
+  userId: string;
+}
+
+export interface CursorUpstreamConfig {
+  accounts: [CursorAccountIdentity];
+}
+
+export interface CursorAccessTokenState {
+  expiresAt: number;
+  refreshedAt: string;
+}
+
+export interface CursorAccountCredentialState {
+  userId: string;
+  state: 'active' | 'session_terminated' | 'refresh_failed';
+  state_message?: string;
+  state_updated_at: string;
+  refresh_token_set: boolean;
+  accessToken: CursorAccessTokenState | null;
+  quotaSnapshot?: unknown;
+}
+
+export interface CursorUpstreamState {
+  accounts: CursorAccountCredentialState[];
 }
 
 export interface CodexQuotaSnapshot {
@@ -291,6 +319,7 @@ export type UpstreamRecord =
   | (UpstreamRecordBase & { provider: 'copilot'; config: CopilotUpstreamConfig; state: CopilotUpstreamState | null })
   | (UpstreamRecordBase & { provider: 'codex'; config: CodexUpstreamConfig; state: CodexUpstreamState | null; codex_quota?: CodexQuotaSnapshot | null })
   | (UpstreamRecordBase & { provider: 'claude-code'; config: ClaudeCodeUpstreamConfig; state: ClaudeCodeUpstreamState | null })
+  | (UpstreamRecordBase & { provider: 'cursor'; config: CursorUpstreamConfig; state: CursorUpstreamState | null })
   | (UpstreamRecordBase & { provider: 'ollama'; config: OllamaUpstreamConfig; state: null });
 
 export interface FlagDef {

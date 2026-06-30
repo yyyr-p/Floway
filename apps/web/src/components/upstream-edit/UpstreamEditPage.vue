@@ -458,7 +458,7 @@ const autoForActive = computed<UpstreamModelConfig[]>(() => {
 
 const upstreamIdLabelForActive = computed(() => activeProvider.value === 'azure' ? 'Deployment' : 'Upstream Model ID');
 // Provider import panels (copilot/codex/claude-code) land the row themselves on create, so the page-level Save button stays hidden until they emit.
-const showSaveButton = computed(() => props.mode === 'edit' || (activeProvider.value !== 'copilot' && activeProvider.value !== 'codex' && activeProvider.value !== 'claude-code'));
+const showSaveButton = computed(() => props.mode === 'edit' || (activeProvider.value !== 'copilot' && activeProvider.value !== 'codex' && activeProvider.value !== 'claude-code' && activeProvider.value !== 'cursor'));
 
 // The cache-status panel reads the row's `modelsCache` summary and offers a
 // force-refresh shortcut. Azure is the one provider whose catalog is pure
@@ -590,7 +590,7 @@ const workbenchStyle = computed(() => ({ '--right-pane-h': `${Math.ceil(rightCon
         :upstream-flag-overrides="flagOverrides"
         :flag-provider-kind="activeProvider"
         :upstream-id-label="upstreamIdLabelForActive"
-        :read-only="activeProvider === 'copilot' || activeProvider === 'codex' || activeProvider === 'claude-code'"
+        :read-only="activeProvider === 'copilot' || activeProvider === 'codex' || activeProvider === 'claude-code' || activeProvider === 'cursor'"
         :all-manual="activeProvider === 'azure'"
         @update:invalid="v => modelsPanelInvalid = v"
       />

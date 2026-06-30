@@ -8,11 +8,11 @@ import { dumpRoutes } from './dump.ts';
 import { controlPlaneModels } from './models/routes.ts';
 import { performanceOverview, performanceTelemetry } from './performance/routes.ts';
 import { createProxy, deleteProxy, listAllBackoffs, listProxies, listProxyBackoffs, resetProxyBackoffs, testProxy, updateProxy } from './proxies/routes.ts';
-import { authLoginBody, changeOwnPasswordBody, claudeCodeAuthorizeUrlBody, claudeCodeImportBody, claudeCodeProbeQuotaBody, claudeCodeRefreshNowBody, claudeCodeReimportBody, claudeCodeSetupTokenImportBody, claudeCodeSetupTokenReimportBody, codexAuthorizeUrlBody, codexImportBody, codexRefreshNowBody, codexReimportBody, copilotAuthPollBody, createKeyBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, fetchModelsBody, importBody, performanceQuery, resetBackoffBody, searchConfigSchema, searchUsageQuery, testProxyBody, tokenUsageQuery, updateKeyBody, updateProxyBody, updateUpstreamBody, updateUserBody } from './schemas.ts';
+import { authLoginBody, changeOwnPasswordBody, claudeCodeAuthorizeUrlBody, claudeCodeImportBody, claudeCodeProbeQuotaBody, claudeCodeRefreshNowBody, claudeCodeReimportBody, claudeCodeSetupTokenImportBody, claudeCodeSetupTokenReimportBody, codexAuthorizeUrlBody, codexImportBody, codexRefreshNowBody, codexReimportBody, copilotAuthPollBody, createKeyBody, createProxyBody, createUpstreamBody, cursorAuthorizeUrlBody, cursorPollBody, cursorReimportBody, cursorRefreshNowBody, createUserBody, exportQuery, fetchModelsBody, importBody, performanceQuery, resetBackoffBody, searchConfigSchema, searchUsageQuery, testProxyBody, tokenUsageQuery, updateKeyBody, updateProxyBody, updateUpstreamBody, updateUserBody } from './schemas.ts';
 import { getSearchConfigRoute, putSearchConfigRoute, testSearchConfigRoute } from './search-config/routes.ts';
 import { searchUsage } from './search-usage/routes.ts';
 import { tokenUsage } from './token-usage/routes.ts';
-import { claudeCodeAuthorizeUrl, claudeCodeImport, claudeCodeProbeQuota, claudeCodeRefreshNow, claudeCodeReimport, claudeCodeSetupTokenImport, claudeCodeSetupTokenReimport, codexAuthorizeUrl, codexImport, codexRefreshNow, codexReimport, copilotAuthPoll, copilotAuthStart, createUpstream, deleteUpstream, fetchModels, listOptionalFlags, listUpstreamModels, listUpstreamOptions, listUpstreams, updateUpstream } from './upstreams/routes.ts';
+import { claudeCodeAuthorizeUrl, claudeCodeImport, claudeCodeProbeQuota, claudeCodeRefreshNow, claudeCodeReimport, claudeCodeSetupTokenImport, claudeCodeSetupTokenReimport, codexAuthorizeUrl, codexImport, codexRefreshNow, codexReimport, copilotAuthPoll, copilotAuthStart, createUpstream, cursorAuthorizeUrl, cursorPoll, cursorReimport, cursorRefreshNow, deleteUpstream, fetchModels, listOptionalFlags, listUpstreamModels, listUpstreamOptions, listUpstreams, updateUpstream } from './upstreams/routes.ts';
 import { changeOwnPassword, createUser, deleteUser, listUsers, updateUser } from './users/routes.ts';
 import { type AuthedContext, type AuthVars, userFromContext } from '../middleware/auth.ts';
 import { zValidator } from '../middleware/zod-validator.ts';
@@ -81,6 +81,10 @@ export const controlPlaneRoutes = new Hono<{ Variables: AuthVars }>()
     .post('/upstreams/:id/claude-code-probe-quota', zValidator('json', claudeCodeProbeQuotaBody), claudeCodeProbeQuota)
     .post('/upstreams/claude-code-setup-token-import', zValidator('json', claudeCodeSetupTokenImportBody), claudeCodeSetupTokenImport)
     .post('/upstreams/:id/claude-code-setup-token-reimport', zValidator('json', claudeCodeSetupTokenReimportBody), claudeCodeSetupTokenReimport)
+    .post('/upstreams/cursor-authorize-url', zValidator('json', cursorAuthorizeUrlBody), cursorAuthorizeUrl)
+    .post('/upstreams/cursor-poll', zValidator('json', cursorPollBody), cursorPoll)
+    .post('/upstreams/:id/cursor-reimport', zValidator('json', cursorReimportBody), cursorReimport)
+    .post('/upstreams/:id/cursor-refresh-now', zValidator('json', cursorRefreshNowBody), cursorRefreshNow)
     .post('/upstreams/fetch-models', zValidator('json', fetchModelsBody), fetchModels)
     .post('/upstreams', zValidator('json', createUpstreamBody), createUpstream)
     .get('/upstreams/:id/copilot/quota', copilotQuota)

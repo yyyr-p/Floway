@@ -7,11 +7,13 @@ import { directFetcher, type ChatTargetApi, type ModelProvider, type ModelProvid
 // (the runtime would have absorbed it in production). Each invocation hands
 // back a fresh `Headers` instance so tests that mutate the bag do not bleed
 // state across cases.
-export const noopUpstreamCallOptions = (): UpstreamCallOptions => ({
+export const noopUpstreamCallOptions = (overrides: Partial<UpstreamCallOptions> = {}): UpstreamCallOptions => ({
   fetcher: directFetcher,
   recordUpstreamLatency: <T>(promise: Promise<T>): Promise<T> => promise,
   waitUntil: () => {},
   headers: new Headers(),
+  apiKeyId: 'test-api-key',
+  ...overrides,
 });
 
 export const stubUpstreamModel = (overrides: Partial<UpstreamModel> = {}): UpstreamModel => ({

@@ -144,6 +144,7 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
         recordUpstreamLatency: recorder.record,
         waitUntil: ctx.backgroundScheduler,
         headers: inboundHeadersForUpstream(c),
+        apiKeyId: ctx.apiKeyId,
       });
       const upstreamDurationMs = requireRecordedDurationMs(recorder, 'passthrough upstream call');
       // Telemetry keys on `match.id` (the upstream's bare catalog id);
