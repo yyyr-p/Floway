@@ -86,13 +86,10 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
   // Cursor packs two ids into one toolCallId string, separated by a newline:
   // an OpenAI-style `call_…` token first, then a Responses-API-style `fc_…`
   // token. OpenAI clients expect a single id with no embedded whitespace, so
-  // we surface only the leading call_… form. Trim defensively in case the
-  // backend ever omits the second id. When a sessionKey is present, further
-  // wrap with the session prefix so the OpenAI client echoes it back.
-  const cleanCallId = (raw: string): string => {
-    const cleaned = raw.split('\n')[0]!.trim();
-    return opts.sessionKey ? wrapToolCallId(opts.sessionKey, cleaned) : cleaned;
-  };
+  // we surface only the leading call_… form. Used for built-in tool calls,
+  // which are never resumed; the MCP path (translateExecRequest) instead wraps
+  // the exec ref via wrapToolCallId so a follow-up can rebuild the result.
+  const cleanCallId = (raw: string): string => raw.split('\n')[0]!.trim();
 
   let emittedRole = false;
   let toolCallIndex = 0;
@@ -257,7 +254,13 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
         tool_calls: [
           {
             index,
-            id: cleanCallId(execRequest.toolCallId),
+            // Encode the session id + cursor exec ref into the tool_call_id so a
+            // follow-up (possibly cross-instance) rebuilds the ExecMcpResult from
+            // the client's echoed id. Falls back to the bare call id when no
+            // session is tracked (shouldn't happen for MCP turns).
+            id: opts.sessionKey
+              ? wrapToolCallId(opts.sessionKey, { id: execRequest.id, execId: execRequest.execId })
+              : cleanCallId(execRequest.toolCallId),
             type: 'function',
             function: {
               name: execRequest.toolName || execRequest.name,

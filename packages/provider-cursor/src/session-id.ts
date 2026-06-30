@@ -73,13 +73,35 @@ function bareId(sessionKey: string): string {
   return sessionKey.split(':').pop()!;
 }
 
-/** Wrap: cursor's tool_call_id → OpenAI-facing id with session prefix. */
-export function wrapToolCallId(sessionKey: string, cursorCallId: string): string {
-  return `sess_${bareId(sessionKey)}__${cursorCallId}`;
+/** The cursor exec identity needed to build an ExecMcpResult on a follow-up. */
+export interface ExecRef {
+  /** ExecClientMessage.id (field 1). */
+  id: number;
+  /** exec_id (field 15); may be absent. */
+  execId: string | undefined;
 }
 
-/** Unwrap: OpenAI client's tool_call_id → original cursor id. */
-export function unwrapToolCallId(wrapped: string): string {
+/**
+ * Wrap: encode the session id AND the cursor exec identity (id + exec_id) into
+ * the OpenAI-facing tool_call_id. The OpenAI protocol echoes tool_call_id back
+ * verbatim on the follow-up tool message, so the follow-up — possibly on a
+ * different instance — can rebuild the ExecMcpResult straight from the client's
+ * id, with no server-side pending-exec map. `__` is the delimiter; cursor ids
+ * use single underscores only (`call_…`, `fc_…`).
+ */
+export function wrapToolCallId(sessionKey: string, exec: ExecRef): string {
+  return `sess_${bareId(sessionKey)}__${exec.id}__${exec.execId ?? ''}`;
+}
+
+/** Decode the cursor exec identity from a wrapped tool_call_id, or null. */
+export function decodeToolCallId(wrapped: string): ExecRef | null {
   const m = TOOL_CALL_PREFIX_RE.exec(wrapped);
-  return m ? wrapped.slice(m[0].length) : wrapped;
+  if (!m) return null;
+  const rest = wrapped.slice(m[0].length); // `${id}__${execId}`
+  const sep = rest.indexOf('__');
+  const idStr = sep === -1 ? rest : rest.slice(0, sep);
+  const execIdStr = sep === -1 ? '' : rest.slice(sep + 2);
+  const id = Number(idStr);
+  if (!Number.isInteger(id)) return null;
+  return { id, execId: execIdStr === '' ? undefined : execIdStr };
 }

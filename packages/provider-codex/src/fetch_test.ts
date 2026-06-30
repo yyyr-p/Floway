@@ -62,6 +62,7 @@ beforeEach(() => {
   vi.useRealTimers();
   currentRecord = makeRecord({ accounts: [{ ...activeAccount }] });
   initProviderRepo(() => ({
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
     upstreams: {
       getById: async () => currentRecord,
       saveState: async (_id, newState) => {

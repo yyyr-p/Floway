@@ -37,6 +37,7 @@ beforeEach(() => {
   saveStateSpy = vi.fn<(id: string, newState: unknown, options: { expectedState: unknown }) => Promise<{ updated: boolean }>>(async () => ({ updated: true }));
   getByIdSpy = vi.fn<(id: string) => Promise<UpstreamRecord | null>>(async () => recordWithAccessToken());
   initProviderRepo(() => ({
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
     upstreams: { getById: getByIdSpy, saveState: saveStateSpy },
   }));
 });

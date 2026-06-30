@@ -14,15 +14,14 @@ import { AgentTransport } from './agent-transport.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION } from './constants.ts';
-import { getCursorSession, putCursorSession, deleteCursorSession } from './cursor-session-state.ts';
-import { AgentMode, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
+import { AgentMode, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
 import { isCursorRateLimited } from './quota.ts';
-import { deriveSessionKey, mintSessionKey, unwrapToolCallId } from './session-id.ts';
+import { deriveSessionKey, mintSessionKey, decodeToolCallId } from './session-id.ts';
 import type { CursorAccountCredential } from './state.ts';
 import { getDurableHttpSession, type DurableHttpSessionHandle } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent, ChatCompletionsPayload, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
 import { eventFrame, doneFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
-import { type ProviderStreamResult, type UpstreamCallOptions, type UpstreamModel } from '@floway-dev/provider';
+import { getProviderRepo, type ProviderStreamResult, type UpstreamCallOptions, type UpstreamModel } from '@floway-dev/provider';
 
 export interface CursorCallEffects {
   persistRefreshTokenRotation(newRefreshToken: string): Promise<void>;
@@ -163,287 +162,244 @@ export const callCursorChatCompletions = async (
   const ready = await prepareCursorCall(opts);
   if (!ready.ok) return { ok: false, modelKey: opts.model.id, response: ready.response };
 
-  // Session correlation: derive sessionKey from inbound tool_call_id or header.
+  // Session correlation: a tool-result follow-up carries the session id in the
+  // echoed tool_call_id (see session-id.ts).
   const { sessionKey: derived, isFollowUp } = deriveSessionKey(
     opts.upstreamId, opts.call.apiKeyId, opts.headers, opts.body.messages,
   );
-  const sessionKey = derived ?? mintSessionKey(opts.upstreamId, opts.call.apiKeyId);
 
-  // Try to reuse an in-process session (tool-call follow-up continuation).
-  // Priority: in-process generator cache (Node fast path) > DurableHttpSession
-  // broker (CF path, future). If neither hits, fall through to new-session.
-  if (isFollowUp) {
-    const inProcess = getCursorSession(sessionKey);
-    if (inProcess) {
-      return await performCursorSessionFollowUp(opts, ready.accessToken, ready.checksum, null, sessionKey);
-    }
-    try {
-      const broker = getDurableHttpSession();
-      const session = await broker.acquire(sessionKey, null, { signal: opts.signal });
-      if (session) {
-        return await performCursorSessionFollowUp(opts, ready.accessToken, ready.checksum, session, sessionKey);
-      }
-    } catch {
-      // broker uninitialized or acquire error → fall through to new-session path
-    }
+  // Follow-up: resume the live RunSSE stream (held by the DurableHttpSession),
+  // seeded by the {requestId, seqno} persisted in D1. A miss / busy claim /
+  // lost socket returns null → fall through to a fresh open (cold-resume:
+  // cursor re-runs the agent loop with the full transcript).
+  if (isFollowUp && derived) {
+    const resumed = await performResume(opts, ready.accessToken, ready.checksum, derived);
+    if (resumed) return resumed;
   }
 
-  return await performCursorChatCall(opts, ready.accessToken, ready.checksum, sessionKey);
+  // Open always mints a fresh session key so it never collides with a still-live
+  // session for the derived key (e.g. a racing concurrent follow-up).
+  return await performOpen(opts, ready.accessToken, ready.checksum);
 };
 
-// Build the AgentTransport + self-construct the event stream. The generator:
-//   - text/thinking/tool_call_* → translator → eventFrame
-//   - mcp exec_request → translator emits tool_calls, then BREAK (stateless
-//     passthru: the downstream client returns the tool result in the next
-//     turn, which Floway inlines into a fresh RunSSE)
-//   - request_context exec → answer with the gateway env, keep streaming
-//   - other built-in exec → reject on the write channel, keep streaming
-//   - done → finalize (finish_reason) + doneFrame
-//   - error → throw (the gateway surfaces a 502)
-//
-// 401 retry: prepareCursorCall already mints a fresh token, so a 401 here is
-// rare. Mid-stream 401 retry is deferred (TODO cursor): the lazy generator
-// can't cleanly retry once events have flowed. Step 9 will add a peek-then-
-// stream retry once the real 401 shape is captured.
-const performCursorChatCall = async (
+// Claim-lock TTL for the D1 single-flight: long enough to cover a turn's
+// upstream round-trips, short enough that a crashed turn frees the session.
+const CLAIM_TTL_MS = 60_000;
+
+const makeTransport = (
   opts: CallCursorChatCompletionsOptions,
-  accessToken: string,
+  getAuthToken: () => string,
   checksum: string,
-  sessionKey: string,
-): Promise<ProviderStreamResult<ChatCompletionsStreamEvent>> => {
-  const message = flattenMessages(opts.body.messages);
-  // Always advertise the tools. On a cold-resume (a tool-result follow-up that
-  // missed the live session) this lets cursor re-run the agent loop natively
-  // and re-issue the tool call, rather than degrading to a prompt-folded
-  // result — see flattenMessages. The native follow-up path
-  // (performCursorSessionFollowUp) handles the happy case on the live session.
-  const tools = toAgentTools(opts.body.tools);
-
-  // Wrap the proxy-aware Fetcher so per-call latency recording still wraps each
-  // outbound RunSSE/BidiAppend, even though transport owns the fetch calls.
-  const fetchWrapper = (url: string, init: RequestInit): Promise<Response> =>
-    opts.call.fetcher(url, init, opts.call.recordUpstreamLatency);
-
-  const transport = new AgentTransport({
-    accessToken,
+): AgentTransport =>
+  new AgentTransport({
+    getAuthToken,
     baseUrl: CURSOR_BACKEND_BASE,
     env: gatewayEnv,
     clientVersion: CURSOR_CLIENT_VERSION,
     getChecksum: () => checksum,
-    fetch: fetchWrapper as unknown as typeof fetch,
+    // The BidiAppend write channel goes through the proxy-aware Fetcher (which
+    // records upstream latency); the RunSSE read is owned by the
+    // DurableHttpSession, not fetched here.
+    fetch: ((url: string, init: RequestInit) =>
+      opts.call.fetcher(url, init, opts.call.recordUpstreamLatency)) as unknown as typeof fetch,
   });
 
-  const id = `chatcmpl-cursor-${crypto.randomUUID()}`;
-  const created = Math.floor(Date.now() / 1000);
-
-  const translator = createAgentTranslator({
-    id,
-    model: opts.model.id,
-    created,
-    composer: isComposerModel(opts.model.id),
-    sessionKey,
-  });
-
-  // AGENT mode keeps the turn open (the backend expects an agent loop to
-  // continue — tool calls, checkpoints — and does not emit turn_ended on a
-  // simple reply). ASK mode is the direct Q&A turn shape: the backend emits
-  // text then turn_ended, which is what a Chat Completions caller expects.
-  // Tool-calling turns stay in AGENT mode so the model can drive its loop.
-  const mode = tools && tools.length > 0 ? AgentMode.AGENT : AgentMode.ASK;
-  const gen = transport.openChatStream({ message, model: opts.model.id, tools, mode });
-
-  // Kick off the generator before returning ok=true: the first .next() awaits
-  // the RunSSE fetch + the initial BidiAppend RunRequest, so the gateway's
-  // recordUpstreamLatency wraps a real upstream round-trip. The recorder is
-  // asserted at the ok=true boundary in providerStreamResultToExecuteResult,
-  // so a fully-lazy generator (fetch deferred until the consumer pulls) would
-  // fail that check. The first chunk is held back and re-yielded so streaming
-  // stays intact.
-  const first = await gen.next();
-
-  const events = async function* (): AsyncGenerator<ProtocolFrame<ChatCompletionsStreamEvent>> {
-    let sessionSaved = false;
+// Shared turn driver: pump the transport gen → translator → SSE frames, and
+// dispose of the DurableHttpSession + D1 row at the right boundary:
+//   - mcp exec      → tool_calls + pause: persist {requestId, seqno, leftover}
+//                     to D1, release the handle (keep the socket), stop pulling.
+//   - request_context / built-in → answer/reject on the write channel, continue.
+//   - done          → discard the handle, delete the D1 row.
+//   - error         → discard the handle, delete the D1 row, rethrow (502).
+//
+// Manual gen pulls (never for-await): for-await calls gen.return() on break,
+// which would tear the read loop down mid-pause.
+const buildEvents = (
+  opts: CallCursorChatCompletionsOptions,
+  transport: AgentTransport,
+  gen: AsyncGenerator<AgentStreamChunk>,
+  translator: ReturnType<typeof createAgentTranslator>,
+  sessionKey: string,
+  requestId: string,
+  handle: DurableHttpSessionHandle,
+  first: IteratorResult<AgentStreamChunk>,
+): AsyncGenerator<ProtocolFrame<ChatCompletionsStreamEvent>> => {
+  const repo = getProviderRepo().cursorSessions;
+  return (async function* (): AsyncGenerator<ProtocolFrame<ChatCompletionsStreamEvent>> {
+    let paused = false;
     try {
-      // Pull from gen manually instead of for-await — for-await would call
-      // gen.return() on break, killing the transport's RunSSE read. We need
-      // the gen to stay alive after a tool_calls break so the next turn can
-      // continue reading from it.
       let iterResult = first;
       while (true) {
         if (iterResult.done) break;
         const chunk = iterResult.value;
-        if (chunk.type === 'error') {
-          throw new Error(chunk.error ?? 'Cursor agent stream error');
-        }
+        if (chunk.type === 'error') throw new Error(chunk.error ?? 'Cursor agent stream error');
         if (chunk.type === 'done') break;
 
         if (chunk.type === 'exec_request' && chunk.execRequest) {
           const exec = chunk.execRequest;
           if (exec.type === 'mcp') {
             for (const ev of translator.translate(chunk)) yield eventFrame(ev);
-            // Save the live session for follow-up tool result continuation.
-            // The gen stays open (NOT returned) so the RunSSE read stays alive.
-            // Key pendingExecs by the cleaned tool_call_id (no newline) —
-            // matches what the translator emits (cleanCallId) and what the
-            // client will echo back (after unwrap).
-            const cleanedTcId = exec.toolCallId.split('\n')[0]!.trim();
-            const pendingExecs = new Map<string, { id: number; execId: string | undefined }>();
-            pendingExecs.set(cleanedTcId, { id: exec.id, execId: exec.execId });
-            putCursorSession({
-              gen,
-              sendMcpResult: (id, execId, result) => transport.sendMcpResult({ type: 'mcp', id, execId, name: exec.name, args: exec.args, toolCallId: exec.toolCallId, providerIdentifier: exec.providerIdentifier, toolName: exec.toolName }, result),
-              sendResumeAction: () => transport.sendResumeAction(),
-              pendingExecs,
+            // Pause point: persist the scalars a (possibly cross-instance)
+            // resume needs. The exec id+execId travel in the tool_call_id, so
+            // only requestId/seqno/leftover go to D1.
+            await repo.put({
               sessionKey,
-              lastActivityAt: Date.now(),
+              requestId,
+              appendSeqno: Number(transport.seqno),
+              leftover: transport.leftover,
             });
-            sessionSaved = true;
+            paused = true;
             break;
           }
           if (exec.type === 'request_context') {
             await transport.sendRequestContextResult(exec.id, exec.execId);
+            iterResult = await gen.next();
             continue;
           }
           await transport.sendRejectedTool(exec, 'Floway gateway cannot execute built-in tools');
+          iterResult = await gen.next();
           continue;
         }
 
         for (const ev of translator.translate(chunk)) yield eventFrame(ev);
-
-        // Advance to the next chunk manually (no for-await, no auto-return).
         iterResult = await gen.next();
       }
-    } finally {
-      // Only abort the transport if we did NOT save the session for follow-up.
-      // When session is saved, the generator stays open for the next turn.
-      if (!sessionSaved) {
-        await gen.return(undefined);
-      }
+    } catch (err) {
+      await gen.return(undefined).catch(() => {});
+      await handle.discard('stream error').catch(() => {});
+      await repo.delete(sessionKey).catch(() => {});
+      throw err;
+    }
+
+    // gen.return() releases the read lock; leftover was already captured before
+    // the pause yield, so this is safe.
+    await gen.return(undefined).catch(() => {});
+    if (paused) {
+      await handle.release().catch(() => {}); // keep the socket; D1 row persisted
+    } else {
+      await handle.discard('turn ended').catch(() => {});
+      await repo.delete(sessionKey).catch(() => {});
     }
 
     for (const ev of translator.finalize()) yield eventFrame(ev);
     yield doneFrame();
-  };
+  })();
+};
 
-  return { ok: true, events: events(), modelKey: opts.model.id };
+// Open a fresh turn: mint a session key, acquire the RunSSE read stream from
+// the DurableHttpSession, send the RunRequest on BidiAppend, then drive.
+const performOpen = async (
+  opts: CallCursorChatCompletionsOptions,
+  accessToken: string,
+  checksum: string,
+): Promise<ProviderStreamResult<ChatCompletionsStreamEvent>> => {
+  const sessionKey = mintSessionKey(opts.upstreamId, opts.call.apiKeyId);
+  const message = flattenMessages(opts.body.messages);
+  // Always advertise the tools: a cold-resume (tool-result follow-up that lost
+  // its session) lets cursor re-run the agent loop natively rather than degrade
+  // to a prompt-folded result.
+  const tools = toAgentTools(opts.body.tools);
+  // AGENT mode keeps the loop open for tool calls; ASK is the direct Q&A shape.
+  const mode = tools && tools.length > 0 ? AgentMode.AGENT : AgentMode.ASK;
+
+  const transport = makeTransport(opts, () => accessToken, checksum);
+  const requestId = crypto.randomUUID();
+  transport.seed(requestId, 0n);
+
+  const broker = getDurableHttpSession();
+  let handle: DurableHttpSessionHandle | null;
+  try {
+    handle = await opts.call.recordUpstreamLatency(
+      broker.acquire(sessionKey, transport.runSseInit(requestId), { signal: opts.signal }),
+    );
+  } catch (err) {
+    const m = err instanceof Error ? err.message : String(err);
+    return { ok: false, modelKey: opts.model.id, response: await opts.call.recordUpstreamLatency(Promise.resolve(synthetic503(`Cursor RunSSE dial failed: ${m}`))) };
+  }
+  if (!handle) {
+    return { ok: false, modelKey: opts.model.id, response: await opts.call.recordUpstreamLatency(Promise.resolve(synthetic503('Cursor session broker unavailable'))) };
+  }
+
+  // The RunSSE read is owned by the DurableHttpSession, so a non-200 upstream
+  // status surfaces here (not in the transport). Surface it as a thrown stream
+  // error so the gateway returns a 502.
+  if (handle.status !== 200) {
+    const bodyText = await new Response(handle.body).text().catch(() => '');
+    await handle.discard(`RunSSE status ${handle.status}`).catch(() => {});
+    const events = (async function* (): AsyncGenerator<ProtocolFrame<ChatCompletionsStreamEvent>> {
+      throw new Error(`SSE stream failed: ${handle.status} - ${bodyText}`);
+    })();
+    return { ok: true, events, modelKey: opts.model.id };
+  }
+
+  const id = `chatcmpl-cursor-${crypto.randomUUID()}`;
+  const created = Math.floor(Date.now() / 1000);
+  const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
+
+  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.model.id, tools, mode } });
+  // First pull sends the RunRequest (BidiAppend, via the latency-recording
+  // fetcher) + reads the first chunk, satisfying the ok=true latency assertion.
+  const first = await gen.next();
+  return { ok: true, events: buildEvents(opts, transport, gen, translator, sessionKey, requestId, handle, first), modelKey: opts.model.id };
 };
 
 /**
- * Follow-up on an existing in-process session (tool result continuation).
- * The transport's gen is still alive in cursor-session-state; we send
- * ExecMcpResult via the saved transport methods, then sendResumeAction
- * so cursor continues streaming, and pump the gen for the follow-up reply.
+ * Resume a tool-result follow-up on the live RunSSE stream held by the
+ * DurableHttpSession, seeded by the {requestId, seqno, leftover} persisted in
+ * D1. Returns null when the session can't be resumed (no row / busy claim /
+ * lost socket) so the caller cold-resumes via a fresh open().
+ *
+ * Token freshness: the access token is re-minted on this request's isolate and
+ * injected via getAuthToken, so a follow-up arriving after the prior turn's
+ * token expired still authenticates.
  */
-const performCursorSessionFollowUp = async (
+const performResume = async (
   opts: CallCursorChatCompletionsOptions,
-  _accessToken: string,
-  _checksum: string,
-  session: DurableHttpSessionHandle | null,
+  accessToken: string,
+  checksum: string,
   sessionKey: string,
-): Promise<ProviderStreamResult<ChatCompletionsStreamEvent>> => {
-  // Release the DurableHttpSession handle if present — we use the in-process gen.
-  if (session) await session.release();
+): Promise<ProviderStreamResult<ChatCompletionsStreamEvent> | null> => {
+  const repo = getProviderRepo().cursorSessions;
+  // Single-flight: claim atomically locks the row (or returns null if missing /
+  // already claimed by a racing follow-up → cold-resume).
+  const row = await repo.claim(sessionKey, CLAIM_TTL_MS);
+  if (!row) return null;
 
-  const entry = getCursorSession(sessionKey);
-  if (!entry) {
-    // Session evicted between acquire and here — fallback to new session.
-    return await performCursorChatCall(opts, _accessToken, _checksum, sessionKey);
+  const broker = getDurableHttpSession();
+  let handle: DurableHttpSessionHandle | null;
+  try {
+    handle = await opts.call.recordUpstreamLatency(broker.acquire(sessionKey, null, { signal: opts.signal }));
+  } catch {
+    handle = null;
+  }
+  if (!handle) {
+    // Read socket gone (idle-evicted / 15-min cap / cross-instance miss) → drop
+    // the stale row and cold-resume.
+    await repo.delete(sessionKey).catch(() => {});
+    return null;
   }
 
-  // Match incoming role:'tool' messages to pending exec requests.
-  // Wrap the BidiAppend calls in this request's recordUpstreamLatency so the
-  // gateway's recorder sees a real upstream round-trip on this request (not
-  // the first request's recorder, which belongs to a different UpstreamCallOptions).
-  const toolMessages = opts.body.messages.filter(m => m.role === 'tool' && typeof m.tool_call_id === 'string');
+  const transport = makeTransport(opts, () => accessToken, checksum);
+  transport.seed(row.requestId, BigInt(row.appendSeqno));
 
+  // Send each tool result on the same stream: the cursor exec ref (id + execId)
+  // is decoded from the client's echoed tool_call_id — no server-side map.
+  const toolMessages = opts.body.messages.filter(m => m.role === 'tool' && typeof m.tool_call_id === 'string');
   const sendToolResults = async (): Promise<void> => {
     for (const toolMsg of toolMessages) {
-      const wrappedId = toolMsg.tool_call_id!;
-      const unwrapped = unwrapToolCallId(wrappedId);
-      const pending = entry.pendingExecs.get(unwrapped) ?? entry.pendingExecs.get(wrappedId);
-      if (!pending) continue;
-
+      const ref = decodeToolCallId(toolMsg.tool_call_id!);
+      if (!ref) continue;
       const content = typeof toolMsg.content === 'string' ? toolMsg.content : JSON.stringify(toolMsg.content);
-      await entry.sendMcpResult(pending.id, pending.execId, { success: { content } });
-      entry.pendingExecs.delete(unwrapped);
-      entry.pendingExecs.delete(wrappedId);
+      await transport.sendMcpResultRaw(ref.id, ref.execId, { success: { content } });
     }
-    // NO ResumeAction: cursor auto-resumes the model turn on the live RunSSE
-    // read channel once it receives the mcp_result (matches the validated
-    // HTTP/2 reference — see AgentTransport.sendExecResultNoClose). Sending a
-    // ResumeAction here makes the server finalize the turn instead, producing
-    // an empty follow-up reply.
   };
-
-  // Record the BidiAppend round-trips against THIS request's latency recorder.
   await opts.call.recordUpstreamLatency(sendToolResults());
 
-  // Now pump the gen for the continuation.
   const id = `chatcmpl-cursor-${crypto.randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
-  const translator = createAgentTranslator({
-    id,
-    model: opts.model.id,
-    created,
-    composer: isComposerModel(opts.model.id),
-    sessionKey,
-  });
+  const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
 
-  // Kick off the first read to satisfy recordUpstreamLatency requirement.
-  // The bidiAppend calls above already went through fetcher (latency recorded).
-  const first = await entry.gen.next();
-
-  const events = async function* (): AsyncGenerator<ProtocolFrame<ChatCompletionsStreamEvent>> {
-    let sessionSavedAgain = false;
-    try {
-      // Manual pull (NOT for-await): for-await calls entry.gen.return() on
-      // break, which kills the transport's RunSSE read and prevents any
-      // further tool-result continuation on this session.
-      let iterResult = first;
-      while (true) {
-        if (iterResult.done) break;
-        const chunk = iterResult.value;
-        if (chunk.type === 'error') {
-          deleteCursorSession(sessionKey);
-          throw new Error(chunk.error ?? 'Cursor agent stream error');
-        }
-        if (chunk.type === 'done') break;
-
-        if (chunk.type === 'exec_request' && chunk.execRequest) {
-          const exec = chunk.execRequest;
-          if (exec.type === 'mcp') {
-            for (const ev of translator.translate(chunk)) yield eventFrame(ev);
-            // Save again for the next follow-up. Key by the cleaned id (no
-            // embedded newline) to match the translator's emitted tool_call_id
-            // and what the client echoes back after unwrap.
-            const cleanedTcId = exec.toolCallId.split('\n')[0]!.trim();
-            entry.pendingExecs.set(cleanedTcId, { id: exec.id, execId: exec.execId });
-            entry.lastActivityAt = Date.now();
-            sessionSavedAgain = true;
-            break;
-          }
-          if (exec.type === 'request_context') {
-            // request_context only appears on the first turn (the agent loop is
-            // already bootstrapped on a follow-up). Skip — rare in practice.
-            iterResult = await entry.gen.next();
-            continue;
-          }
-          iterResult = await entry.gen.next();
-          continue;
-        }
-
-        for (const ev of translator.translate(chunk)) yield eventFrame(ev);
-        iterResult = await entry.gen.next();
-      }
-    } finally {
-      if (!sessionSavedAgain) {
-        deleteCursorSession(sessionKey);
-      }
-    }
-
-    for (const ev of translator.finalize()) yield eventFrame(ev);
-    yield doneFrame();
-  };
-
-  return { ok: true, events: events(), modelKey: opts.model.id };
+  const gen = transport.resumeChatStream({ readStream: handle.body, leftover: row.leftover });
+  const first = await gen.next();
+  return { ok: true, events: buildEvents(opts, transport, gen, translator, sessionKey, row.requestId, handle, first), modelKey: opts.model.id };
 };

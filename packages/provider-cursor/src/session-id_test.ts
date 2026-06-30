@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { deriveSessionKey, mintSessionKey, wrapToolCallId, unwrapToolCallId } from './session-id.ts';
+import { deriveSessionKey, mintSessionKey, wrapToolCallId, decodeToolCallId } from './session-id.ts';
 
 describe('deriveSessionKey', () => {
   test('priority 1: X-Floway-Conversation-Id header wins', () => {
@@ -70,23 +70,25 @@ describe('mintSessionKey', () => {
   });
 });
 
-describe('wrapToolCallId / unwrapToolCallId', () => {
-  test('round-trips correctly', () => {
+describe('wrapToolCallId / decodeToolCallId', () => {
+  test('encodes the session id + exec ref and round-trips', () => {
     const sessionKey = 'cursor:up1:ak1:auto:abc123def456';
-    const cursorId = 'call_xyz';
-    const wrapped = wrapToolCallId(sessionKey, cursorId);
-    expect(wrapped).toBe('sess_abc123def456__call_xyz');
-    expect(unwrapToolCallId(wrapped)).toBe(cursorId);
+    const wrapped = wrapToolCallId(sessionKey, { id: 7, execId: 'fc_01c10a8' });
+    expect(wrapped).toBe('sess_abc123def456__7__fc_01c10a8');
+    // deriveSessionKey still recovers the session id from the prefix.
+    expect(deriveSessionKey('up1', 'ak1', new Headers(), [{ role: 'tool', tool_call_id: wrapped, content: 'x' }]).sessionKey)
+      .toBe('cursor:up1:ak1:auto:abc123def456');
+    expect(decodeToolCallId(wrapped)).toEqual({ id: 7, execId: 'fc_01c10a8' });
   });
 
-  test('unwrap passes through ids without the sess_ prefix', () => {
-    expect(unwrapToolCallId('call_plain')).toBe('call_plain');
+  test('round-trips an absent execId', () => {
+    const wrapped = wrapToolCallId('cursor:up1:ak1:auto:aabb', { id: 3, execId: undefined });
+    expect(wrapped).toBe('sess_aabb__3__');
+    expect(decodeToolCallId(wrapped)).toEqual({ id: 3, execId: undefined });
   });
 
-  test('unwrap handles newline-contaminated cursor ids', () => {
-    const sessionKey = 'cursor:up1:ak1:auto:aabb';
-    const cursorId = 'call_x\nfc_y';
-    const wrapped = wrapToolCallId(sessionKey, cursorId);
-    expect(unwrapToolCallId(wrapped)).toBe(cursorId);
+  test('decode returns null for ids without the sess_ prefix or a non-numeric id', () => {
+    expect(decodeToolCallId('call_plain')).toBeNull();
+    expect(decodeToolCallId('sess_aabb__notanumber__fc_1')).toBeNull();
   });
 });

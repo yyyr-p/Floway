@@ -72,6 +72,7 @@ const setupCopilotTest = async (initial: SetupOptions = {}): Promise<CopilotTest
     return saveResult;
   };
   initProviderRepo(() => ({
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
     upstreams: {
       getById: () => getByIdImpl(),
       saveState: (id, newState, options) => saveStateImpl(id, newState, options),

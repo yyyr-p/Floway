@@ -27,6 +27,7 @@ const installRepoAndClearCache = async () => {
     config: { githubToken: 'ghu_test', user: { id: 1, login: 't', name: null, avatar_url: '' } },
   };
   initProviderRepo(() => ({
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
     upstreams: {
       getById: async () => ({ ...stub, state }),
       saveState: async (_id, newState) => {

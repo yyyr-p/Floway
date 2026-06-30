@@ -3,10 +3,28 @@ import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
 import { addConnectEnvelope, encodeMessageField, encodeStringField } from './proto/index.ts';
 import type { CursorAccessTokenEntry, CursorAccountCredential, CursorUpstreamState } from './state.ts';
+import { initDurableHttpSession, resetDurableHttpSessionForTesting, type DurableHttpSession } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import { initProviderRepo, type UpstreamModel, type UpstreamRecord } from '@floway-dev/provider';
 import { noopUpstreamCallOptions, stubUpstreamModel } from '@floway-dev/test-utils';
+
+// Minimal DurableHttpSession that does the RunSSE fetch via globalThis.fetch
+// (which the tests mock), so the read stream flows through the same channel the
+// suite already controls. Mirrors the in-process impl's open() shape.
+const testDurableHttpSession: DurableHttpSession = {
+  async acquire(_sessionKey, init) {
+    if (!init) return null; // resume miss → cold-resume (claim returns null first anyway)
+    const resp = await globalThis.fetch(init.url, { method: init.method, headers: init.headers, body: init.body as BodyInit });
+    return {
+      status: resp.status,
+      headers: resp.headers,
+      body: resp.body ?? new ReadableStream<Uint8Array>({ start: c => c.close() }),
+      release: async () => {},
+      discard: async () => {},
+    };
+  },
+};
 
 const makeEffects = (): CursorCallEffects => ({
   persistRefreshTokenRotation: vi.fn(async () => {}),
@@ -51,8 +69,10 @@ let currentRecord: UpstreamRecord;
 
 beforeEach(() => {
   vi.useRealTimers();
+  initDurableHttpSession(testDurableHttpSession);
   currentRecord = makeRecord({ accounts: [{ ...activeAccount }] });
   initProviderRepo(() => ({
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
     upstreams: {
       getById: async () => currentRecord,
       saveState: async (_id, newState) => {
@@ -63,7 +83,10 @@ beforeEach(() => {
   }));
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  resetDurableHttpSessionForTesting();
+  vi.restoreAllMocks();
+});
 
 // AgentServerMessage { field 1: InteractionUpdate { field 1: TextDeltaUpdate { field 1: text } } }
 function textFrame(text: string): Uint8Array {

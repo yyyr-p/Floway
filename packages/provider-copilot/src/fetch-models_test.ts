@@ -24,6 +24,7 @@ const installRepoAndConfig = async () => {
     config: { githubToken, user: { id: 1, login: 't', name: null, avatar_url: '' } },
   };
   initProviderRepo(() => ({
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
     upstreams: {
       getById: async () => stub,
       saveState: async () => ({ updated: true }),

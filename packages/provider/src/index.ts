@@ -53,7 +53,7 @@ export type {
 } from './provider.ts';
 export { streamingProviderCall, type ProviderStreamParser } from './streaming.ts';
 
-export type { ProviderRepo, UpstreamsRepoSlim } from './repo.ts';
+export type { CursorSessionRow, CursorSessionsRepoSlim, ProviderRepo, UpstreamsRepoSlim } from './repo.ts';
 export { getProviderRepo, initProviderRepo } from './repo.ts';
 
 export {

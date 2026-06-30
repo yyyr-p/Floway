@@ -77,10 +77,10 @@ const DEFAULT_HEARTBEAT = {
   idleAfterProgressMs: 30_000,
 };
 
-const DEFAULT_REQUEST_TIMEOUT_MS = 300_000;
-
 export interface AgentTransportOptions {
-  accessToken: string;
+  /** Supplies the Bearer access token. A getter (not a captured string) so a
+   * resume on a long-lived session can swap in a freshly-minted token. */
+  getAuthToken: () => string;
   baseUrl: string;
   env: RequestContextEnv;
   clientVersion: string;
@@ -92,7 +92,6 @@ export interface AgentTransportOptions {
   fetch?: typeof fetch;
   /** BidiAppend retry count for transient network errors. Default 1. */
   maxRetries?: number;
-  requestTimeoutMs?: number;
   heartbeat?: Partial<typeof DEFAULT_HEARTBEAT>;
 }
 
@@ -116,7 +115,7 @@ function isRetryableNetworkError(message: string): boolean {
  * store and seqno are turn-scoped and cleared on openChatStream.
  */
 export class AgentTransport {
-  private readonly accessToken: string;
+  private readonly getAuthToken: () => string;
   private readonly baseUrl: string;
   private readonly env: RequestContextEnv;
   private readonly clientVersion: string;
@@ -124,19 +123,22 @@ export class AgentTransport {
   private readonly getChecksum: () => string;
   private readonly fetchFn: typeof fetch;
   private readonly maxRetries: number;
-  private readonly requestTimeoutMs: number;
   private readonly heartbeat: typeof DEFAULT_HEARTBEAT;
 
   private readonly blobStore = new Map<string, Uint8Array>();
   private readonly blobStoreOrder: string[] = [];
 
-  // Turn-scoped state, valid while openChatStream is running.
+  // Turn-scoped state. seed() sets requestId+seqno before open/resume; the read
+  // stream + socket lifetime are owned by the DurableHttpSession, so the
+  // transport no longer holds an AbortController/timeout of its own.
   private currentRequestId: string | null = null;
   private currentAppendSeqno = 0n;
-  private controller: AbortController | null = null;
+  // RunSSE bytes read past the exec_mcp frame but not yet parsed, captured at
+  // the pause so a cross-instance resume can prepend them (see driveReadLoop).
+  private suspendedLeftover: Uint8Array | null = null;
 
   constructor(opts: AgentTransportOptions) {
-    this.accessToken = opts.accessToken;
+    this.getAuthToken = opts.getAuthToken;
     this.baseUrl = opts.baseUrl.replace(/\/$/, '');
     this.env = opts.env;
     this.clientVersion = opts.clientVersion;
@@ -144,13 +146,22 @@ export class AgentTransport {
     this.getChecksum = opts.getChecksum;
     this.fetchFn = opts.fetch ?? globalThis.fetch;
     this.maxRetries = opts.maxRetries ?? 1;
-    this.requestTimeoutMs = opts.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.heartbeat = { ...DEFAULT_HEARTBEAT, ...opts.heartbeat };
+  }
+
+  /** The unparsed RunSSE remainder at the last exec_mcp pause (usually empty). */
+  get leftover(): Uint8Array | null {
+    return this.suspendedLeftover;
+  }
+
+  /** The next BidiAppend seqno (to persist for a cross-instance resume). */
+  get seqno(): bigint {
+    return this.currentAppendSeqno;
   }
 
   private getHeaders(requestId?: string): Record<string, string> {
     const headers: Record<string, string> = {
-      authorization: `Bearer ${this.accessToken}`,
+      authorization: `Bearer ${this.getAuthToken()}`,
       'content-type': GRPC_WEB_PROTO,
       'user-agent': USER_AGENT,
       'x-cursor-checksum': this.getChecksum(),
@@ -314,7 +325,17 @@ export class AgentTransport {
    * server resumes the model turn automatically (see sendExecResultNoClose).
    */
   async sendMcpResult(execRequest: Extract<ExecRequest, { type: 'mcp' }>, result: McpResult): Promise<void> {
-    const execClientMsg = buildExecClientMessageWithMcpResult(execRequest.id, execRequest.execId, result);
+    await this.sendMcpResultRaw(execRequest.id, execRequest.execId, result);
+  }
+
+  /**
+   * Send an MCP tool result from just the exec identity (id + exec_id) — a
+   * cross-instance resume reconstructs these from the client's echoed
+   * tool_call_id (see session-id.ts decodeToolCallId), without the original
+   * exec_request object.
+   */
+  async sendMcpResultRaw(id: number, execId: string | undefined, result: McpResult): Promise<void> {
+    const execClientMsg = buildExecClientMessageWithMcpResult(id, execId, result);
     await this.sendExecResultNoClose(execClientMsg);
   }
 
@@ -385,29 +406,73 @@ export class AgentTransport {
     this.currentAppendSeqno += 1n;
   }
 
-  /** Abort the active RunSSE read (e.g. after yielding a tool_calls chunk). */
-  abort(): void {
-    this.controller?.abort();
+  /**
+   * Seed the turn-scoped write-channel state before open/resume. requestId +
+   * seqno are generated/loaded by the caller (fetch.ts) so they can be shared
+   * with the DurableHttpSession RunSSE request and persisted to D1 for a
+   * cross-instance resume.
+   */
+  seed(requestId: string, seqno: bigint): void {
+    this.currentRequestId = requestId;
+    this.currentAppendSeqno = seqno;
+    this.suspendedLeftover = null;
+    this.clearBlobStore();
   }
 
   /**
-   * Drive a full chat turn over the dual channel: open RunSSE, send the
-   * RunRequest on BidiAppend, then pump AgentServerMessage frames as
-   * AgentStreamChunk events until turn_ended / idle-timeout / abort / error.
-   *
-   * The caller drives exec_request disposition: on an mcp exec it typically
-   * translates to a downstream tool_calls chunk and breaks (aborting the
-   * read); on a built-in exec it calls sendRejectedTool / sendRequestContextResult
-   * and lets the loop continue.
+   * The RunSSE POST spec the caller hands to DurableHttpSession.acquire — the
+   * read socket lives in the session, not the transport. The body is just the
+   * requestId envelope; the actual RunRequest goes out on BidiAppend (open()).
    */
-  async *openChatStream(request: AgentChatRequest): AsyncGenerator<AgentStreamChunk> {
-    this.clearBlobStore();
-    const requestId = crypto.randomUUID();
-    this.currentRequestId = requestId;
-    this.currentAppendSeqno = 0n;
+  runSseInit(requestId: string): { method: 'POST'; url: string; headers: Record<string, string>; body: Uint8Array } {
+    return {
+      method: 'POST',
+      url: `${this.baseUrl}${RUN_SSE_PATH}`,
+      headers: this.getHeaders(requestId),
+      body: addConnectEnvelope(encodeBidiRequestId(requestId)),
+    };
+  }
 
-    const messageBody = this.buildChatMessage(request);
+  /**
+   * Open turn: send the initial RunRequest on BidiAppend (seqno 0, seeded by
+   * seed()), then pump the provided RunSSE read stream. The stream comes from
+   * the DurableHttpSession; the transport never fetches RunSSE itself.
+   */
+  async *openChatStream(opts: { readStream: ReadableStream<Uint8Array>; request: AgentChatRequest }): AsyncGenerator<AgentStreamChunk> {
+    const requestId = this.currentRequestId;
+    if (!requestId) throw new Error('openChatStream called before seed()');
+    const messageBody = this.buildChatMessage(opts.request);
+    try {
+      await this.bidiAppend(requestId, this.currentAppendSeqno, messageBody);
+      this.currentAppendSeqno += 1n;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      yield { type: 'error', error: `BidiAppend initial RunRequest failed: ${message}` };
+      return;
+    }
+    yield* this.driveReadLoop(opts.readStream.getReader(), new Uint8Array(0));
+  }
 
+  /**
+   * Resume turn: the RunRequest was already sent on a prior turn and the
+   * caller has seeded {requestId, seqno} and sent the ExecMcpResult; we just
+   * pump the continued RunSSE read stream, prepending any leftover bytes the
+   * prior turn read past its exec_mcp pause.
+   */
+  async *resumeChatStream(opts: { readStream: ReadableStream<Uint8Array>; leftover: Uint8Array | null }): AsyncGenerator<AgentStreamChunk> {
+    yield* this.driveReadLoop(opts.readStream.getReader(), opts.leftover ?? new Uint8Array(0));
+  }
+
+  /**
+   * Pump AgentServerMessage frames off the RunSSE read stream as
+   * AgentStreamChunk events until turn_ended / idle / done / error.
+   *
+   * The caller drives exec_request disposition: on an mcp exec it translates to
+   * a downstream tool_calls chunk and stops pulling (the pause point — leftover
+   * is captured here); on a built-in/request_context exec it answers on the
+   * write channel and keeps pulling.
+   */
+  private async *driveReadLoop(reader: ReadableStreamDefaultReader<Uint8Array>, initialBuffer: Uint8Array): AsyncGenerator<AgentStreamChunk> {
     let lastProgressAt = Date.now();
     let heartbeatSinceProgress = 0;
     let hasProgress = false;
@@ -417,59 +482,11 @@ export class AgentTransport {
       hasProgress = true;
     };
 
-    const bidiRequestId = encodeBidiRequestId(requestId);
-    const envelope = addConnectEnvelope(bidiRequestId);
-    const sseUrl = `${this.baseUrl}${RUN_SSE_PATH}`;
-
-    this.controller = new AbortController();
-    const timeout = setTimeout(() => this.controller?.abort(), this.requestTimeoutMs);
-
     const pendingAssistantBlobs: Array<{ blobId: string; content: string }> = [];
     let hasStreamedText = false;
 
     try {
-      // ssePromise is intentionally kicked off without await so we can fire the
-      // initial BidiAppend RunRequest concurrently. Without an immediate .catch
-      // attached, a rejection (DNS failure, connection refused, abort) that
-      // resolves before the later `await ssePromise` surfaces as an
-      // unhandledRejection — Node 25 escalates that to a process exit. Attach
-      // a noop catch so the rejection is observed; the real await below still
-      // sees the same error.
-      const ssePromise = this.fetchFn(sseUrl, {
-        method: 'POST',
-        headers: this.getHeaders(requestId),
-        body: envelope as BodyInit,
-        signal: this.controller.signal,
-      });
-      ssePromise.catch(() => {});
-
-      // Send the initial RunRequest on the write channel, concurrent with RunSSE.
-      // BidiAppend can fail for the same reasons RunSSE can (DNS, abort, refused);
-      // any rejection here is caught by the outer try below, but we surface it
-      // as an error chunk before falling out so the consumer sees a clean event
-      // instead of a thrown promise.
-      try {
-        await this.bidiAppend(requestId, this.currentAppendSeqno, messageBody);
-        this.currentAppendSeqno += 1n;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        yield { type: 'error', error: `BidiAppend initial RunRequest failed: ${message}` };
-        return;
-      }
-
-      const sseResponse = await ssePromise;
-      if (!sseResponse.ok) {
-        const errorText = await sseResponse.text();
-        yield { type: 'error', error: `SSE stream failed: ${sseResponse.status} - ${errorText}` };
-        return;
-      }
-      if (!sseResponse.body) {
-        yield { type: 'error', error: 'No response body from SSE stream' };
-        return;
-      }
-
-      const reader = sseResponse.body.getReader();
-      let buffer = new Uint8Array(0);
+      let buffer = initialBuffer;
       let turnEnded = false;
 
       try {
@@ -611,6 +628,13 @@ export class AgentTransport {
                   const execRequest = parseExecServerMessage(field.value);
                   if (execRequest) {
                     markProgress();
+                    // An mcp exec is the pause point: the caller stops pulling
+                    // here. Capture the unparsed remainder so a cross-instance
+                    // resume (fresh transport, fresh DurableHttpSession view) can
+                    // prepend it — these bytes were already dequeued from the
+                    // session and won't be re-served. Usually empty (cursor
+                    // pauses right after exec_mcp).
+                    if (execRequest.type === 'mcp') this.suspendedLeftover = buffer.slice(offset);
                     yield { type: 'exec_request', execRequest };
                   }
                 } else if (field.fieldNumber === 4 && field.wireType === 2 && field.value instanceof Uint8Array) {
@@ -639,7 +663,7 @@ export class AgentTransport {
                     // blobs) all replied at the same seqno — cursor ignores the
                     // duplicates, the blob channel stalls, and the model emits an
                     // empty continuation.
-                    this.currentAppendSeqno = await this.handleKvMessage(kvMsg, requestId);
+                    this.currentAppendSeqno = await this.handleKvMessage(kvMsg, this.currentRequestId!);
                   } catch (kvErr) {
                     const msg = kvErr instanceof Error ? kvErr.message : String(kvErr);
                     if (isRetryableNetworkError(msg)) {
@@ -683,7 +707,6 @@ export class AgentTransport {
         }
 
         if (turnEnded) {
-          this.controller?.abort();
           if (!hasStreamedText && pendingAssistantBlobs.length > 0) {
             for (const blob of pendingAssistantBlobs) {
               yield { type: 'kv_blob_assistant', blobContent: blob.content };
@@ -696,12 +719,8 @@ export class AgentTransport {
       }
     } catch (err: unknown) {
       const error = err as Error & { name?: string };
-      if (error.name === 'AbortError') return; // normal termination
+      if (error.name === 'AbortError') return; // stream cancelled by the caller
       yield { type: 'error', error: error.message || String(err) };
-    } finally {
-      clearTimeout(timeout);
-      this.controller?.abort();
-      this.currentRequestId = null;
     }
   }
 }

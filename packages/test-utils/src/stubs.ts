@@ -1,4 +1,12 @@
-import { directFetcher, type ChatTargetApi, type ModelProvider, type ModelProviderInstance, type ProviderCandidate, type ProviderModelRecord, type TelemetryModelIdentity, type UpstreamCallOptions, type UpstreamModel } from '@floway-dev/provider';
+import { directFetcher, type ChatTargetApi, type CursorSessionsRepoSlim, type ModelProvider, type ModelProviderInstance, type ProviderCandidate, type ProviderModelRecord, type TelemetryModelIdentity, type UpstreamCallOptions, type UpstreamModel } from '@floway-dev/provider';
+
+// No-op cursor-sessions slim repo for provider tests that wire initProviderRepo
+// but don't exercise cross-instance session reuse. Always misses on claim.
+export const noopCursorSessionsRepo = (): CursorSessionsRepoSlim => ({
+  claim: async () => null,
+  put: async () => {},
+  delete: async () => {},
+});
 
 // No-op UpstreamCallOptions factory for tests calling provider methods
 // directly: identity recordUpstreamLatency satisfies the contract without

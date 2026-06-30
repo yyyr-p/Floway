@@ -8,15 +8,32 @@ const ENV: RequestContextEnv = { workspacePath: '/tmp', osVersion: 'darwin 24.0.
 
 function makeTransport(fetchMock: unknown): AgentTransport {
   return new AgentTransport({
-    accessToken: 'tok',
+    getAuthToken: () => 'tok',
     baseUrl: 'https://api2.cursor.sh',
     env: ENV,
     clientVersion: 'cli-test',
     getChecksum: () => 'checksum-value',
     fetch: fetchMock as typeof fetch,
     maxRetries: 1,
-    requestTimeoutMs: 5000,
   });
+}
+
+// The transport no longer fetches RunSSE itself (the DurableHttpSession owns
+// the read socket); it drives a provided read stream. Build one from frames.
+function readStreamOf(...frames: Uint8Array[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const f of frames) controller.enqueue(f);
+      controller.close();
+    },
+  });
+}
+
+// Seed + open a turn over a frame stream. fetchMock only serves the BidiAppend
+// write channel now.
+function openOver(transport: AgentTransport, ...frames: Uint8Array[]): AsyncGenerator {
+  transport.seed('req-test', 0n);
+  return transport.openChatStream({ readStream: readStreamOf(...frames), request: { message: 'hi', model: 'gpt-4o' } as AgentChatRequest });
 }
 
 function okEmptyResponse(): Response {
@@ -42,16 +59,6 @@ function heartbeatFrame(): Uint8Array {
   const interactionUpdate = new Uint8Array([(13 << 3) | 0, 0]);
   const serverMsg = encodeMessageField(1, interactionUpdate);
   return addConnectEnvelope(serverMsg);
-}
-
-function streamResponse(...frames: Uint8Array[]): Response {
-  const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const f of frames) controller.enqueue(f);
-      controller.close();
-    },
-  });
-  return new Response(stream, { status: 200, headers: { 'content-type': 'application/grpc-web+proto' } });
 }
 
 async function collect(gen: AsyncGenerator): Promise<unknown[]> {
@@ -106,18 +113,11 @@ describe('AgentTransport.bidiAppend', () => {
 });
 
 describe('AgentTransport.openChatStream', () => {
-  function dualChannelMock(runSseResponse: Response): ReturnType<typeof vi.fn> {
-    return vi.fn(async (url: string) => {
-      if (String(url).includes('RunSSE')) return runSseResponse;
-      return okEmptyResponse(); // BidiAppend
-    });
-  }
+  const bidiOnlyMock = (): ReturnType<typeof vi.fn> => vi.fn(async (_url: string) => okEmptyResponse());
 
   test('yields text then done on a clean turn', async () => {
-    const fetchMock = dualChannelMock(streamResponse(textFrame('hello'), turnEndedFrame()));
-    const transport = makeTransport(fetchMock);
-
-    const chunks = await collect(transport.openChatStream({ message: 'hi', model: 'gpt-4o' } as AgentChatRequest));
+    const transport = makeTransport(bidiOnlyMock());
+    const chunks = await collect(openOver(transport, textFrame('hello'), turnEndedFrame()));
 
     const types = chunks.map(c => (c as { type: string }).type);
     expect(types).toContain('text');
@@ -130,15 +130,14 @@ describe('AgentTransport.openChatStream', () => {
     // started — cursor interleaves keep-alive heartbeats and KV checkpoints
     // between the final text and the turn_ended (IU field 14) marker. Closing
     // on a beat count truncated short answers whose turn_ended lagged behind.
-    const fetchMock = dualChannelMock(streamResponse(
+    const transport = makeTransport(bidiOnlyMock());
+    const chunks = await collect(openOver(
+      transport,
       textFrame('the answer is 42'),
       heartbeatFrame(), heartbeatFrame(), heartbeatFrame(),
       heartbeatFrame(), heartbeatFrame(), heartbeatFrame(),
       turnEndedFrame(),
     ));
-    const transport = makeTransport(fetchMock);
-
-    const chunks = await collect(transport.openChatStream({ message: 'hi', model: 'gpt-4o' } as AgentChatRequest));
     const types = chunks.map(c => (c as { type: string }).type);
 
     // The full text survives, and the turn ends on the turn_ended frame (done
@@ -147,51 +146,28 @@ describe('AgentTransport.openChatStream', () => {
     expect(types[types.length - 1]).toBe('done');
   });
 
-  test('sends the initial RunRequest on BidiAppend concurrently with RunSSE', async () => {
-    const fetchMock = dualChannelMock(streamResponse(textFrame('hi'), turnEndedFrame()));
+  test('sends the initial RunRequest on the BidiAppend write channel', async () => {
+    const fetchMock = bidiOnlyMock();
     const transport = makeTransport(fetchMock);
-    await collect(transport.openChatStream({ message: 'hi', model: 'gpt-4o' } as AgentChatRequest));
+    await collect(openOver(transport, textFrame('hi'), turnEndedFrame()));
 
     const bidiCalls = fetchMock.mock.calls.filter(c => String(c[0]).includes('BidiAppend'));
-    const runSseCalls = fetchMock.mock.calls.filter(c => String(c[0]).includes('RunSSE'));
-    expect(runSseCalls).toHaveLength(1);
-    // At least the initial RunRequest BidiAppend
     expect(bidiCalls.length).toBeGreaterThanOrEqual(1);
-  });
-
-  test('yields an error chunk on non-ok RunSSE', async () => {
-    const fetchMock = dualChannelMock(new Response('upstream down', { status: 503 }));
-    const transport = makeTransport(fetchMock);
-    const chunks = await collect(transport.openChatStream({ message: 'hi', model: 'gpt-4o' } as AgentChatRequest));
-    const err = chunks.find(c => (c as { type: string }).type === 'error') as { error?: string };
-    expect(err).toBeDefined();
-    expect(err!.error).toContain('503');
-  });
-
-  test('yields an error chunk when RunSSE has no body', async () => {
-    const fetchMock = dualChannelMock(new Response(null, { status: 200 }));
-    const transport = makeTransport(fetchMock);
-    const chunks = await collect(transport.openChatStream({ message: 'hi', model: 'gpt-4o' } as AgentChatRequest));
-    const err = chunks.find(c => (c as { type: string }).type === 'error') as { error?: string };
-    expect(err?.error).toContain('No response body');
   });
 });
 
 describe('AgentTransport.sendRejectedTool', () => {
   test('sends a result frame then a stream-close control (2 BidiAppends)', async () => {
     // Open a stream first so currentRequestId is set (sendExecAndClose guards it).
-    const runSseFetch = vi.fn(async (url: string) => {
-      if (String(url).includes('RunSSE')) return streamResponse(textFrame('hi'), turnEndedFrame());
-      return okEmptyResponse();
-    });
-    const transport2 = makeTransport(runSseFetch);
+    const bidiFetch = vi.fn(async (_url: string) => okEmptyResponse());
+    const transport2 = makeTransport(bidiFetch);
     // Drive the stream just enough to set currentRequestId, then reject a shell tool.
-    const gen = transport2.openChatStream({ message: 'hi', model: 'gpt-4o' } as AgentChatRequest);
+    const gen = openOver(transport2, textFrame('hi'), turnEndedFrame());
     await gen.next(); // text chunk, currentRequestId now set
 
-    const bidiBefore = runSseFetch.mock.calls.filter(c => String(c[0]).includes('BidiAppend')).length;
+    const bidiBefore = bidiFetch.mock.calls.filter(c => String(c[0]).includes('BidiAppend')).length;
     await transport2.sendRejectedTool({ type: 'shell', id: 9, execId: 'e1', command: 'rm', cwd: '/' }, 'no shell in gateway');
-    const bidiAfter = runSseFetch.mock.calls.filter(c => String(c[0]).includes('BidiAppend')).length;
+    const bidiAfter = bidiFetch.mock.calls.filter(c => String(c[0]).includes('BidiAppend')).length;
     expect(bidiAfter - bidiBefore).toBe(2); // exec result + control close
     await gen.return(undefined);
   });

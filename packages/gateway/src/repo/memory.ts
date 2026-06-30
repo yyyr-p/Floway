@@ -13,6 +13,8 @@ import type {
   ApiKeyRepo,
   BackoffRow,
   CachedModelsRow,
+  CursorSessionRow,
+  CursorSessionsRepo,
   ModelsCacheRepo,
   PerformanceDimensions,
   PerformanceErrorSample,
@@ -882,6 +884,31 @@ class MemoryProxyBackoffRepo implements ProxyBackoffRepo {
 
 const cloneBackoffRow = (row: BackoffRow): BackoffRow => ({ ...row });
 
+class MemoryCursorSessionsRepo implements CursorSessionsRepo {
+  private rows = new Map<string, CursorSessionRow & { lockedUntil: number | null; refreshedAt: number }>();
+
+  async claim(sessionKey: string, ttlMs: number): Promise<CursorSessionRow | null> {
+    const now = Date.now();
+    const row = this.rows.get(sessionKey);
+    if (!row) return null;
+    if (row.lockedUntil !== null && row.lockedUntil >= now) return null;
+    row.lockedUntil = now + ttlMs;
+    return { sessionKey, requestId: row.requestId, appendSeqno: row.appendSeqno, leftover: row.leftover };
+  }
+
+  async put(row: CursorSessionRow): Promise<void> {
+    this.rows.set(row.sessionKey, { ...row, lockedUntil: null, refreshedAt: Date.now() });
+  }
+
+  async delete(sessionKey: string): Promise<void> {
+    this.rows.delete(sessionKey);
+  }
+
+  async deleteOlderThan(cutoffMs: number): Promise<void> {
+    for (const [k, v] of this.rows) if (v.refreshedAt < cutoffMs) this.rows.delete(k);
+  }
+}
+
 export class InMemoryRepo implements Repo {
   apiKeys: ApiKeyRepo;
   users: UsersRepo;
@@ -896,6 +923,7 @@ export class InMemoryRepo implements Repo {
   proxyBackoffs: ProxyBackoffRepo;
   responsesItems: ResponsesItemsRepo;
   responsesSnapshots: ResponsesSnapshotsRepo;
+  cursorSessions: CursorSessionsRepo;
 
   constructor() {
     this.users = new MemoryUsersRepo();
@@ -911,5 +939,6 @@ export class InMemoryRepo implements Repo {
     this.proxyBackoffs = new MemoryProxyBackoffRepo();
     this.responsesItems = new MemoryResponsesItemsRepo();
     this.responsesSnapshots = new MemoryResponsesSnapshotsRepo();
+    this.cursorSessions = new MemoryCursorSessionsRepo();
   }
 }

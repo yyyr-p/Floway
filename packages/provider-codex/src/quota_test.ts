@@ -52,6 +52,7 @@ beforeEach(() => {
   getByIdSpy = vi.fn(async () => current);
   initProviderRepo(() => ({
     upstreams: { getById: getByIdSpy, saveState: saveStateSpy },
+    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
   }));
 });
 
