@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
-import { addConnectEnvelope, encodeMessageField, encodeStringField } from './proto/index.ts';
+import { callCursorChatCompletions, pullToFirstMeaningful, type CursorCallEffects } from './fetch.ts';
+import { addConnectEnvelope, encodeMessageField, encodeStringField, type AgentStreamChunk } from './proto/index.ts';
 import type { CursorAccessTokenEntry, CursorAccountCredential, CursorUpstreamState } from './state.ts';
 import { initDurableHttpSession, resetDurableHttpSessionForTesting, type DurableHttpSession } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
@@ -101,6 +101,14 @@ function turnEndedFrame(): Uint8Array {
   return addConnectEnvelope(serverMsg);
 }
 
+// AgentServerMessage { field 3: conversation_checkpoint_update } — a pre-output
+// control frame cursor emits before the first token; driveReadLoop yields it as
+// { type: 'checkpoint' }.
+function checkpointFrame(): Uint8Array {
+  const serverMsg = encodeMessageField(3, new Uint8Array([1, 2, 3]));
+  return addConnectEnvelope(serverMsg);
+}
+
 function streamResponse(...frames: Uint8Array[]): Response {
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
@@ -181,5 +189,73 @@ describe('callCursorChatCompletions', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     await expect(collectEvents(result)).rejects.toThrow(/SSE stream failed: 503/);
+  });
+
+  test('records TTFT: the latency wrap resolves to the first token frame, past control frames', async () => {
+    mockCursorFetch(streamResponse(checkpointFrame(), textFrame('hello'), turnEndedFrame()));
+    // Mirror the real recorder: last-settled promise wins. The acquire/BidiAppend
+    // wraps settle first; the pull-to-first-token wrap settles last, so its value
+    // (the first meaningful IteratorResult) is what upstream_success would record.
+    const settled: unknown[] = [];
+    const call = noopUpstreamCallOptions({
+      recordUpstreamLatency: <T>(promise: Promise<T>): Promise<T> => {
+        void promise.then(v => settled.push(v)).catch(() => {});
+        return promise;
+      },
+    });
+    const result = await callCursorChatCompletions({
+      upstreamId, account: activeAccount, model,
+      body: { messages: [{ role: 'user', content: 'hi' }] },
+      headers: new Headers(), effects: makeEffects(), call,
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const events = await collectEvents(result);
+    expect(events.map(e => e.choices[0]?.delta?.content ?? '').filter(Boolean)).toContain('hello');
+
+    // Only the pull wrap resolves to an IteratorResult (acquire→handle,
+    // BidiAppend→Response). It must carry the text token, not the checkpoint.
+    const pullResults = settled.filter(
+      (v): v is IteratorResult<AgentStreamChunk> => !!v && typeof v === 'object' && 'done' in v,
+    );
+    expect(pullResults.at(-1)).toEqual({ done: false, value: { type: 'text', content: 'hello' } });
+  });
+});
+
+describe('pullToFirstMeaningful', () => {
+  async function* chunkGen(chunks: AgentStreamChunk[]): AsyncGenerator<AgentStreamChunk> {
+    for (const c of chunks) yield c;
+  }
+
+  test('skips pre-output control frames and stops at the first text token', async () => {
+    const r = await pullToFirstMeaningful(chunkGen([
+      { type: 'checkpoint' }, { type: 'heartbeat' }, { type: 'text', content: 'hi' },
+    ]));
+    expect(r).toEqual({ done: false, value: { type: 'text', content: 'hi' } });
+  });
+
+  test('skips empty text/thinking deltas, stops at the first non-empty one', async () => {
+    const r = await pullToFirstMeaningful(chunkGen([
+      { type: 'text', content: '' }, { type: 'thinking', content: '' }, { type: 'thinking', content: 'reasoning' },
+    ]));
+    expect(r).toEqual({ done: false, value: { type: 'thinking', content: 'reasoning' } });
+  });
+
+  test('stops at exec_request when the model goes straight to a tool call', async () => {
+    const r = await pullToFirstMeaningful(chunkGen([{ type: 'checkpoint' }, { type: 'exec_request' }]));
+    expect(r.done).toBe(false);
+    expect((r.value as AgentStreamChunk).type).toBe('exec_request');
+  });
+
+  test('stops at a terminal done frame on an empty (all-heartbeat) turn', async () => {
+    const r = await pullToFirstMeaningful(chunkGen([
+      { type: 'heartbeat' }, { type: 'heartbeat' }, { type: 'done' },
+    ]));
+    expect(r).toEqual({ done: false, value: { type: 'done' } });
+  });
+
+  test('returns the done result when the generator ends with only control frames', async () => {
+    const r = await pullToFirstMeaningful(chunkGen([{ type: 'checkpoint' }]));
+    expect(r.done).toBe(true);
   });
 });

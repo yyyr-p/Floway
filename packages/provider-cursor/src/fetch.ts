@@ -286,6 +286,46 @@ const buildEvents = (
   })();
 };
 
+// A cursor turn opens with pre-output control frames — conversation
+// checkpoints and keep-alive heartbeats cursor emits while the model is still
+// queued/thinking — that arrive before the first real token. Classify the
+// frame the model's first *output* rides on: real text/thinking content, any
+// tool call (incl. the exec_request pause), a kv-blob content frame, or a
+// terminal done/error.
+const isFirstTokenFrame = (chunk: AgentStreamChunk): boolean => {
+  switch (chunk.type) {
+  // Pure control / keep-alive frames: the model has not produced output yet.
+  case 'checkpoint':
+  case 'heartbeat':
+  case 'interaction_query':
+  case 'exec_server_abort':
+  case 'token':
+    return false;
+  // Empty text/thinking deltas carry no token — keep waiting for real content.
+  case 'text':
+  case 'thinking':
+    return Boolean(chunk.content);
+  default:
+    return true;
+  }
+};
+
+// Pull the transport generator to the model's first output frame (or a terminal
+// result), discarding the pre-output control frames. Skipping is output-neutral:
+// those frames translate to zero downstream events, and the returned result is
+// handed to buildEvents unchanged, so exec-pause / seqno persistence / all
+// translation stay there. Wrapping this call in recordUpstreamLatency makes
+// `upstream_success` measure TTFT (request submitted → first token) instead of
+// the BidiAppend write round-trip the earlier wraps saw.
+export const pullToFirstMeaningful = async (
+  gen: AsyncGenerator<AgentStreamChunk>,
+): Promise<IteratorResult<AgentStreamChunk>> => {
+  for (;;) {
+    const result = await gen.next();
+    if (result.done || isFirstTokenFrame(result.value)) return result;
+  }
+};
+
 // Open a fresh turn: mint a session key, acquire the RunSSE read stream from
 // the DurableHttpSession, send the RunRequest on BidiAppend, then drive.
 const performOpen = async (
@@ -342,9 +382,12 @@ const performOpen = async (
   const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
 
   const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.model.id, tools, mode } });
-  // First pull sends the RunRequest (BidiAppend, via the latency-recording
-  // fetcher) + reads the first chunk, satisfying the ok=true latency assertion.
-  const first = await gen.next();
+  // The first pull sends the RunRequest (BidiAppend) then reads; pull past
+  // cursor's pre-output control frames to the model's first token so the
+  // recorded `upstream_success` latency is TTFT, and satisfy the ok=true
+  // latency assertion. broker.acquire above stays wrapped too so the non-200
+  // early-return path still records a duration; on success this later wrap wins.
+  const first = await opts.call.recordUpstreamLatency(pullToFirstMeaningful(gen));
   return { ok: true, events: buildEvents(opts, transport, gen, translator, sessionKey, requestId, handle, first), modelKey: opts.model.id };
 };
 
@@ -398,13 +441,20 @@ const performResume = async (
       await transport.sendMcpResultRaw(ref.id, ref.execId, { success: { content } });
     }
   };
-  await opts.call.recordUpstreamLatency(sendToolResults());
 
   const id = `chatcmpl-cursor-${crypto.randomUUID()}`;
   const created = Math.floor(Date.now() / 1000);
   const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
 
   const gen = transport.resumeChatStream({ readStream: handle.body, leftover: row.leftover });
-  const first = await gen.next();
+  // TTFT on a resume spans sending the tool results → the model's first new
+  // token; wrap both so `upstream_success` reflects the model's turnaround, not
+  // just the tool-result write round-trip.
+  const first = await opts.call.recordUpstreamLatency(
+    (async () => {
+      await sendToolResults();
+      return await pullToFirstMeaningful(gen);
+    })(),
+  );
   return { ok: true, events: buildEvents(opts, transport, gen, translator, sessionKey, row.requestId, handle, first), modelKey: opts.model.id };
 };
