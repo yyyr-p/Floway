@@ -1,7 +1,7 @@
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_AVAILABLE_MODELS_PATH, CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION, CURSOR_USABLE_MODELS_PATH, CURSOR_USER_AGENT } from './constants.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
-import { type Fetcher, type Modality, type UpstreamChatModelConfig, type UpstreamModel } from '@floway-dev/provider';
+import { type Fetcher, type UpstreamChatModelConfig, type UpstreamModel } from '@floway-dev/provider';
 
 export interface CursorReasoningInfo {
   supported: readonly string[];
@@ -19,22 +19,20 @@ export interface CursorRawModel {
   wireModelId?: string;
   // Pre-collapse variant/alias ids that map onto this base (registry aliasing).
   variantIds?: readonly string[];
-  // Whether the model accepts image input (→ chat.modalities).
-  supportsImages?: boolean;
   // Reasoning-effort levels the model exposes (→ chat.reasoning.effort).
   reasoning?: CursorReasoningInfo;
 }
 
 // One Cursor "base" model from AvailableModels(useModelParameters=true): the
 // server's own collapse of the ~150 per-variant slugs into ~32 families, each
-// carrying its variant list, per-mode context, modality/reasoning capability,
-// and display name.
+// carrying its variant list, per-mode context, reasoning capability, and
+// display name. (Image modality is intentionally not surfaced: cursor's
+// supportsImages field is unreliable and image input is not yet wired.)
 export interface CursorBaseModel {
   name: string;
   displayName: string;
   contextNormal: number | null;
   contextMax: number | null;
-  supportsImages: boolean;
   reasoning: CursorReasoningInfo | null;
   variants: { legacySlug: string; isDefaultNonMaxConfig: boolean; isDefaultMaxConfig: boolean }[];
   aliasSlugs: string[];
@@ -208,7 +206,6 @@ export const fetchCursorBaseModels = async (
       displayName: tooltipHeading(markdown(entry.tooltipData)) ?? (typeof entry.clientDisplayName === 'string' ? entry.clientDisplayName : entry.name),
       contextNormal,
       contextMax,
-      supportsImages: entry.supportsImages === true,
       reasoning,
       variants,
       aliasSlugs,
@@ -252,7 +249,6 @@ export const buildCollapsedCatalog = (
       ...(context !== null ? { contextWindow: context } : {}),
       wireModelId: wire,
       variantIds,
-      supportsImages: b.supportsImages,
       ...(b.reasoning ? { reasoning: b.reasoning } : {}),
     });
   }
@@ -288,15 +284,11 @@ const assertRawModel = (value: unknown): CursorRawModel => {
 };
 
 const buildChatConfig = (raw: CursorRawModel): UpstreamChatModelConfig | undefined => {
-  const chat: UpstreamChatModelConfig = {};
-  if (raw.supportsImages !== undefined) {
-    const input: Modality[] = raw.supportsImages ? ['text', 'image'] : ['text'];
-    chat.modalities = { input, output: ['text'] };
-  }
-  if (raw.reasoning) {
-    chat.reasoning = { effort: { supported: [...raw.reasoning.supported], default: raw.reasoning.default } };
-  }
-  return chat.modalities || chat.reasoning ? chat : undefined;
+  // Only reasoning effort is surfaced. Image modality is deliberately omitted:
+  // cursor's supportsImages field disagrees with reality for some models and
+  // image input is not yet wired into the provider.
+  if (!raw.reasoning) return undefined;
+  return { reasoning: { effort: { supported: [...raw.reasoning.supported], default: raw.reasoning.default } } };
 };
 
 // Cursor exposes only the Chat Completions endpoint (RunSSE+BidiAppend).

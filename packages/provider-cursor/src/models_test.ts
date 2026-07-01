@@ -41,7 +41,6 @@ const pbase = (name: string, variants: V[], extra: Partial<CursorBaseModel> = {}
   displayName: name,
   contextNormal: null,
   contextMax: null,
-  supportsImages: false,
   reasoning: null,
   variants: variants.map(v => ({ legacySlug: v.slug, isDefaultNonMaxConfig: v.defNonMax === true, isDefaultMaxConfig: v.defMax === true })),
   aliasSlugs: [],
@@ -73,17 +72,11 @@ describe('cursorRawToUpstreamModel', () => {
     expect(m.providerData).toBeUndefined();
     expect(m.limits.max_context_window_tokens).toBe(200_000);
   });
-  test('builds chat.modalities from supportsImages', () => {
-    expect(cursorRawToUpstreamModel({ id: 'a', display_name: 'a', supportsImages: true }, flags).chat)
-      .toEqual({ modalities: { input: ['text', 'image'], output: ['text'] } });
-    expect(cursorRawToUpstreamModel({ id: 'b', display_name: 'b', supportsImages: false }, flags).chat)
-      .toEqual({ modalities: { input: ['text'], output: ['text'] } });
+  test('builds chat.reasoning.effort from reasoning info; no image modality', () => {
+    const m = cursorRawToUpstreamModel({ id: 'c', display_name: 'c', reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
+    expect(m.chat).toEqual({ reasoning: { effort: { supported: ['low', 'medium', 'high'], default: 'high' } } });
   });
-  test('builds chat.reasoning.effort from reasoning info', () => {
-    const m = cursorRawToUpstreamModel({ id: 'c', display_name: 'c', supportsImages: true, reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
-    expect(m.chat?.reasoning).toEqual({ effort: { supported: ['low', 'medium', 'high'], default: 'high' } });
-  });
-  test('no chat when neither modality nor reasoning is known', () => {
+  test('no chat when reasoning is unknown', () => {
     expect(cursorRawToUpstreamModel({ id: 'd', display_name: 'd' }, flags).chat).toBeUndefined();
   });
 });
@@ -102,11 +95,11 @@ describe('buildCollapsedCatalog', () => {
 
   const bases = [
     pbase('claude-opus-4-8', [{ slug: 'claude-opus-4-8-high', defNonMax: true }, { slug: 'claude-opus-4-8-max', defMax: true }], {
-      displayName: 'Claude Opus 4.8', contextNormal: 300_000, contextMax: 1_000_000, supportsImages: true,
+      displayName: 'Claude Opus 4.8', contextNormal: 300_000, contextMax: 1_000_000,
       reasoning: { supported: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' },
     }),
     pbase('composer-2.5', [{ slug: 'composer-2.5-fast', defNonMax: true, defMax: true }, { slug: 'composer-2.5' }], { displayName: 'Composer 2.5', contextNormal: 200_000, contextMax: 200_000 }),
-    pbase('default', [{ slug: 'default', defNonMax: true, defMax: true }], { displayName: 'Auto', supportsImages: true }),
+    pbase('default', [{ slug: 'default', defNonMax: true, defMax: true }], { displayName: 'Auto' }),
     pbase('phantom', [{ slug: 'phantom-x', defNonMax: true }], { contextNormal: 128_000 }),
   ];
 
@@ -119,7 +112,6 @@ describe('buildCollapsedCatalog', () => {
     expect(opus.display_name).toBe('Claude Opus 4.8');
     expect(opus.wireModelId).toBe('claude-opus-4-8-high');
     expect(opus.contextWindow).toBe(300_000);
-    expect(opus.supportsImages).toBe(true);
     expect(opus.reasoning).toEqual({ supported: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' });
     expect(opus.variantIds).toEqual(['claude-opus-4-8-high', 'claude-opus-4-8-max']);
 
@@ -137,7 +129,7 @@ describe('buildCollapsedCatalog', () => {
 // A realistic AvailableModels(useModelParameters) entry.
 const tt = (s: string) => ({ markdownContent: s });
 const rawEntry = (o: {
-  name: string; heading?: string; clientDisplayName?: string; supportsImages?: boolean;
+  name: string; heading?: string; clientDisplayName?: string;
   ctxEnum?: [string, string]; ctxTooltipNormal?: string; ctxTooltipMax?: string;
   effortId?: 'effort' | 'reasoning'; efforts?: string[]; defaultEffort?: string;
   variants: { slug: string; defNonMax?: boolean; defMax?: boolean }[];
@@ -148,7 +140,6 @@ const rawEntry = (o: {
   return {
     name: o.name,
     ...(o.clientDisplayName ? { clientDisplayName: o.clientDisplayName } : {}),
-    supportsImages: o.supportsImages === true,
     tooltipData: tt(`${o.heading ? `**${o.heading}**<br />` : ''}desc${o.ctxTooltipNormal ? `<br /><br />${o.ctxTooltipNormal} context window` : ''}`),
     tooltipDataForMaxMode: tt(`${o.heading ? `**${o.heading}**<br />` : ''}desc${o.ctxTooltipMax ? `<br /><br />${o.ctxTooltipMax} context window` : ''}`),
     parameterDefinitions: paramDefs,
@@ -204,17 +195,15 @@ describe('fetchCursorBaseModels', () => {
   test('parses reasoning effort enum + default from the default-non-max variant', async () => {
     const bases = await fetchCursorBaseModels(fetcherOf(() => jsonResponse({
       models: [
-        rawEntry({ name: 'opus', effortId: 'effort', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'high', supportsImages: true, variants: [{ slug: 'a', defNonMax: true }] }),
+        rawEntry({ name: 'opus', effortId: 'effort', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'high', variants: [{ slug: 'a', defNonMax: true }] }),
         rawEntry({ name: 'gpt', effortId: 'reasoning', efforts: ['none', 'low', 'medium', 'high'], variants: [{ slug: 'b', defNonMax: true }] }), // no defaultEffort → 'medium'
-        rawEntry({ name: 'kimi', supportsImages: false, variants: [{ slug: 'c', defNonMax: true }] }), // no effort param → null
+        rawEntry({ name: 'kimi', variants: [{ slug: 'c', defNonMax: true }] }), // no effort param → null
       ],
     })), noopHeaders);
     const byName = Object.fromEntries(bases.map(b => [b.name, b]));
     expect(byName['opus'].reasoning).toEqual({ supported: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' });
-    expect(byName['opus'].supportsImages).toBe(true);
     expect(byName['gpt'].reasoning).toEqual({ supported: ['none', 'low', 'medium', 'high'], default: 'medium' });
     expect(byName['kimi'].reasoning).toBeNull();
-    expect(byName['kimi'].supportsImages).toBe(false);
   });
 });
 
@@ -222,11 +211,11 @@ describe('fetchCursorCatalog', () => {
   const opts = (fetcher: Fetcher, maxMode?: boolean) => ({ accessToken: 'tok', timezone: 'UTC', fetcher, maxMode });
   const available = () => jsonResponse({
     models: [
-      rawEntry({ name: 'claude-opus-4-8', heading: 'Claude Opus 4.8', supportsImages: true, ctxEnum: ['300k', '1m'], effortId: 'effort', efforts: ['low', 'high'], defaultEffort: 'high', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
+      rawEntry({ name: 'claude-opus-4-8', heading: 'Claude Opus 4.8', ctxEnum: ['300k', '1m'], effortId: 'effort', efforts: ['low', 'high'], defaultEffort: 'high', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
     ],
   });
 
-  test('collapses with display name, context, modality, reasoning', async () => {
+  test('collapses with display name, context, reasoning', async () => {
     const raw = await fetchCursorCatalog(opts(routingFetcher({ usable: () => usableModels(['claude-opus-4-8-high']), available })));
     expect(raw).toHaveLength(1);
     const opus = raw[0];
@@ -234,7 +223,6 @@ describe('fetchCursorCatalog', () => {
     expect(opus.display_name).toBe('Claude Opus 4.8');
     expect(opus.wireModelId).toBe('claude-opus-4-8-high');
     expect(opus.contextWindow).toBe(300_000);
-    expect(opus.supportsImages).toBe(true);
     expect(opus.reasoning).toEqual({ supported: ['low', 'high'], default: 'high' });
   });
 
@@ -246,6 +234,6 @@ describe('fetchCursorCatalog', () => {
   test('falls back to the raw per-variant list when AvailableModels fails', async () => {
     const raw = await fetchCursorCatalog(opts(routingFetcher({ usable: () => usableModels(['claude-opus-4-8-high', 'gpt-5.5-high']), available: () => new Response('nope', { status: 500 }) })));
     expect(raw.map(r => r.id)).toEqual(['claude-opus-4-8-high', 'gpt-5.5-high']);
-    expect(raw.every(r => r.wireModelId === undefined && r.supportsImages === undefined)).toBe(true);
+    expect(raw.every(r => r.wireModelId === undefined && r.reasoning === undefined)).toBe(true);
   });
 });
