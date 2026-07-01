@@ -246,7 +246,7 @@ export class AgentTransport {
     const mode = request.mode ?? AgentMode.AGENT;
 
     const requestContext = buildRequestContext(this.env, request.tools);
-    const userMessage = encodeUserMessage(request.message, messageId, mode);
+    const userMessage = encodeUserMessage(request.message, messageId, mode, request.images);
     const userMessageAction = encodeUserMessageAction(userMessage, requestContext);
     const conversationAction = encodeConversationAction(userMessageAction);
     const modelDetails = encodeModelDetails(model, request.maxMode);

@@ -14,6 +14,7 @@ import { AgentTransport } from './agent-transport.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION } from './constants.ts';
+import { parseCursorImages } from './cursor-images.ts';
 import { cursorWireModelId } from './models.ts';
 import { AgentMode, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
 import { isCursorRateLimited } from './quota.ts';
@@ -362,6 +363,10 @@ const performOpen = async (
 ): Promise<ProviderStreamResult<ChatCompletionsStreamEvent>> => {
   const sessionKey = mintSessionKey(opts.upstreamId, opts.call.apiKeyId);
   const message = flattenMessages(opts.body.messages);
+  // Inline images ride the current (last) user turn only — Cursor attaches them
+  // to that UserMessage's SelectedContext, and historical turns carry text only.
+  const lastUser = [...opts.body.messages].reverse().find(m => m.role === 'user');
+  const images = lastUser ? parseCursorImages(lastUser) : [];
   // Always advertise the tools: a cold-resume (tool-result follow-up that lost
   // its session) lets cursor re-run the agent loop natively rather than degrade
   // to a prompt-folded result.
@@ -408,7 +413,7 @@ const performOpen = async (
   const created = Math.floor(Date.now() / 1000);
   const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
 
-  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.wireModelId ?? cursorWireModelId(opts.model), tools, mode, maxMode: opts.maxMode } });
+  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.wireModelId ?? cursorWireModelId(opts.model), tools, mode, maxMode: opts.maxMode, ...(images.length > 0 ? { images } : {}) } });
   // The first pull sends the RunRequest (BidiAppend) then reads; pull past
   // cursor's pre-output control frames to the model's first token so the
   // recorded `upstream_success` latency is TTFT, and satisfy the ok=true

@@ -85,12 +85,38 @@ export function buildRequestContext(env: RequestContextEnv, tools?: OpenAIToolDe
   return concatBytes(...parts);
 }
 
-export function encodeUserMessage(text: string, messageId: string, mode: AgentMode = AgentMode.ASK): Uint8Array {
+export interface SelectedImageInput {
+  data: Uint8Array;
+  mimeType: string;
+}
+
+export interface SelectedImageInput {
+  data: Uint8Array;
+  mimeType: string;
+}
+
+// SelectedImage (agent.v1): inline image bytes. uuid=2, mime_type=7, and the
+// raw bytes ride the `data_or_blob_id` oneof at data=8 (length-delimited, same
+// wire form as an embedded message). dimension is optional and omitted.
+export function encodeSelectedImage(image: SelectedImageInput): Uint8Array {
   return concatBytes(
-    encodeStringField(1, text),
-    encodeStringField(2, messageId),
-    encodeInt32Field(4, mode),
+    encodeStringField(2, crypto.randomUUID()),
+    encodeStringField(7, image.mimeType),
+    encodeMessageField(8, image.data),
   );
+}
+
+// SelectedContext: selected_images is the repeated field 1.
+export function encodeSelectedContext(images: readonly SelectedImageInput[]): Uint8Array {
+  return concatBytes(...images.map(img => encodeMessageField(1, encodeSelectedImage(img))));
+}
+
+export function encodeUserMessage(text: string, messageId: string, mode: AgentMode = AgentMode.ASK, images?: readonly SelectedImageInput[]): Uint8Array {
+  const parts: Uint8Array[] = [encodeStringField(1, text), encodeStringField(2, messageId)];
+  // UserMessage.selected_context = 3 (before mode to keep ascending field order).
+  if (images && images.length > 0) parts.push(encodeMessageField(3, encodeSelectedContext(images)));
+  parts.push(encodeInt32Field(4, mode));
+  return concatBytes(...parts);
 }
 
 export function encodeUserMessageAction(userMessage: Uint8Array, requestContext: Uint8Array): Uint8Array {

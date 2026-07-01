@@ -6,6 +6,8 @@
  * cursor-http11-bidi-protocol memory for the endpoint lineage.
  */
 
+import type { SelectedImageInput } from './agent-messages.ts';
+
 export enum AgentMode {
   UNSPECIFIED = 0,
   AGENT = 1,
@@ -169,6 +171,8 @@ export interface AgentChatRequest {
   tools?: OpenAIToolDefinition[];
   // Opt into Cursor Max Mode (larger context window) for this turn.
   maxMode?: boolean;
+  // Inline images for the current user turn (SelectedContext.selected_images).
+  images?: readonly SelectedImageInput[];
 }
 
 export interface McpResult {
