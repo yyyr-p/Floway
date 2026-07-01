@@ -3,12 +3,17 @@ import { describe, expect, test, vi } from 'vitest';
 import { DurableObjectDurableHttpSession, type DurableHttpSessionNamespace } from './do-durable-http-session.ts';
 
 // Fake WebSocket the broker treats as the DO body channel. Tests drive it by
-// calling emitMessage / emitClose after the broker has wired its listeners.
+// calling emitMessage / emitClose after the broker has wired its listeners. The
+// broker sends one credit (send) per ReadableStream pull; `credits` records them
+// and `onCredit` lets a test script a frame per credit (the real DO's behavior).
 class FakeWebSocket {
   readonly listeners = new Map<string, Set<(ev: unknown) => void>>();
+  readonly credits: Uint8Array[] = [];
+  onCredit: (() => void) | null = null;
   closed: { code: number; reason: string } | null = null;
   accepted = false;
   accept(): void { this.accepted = true; }
+  send(data: Uint8Array): void { this.credits.push(data); this.onCredit?.(); }
   close(code = 1000, reason = ''): void {
     if (this.closed) return;
     this.closed = { code, reason };
@@ -92,6 +97,25 @@ describe('DurableObjectDurableHttpSession.acquire', () => {
     socket.emitClose();
     const chunks = await collected;
     expect(chunks.flatMap(c => Array.from(c))).toEqual([1, 2, 3, 4]);
+  });
+
+  test('issues exactly one credit per pull (strict backpressure)', async () => {
+    const socket = new FakeWebSocket();
+    // Respond to each credit with the next frame, then the close — modelling the
+    // DO's one-chunk-per-credit delivery.
+    const frames = [new Uint8Array([1]), new Uint8Array([2])];
+    let i = 0;
+    socket.onCredit = () => {
+      queueMicrotask(() => { if (i < frames.length) socket.emitMessage(frames[i++]); else socket.emitClose(); });
+    };
+    const { ns } = makeNamespace({ meta: { status: 200, headers: [] }, socket });
+    const broker = new DurableObjectDurableHttpSession(ns);
+    const handle = await broker.acquire('k', { method: 'POST', url: 'https://x', headers: {} });
+
+    const chunks = await drain(handle!.body);
+    expect(chunks.flatMap(c => Array.from(c))).toEqual([1, 2]);
+    // Two data chunks + the final pull that received the close = three credits.
+    expect(socket.credits).toHaveLength(3);
   });
 
   test('release closes the body socket and calls stub.release', async () => {

@@ -16,6 +16,11 @@ import type {
 
 const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
 
+// One credit = "send me the next chunk". The broker sends exactly one per
+// ReadableStream pull; the DO treats any inbound message as a credit and ignores
+// the content, so a 1-byte sentinel is enough.
+const CREDIT_BYTE = new Uint8Array([1]);
+
 // Minimal namespace/stub surface — declared locally so this file stays off
 // `@cloudflare/workers-types` (same convention as do-channel-broker.ts).
 export interface DurableHttpSessionNamespace {
@@ -139,6 +144,11 @@ const wsToByteStream = (
         controller.close();
         return;
       }
+      // Credit-based backpressure: request exactly one chunk, then wait for it.
+      // With highWaterMark 0 the stream only pulls on an active read, so a
+      // consumer that pauses (transport parked at exec_mcp) sends no credit and
+      // the DO holds subsequent chunks in its buffer for the next acquire.
+      try { socket.send(CREDIT_BYTE); } catch { controller.close(); return; }
       const result = await new Promise<{ value?: Uint8Array; done: boolean }>(resolve => { pull = resolve; });
       if (result.done) {
         if (pendingError) controller.error(pendingError);
@@ -148,5 +158,5 @@ const wsToByteStream = (
       if (result.value) controller.enqueue(result.value);
     },
     cancel(): void { end(); },
-  });
+  }, { highWaterMark: 0 });
 };

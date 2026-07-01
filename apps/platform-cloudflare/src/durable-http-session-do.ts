@@ -55,6 +55,9 @@ export class DurableHttpSessionDO extends DurableObject {
   private buffer: Uint8Array[] = [];
   private bufferedBytes = 0;
   private consumer: WebSocket | null = null;
+  // Chunks the current consumer has requested (one credit per broker-side
+  // ReadableStream pull) but not yet been sent. Reset on attach/release/discard.
+  private credits = 0;
   private idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS;
   private lastActivityAt = 0;
 
@@ -138,9 +141,10 @@ export class DurableHttpSessionDO extends DurableObject {
     return { status: this.statusCode, headers: this.headerList };
   }
 
-  // Continuously drain the upstream reader. With a consumer attached, frames
-  // are forwarded live; otherwise they accumulate in the buffer (bounded by
-  // MAX_BUFFERED_BYTES) for the next consumer to pick up mid-stream.
+  // Continuously drain the upstream reader into `buffer`, then hand chunks to
+  // the consumer only as fast as it credits them (see flushToConsumer). A
+  // consumer that pauses reading stops crediting, so subsequent chunks stay
+  // buffered for the next acquire instead of being pushed at a WS about to close.
   private startPump(): void {
     const pump = async (): Promise<void> => {
       try {
@@ -148,20 +152,17 @@ export class DurableHttpSessionDO extends DurableObject {
           const { done, value } = await this.reader!.read();
           if (done) {
             this.done = true;
-            this.consumer?.close(1000, 'upstream ended');
+            this.flushToConsumer();
             return;
           }
           if (!value || value.byteLength === 0) continue;
-          if (this.consumer) {
-            this.safeSend(this.consumer, value);
-          } else {
-            this.buffer.push(value);
-            this.bufferedBytes += value.byteLength;
-            if (this.bufferedBytes > MAX_BUFFERED_BYTES) {
-              await this.discard('buffer overflow with no consumer');
-              return;
-            }
+          this.buffer.push(value);
+          this.bufferedBytes += value.byteLength;
+          if (this.bufferedBytes > MAX_BUFFERED_BYTES) {
+            await this.discard('buffer overflow with no consumer');
+            return;
           }
+          this.flushToConsumer();
         }
       } catch (err) {
         this.errored = true;
@@ -172,13 +173,29 @@ export class DurableHttpSessionDO extends DurableObject {
     void pump();
   }
 
-  private safeSend(ws: WebSocket, bytes: Uint8Array): void {
-    try {
-      ws.send(bytes);
-    } catch {
-      // Consumer socket went away between the open check and the send; drop it
-      // so the pump falls back to buffering for the next acquire.
-      if (this.consumer === ws) this.consumer = null;
+  // Deliver buffered chunks to the consumer up to the credits it has requested
+  // (the broker sends one credit per ReadableStream pull). A send that throws
+  // leaves the chunk at the head of `buffer` — never dropped — and detaches the
+  // dead consumer so the next acquire resumes from the same point. Once the
+  // upstream is done and the buffer is fully drained, a waiting credit gets the
+  // end-of-stream close.
+  private flushToConsumer(): void {
+    while (this.consumer && this.credits > 0 && this.buffer.length > 0) {
+      const chunk = this.buffer[0];
+      try {
+        this.consumer.send(chunk);
+      } catch {
+        this.consumer = null;
+        return;
+      }
+      this.buffer.shift();
+      this.bufferedBytes -= chunk.byteLength;
+      this.credits -= 1;
+    }
+    if (this.consumer && this.credits > 0 && this.done && this.buffer.length === 0) {
+      try {
+        this.consumer.close(1000, this.errored ? 'upstream error' : 'upstream ended');
+      } catch { /* already closing */ }
     }
   }
 
@@ -200,7 +217,16 @@ export class DurableHttpSessionDO extends DurableObject {
 
   private attachConsumer(ws: WebSocket): void {
     this.consumer = ws;
+    this.credits = 0;
     this.touch();
+    // Each inbound message is one credit — "send me one more chunk". The broker
+    // sends exactly one per ReadableStream pull, giving strict 1:1 backpressure.
+    ws.addEventListener('message', () => {
+      if (this.consumer !== ws) return;
+      this.credits += 1;
+      this.touch();
+      this.flushToConsumer();
+    });
     ws.addEventListener('close', () => {
       if (this.consumer === ws) {
         this.consumer = null;
@@ -210,11 +236,9 @@ export class DurableHttpSessionDO extends DurableObject {
     ws.addEventListener('error', () => {
       if (this.consumer === ws) this.consumer = null;
     });
-    // Flush whatever accumulated since the last consumer detached.
-    for (const chunk of this.buffer) this.safeSend(ws, chunk);
-    this.buffer = [];
-    this.bufferedBytes = 0;
-    if (this.done) ws.close(1000, this.errored ? 'upstream error' : 'upstream ended');
+    // No eager flush and no done-close here: delivery is credit-driven, so a
+    // fresh consumer starts receiving only once it pulls (credits arrive).
+    this.flushToConsumer();
   }
 
   /**
@@ -223,13 +247,13 @@ export class DurableHttpSessionDO extends DurableObject {
    * consumer reference also clears on its own WS 'close' event.
    */
   async release(): Promise<void> {
-    // Detach synchronously rather than waiting for the WS 'close' event. If we
-    // left this.consumer set, a chunk the pump reads in the gap between release
-    // and the close event would be safeSent to the detaching socket — and
-    // safeSend drops (does not buffer) a chunk whose send throws, losing it
-    // across the turn handoff. Nulling now makes the pump buffer for the next
-    // acquire instead. The provider side closes its WS end independently.
+    // Detach the consumer and drop its outstanding credits; the buffer is
+    // retained so the next acquire continues mid-stream. Because delivery is
+    // credit-driven, any chunk the pump reads after this point simply stays
+    // buffered (the paused turn never credited it), so nothing is pushed at the
+    // detaching socket. The provider side closes its WS end independently.
     this.consumer = null;
+    this.credits = 0;
     this.touch();
   }
 
@@ -238,6 +262,7 @@ export class DurableHttpSessionDO extends DurableObject {
     this.done = true;
     try { this.consumer?.close(1000, reason); } catch { /* already closing */ }
     this.consumer = null;
+    this.credits = 0;
     const reader = this.reader;
     this.reader = null;
     if (reader) { try { await reader.cancel(reason); } catch { /* already done */ } }

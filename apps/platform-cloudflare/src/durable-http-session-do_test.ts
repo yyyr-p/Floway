@@ -51,6 +51,11 @@ class FakeWebSocket {
     if (!this.listeners.has(type)) this.listeners.set(type, new Set());
     this.listeners.get(type)!.add(fn);
   }
+  // Test helper: simulate the broker sending one credit ("send me one chunk").
+  // The DO's message listener ignores the payload, so any data works.
+  credit(): void {
+    for (const fn of this.listeners.get('message') ?? []) fn({ data: new Uint8Array([1]) });
+  }
 }
 
 const createdPairs: [FakeWebSocket, FakeWebSocket][] = [];
@@ -154,7 +159,7 @@ describe('DurableHttpSessionDO body channel + lifecycle', () => {
     expect(resp.status).toBe(409);
   });
 
-  test('fetch after start upgrades to 101 and flushes buffered + live bytes', async () => {
+  test('fetch after start upgrades to 101 and delivers one chunk per credit', async () => {
     const { actor } = makeDO();
     await actor.queryOrStart(POST_INIT, 1000);
 
@@ -164,20 +169,30 @@ describe('DurableHttpSessionDO body channel + lifecycle', () => {
     const resp = await actor.fetch(new Request('https://durable-http.do/body'));
     expect(resp.status).toBe(101);
     const server = createdPairs[0]![1];
+    // Credit-based backpressure: nothing is sent until the consumer requests it.
+    expect(server.sent).toEqual([]);
+
+    server.credit();
     expect(server.sent.flatMap(c => Array.from(c))).toEqual([1, 2]);
 
+    // A live chunk stays buffered until the next credit.
     h.ctl.bodyController!.enqueue(new Uint8Array([3]));
     await flushMicrotasks();
+    expect(server.sent.flatMap(c => Array.from(c))).toEqual([1, 2]);
+    server.credit();
     expect(server.sent.flatMap(c => Array.from(c))).toEqual([1, 2, 3]);
   });
 
-  test('upstream end closes the consumer socket', async () => {
+  test('upstream end closes the consumer socket once a credit is waiting', async () => {
     const { actor } = makeDO();
     await actor.queryOrStart(POST_INIT, 1000);
     await actor.fetch(new Request('https://durable-http.do/body'));
     const server = createdPairs[0]![1];
     h.ctl.bodyController!.close();
     await flushMicrotasks();
+    // End-of-stream is delivered on a pull, not pushed: no credit → no close.
+    expect(server.closed).toBeNull();
+    server.credit();
     expect(server.closed).not.toBeNull();
   });
 
