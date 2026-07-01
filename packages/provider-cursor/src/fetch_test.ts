@@ -171,8 +171,10 @@ describe('callCursorChatCompletions', () => {
     const events = await collectEvents(result);
     const contents = events.map(e => e.choices[0]?.delta?.content ?? '').filter(c => c !== '');
     expect(contents).toContain('hello');
-    const last = events[events.length - 1]!;
-    expect(last.choices[0]?.finish_reason).toBe('stop');
+    expect(events.some(e => e.choices[0]?.finish_reason === 'stop')).toBe(true);
+    // Trailing zero-usage frame (choices: []) so the gateway counts the request.
+    const usageFrame = events.find(e => e.choices.length === 0 && e.usage);
+    expect(usageFrame?.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   });
 
   test('surfaces a non-ok RunSSE as a thrown stream error', async () => {

@@ -152,13 +152,17 @@ describe('createAgentTranslator — tool calls', () => {
 });
 
 describe('createAgentTranslator.finalize', () => {
-  test('emits stop when no tool calls were produced', () => {
+  test('emits stop then a zero-usage frame when no tool calls were produced', () => {
     const t = mk('gpt-4o');
     t.translate({ type: 'text', content: 'hi' });
     const fin = t.finalize();
-    expect(fin).toHaveLength(1);
+    expect(fin).toHaveLength(2);
     expect(finishOf(fin[0]!)).toBe('stop');
     expect(deltaOf(fin[0]!)).toEqual({});
+    // The trailing usage frame carries empty choices + an all-zero usage block
+    // (cursor reports no per-request tokens; this only gets the request counted).
+    expect(fin[1]!.choices).toEqual([]);
+    expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   });
 
   test('emits tool_calls finish_reason after an mcp exec', () => {

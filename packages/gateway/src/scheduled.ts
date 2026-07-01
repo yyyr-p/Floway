@@ -1,3 +1,4 @@
+import { syncCursorUsage } from './data-plane/shared/telemetry/cursor-usage-sync.ts';
 import { getDumpStore } from './dump/registry.ts';
 import { getRepo } from './repo/index.ts';
 import { RESPONSES_ITEM_PAYLOAD_TTL_MS, startOfUtcHour, sweepExpiredResponsesItemPayloadFiles } from './repo/responses-payload.ts';
@@ -30,6 +31,7 @@ export const runScheduledMaintenance = async (): Promise<void> => {
   await runSweep('cursorSessions.deleteOlderThan', () => getRepo().cursorSessions.deleteOlderThan(Date.now() - CURSOR_SESSION_ROW_TTL_MS));
   await runSweep('imageCacheStore.sweepExpired', () => getImageCacheStore().sweepExpired(Date.now()));
   await runSweep('dumps.sweepExpired', () => sweepExpiredDumps());
+  await runSweep('cursor.usageSync', () => syncCursorUsage());
 };
 
 const sweepExpiredDumps = async (): Promise<void> => {

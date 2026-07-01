@@ -276,7 +276,21 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
     if (finalized) return [];
     finalized = true;
     const finishReason: FinishReason = endReason === 'tool_calls' ? 'tool_calls' : 'stop';
-    return [makeEvent({}, finishReason)];
+    // Trailing all-zero usage frame (choices: []). Cursor's RunSSE stream reports
+    // no per-request token counts, so this carries no real numbers — it exists
+    // only so the gateway records that a (billable) request happened; the real
+    // tokens are back-filled hourly from the account-level dashboard sync. Only
+    // emitted on a clean finish (finalize runs after the turn completes), so
+    // failed turns are not counted.
+    const usageEvent: ChatCompletionsStreamEvent = {
+      id: opts.id,
+      object: 'chat.completion.chunk',
+      created: opts.created,
+      model: opts.model,
+      choices: [],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    };
+    return [makeEvent({}, finishReason), usageEvent];
   };
 
   return { translate, finalize };

@@ -109,6 +109,15 @@ const refreshTokenNow = async () => {
           {{ reimportOpen ? 'Cancel re-import' : 'Re-import credential' }}
         </Button>
       </div>
+      <div class="flex items-start gap-2 rounded-md border border-white/5 bg-surface-800/40 p-3 text-xs text-gray-500">
+        <i class="i-lucide-info mt-0.5 size-3.5 shrink-0" />
+        <p>
+          Token usage for Cursor is an <span class="text-gray-400">account-level approximation</span>. Cursor exposes no
+          per-request usage to a gateway, so real usage is pulled hourly from your Cursor account dashboard and split
+          across API keys by request count. It includes usage from this Cursor account that did not go through Floway
+          (e.g. your own Cursor IDE or other clients), and lags a few minutes behind.
+        </p>
+      </div>
     </template>
 
     <template v-if="mode === 'create' || reimportOpen">

@@ -9,6 +9,8 @@ export * from './models.ts';
 export * from './pricing.ts';
 export * from './quota.ts';
 export * from './state.ts';
+export { fetchCursorUsageBuckets } from './usage-sync.ts';
+export type { CursorUsageBucket, FetchCursorUsageOptions } from './usage-sync.ts';
 export { createCursorProvider } from './provider.ts';
 export type { CursorCallEffects, CallCursorChatCompletionsOptions } from './fetch.ts';
 export type { AgentTransport, AgentTransportOptions } from './agent-transport.ts';
