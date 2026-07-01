@@ -14,6 +14,11 @@ export interface CursorAccountIdentity {
 // round-robin pool feature can widen the tuple without a schema migration.
 export interface CursorUpstreamConfig {
   accounts: [CursorAccountIdentity];
+  // Privacy / ghost mode toggle sent to Cursor as the x-ghost-mode data-plane
+  // header. Absent = default on (privacy preserved) — see provider.ts, which
+  // resolves `privacyMode ?? true`. Only the chat data plane honors this; the
+  // model-catalog fetch stays always-private (no user content flows there).
+  privacyMode?: boolean;
 }
 
 export type CursorUpstreamRecord = UpstreamRecord & {
@@ -27,9 +32,12 @@ function assertCursorUpstreamConfig(value: unknown): asserts value is CursorUpst
   }
   const obj = value as Record<string, unknown>;
   for (const key of Object.keys(obj)) {
-    if (key !== 'accounts') {
+    if (key !== 'accounts' && key !== 'privacyMode') {
       throw new TypeError(`CursorUpstreamConfig has unexpected key '${key}'`);
     }
+  }
+  if (obj.privacyMode !== undefined && typeof obj.privacyMode !== 'boolean') {
+    throw new TypeError('CursorUpstreamConfig.privacyMode must be a boolean when present');
   }
   if (!Array.isArray(obj.accounts)) {
     throw new TypeError('CursorUpstreamConfig.accounts must be an array');
