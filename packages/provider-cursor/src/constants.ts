@@ -7,6 +7,10 @@ export const CURSOR_BACKEND_BASE = 'https://api2.cursor.sh';
 export const CURSOR_RUN_SSE_PATH = '/agent.v1.AgentService/RunSSE';
 export const CURSOR_BIDI_APPEND_PATH = '/aiserver.v1.BidiService/BidiAppend';
 export const CURSOR_USABLE_MODELS_PATH = '/aiserver.v1.AiService/GetUsableModels';
+// AvailableModels carries the client-facing model tooltips. GetUsableModels
+// says which models the account may use; AvailableModels is the only source
+// (prose-only) of each model's context window — see fetchCursorAvailableContext.
+export const CURSOR_AVAILABLE_MODELS_PATH = '/aiserver.v1.AiService/AvailableModels';
 
 // Cursor CLI client version we impersonate on the data plane. Pinned from
 // yet-another-opencode-cursor-auth / opencode-cursor-proxy; newer models may
