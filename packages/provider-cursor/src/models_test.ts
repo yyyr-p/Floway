@@ -7,6 +7,7 @@ import {
   fetchCursorBaseModels,
   fetchCursorCatalog,
   parseContextWindow,
+  resolveCursorWireModel,
   type CursorBaseModel,
   type CursorRawModel,
 } from './models.ts';
@@ -33,7 +34,7 @@ const routingFetcher = (routes: {
 const usableModels = (ids: string[]): Response =>
   jsonResponse({ models: ids.map(id => ({ modelId: id, displayName: id })) });
 
-type V = { slug: string; defNonMax?: boolean; defMax?: boolean };
+type V = { slug: string; defNonMax?: boolean; defMax?: boolean; effort?: string; thinking?: boolean; fast?: boolean };
 
 // Parsed CursorBaseModel (what buildCollapsedCatalog consumes).
 const pbase = (name: string, variants: V[], extra: Partial<CursorBaseModel> = {}): CursorBaseModel => ({
@@ -42,7 +43,15 @@ const pbase = (name: string, variants: V[], extra: Partial<CursorBaseModel> = {}
   contextNormal: null,
   contextMax: null,
   reasoning: null,
-  variants: variants.map(v => ({ legacySlug: v.slug, isDefaultNonMaxConfig: v.defNonMax === true, isDefaultMaxConfig: v.defMax === true })),
+  variants: variants.map(v => ({
+    slug: v.slug,
+    legacySlug: v.slug,
+    ...(v.effort !== undefined ? { effort: v.effort } : {}),
+    ...(v.thinking !== undefined ? { thinking: v.thinking } : {}),
+    ...(v.fast !== undefined ? { fast: v.fast } : {}),
+    isDefaultNonMaxConfig: v.defNonMax === true,
+    isDefaultMaxConfig: v.defMax === true,
+  })),
   aliasSlugs: [],
   ...extra,
 });
@@ -85,6 +94,59 @@ describe('cursorWireModelId', () => {
   test('reads providerData.wireModelId, else the id', () => {
     expect(cursorWireModelId({ id: 'claude-opus-4-8', providerData: { wireModelId: 'claude-opus-4-8-high' } } as UpstreamModel)).toBe('claude-opus-4-8-high');
     expect(cursorWireModelId({ id: 'gpt-5.5' } as UpstreamModel)).toBe('gpt-5.5');
+  });
+});
+
+describe('resolveCursorWireModel', () => {
+  const flags = new Set<string>();
+  // thinking + effort model (opus-like)
+  const opus = cursorRawToUpstreamModel({
+    id: 'opus', display_name: 'Opus', wireModelId: 'opus-thinking-high',
+    variants: [
+      { slug: 'opus-low', effort: 'low', thinking: false, fast: false },
+      { slug: 'opus-high', effort: 'high', thinking: false, fast: false },
+      { slug: 'opus-thinking-low', effort: 'low', thinking: true, fast: false },
+      { slug: 'opus-thinking-high', effort: 'high', thinking: true, fast: false },
+    ],
+  }, flags);
+  // thinking-only model (sonnet-4-5-like)
+  const sonnet = cursorRawToUpstreamModel({
+    id: 'sonnet', display_name: 'Sonnet', wireModelId: 'sonnet-thinking',
+    variants: [{ slug: 'sonnet', thinking: false }, { slug: 'sonnet-thinking', thinking: true }],
+  }, flags);
+  // effort-only model (gpt-like, incl 'none')
+  const gpt = cursorRawToUpstreamModel({
+    id: 'gpt', display_name: 'GPT', wireModelId: 'gpt-high',
+    variants: [{ slug: 'gpt-none', effort: 'none' }, { slug: 'gpt-low', effort: 'low' }, { slug: 'gpt-high', effort: 'high' }],
+  }, flags);
+  // single-variant model (kimi-like)
+  const kimi = cursorRawToUpstreamModel({ id: 'kimi', display_name: 'Kimi', wireModelId: 'kimi', variants: [{ slug: 'kimi' }] }, flags);
+
+  test('no reasoning_effort → default wire', () => {
+    expect(resolveCursorWireModel(opus, null)).toBe('opus-thinking-high');
+    expect(resolveCursorWireModel(opus, undefined)).toBe('opus-thinking-high');
+  });
+  test('effort steers effort; thinking stays on for a non-none effort', () => {
+    expect(resolveCursorWireModel(opus, 'high')).toBe('opus-thinking-high');
+    expect(resolveCursorWireModel(opus, 'low')).toBe('opus-thinking-low');
+    expect(resolveCursorWireModel(opus, 'xhigh')).toBe('opus-thinking-high'); // nearest to 'high'
+  });
+  test("'none' turns thinking off and drops to lowest effort", () => {
+    expect(resolveCursorWireModel(opus, 'none')).toBe('opus-low');
+  });
+  test('thinking-only model toggles thinking by effort presence', () => {
+    expect(resolveCursorWireModel(sonnet, 'high')).toBe('sonnet-thinking');
+    expect(resolveCursorWireModel(sonnet, 'none')).toBe('sonnet');
+    expect(resolveCursorWireModel(sonnet, null)).toBe('sonnet-thinking');
+  });
+  test('effort-only model maps effort including none', () => {
+    expect(resolveCursorWireModel(gpt, 'none')).toBe('gpt-none');
+    expect(resolveCursorWireModel(gpt, 'low')).toBe('gpt-low');
+    expect(resolveCursorWireModel(gpt, 'medium')).toBe('gpt-low'); // nearest
+  });
+  test('single-variant model always returns its default', () => {
+    expect(resolveCursorWireModel(kimi, 'high')).toBe('kimi');
+    expect(resolveCursorWireModel(kimi, 'none')).toBe('kimi');
   });
 });
 

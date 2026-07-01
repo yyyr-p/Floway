@@ -8,6 +8,16 @@ export interface CursorReasoningInfo {
   default: string;
 }
 
+// One selectable Cursor variant of a base, reduced to the request-routable
+// dimensions (context is excluded — it rides the max_mode proto flag, and the
+// legacySlug is context-independent). `slug` is the wire model id.
+export interface CursorVariantParams {
+  slug: string;
+  effort?: string;
+  thinking?: boolean;
+  fast?: boolean;
+}
+
 export interface CursorRawModel {
   id: string;
   display_name: string;
@@ -21,6 +31,8 @@ export interface CursorRawModel {
   variantIds?: readonly string[];
   // Reasoning-effort levels the model exposes (→ chat.reasoning.effort).
   reasoning?: CursorReasoningInfo;
+  // Distinct usable variants (by wire slug) for request→variant routing.
+  variants?: readonly CursorVariantParams[];
 }
 
 // One Cursor "base" model from AvailableModels(useModelParameters=true): the
@@ -34,7 +46,7 @@ export interface CursorBaseModel {
   contextNormal: number | null;
   contextMax: number | null;
   reasoning: CursorReasoningInfo | null;
-  variants: { legacySlug: string; isDefaultNonMaxConfig: boolean; isDefaultMaxConfig: boolean }[];
+  variants: (CursorVariantParams & { legacySlug: string; isDefaultNonMaxConfig: boolean; isDefaultMaxConfig: boolean })[];
   aliasSlugs: string[];
 }
 
@@ -174,18 +186,31 @@ export const fetchCursorBaseModels = async (
       : paramDefs.some(p => isPlainRecord(p) && p.id === 'reasoning') ? 'reasoning' : null;
     const effortEnum = effortId ? enumValues(effortId) : null;
 
+    const paramValue = (v: Record<string, unknown>, id: string): string | undefined => {
+      if (!Array.isArray(v.parameterValues)) return undefined;
+      for (const pv of v.parameterValues) if (isPlainRecord(pv) && pv.id === id && typeof pv.value === 'string') return pv.value;
+      return undefined;
+    };
+
     const variants: CursorBaseModel['variants'] = [];
     let defaultEffort: string | null = null;
     if (Array.isArray(entry.variants)) {
       for (const v of entry.variants) {
         if (!isPlainRecord(v) || typeof v.legacySlug !== 'string') continue;
         const isDefaultNonMaxConfig = v.isDefaultNonMaxConfig === true;
-        variants.push({ legacySlug: v.legacySlug, isDefaultNonMaxConfig, isDefaultMaxConfig: v.isDefaultMaxConfig === true });
-        if (isDefaultNonMaxConfig && effortId && defaultEffort === null && Array.isArray(v.parameterValues)) {
-          for (const pv of v.parameterValues) {
-            if (isPlainRecord(pv) && pv.id === effortId && typeof pv.value === 'string') { defaultEffort = pv.value; break; }
-          }
-        }
+        const effort = effortId ? paramValue(v, effortId) : undefined;
+        const thinkingStr = paramValue(v, 'thinking');
+        const fastStr = paramValue(v, 'fast');
+        variants.push({
+          slug: v.legacySlug,
+          legacySlug: v.legacySlug,
+          ...(effort !== undefined ? { effort } : {}),
+          ...(thinkingStr !== undefined ? { thinking: thinkingStr === 'true' } : {}),
+          ...(fastStr !== undefined ? { fast: fastStr === 'true' } : {}),
+          isDefaultNonMaxConfig,
+          isDefaultMaxConfig: v.isDefaultMaxConfig === true,
+        });
+        if (isDefaultNonMaxConfig && defaultEffort === null && effort !== undefined) defaultEffort = effort;
       }
     }
 
@@ -237,7 +262,19 @@ export const buildCollapsedCatalog = (
     if (!wire) continue;
 
     const variantIds: string[] = [];
-    for (const v of b.variants) if (usableIds.has(v.legacySlug)) { variantIds.push(v.legacySlug); claimed.add(v.legacySlug); }
+    const variantParams: CursorVariantParams[] = [];
+    const seenSlug = new Set<string>();
+    for (const v of b.variants) {
+      if (!usableIds.has(v.legacySlug)) continue;
+      claimed.add(v.legacySlug);
+      variantIds.push(v.legacySlug);
+      // Dedup by wire slug — the same slug recurs across context sizes with
+      // identical (effort, thinking, fast).
+      if (!seenSlug.has(v.legacySlug)) {
+        seenSlug.add(v.legacySlug);
+        variantParams.push({ slug: v.legacySlug, ...(v.effort !== undefined ? { effort: v.effort } : {}), ...(v.thinking !== undefined ? { thinking: v.thinking } : {}), ...(v.fast !== undefined ? { fast: v.fast } : {}) });
+      }
+    }
     for (const s of b.aliasSlugs) if (usableIds.has(s)) { variantIds.push(s); claimed.add(s); }
     claimed.add(wire);
     claimed.add(b.name);
@@ -250,6 +287,7 @@ export const buildCollapsedCatalog = (
       wireModelId: wire,
       variantIds,
       ...(b.reasoning ? { reasoning: b.reasoning } : {}),
+      ...(variantParams.length > 0 ? { variants: variantParams } : {}),
     });
   }
 
@@ -299,9 +337,10 @@ export const cursorRawToUpstreamModel = (raw: CursorRawModel, enabledFlags: Read
   // Carry the wire id (so fetch.ts sends the usable variant slug while the
   // catalog keeps the clean base id) and the pre-collapse variant ids (so the
   // registry can alias an old per-variant request onto this base).
-  const providerData: { wireModelId?: string; variantIds?: readonly string[] } = {};
+  const providerData: { wireModelId?: string; variantIds?: readonly string[]; variants?: readonly CursorVariantParams[] } = {};
   if (raw.wireModelId && raw.wireModelId !== raw.id) providerData.wireModelId = raw.wireModelId;
   if (raw.variantIds && raw.variantIds.length > 0) providerData.variantIds = raw.variantIds;
+  if (raw.variants && raw.variants.length > 0) providerData.variants = raw.variants;
   const chat = buildChatConfig(raw);
 
   return {
@@ -315,7 +354,7 @@ export const cursorRawToUpstreamModel = (raw: CursorRawModel, enabledFlags: Read
     endpoints: { chatCompletions: {} },
     enabledFlags,
     ...(chat ? { chat } : {}),
-    ...(providerData.wireModelId || providerData.variantIds ? { providerData } : {}),
+    ...(providerData.wireModelId || providerData.variantIds || providerData.variants ? { providerData } : {}),
     ...(cost ? { cost } : {}),
   };
 };
@@ -326,4 +365,59 @@ export const cursorWireModelId = (model: UpstreamModel): string => {
   const data = model.providerData;
   if (isPlainRecord(data) && typeof data.wireModelId === 'string') return data.wireModelId;
   return model.id;
+};
+
+// Ordered reasoning-effort scale spanning every vendor's naming, used to map a
+// request's reasoning_effort onto the nearest value a model actually exposes.
+const EFFORT_SCALE = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra-high', 'max'];
+
+const nearestEffort = (want: string, supported: readonly string[]): string => {
+  if (supported.includes(want)) return want;
+  const wi = EFFORT_SCALE.indexOf(want);
+  if (wi < 0) return supported[0];
+  let best = supported[0];
+  let bestDist = Infinity;
+  for (const s of supported) {
+    const si = EFFORT_SCALE.indexOf(s);
+    const dist = si < 0 ? Infinity : Math.abs(si - wi);
+    if (dist < bestDist) { bestDist = dist; best = s; }
+  }
+  return best;
+};
+
+// Resolve the wire variant for a request. The collapsed base defaults to one
+// variant; a request's reasoning_effort steers effort (mapped to the nearest
+// exposed level) and, for models with a thinking dimension, thinking on/off
+// ('none' = off, any other effort = on). Context is untouched here — it rides
+// the max_mode proto flag. Falls back to the default wire id when the model has
+// no routable variants or no reasoning_effort was given.
+export const resolveCursorWireModel = (model: UpstreamModel, reasoningEffort: string | null | undefined): string => {
+  const defaultSlug = cursorWireModelId(model);
+  const data = model.providerData;
+  if (!reasoningEffort || !isPlainRecord(data) || !Array.isArray(data.variants)) return defaultSlug;
+  const variants = data.variants as CursorVariantParams[];
+  if (variants.length === 0) return defaultSlug;
+
+  const efforts = [...new Set(variants.map(v => v.effort).filter((e): e is string => typeof e === 'string'))];
+  const hasThinking = variants.some(v => typeof v.thinking === 'boolean');
+  const def = variants.find(v => v.slug === defaultSlug);
+
+  const targetEffort = efforts.length > 0 ? nearestEffort(reasoningEffort, efforts) : undefined;
+  const targetThinking = hasThinking ? reasoningEffort !== 'none' : undefined;
+  const targetFast = def?.fast;
+
+  // Weighted match: effort dominates, then thinking, then keep the default fast
+  // setting. Highest score wins; the default variant seeds the best-so-far.
+  const score = (v: CursorVariantParams): number =>
+    (targetEffort !== undefined && v.effort === targetEffort ? 4 : 0) +
+    (targetThinking !== undefined && v.thinking === targetThinking ? 2 : 0) +
+    (targetFast !== undefined && v.fast === targetFast ? 1 : 0);
+
+  let best = def ?? variants[0];
+  let bestScore = def ? score(def) : -1;
+  for (const v of variants) {
+    const s = score(v);
+    if (s > bestScore) { bestScore = s; best = v; }
+  }
+  return best.slug;
 };

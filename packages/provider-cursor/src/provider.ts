@@ -4,7 +4,7 @@ import { assertCursorUpstreamRecord, type CursorUpstreamConfig } from './config.
 import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
 import { cursorChatCompletionsChain } from './interceptors/chat-completions/index.ts';
 import type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
-import { cursorRawToUpstreamModel, fetchCursorCatalog } from './models.ts';
+import { cursorRawToUpstreamModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
 import { assertCursorUpstreamState, type CursorUpstreamState } from './state.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
@@ -108,6 +108,9 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
     getPricingForModelKey: pricingForCursorModelKey,
 
     callChatCompletions: async (model, body, signal, opts) => {
+      // Resolve the wire variant from the request's reasoning_effort before the
+      // interceptor chain strips it from the payload.
+      const wireModelId = resolveCursorWireModel(model, body.reasoning_effort);
       const ctx: ChatCompletionsBoundaryCtx = {
         payload: { ...body, model: model.id },
         headers: new Headers(opts.headers),
@@ -130,6 +133,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
             effects,
             call: opts,
             maxMode: config.maxMode ?? false,
+            wireModelId,
           });
         },
       );
