@@ -144,6 +144,9 @@ export interface CursorAccountIdentity {
 
 export interface CursorUpstreamConfig {
   accounts: [CursorAccountIdentity];
+  // Ghost/privacy mode toggle sent as the x-ghost-mode data-plane header.
+  // Absent = privacy on (default). Editable via the config panel.
+  privacyMode?: boolean;
 }
 
 export interface CursorAccessTokenState {

@@ -92,6 +92,8 @@ const modelPrefixInvalid = ref(false);
 const customDraft = ref<CustomDraft>(blankCustomDraft());
 const azureDraft = ref<AzureDraft>(blankAzureDraft());
 const ollamaDraft = ref<OllamaDraft>(blankOllamaDraft());
+// Cursor's only editable config field. Absent on the record = privacy on.
+const cursorPrivacyMode = ref(true);
 
 const upstreamModels = ref<UpstreamModelConfig[]>(props.initialUpstreamModels ?? []);
 const upstreamModelsError = ref<string | null>(props.initialUpstreamModelsError ?? null);
@@ -151,6 +153,8 @@ const seedFromRecord = (r: UpstreamRecord) => {
       apiKey: '',
       models: cfg.models ? (JSON.parse(JSON.stringify(cfg.models)) as UpstreamModelConfig[]) : [],
     };
+  } else if (r.provider === 'cursor') {
+    cursorPrivacyMode.value = r.config.privacyMode ?? true;
   }
 };
 
@@ -388,6 +392,7 @@ const save = async () => {
       if (activeProvider.value === 'custom') patch.config = buildCustomConfig();
       else if (activeProvider.value === 'azure') patch.config = buildAzureConfig();
       else if (activeProvider.value === 'ollama') patch.config = buildOllamaConfig();
+      else if (activeProvider.value === 'cursor') patch.config = { privacyMode: cursorPrivacyMode.value };
       const { error } = await callApi(
         () => api.api.upstreams[':id'].$patch({ param: { id: props.record.id }, json: patch }),
       );
@@ -561,6 +566,7 @@ const workbenchStyle = computed(() => ({ '--right-pane-h': `${Math.ceil(rightCon
         v-model:custom="customDraft"
         v-model:azure="azureDraft"
         v-model:ollama="ollamaDraft"
+        v-model:cursor-privacy-mode="cursorPrivacyMode"
         :flags="flags"
         :colo-aware="coloAware"
         :current-colo="currentColo"
