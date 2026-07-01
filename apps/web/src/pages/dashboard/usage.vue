@@ -406,13 +406,20 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
   const entries = groupKey === 'keyId'
     ? keyChartEntries([...presentGroups], keyMetadataForTokenRecords(allRecords, data.value?.keys ?? []), data.value?.keys.map(k => k.id) ?? [...presentGroups])
     : modelChartEntries([...presentGroups]);
-  // Cross-filtering can leave a group with all-zero (or, for percent metrics,
-  // all-null) values. Drop those datasets outright — legend entry and line both
-  // gone — instead of rendering an inert flat line. The own-dimension hidden set
-  // is a separate, restorable user toggle and keeps its struck-through entry.
+  // A group can hold all-zero (or, for percent metrics, all-null) values under
+  // the current metric for two distinct reasons, and requests tells them apart:
+  // cross-filtering that emptied the group leaves requests at zero too (details
+  // aggregate the same cross-filtered records), whereas a group with real but
+  // zero-token traffic — e.g. an upstream that reports no usage — still has
+  // requests > 0. Keep the latter as a flat line at zero so it stays visible in
+  // the token/cost views; drop the former outright, legend entry and line both
+  // gone, instead of rendering an inert line for a group with no activity. Own-
+  // dimension hidden groups are a separate, restorable toggle kept struck-through.
+  // Percent metrics stay null-only: a ratio over zero tokens is undefined.
+  const hasRequests = (id: string) => bucketKeys.some(k => (details.get(k)?.get(id)?.requests ?? 0) > 0);
   const datasetEntries = entries
     .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)?.get(entry.id) ?? (isPercent ? null : 0)) }))
-    .filter(({ data }) => isPercent ? data.some(v => v !== null) : data.some(v => v !== 0));
+    .filter(({ entry, data }) => isPercent ? data.some(v => v !== null) : (data.some(v => v !== 0) || hasRequests(entry.id)));
   const labelWidth = datasetEntries.reduce((max, { entry }) => Math.max(max, entry.label.length), 0);
   return {
     type: 'line',
