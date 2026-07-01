@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { callCursorChatCompletions, pullToFirstMeaningful, type CursorCallEffects } from './fetch.ts';
+import { callCursorChatCompletions, flattenMessages, pullToFirstMeaningful, type CursorCallEffects } from './fetch.ts';
 import { addConnectEnvelope, encodeMessageField, encodeStringField, type AgentStreamChunk } from './proto/index.ts';
 import type { CursorAccessTokenEntry, CursorAccountCredential, CursorUpstreamState } from './state.ts';
 import { initDurableHttpSession, resetDurableHttpSessionForTesting, type DurableHttpSession } from '@floway-dev/platform';
@@ -257,5 +257,60 @@ describe('pullToFirstMeaningful', () => {
   test('returns the done result when the generator ends with only control frames', async () => {
     const r = await pullToFirstMeaningful(chunkGen([{ type: 'checkpoint' }]));
     expect(r.done).toBe(true);
+  });
+});
+
+describe('flattenMessages', () => {
+  test('folds a completed tool round with framing and tool-name labels', () => {
+    const out = flattenMessages([
+      { role: 'system', content: 'You are helpful.' },
+      { role: 'user', content: 'weather in Tokyo?' },
+      { role: 'assistant', content: 'Plan: check the weather.', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_weather', arguments: '{"city":"Tokyo"}' } }] },
+      { role: 'tool', tool_call_id: 'call_1', content: '{"temperature":18,"condition":"cloudy"}' },
+      { role: 'assistant', content: 'Tokyo is cloudy, 18C.' },
+      { role: 'user', content: 'thanks' },
+    ]);
+    expect(out).toContain('[System]\nYou are helpful.');
+    expect(out).toContain('[User]\nweather in Tokyo?');
+    expect(out).toContain('[Assistant]\nPlan: check the weather.\n→ called get_weather({"city":"Tokyo"})');
+    expect(out).toContain('[Tool result: get_weather]\n{"temperature":18,"condition":"cloudy"}');
+    expect(out).toContain('[Assistant]\nTokyo is cloudy, 18C.');
+  });
+
+  test('folds a trailing pending tool round instead of dropping it (full reconstruction)', () => {
+    const out = flattenMessages([
+      { role: 'user', content: 'weather?' },
+      { role: 'assistant', content: null, tool_calls: [{ id: 'c', type: 'function', function: { name: 'get_weather', arguments: '{"city":"NYC"}' } }] },
+      { role: 'tool', tool_call_id: 'c', content: '{"t":20}' },
+    ]);
+    expect(out).toContain('→ called get_weather({"city":"NYC"})');
+    expect(out.endsWith('[Tool result: get_weather]\n{"t":20}')).toBe(true);
+  });
+
+  test('renders an assistant turn that carried only tool_calls (no text)', () => {
+    const out = flattenMessages([
+      { role: 'assistant', content: null, tool_calls: [{ id: 'x', type: 'function', function: { name: 'search', arguments: '{}' } }] },
+    ]);
+    expect(out).toBe('[Assistant]\n→ called search({})');
+  });
+
+  test('plain-text conversation keeps the role-tagged shape', () => {
+    const out = flattenMessages([
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'hi' },
+      { role: 'assistant', content: 'hello' },
+    ]);
+    expect(out).toBe('[System]\nsys\n\n[User]\nhi\n\n[Assistant]\nhello');
+  });
+
+  test('normalizes tool-result content (array parts) and keeps the frame on empty/unknown', () => {
+    const arr = flattenMessages([
+      { role: 'assistant', content: null, tool_calls: [{ id: 'a', type: 'function', function: { name: 't', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'a', content: [{ type: 'text', text: 'part1' }, { type: 'text', text: 'part2' }] },
+    ]);
+    expect(arr).toContain('[Tool result: t]\npart1\npart2');
+    // Unknown id (no matching assistant tool_call) → labelled by the id itself.
+    const nul = flattenMessages([{ role: 'tool', tool_call_id: 'z', content: null }]);
+    expect(nul).toBe('[Tool result: z]\n');
   });
 });

@@ -90,45 +90,66 @@ const prepareCursorCall = async (
 // an empty conversation state, so the full transcript is inlined into the
 // single user message. System → prefix, history → role-tagged turns.
 //
-// Tool calling does NOT go through this transcript. Cursor's MCP protocol
-// carries tool outputs over the BidiAppend ExecMcpResult write channel on a
-// live session (see performCursorSessionFollowUp) — folding a tool result into
-// the prompt as "[Tool result] {...}" severely degrades the model (it reads an
-// unaddressed JSON blob and either ignores it or re-runs the tool). So we never
-// flatten tool results here: role:'tool' messages are dropped, and an assistant
-// turn that only carried tool_calls contributes just its own text (if any).
-//
 // This path serves (a) genuine new conversations and (b) the cold-resume
 // fallback when a live session was lost (cross-instance / evicted / CF cold
-// start). In case (b) the tools list stays advertised so cursor re-runs the
-// agent loop natively — an honest "fresh turn" rather than a degraded prompt
-// fold.
-const flattenMessages = (messages: ChatCompletionsMessage[]): string => {
+// start). Only live-resume (performResume) carries a tool result over the
+// BidiAppend ExecMcpResult write channel; here on cold-open cursor has zero
+// server-side memory, so past tool rounds are reconstructed into the transcript
+// too — otherwise the model loses what it already called and re-runs tools. They
+// are framed explicitly (which tool, its arguments, its result) so the model
+// reads them as history: the degradation the earlier version avoided came from
+// folding an *unaddressed* JSON blob, not from tool history per se. Tools stay
+// advertised so cursor can still continue the agent loop natively.
+export const flattenMessages = (messages: ChatCompletionsMessage[]): string => {
+  // A tool message carries only tool_call_id + content; recover the tool name
+  // from the assistant tool_calls so its result can be labelled with what it
+  // answers.
+  const toolNameById = new Map<string, string>();
+  for (const m of messages) {
+    if (m.role === 'assistant' && m.tool_calls) {
+      for (const tc of m.tool_calls) toolNameById.set(tc.id, tc.function.name);
+    }
+  }
+
   const parts: string[] = [];
   for (const m of messages) {
-    // Tool results live on the MCP write channel, never in the transcript.
-    if (m.role === 'tool') continue;
+    if (m.role === 'tool') {
+      const mapped = m.tool_call_id ? toolNameById.get(m.tool_call_id) : undefined;
+      const name = mapped ?? m.tool_call_id ?? 'tool';
+      parts.push(`[Tool result: ${name}]\n${messageText(m)}`);
+      continue;
+    }
+
+    if (m.role === 'assistant') {
+      // Text (if any) then one line per tool call it made — an assistant turn
+      // that only carried tool_calls still contributes its calls, not nothing.
+      const lines: string[] = [];
+      const text = messageText(m);
+      if (text) lines.push(text);
+      for (const tc of m.tool_calls ?? []) {
+        lines.push(`→ called ${tc.function.name}(${tc.function.arguments})`);
+      }
+      if (lines.length === 0) continue;
+      parts.push(`[Assistant]\n${lines.join('\n')}`);
+      continue;
+    }
 
     const text = messageText(m);
     if (!text) continue;
-    const tag = m.role === 'system' || m.role === 'developer' ? 'System'
-      : m.role === 'user' ? 'User'
-        : m.role === 'assistant' ? 'Assistant'
-          : m.role;
+    const tag = m.role === 'system' || m.role === 'developer' ? 'System' : m.role === 'user' ? 'User' : m.role;
     parts.push(`[${tag}]\n${text}`);
   }
 
   return parts.join('\n\n');
 };
 
+// Plain-text extraction: string content verbatim, array content's text parts
+// joined, everything else empty (assistant tool_calls are rendered separately).
 const messageText = (m: ChatCompletionsMessage): string => {
   if (typeof m.content === 'string') return m.content;
   if (Array.isArray(m.content)) {
     return m.content.filter(p => p.type === 'text').map(p => p.text).join('\n');
   }
-  // An assistant turn carrying only tool_calls (no text) contributes nothing to
-  // the transcript — the call itself is replayed natively via the tools list,
-  // not narrated into the prompt.
   return '';
 };
 
