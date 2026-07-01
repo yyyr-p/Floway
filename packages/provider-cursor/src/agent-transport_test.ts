@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 
 import { AgentTransport } from './agent-transport.ts';
-import { addConnectEnvelope, encodeMessageField, encodeStringField } from './proto/index.ts';
+import { addConnectEnvelope, bytesToHex, encodeMessageField, encodeStringField } from './proto/index.ts';
 import type { AgentChatRequest, RequestContextEnv } from './proto/index.ts';
 
 const ENV: RequestContextEnv = { workspacePath: '/tmp', osVersion: 'darwin 24.0.0', shell: '/bin/zsh', timezone: 'UTC' };
@@ -177,5 +177,53 @@ describe('AgentTransport.sendRejectedTool', () => {
     await expect(
       transport.sendRejectedTool({ type: 'shell', id: 1, command: 'x', cwd: '/' }, 'reason'),
     ).rejects.toThrow('No active chat stream');
+  });
+});
+
+describe('AgentTransport privacy + root-prompt injection', () => {
+  function makeTransportPrivacy(fetchMock: unknown, privacyMode: boolean | undefined): AgentTransport {
+    return new AgentTransport({
+      getAuthToken: () => 'tok',
+      baseUrl: 'https://api2.cursor.sh',
+      env: ENV,
+      clientVersion: 'cli-test',
+      privacyMode,
+      getChecksum: () => 'checksum-value',
+      fetch: fetchMock as typeof fetch,
+    });
+  }
+
+  test('x-ghost-mode reflects privacyMode on the RunSSE init headers', () => {
+    const off = makeTransportPrivacy(vi.fn(), false).runSseInit('req-1').headers;
+    expect(off['x-ghost-mode']).toBe('false');
+
+    const on = makeTransportPrivacy(vi.fn(), true).runSseInit('req-1').headers;
+    expect(on['x-ghost-mode']).toBe('true');
+
+    // Absent option defaults to privacy on.
+    const dflt = makeTransportPrivacy(vi.fn(), undefined).runSseInit('req-1').headers;
+    expect(dflt['x-ghost-mode']).toBe('true');
+  });
+
+  test('open with rootPromptBlob embeds the blob id in the RunRequest conversation_state', async () => {
+    const bodies: Uint8Array[] = [];
+    const fetchMock = vi.fn(async (_url: unknown, init: RequestInit) => {
+      bodies.push(init.body as Uint8Array);
+      return okEmptyResponse();
+    });
+    const transport = makeTransportPrivacy(fetchMock, true);
+    transport.seed('req-x', 0n);
+
+    const blobId = new Uint8Array(32).map((_, i) => (i * 7 + 3) & 0xff);
+    const jsonBytes = new TextEncoder().encode('{"role":"system","content":"hi"}');
+    const request = { message: 'hi', model: 'gpt-4o', rootPromptBlob: { blobId, jsonBytes } } as AgentChatRequest;
+
+    await collect(transport.openChatStream({ readStream: readStreamOf(turnEndedFrame()), request }));
+
+    // The first BidiAppend write is the RunRequest; its data field is the hex of
+    // the AgentClientMessage, so the raw blob id shows up as its hex substring —
+    // proving conversation_state.root_prompt_messages_json carries the reference.
+    const runRequestText = new TextDecoder().decode(bodies[0]);
+    expect(runRequestText).toContain(bytesToHex(blobId));
   });
 });

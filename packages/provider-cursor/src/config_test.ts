@@ -43,4 +43,13 @@ describe('assertCursorUpstreamRecord (config validation)', () => {
   ])('rejects %s', (_label, value) => {
     expect(() => assertCursorUpstreamRecord(wrap(value))).toThrow();
   });
+
+  test('accepts an explicit privacyMode boolean', () => {
+    expect(() => assertCursorUpstreamRecord(wrap({ ...good, privacyMode: true }))).not.toThrow();
+    expect(() => assertCursorUpstreamRecord(wrap({ ...good, privacyMode: false }))).not.toThrow();
+  });
+
+  test('rejects a non-boolean privacyMode', () => {
+    expect(() => assertCursorUpstreamRecord(wrap({ ...good, privacyMode: 'true' }))).toThrow(/privacyMode must be a boolean/);
+  });
 });
