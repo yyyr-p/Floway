@@ -427,6 +427,13 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
       labels,
       datasets: datasetEntries.map(({ entry, data: datasetData }) => {
         const color = chartColor(entry.colorSlot);
+        // A dataset kept only because its group has real requests — every
+        // selected-metric value is zero — would, when stacked onto the series
+        // below it, ride invisibly along that series' top edge rather than sit
+        // at zero. Give it a private stack group and drop the fill so it draws
+        // as a flat, hoverable line pinned to the axis. It contributes nothing
+        // to the main stack, so pulling it out leaves the real totals untouched.
+        const zeroLine = !isPercent && !datasetData.some(v => v !== 0);
         return {
           label: entry.label,
           data: datasetData,
@@ -437,8 +444,9 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           pointRadius: 2,
           pointHoverRadius: 5,
           tension: 0.3,
-          fill: isPercent ? false : 'stack',
+          fill: isPercent || zeroLine ? false : 'stack',
           spanGaps: isPercent,
+          stack: zeroLine ? `zero-${entry.id}` : 'main',
         };
       }),
     },
@@ -464,7 +472,16 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           bodyColor: '#b0bec5',
           padding: 12,
           bodyFont: { family: chartFont.mono, size: 11 },
-          filter: item => item.parsed.y !== null && (isPercent || item.parsed.y > 0),
+          // Keep a zero-valued row when the group actually served requests in
+          // this bucket, so a zero-token model's hover still reports its
+          // requests/cost; drop rows that are zero because nothing happened.
+          filter: item => {
+            if (item.parsed.y === null) return false;
+            if (isPercent || item.parsed.y > 0) return true;
+            const bucket = bucketKeys[item.dataIndex];
+            const entry = datasetEntries[item.datasetIndex]?.entry;
+            return bucket !== undefined && entry !== undefined && (details.get(bucket)?.get(entry.id)?.requests ?? 0) > 0;
+          },
           itemSort: (a, b) => Number(b.parsed.y ?? 0) - Number(a.parsed.y ?? 0),
           callbacks: {
             beforeBody: items => items.length ? tooltipHeader(labelWidth) : [],
