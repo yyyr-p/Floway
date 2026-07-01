@@ -167,6 +167,12 @@ export interface AgentChatRequest {
   mode?: AgentMode;
   conversationId?: string;
   tools?: OpenAIToolDefinition[];
+  // Native system-prompt injection. blobId is the raw 32-byte SHA-256 digest of
+  // jsonBytes (the `{"role":"system","content":...}` UTF-8 bytes); the transport
+  // seeds the blob store with hex(blobId)→jsonBytes and references blobId from
+  // conversation_state.root_prompt_messages_json so cursor fetches it via
+  // get_blob_args. Absent = empty conversation_state (prompt stays inlined).
+  rootPromptBlob?: { blobId: Uint8Array; jsonBytes: Uint8Array };
 }
 
 export interface McpResult {

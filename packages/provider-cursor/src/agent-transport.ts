@@ -250,12 +250,26 @@ export class AgentTransport {
     const userMessageAction = encodeUserMessageAction(userMessage, requestContext);
     const conversationAction = encodeConversationAction(userMessageAction);
     const modelDetails = encodeModelDetails(model);
+
+    // Native system-prompt injection: seed the turn-scoped blob store with the
+    // prompt JSON keyed by hex(blobId) so cursor's later get_blob_args resolves
+    // it (handleKvMessage serves from the same store), then reference blobId
+    // from conversation_state.root_prompt_messages_json. seed() cleared the
+    // store just before openChatStream, so this entry lives for the whole turn.
+    let rootPromptBlobId: Uint8Array | undefined;
+    if (request.rootPromptBlob) {
+      const { blobId, jsonBytes } = request.rootPromptBlob;
+      this.storeBlob(this.blobIdToKey(blobId), jsonBytes);
+      rootPromptBlobId = blobId;
+    }
+
     const agentRunRequest = encodeAgentRunRequest(
       conversationAction,
       modelDetails,
       conversationId,
       request.tools,
       this.env.workspacePath,
+      rootPromptBlobId,
     );
     return encodeAgentClientMessage(agentRunRequest);
   }
