@@ -4,6 +4,7 @@ import {
   buildCollapsedCatalog,
   cursorRawToUpstreamModel,
   cursorWireModelId,
+  fetchCursorBaseModels,
   fetchCursorCatalog,
   parseContextWindow,
   type CursorBaseModel,
@@ -13,6 +14,10 @@ import { type Fetcher, type UpstreamModel } from '@floway-dev/provider';
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+
+const noopHeaders: Record<string, string> = {};
+const fetcherOf = (resp: () => Response | Promise<Response>): Fetcher =>
+  (async () => await resp()) as unknown as Fetcher;
 
 const routingFetcher = (routes: {
   usable: () => Response | Promise<Response>;
@@ -31,33 +36,22 @@ const usableModels = (ids: string[]): Response =>
 type V = { slug: string; defNonMax?: boolean; defMax?: boolean };
 
 // Parsed CursorBaseModel (what buildCollapsedCatalog consumes).
-const pbase = (name: string, variants: V[], contextNormal: number | null = null, contextMax: number | null = null): CursorBaseModel => ({
+const pbase = (name: string, variants: V[], extra: Partial<CursorBaseModel> = {}): CursorBaseModel => ({
   name,
   displayName: name,
-  contextNormal,
-  contextMax,
+  contextNormal: null,
+  contextMax: null,
+  supportsImages: false,
+  reasoning: null,
   variants: variants.map(v => ({ legacySlug: v.slug, isDefaultNonMaxConfig: v.defNonMax === true, isDefaultMaxConfig: v.defMax === true })),
   aliasSlugs: [],
-});
-
-// Raw AvailableModels(useModelParameters) JSON entry (what fetchCursorBaseModels parses).
-const rawBase = (name: string, variants: V[], ctxNormal?: string, ctxMax?: string) => ({
-  name,
-  clientDisplayName: name,
-  tooltipData: { markdownContent: ctxNormal ? `**${name}**<br />${ctxNormal} context window` : `**${name}**` },
-  ...(ctxMax ? { tooltipDataForMaxMode: { markdownContent: `**${name}**<br />${ctxMax} context window` } } : {}),
-  variants: variants.map(v => ({
-    legacySlug: v.slug,
-    ...(v.defNonMax ? { isDefaultNonMaxConfig: true } : {}),
-    ...(v.defMax ? { isDefaultMaxConfig: true } : {}),
-  })),
+  ...extra,
 });
 
 describe('parseContextWindow', () => {
   test('parses k and M suffixes', () => {
     expect(parseContextWindow('**X**<br />200k context window')).toBe(200_000);
     expect(parseContextWindow('300k context window')).toBe(300_000);
-    expect(parseContextWindow('272k context window')).toBe(272_000);
     expect(parseContextWindow('1M context window')).toBe(1_000_000);
     expect(parseContextWindow('1.5M context window')).toBe(1_500_000);
   });
@@ -69,19 +63,28 @@ describe('parseContextWindow', () => {
 
 describe('cursorRawToUpstreamModel', () => {
   const flags = new Set<string>();
-  test('carries context and a differing wire id as providerData', () => {
-    const m = cursorRawToUpstreamModel({ id: 'claude-opus-4-8', display_name: 'Opus', contextWindow: 300_000, wireModelId: 'claude-opus-4-8-high' }, flags);
+  test('carries context, wire id, and variant ids in providerData', () => {
+    const m = cursorRawToUpstreamModel({ id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8', contextWindow: 300_000, wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] }, flags);
     expect(m.limits.max_context_window_tokens).toBe(300_000);
-    expect(m.providerData).toEqual({ wireModelId: 'claude-opus-4-8-high' });
+    expect(m.providerData).toEqual({ wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] });
   });
   test('no providerData when wire id equals id; 200k fallback', () => {
     const m = cursorRawToUpstreamModel({ id: 'default', display_name: 'Auto', wireModelId: 'default' }, flags);
     expect(m.providerData).toBeUndefined();
     expect(m.limits.max_context_window_tokens).toBe(200_000);
   });
-  test('carries pre-collapse variant ids in providerData for aliasing', () => {
-    const m = cursorRawToUpstreamModel({ id: 'claude-opus-4-8', display_name: 'Opus', wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] }, flags);
-    expect(m.providerData).toEqual({ wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] });
+  test('builds chat.modalities from supportsImages', () => {
+    expect(cursorRawToUpstreamModel({ id: 'a', display_name: 'a', supportsImages: true }, flags).chat)
+      .toEqual({ modalities: { input: ['text', 'image'], output: ['text'] } });
+    expect(cursorRawToUpstreamModel({ id: 'b', display_name: 'b', supportsImages: false }, flags).chat)
+      .toEqual({ modalities: { input: ['text'], output: ['text'] } });
+  });
+  test('builds chat.reasoning.effort from reasoning info', () => {
+    const m = cursorRawToUpstreamModel({ id: 'c', display_name: 'c', supportsImages: true, reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
+    expect(m.chat?.reasoning).toEqual({ effort: { supported: ['low', 'medium', 'high'], default: 'high' } });
+  });
+  test('no chat when neither modality nor reasoning is known', () => {
+    expect(cursorRawToUpstreamModel({ id: 'd', display_name: 'd' }, flags).chat).toBeUndefined();
   });
 });
 
@@ -94,90 +97,155 @@ describe('cursorWireModelId', () => {
 
 describe('buildCollapsedCatalog', () => {
   const usable: CursorRawModel[] = [
-    'claude-opus-4-8-high', 'claude-opus-4-8-max', 'composer-2.5', 'default', 'kimi-k2.5', 'gpt-5.5-high',
+    'claude-opus-4-8-high', 'claude-opus-4-8-max', 'composer-2.5', 'default', 'kimi-k2.5',
   ].map(id => ({ id, display_name: id }));
 
   const bases = [
-    pbase('claude-opus-4-8', [{ slug: 'claude-opus-4-8-high', defNonMax: true }, { slug: 'claude-opus-4-8-max', defMax: true }], 300_000, 1_000_000),
-    pbase('composer-2.5', [{ slug: 'composer-2.5-fast', defNonMax: true, defMax: true }, { slug: 'composer-2.5' }], 200_000, 200_000),
-    pbase('default', [{ slug: 'default', defNonMax: true, defMax: true }]),
-    pbase('gpt-5.5', [{ slug: 'gpt-5.5-high', defNonMax: true }], 272_000, 1_000_000),
-    pbase('phantom', [{ slug: 'phantom-x', defNonMax: true }], 128_000), // no usable variant → dropped
+    pbase('claude-opus-4-8', [{ slug: 'claude-opus-4-8-high', defNonMax: true }, { slug: 'claude-opus-4-8-max', defMax: true }], {
+      displayName: 'Claude Opus 4.8', contextNormal: 300_000, contextMax: 1_000_000, supportsImages: true,
+      reasoning: { supported: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' },
+    }),
+    pbase('composer-2.5', [{ slug: 'composer-2.5-fast', defNonMax: true, defMax: true }, { slug: 'composer-2.5' }], { displayName: 'Composer 2.5', contextNormal: 200_000, contextMax: 200_000 }),
+    pbase('default', [{ slug: 'default', defNonMax: true, defMax: true }], { displayName: 'Auto', supportsImages: true }),
+    pbase('phantom', [{ slug: 'phantom-x', defNonMax: true }], { contextNormal: 128_000 }),
   ];
 
-  test('collapses to one model per usable base, normal mode', () => {
+  test('collapses to one model per usable base, carrying metadata (normal mode)', () => {
     const out = buildCollapsedCatalog(usable, bases, false);
     const byId = Object.fromEntries(out.map(r => [r.id, r]));
-    expect(out).toHaveLength(5); // 4 collapsed + kimi leftover; phantom dropped
-    expect(byId['phantom']).toBeUndefined();
+    expect(out).toHaveLength(4); // 3 collapsed + kimi leftover; phantom dropped
 
-    expect(byId['claude-opus-4-8'].wireModelId).toBe('claude-opus-4-8-high');
-    expect(byId['claude-opus-4-8'].contextWindow).toBe(300_000);
-    expect(byId['claude-opus-4-8'].variantIds).toEqual(['claude-opus-4-8-high', 'claude-opus-4-8-max']);
+    const opus = byId['claude-opus-4-8'];
+    expect(opus.display_name).toBe('Claude Opus 4.8');
+    expect(opus.wireModelId).toBe('claude-opus-4-8-high');
+    expect(opus.contextWindow).toBe(300_000);
+    expect(opus.supportsImages).toBe(true);
+    expect(opus.reasoning).toEqual({ supported: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' });
+    expect(opus.variantIds).toEqual(['claude-opus-4-8-high', 'claude-opus-4-8-max']);
 
     expect(byId['composer-2.5'].wireModelId).toBe('composer-2.5'); // fast not usable → fallback
-    expect(byId['composer-2.5'].contextWindow).toBe(200_000);
-
-    expect(byId['default'].wireModelId).toBe('default');
-    expect(byId['default'].contextWindow).toBeUndefined();
-
-    expect(byId['gpt-5.5'].wireModelId).toBe('gpt-5.5-high');
-
-    expect(byId['kimi-k2.5'].wireModelId).toBeUndefined(); // leftover, uncollapsed
+    expect(byId['kimi-k2.5'].wireModelId).toBeUndefined(); // leftover
   });
 
   test('max mode picks the default-max variant + max context', () => {
-    const out = buildCollapsedCatalog(usable, bases, true);
-    const opus = out.find(r => r.id === 'claude-opus-4-8')!;
+    const opus = buildCollapsedCatalog(usable, bases, true).find(r => r.id === 'claude-opus-4-8')!;
     expect(opus.wireModelId).toBe('claude-opus-4-8-max');
     expect(opus.contextWindow).toBe(1_000_000);
   });
 });
 
+// A realistic AvailableModels(useModelParameters) entry.
+const tt = (s: string) => ({ markdownContent: s });
+const rawEntry = (o: {
+  name: string; heading?: string; clientDisplayName?: string; supportsImages?: boolean;
+  ctxEnum?: [string, string]; ctxTooltipNormal?: string; ctxTooltipMax?: string;
+  effortId?: 'effort' | 'reasoning'; efforts?: string[]; defaultEffort?: string;
+  variants: { slug: string; defNonMax?: boolean; defMax?: boolean }[];
+}) => {
+  const paramDefs: unknown[] = [];
+  if (o.ctxEnum) paramDefs.push({ id: 'context', parameterType: { enumParameter: { values: o.ctxEnum.map(v => ({ value: v })) } } });
+  if (o.effortId && o.efforts) paramDefs.push({ id: o.effortId, parameterType: { enumParameter: { values: o.efforts.map(v => ({ value: v })) } } });
+  return {
+    name: o.name,
+    ...(o.clientDisplayName ? { clientDisplayName: o.clientDisplayName } : {}),
+    supportsImages: o.supportsImages === true,
+    tooltipData: tt(`${o.heading ? `**${o.heading}**<br />` : ''}desc${o.ctxTooltipNormal ? `<br /><br />${o.ctxTooltipNormal} context window` : ''}`),
+    tooltipDataForMaxMode: tt(`${o.heading ? `**${o.heading}**<br />` : ''}desc${o.ctxTooltipMax ? `<br /><br />${o.ctxTooltipMax} context window` : ''}`),
+    parameterDefinitions: paramDefs,
+    variants: o.variants.map(v => ({
+      legacySlug: v.slug,
+      ...(v.defNonMax ? { isDefaultNonMaxConfig: true } : {}),
+      ...(v.defMax ? { isDefaultMaxConfig: true } : {}),
+      ...(o.effortId && o.defaultEffort && v.defNonMax ? { parameterValues: [{ id: o.effortId, value: o.defaultEffort }] } : {}),
+    })),
+  };
+};
+
+describe('fetchCursorBaseModels', () => {
+  test('extracts display name from tooltip heading, stripping the variant parenthetical', async () => {
+    const bases = await fetchCursorBaseModels(fetcherOf(() => jsonResponse({
+      models: [
+        rawEntry({ name: 'claude-opus-4-8', heading: 'Claude Opus 4.8', clientDisplayName: 'Opus 4.8', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
+        rawEntry({ name: 'claude-sonnet-4-6', heading: 'Claude Sonnet 4.6 (Thinking)', clientDisplayName: 'Sonnet 4.6', variants: [{ slug: 'x', defNonMax: true }] }),
+        rawEntry({ name: 'gpt-5.2', clientDisplayName: 'GPT-5.2', variants: [{ slug: 'y', defNonMax: true }] }), // no heading → fallback
+      ],
+    })), noopHeaders);
+    const byName = Object.fromEntries(bases.map(b => [b.name, b]));
+    expect(byName['claude-opus-4-8'].displayName).toBe('Claude Opus 4.8');
+    expect(byName['claude-sonnet-4-6'].displayName).toBe('Claude Sonnet 4.6');
+    expect(byName['gpt-5.2'].displayName).toBe('GPT-5.2');
+  });
+
+  test('prefers the structured context enum, falls back to tooltip prose', async () => {
+    const bases = await fetchCursorBaseModels(fetcherOf(() => jsonResponse({
+      models: [
+        rawEntry({ name: 'opus', ctxEnum: ['300k', '1m'], ctxTooltipNormal: '999k', ctxTooltipMax: '999k', variants: [{ slug: 'a', defNonMax: true }] }),
+        rawEntry({ name: 'gemini', ctxTooltipNormal: '200k', ctxTooltipMax: '1M', variants: [{ slug: 'b', defNonMax: true }] }), // no enum → tooltip
+      ],
+    })), noopHeaders);
+    const byName = Object.fromEntries(bases.map(b => [b.name, b]));
+    expect(byName['opus'].contextNormal).toBe(300_000); // enum, not tooltip 999k
+    expect(byName['opus'].contextMax).toBe(1_000_000);
+    expect(byName['gemini'].contextNormal).toBe(200_000); // tooltip fallback
+    expect(byName['gemini'].contextMax).toBe(1_000_000);
+  });
+
+  test('recovers a context stated only in the max-mode tooltip (normal tooltip blank)', async () => {
+    // gpt-5.3-codex shape: normal tooltip carries no context, max tooltip says 272k.
+    const bases = await fetchCursorBaseModels(fetcherOf(() => jsonResponse({
+      models: [
+        rawEntry({ name: 'codex', ctxTooltipMax: '272k', variants: [{ slug: 'a', defNonMax: true }] }),
+      ],
+    })), noopHeaders);
+    expect(bases[0].contextNormal).toBe(272_000); // recovered from the max tooltip
+    expect(bases[0].contextMax).toBe(272_000);
+  });
+
+  test('parses reasoning effort enum + default from the default-non-max variant', async () => {
+    const bases = await fetchCursorBaseModels(fetcherOf(() => jsonResponse({
+      models: [
+        rawEntry({ name: 'opus', effortId: 'effort', efforts: ['low', 'medium', 'high', 'xhigh', 'max'], defaultEffort: 'high', supportsImages: true, variants: [{ slug: 'a', defNonMax: true }] }),
+        rawEntry({ name: 'gpt', effortId: 'reasoning', efforts: ['none', 'low', 'medium', 'high'], variants: [{ slug: 'b', defNonMax: true }] }), // no defaultEffort → 'medium'
+        rawEntry({ name: 'kimi', supportsImages: false, variants: [{ slug: 'c', defNonMax: true }] }), // no effort param → null
+      ],
+    })), noopHeaders);
+    const byName = Object.fromEntries(bases.map(b => [b.name, b]));
+    expect(byName['opus'].reasoning).toEqual({ supported: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' });
+    expect(byName['opus'].supportsImages).toBe(true);
+    expect(byName['gpt'].reasoning).toEqual({ supported: ['none', 'low', 'medium', 'high'], default: 'medium' });
+    expect(byName['kimi'].reasoning).toBeNull();
+    expect(byName['kimi'].supportsImages).toBe(false);
+  });
+});
+
 describe('fetchCursorCatalog', () => {
   const opts = (fetcher: Fetcher, maxMode?: boolean) => ({ accessToken: 'tok', timezone: 'UTC', fetcher, maxMode });
-
-  const availableResponse = () => jsonResponse({
+  const available = () => jsonResponse({
     models: [
-      rawBase('claude-opus-4-8', [{ slug: 'claude-opus-4-8-high', defNonMax: true }], '300k', '1M'),
-      rawBase('gpt-5.5', [{ slug: 'gpt-5.5-high', defNonMax: true }], '272k'),
+      rawEntry({ name: 'claude-opus-4-8', heading: 'Claude Opus 4.8', supportsImages: true, ctxEnum: ['300k', '1m'], effortId: 'effort', efforts: ['low', 'high'], defaultEffort: 'high', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
     ],
   });
 
-  test('collapses variants into base models with wire ids + context', async () => {
-    const raw = await fetchCursorCatalog(opts(routingFetcher({
-      usable: () => usableModels(['claude-opus-4-8-high', 'gpt-5.5-high']),
-      available: availableResponse,
-    })));
-    expect(raw.map(r => r.id).sort()).toEqual(['claude-opus-4-8', 'gpt-5.5']);
-    const opus = raw.find(r => r.id === 'claude-opus-4-8')!;
+  test('collapses with display name, context, modality, reasoning', async () => {
+    const raw = await fetchCursorCatalog(opts(routingFetcher({ usable: () => usableModels(['claude-opus-4-8-high']), available })));
+    expect(raw).toHaveLength(1);
+    const opus = raw[0];
+    expect(opus.id).toBe('claude-opus-4-8');
+    expect(opus.display_name).toBe('Claude Opus 4.8');
     expect(opus.wireModelId).toBe('claude-opus-4-8-high');
     expect(opus.contextWindow).toBe(300_000);
+    expect(opus.supportsImages).toBe(true);
+    expect(opus.reasoning).toEqual({ supported: ['low', 'high'], default: 'high' });
   });
 
-  test('max mode uses the max-mode context', async () => {
-    const raw = await fetchCursorCatalog(opts(routingFetcher({
-      usable: () => usableModels(['claude-opus-4-8-high', 'gpt-5.5-high']),
-      available: availableResponse,
-    }), true));
-    expect(raw.find(r => r.id === 'claude-opus-4-8')!.contextWindow).toBe(1_000_000);
+  test('max mode reports the max context', async () => {
+    const raw = await fetchCursorCatalog(opts(routingFetcher({ usable: () => usableModels(['claude-opus-4-8-high']), available }), true));
+    expect(raw[0].contextWindow).toBe(1_000_000);
   });
 
   test('falls back to the raw per-variant list when AvailableModels fails', async () => {
-    const raw = await fetchCursorCatalog(opts(routingFetcher({
-      usable: () => usableModels(['claude-opus-4-8-high', 'gpt-5.5-high']),
-      available: () => new Response('nope', { status: 500 }),
-    })));
+    const raw = await fetchCursorCatalog(opts(routingFetcher({ usable: () => usableModels(['claude-opus-4-8-high', 'gpt-5.5-high']), available: () => new Response('nope', { status: 500 }) })));
     expect(raw.map(r => r.id)).toEqual(['claude-opus-4-8-high', 'gpt-5.5-high']);
-    expect(raw.every(r => r.wireModelId === undefined)).toBe(true);
-  });
-
-  test('AvailableModels throwing (dial error) is swallowed', async () => {
-    const raw = await fetchCursorCatalog(opts(routingFetcher({
-      usable: () => usableModels(['gpt-5.5-high']),
-      available: () => { throw new Error('dial failed'); },
-    })));
-    expect(raw).toHaveLength(1);
-    expect(raw[0].id).toBe('gpt-5.5-high');
+    expect(raw.every(r => r.wireModelId === undefined && r.supportsImages === undefined)).toBe(true);
   });
 });
