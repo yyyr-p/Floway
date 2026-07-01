@@ -71,6 +71,7 @@ import {
   refreshCursorAccessToken,
   CursorSessionTerminatedError,
   assertCursorUpstreamState,
+  assertCursorUpstreamRecord,
   type CursorUpstreamConfig,
   type CursorUpstreamState,
 } from '@floway-dev/provider-cursor';
@@ -138,6 +139,10 @@ const normalizeConfig = (record: UpstreamRecord): ValidationResult<unknown> => {
     }
     if (record.provider === 'claude-code') {
       assertClaudeCodeUpstreamRecord(record);
+      return { ok: true, value: record.config };
+    }
+    if (record.provider === 'cursor') {
+      assertCursorUpstreamRecord(record);
       return { ok: true, value: record.config };
     }
     return {
@@ -324,7 +329,11 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
     return c.json({ error: 'Use POST /api/upstreams/:id/claude-code-reimport to update claude-code credentials' }, 400);
   }
   if (existing.provider === 'cursor' && body.config !== undefined) {
-    return c.json({ error: 'Use POST /api/upstreams/:id/cursor-reimport to update cursor credentials' }, 400);
+    // Credentials (accounts) are owned by cursor-reimport; a generic PATCH may
+    // only touch non-credential config such as privacyMode.
+    if (!isRecord(body.config) || 'accounts' in body.config) {
+      return c.json({ error: 'Use POST /api/upstreams/:id/cursor-reimport to update cursor credentials' }, 400);
+    }
   }
 
   let next: UpstreamRecord = { ...existing, updatedAt: new Date().toISOString() };
