@@ -97,7 +97,6 @@ export {
   encodeAgentClientMessageWithConversationAction,
   encodeModelDetails,
   encodeEmptyConversationState,
-  encodeConversationStateWithRootPrompt,
   encodeMcpTools,
   encodeMcpDescriptor,
   encodeMcpFileSystemOptions,

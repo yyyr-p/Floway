@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 
-import { callCursorChatCompletions, computeRootPromptBlob, extractSystemPrompt, flattenMessages, pullToFirstMeaningful, type CursorCallEffects } from './fetch.ts';
-import { addConnectEnvelope, bytesToHex, encodeMessageField, encodeStringField, type AgentStreamChunk } from './proto/index.ts';
+import { callCursorChatCompletions, flattenMessages, pullToFirstMeaningful, type CursorCallEffects } from './fetch.ts';
+import { addConnectEnvelope, encodeMessageField, encodeStringField, type AgentStreamChunk } from './proto/index.ts';
 import type { CursorAccessTokenEntry, CursorAccountCredential, CursorUpstreamState } from './state.ts';
 import { initDurableHttpSession, resetDurableHttpSessionForTesting, type DurableHttpSession } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
@@ -273,8 +273,7 @@ describe('flattenMessages', () => {
       { role: 'assistant', content: 'Tokyo is cloudy, 18C.' },
       { role: 'user', content: 'thanks' },
     ]);
-    expect(out).not.toContain('[System]');
-    expect(out).not.toContain('You are helpful.');
+    expect(out).toContain('[System]\nYou are helpful.');
     expect(out).toContain('[User]\nweather in Tokyo?');
     expect(out).toContain('[Assistant]\nPlan: check the weather.\n→ called get_weather({"city":"Tokyo"})');
     expect(out).toContain('[Tool result: get_weather]\n{"temperature":18,"condition":"cloudy"}');
@@ -298,14 +297,13 @@ describe('flattenMessages', () => {
     expect(out).toBe('[Assistant]\n→ called search({})');
   });
 
-  test('drops system/developer messages (they go native via root_prompt) and keeps the rest role-tagged', () => {
+  test('plain-text conversation keeps the role-tagged shape', () => {
     const out = flattenMessages([
       { role: 'system', content: 'sys' },
-      { role: 'developer', content: 'dev' },
       { role: 'user', content: 'hi' },
       { role: 'assistant', content: 'hello' },
     ]);
-    expect(out).toBe('[User]\nhi\n\n[Assistant]\nhello');
+    expect(out).toBe('[System]\nsys\n\n[User]\nhi\n\n[Assistant]\nhello');
   });
 
   test('normalizes tool-result content (array parts) and keeps the frame on empty/unknown', () => {
@@ -317,34 +315,5 @@ describe('flattenMessages', () => {
     // Unknown id (no matching assistant tool_call) → labelled by the id itself.
     const nul = flattenMessages([{ role: 'tool', tool_call_id: 'z', content: null }]);
     expect(nul).toBe('[Tool result: z]\n');
-  });
-});
-
-describe('extractSystemPrompt', () => {
-  test('joins system + developer contents blank-line separated, in order', () => {
-    expect(
-      extractSystemPrompt([
-        { role: 'system', content: 'a' },
-        { role: 'user', content: 'x' },
-        { role: 'developer', content: 'b' },
-      ]),
-    ).toBe('a\n\nb');
-  });
-
-  test('empty string when no system/developer message present', () => {
-    expect(extractSystemPrompt([{ role: 'user', content: 'x' }])).toBe('');
-  });
-});
-
-describe('computeRootPromptBlob', () => {
-  test('blobId is the 32-byte SHA-256 of the {role,content} JSON; jsonBytes are exactly those hashed bytes', async () => {
-    const { blobId, jsonBytes } = await computeRootPromptBlob('be terse');
-    // The hashed bytes are the literal reference-client JSON, byte-for-byte.
-    expect(new TextDecoder().decode(jsonBytes)).toBe('{"role":"system","content":"be terse"}');
-    expect(blobId.length).toBe(32);
-    // Independent oracle: hashing jsonBytes must reproduce blobId exactly, so
-    // cursor's get_blob_args (keyed on this digest) resolves to the seeded bytes.
-    const oracle = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(jsonBytes)));
-    expect(bytesToHex(blobId)).toBe(bytesToHex(oracle));
   });
 });

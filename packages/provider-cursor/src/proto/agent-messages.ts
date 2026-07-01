@@ -122,17 +122,6 @@ export function encodeEmptyConversationState(): Uint8Array {
   return new Uint8Array(0);
 }
 
-// ConversationStateStructure with only root_prompt_messages_json (field 1,
-// repeated bytes) set to a single content-addressed blob reference. blobId is
-// the raw 32-byte SHA-256 digest of the system-prompt JSON; the same bytes are
-// seeded into the transport blob store under hex(blobId) so cursor's follow-up
-// get_blob_args resolves to the real prompt. encodeMessageField gives the
-// correct `bytes` wire encoding (length-delimited, contents uninterpreted) —
-// encodeStringField would UTF-8-mangle the binary digest.
-export function encodeConversationStateWithRootPrompt(blobId: Uint8Array): Uint8Array {
-  return encodeMessageField(1, blobId);
-}
-
 export function encodeMcpTools(tools: OpenAIToolDefinition[]): Uint8Array {
   const parts: Uint8Array[] = [];
   for (const tool of tools) {
@@ -202,11 +191,8 @@ export function encodeAgentRunRequest(
   conversationId: string | undefined,
   tools: OpenAIToolDefinition[] | undefined,
   workspacePath: string | undefined,
-  rootPromptBlobId?: Uint8Array,
 ): Uint8Array {
-  const conversationState = rootPromptBlobId
-    ? encodeConversationStateWithRootPrompt(rootPromptBlobId)
-    : encodeEmptyConversationState();
+  const conversationState = encodeEmptyConversationState();
 
   const parts: Uint8Array[] = [
     encodeMessageField(1, conversationState),
