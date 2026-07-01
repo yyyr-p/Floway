@@ -14,11 +14,11 @@ import { AgentTransport } from './agent-transport.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION } from './constants.ts';
-import { AgentMode, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
+import { AgentMode, hexToBytes, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
 import { isCursorRateLimited } from './quota.ts';
 import { deriveSessionKey, mintSessionKey, decodeToolCallId } from './session-id.ts';
 import type { CursorAccountCredential } from './state.ts';
-import { getDurableHttpSession, type DurableHttpSessionHandle } from '@floway-dev/platform';
+import { getDurableHttpSession, sha256Hex, type DurableHttpSessionHandle } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent, ChatCompletionsPayload, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
 import { eventFrame, doneFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
 import { getProviderRepo, type ProviderStreamResult, type UpstreamCallOptions, type UpstreamModel } from '@floway-dev/provider';
@@ -89,8 +89,10 @@ const prepareCursorCall = async (
 };
 
 // Cursor agent is stateless from the gateway's view: each fresh RunSSE carries
-// an empty conversation state, so the full transcript is inlined into the
-// single user message. System → prefix, history → role-tagged turns.
+// the transcript inlined into the single user message. System/developer
+// messages are the exception — they go native via
+// conversation_state.root_prompt_messages_json (see extractSystemPrompt /
+// performOpen), so flattenMessages carries only user/assistant/tool history.
 //
 // This path serves (a) genuine new conversations and (b) the cold-resume
 // fallback when a live session was lost (cross-instance / evicted / CF cold
@@ -115,6 +117,9 @@ export const flattenMessages = (messages: ChatCompletionsMessage[]): string => {
 
   const parts: string[] = [];
   for (const m of messages) {
+    // System/developer prompts go native (root_prompt blob), not inlined here.
+    if (m.role === 'system' || m.role === 'developer') continue;
+
     if (m.role === 'tool') {
       const mapped = m.tool_call_id ? toolNameById.get(m.tool_call_id) : undefined;
       const name = mapped ?? m.tool_call_id ?? 'tool';
@@ -138,11 +143,35 @@ export const flattenMessages = (messages: ChatCompletionsMessage[]): string => {
 
     const text = messageText(m);
     if (!text) continue;
-    const tag = m.role === 'system' || m.role === 'developer' ? 'System' : m.role === 'user' ? 'User' : m.role;
+    const tag = m.role === 'user' ? 'User' : m.role;
     parts.push(`[${tag}]\n${text}`);
   }
 
   return parts.join('\n\n');
+};
+
+// Concatenate all system/developer message contents (in order, blank-line
+// separated) into the single system prompt cursor's root_prompt blob carries.
+// Empty when the caller supplied none (injectDefaultInstructions normally
+// prepends one upstream, so this is rare).
+export const extractSystemPrompt = (messages: ChatCompletionsMessage[]): string =>
+  messages
+    .filter(m => m.role === 'system' || m.role === 'developer')
+    .map(messageText)
+    .filter(Boolean)
+    .join('\n\n');
+
+// Content-addressed root-prompt blob: SHA-256 of the UTF-8 `{"role":"system",
+// "content":...}` JSON, matching the reference clients byte-for-byte so cursor's
+// get_blob_args (keyed on this digest) resolves to the seeded bytes. Returns the
+// raw 32-byte digest as blobId plus the exact hashed bytes as jsonBytes.
+export const computeRootPromptBlob = async (
+  systemPrompt: string,
+): Promise<{ blobId: Uint8Array; jsonBytes: Uint8Array }> => {
+  const systemJson = JSON.stringify({ role: 'system', content: systemPrompt });
+  const jsonBytes = new TextEncoder().encode(systemJson);
+  const blobId = hexToBytes(await sha256Hex(jsonBytes));
+  return { blobId, jsonBytes };
 };
 
 // Plain-text extraction: string content verbatim, array content's text parts
@@ -359,6 +388,10 @@ const performOpen = async (
 ): Promise<ProviderStreamResult<ChatCompletionsStreamEvent>> => {
   const sessionKey = mintSessionKey(opts.upstreamId, opts.call.apiKeyId);
   const message = flattenMessages(opts.body.messages);
+  // System prompt goes native via conversation_state.root_prompt_messages_json
+  // rather than folded into the user text. Absent → empty conversation_state.
+  const systemPrompt = extractSystemPrompt(opts.body.messages);
+  const rootPromptBlob = systemPrompt ? await computeRootPromptBlob(systemPrompt) : undefined;
   // Always advertise the tools: a cold-resume (tool-result follow-up that lost
   // its session) lets cursor re-run the agent loop natively rather than degrade
   // to a prompt-folded result.
@@ -405,7 +438,7 @@ const performOpen = async (
   const created = Math.floor(Date.now() / 1000);
   const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
 
-  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.model.id, tools, mode } });
+  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.model.id, tools, mode, rootPromptBlob } });
   // The first pull sends the RunRequest (BidiAppend) then reads; pull past
   // cursor's pre-output control frames to the model's first token so the
   // recorded `upstream_success` latency is TTFT, and satisfy the ok=true
