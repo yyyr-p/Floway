@@ -36,6 +36,8 @@ interface CursorChatCallBase {
   signal?: AbortSignal;
   effects: CursorCallEffects;
   call: UpstreamCallOptions;
+  /** Ghost-mode toggle, resolved by provider.ts from config (default on). */
+  privacyMode: boolean;
 }
 
 export interface CallCursorChatCompletionsOptions extends CursorChatCallBase {
@@ -217,6 +219,7 @@ const makeTransport = (
     baseUrl: CURSOR_BACKEND_BASE,
     env: gatewayEnv,
     clientVersion: CURSOR_CLIENT_VERSION,
+    privacyMode: opts.privacyMode,
     getChecksum: () => checksum,
     // The BidiAppend write channel goes through the proxy-aware Fetcher (which
     // records upstream latency); the RunSSE read is owned by the
