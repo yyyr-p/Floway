@@ -249,7 +249,7 @@ export class AgentTransport {
     const userMessage = encodeUserMessage(request.message, messageId, mode);
     const userMessageAction = encodeUserMessageAction(userMessage, requestContext);
     const conversationAction = encodeConversationAction(userMessageAction);
-    const modelDetails = encodeModelDetails(model);
+    const modelDetails = encodeModelDetails(model, request.maxMode);
     const agentRunRequest = encodeAgentRunRequest(
       conversationAction,
       modelDetails,

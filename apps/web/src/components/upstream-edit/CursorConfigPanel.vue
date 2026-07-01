@@ -3,7 +3,7 @@ import { ref } from 'vue';
 
 import { callApi, useApi } from '../../api/client.ts';
 import type { ProxyFallbackEntry, UpstreamRecord } from '../../api/types.ts';
-import { Button, Spinner } from '@floway-dev/ui';
+import { Button, Spinner, Switch } from '@floway-dev/ui';
 
 type CursorUpstreamRecord = Extract<UpstreamRecord, { provider: 'cursor' }>;
 
@@ -89,6 +89,24 @@ const refreshTokenNow = async () => {
   if (error) { emit('error', error.message); return; }
   emit('imported', data);
 };
+
+// Max Mode is a settings-only config patch (never touches the account pool),
+// persisted immediately so the operator sees the larger-context models on the
+// next model-list refresh.
+const maxMode = ref(props.mode === 'edit' ? (props.record.config.maxMode ?? false) : false);
+const savingMaxMode = ref(false);
+
+const setMaxMode = async (value: boolean) => {
+  if (props.mode !== 'edit' || savingMaxMode.value) return;
+  savingMaxMode.value = true;
+  maxMode.value = value;
+  const { data, error } = await callApi<UpstreamRecord>(
+    () => api.api.upstreams[':id'].$patch({ param: { id: props.record.id }, json: { config: { maxMode: value } } }),
+  );
+  savingMaxMode.value = false;
+  if (error) { maxMode.value = !value; emit('error', error.message); return; }
+  emit('imported', data);
+};
 </script>
 
 <template>
@@ -108,6 +126,16 @@ const refreshTokenNow = async () => {
           <i class="i-lucide-key-round size-3.5" />
           {{ reimportOpen ? 'Cancel re-import' : 'Re-import credential' }}
         </Button>
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-surface-800/40 p-3">
+        <div>
+          <p class="text-sm text-white">Max Mode</p>
+          <p class="text-xs text-gray-500">
+            Send every request in Cursor Max Mode for the largest context window. Consumes more
+            usage. Refresh the model list after toggling to see updated context sizes.
+          </p>
+        </div>
+        <Switch :model-value="maxMode" :disabled="savingMaxMode" @update:model-value="v => setMaxMode(!!v)" />
       </div>
       <div class="flex items-start gap-2 rounded-md border border-white/5 bg-surface-800/40 p-3 text-xs text-gray-500">
         <i class="i-lucide-info mt-0.5 size-3.5 shrink-0" />

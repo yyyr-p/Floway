@@ -167,6 +167,8 @@ export interface AgentChatRequest {
   mode?: AgentMode;
   conversationId?: string;
   tools?: OpenAIToolDefinition[];
+  // Opt into Cursor Max Mode (larger context window) for this turn.
+  maxMode?: boolean;
 }
 
 export interface McpResult {

@@ -10,6 +10,25 @@ export interface CursorRawModel {
   // Context window (tokens) parsed from the AvailableModels tooltip prose, when
   // a match was found. Undefined leaves cursorRawToUpstreamModel on its default.
   contextWindow?: number;
+  // The concrete Cursor model id to put on the wire (a usable variant slug),
+  // when this catalog entry is a collapsed base whose display id differs from
+  // the id Cursor's RunSSE accepts. Absent → wire id equals `id`.
+  wireModelId?: string;
+  // Variant/alias ids that collapse to this base — used to alias an old
+  // per-variant request id back onto the base model (backward compatibility).
+  variantIds?: readonly string[];
+}
+
+// One Cursor "base" model from AvailableModels(useModelParameters=true): the
+// server's own collapse of the ~150 per-variant slugs into ~32 families, each
+// carrying its variant list, per-mode tooltips, and display name.
+export interface CursorBaseModel {
+  name: string;
+  displayName: string;
+  contextNormal: number | null;
+  contextMax: number | null;
+  variants: { legacySlug: string; isDefaultNonMaxConfig: boolean; isDefaultMaxConfig: boolean }[];
+  aliasSlugs: string[];
 }
 
 // Shared Connect-JSON headers for the CLI-impersonating catalog RPCs
@@ -27,31 +46,33 @@ const catalogHeaders = (accessToken: string, checksum: string, timezone: string)
   'x-ghost-mode': 'true',
 });
 
-// GetUsableModels is called over Connect JSON (not grpc-web) — the same
-// endpoint the Cursor CLI hits for its model picker. `fetcher` is required so
-// the catalog refresh traverses the same proxy/dial chain as request traffic.
-// Context windows come from AvailableModels tooltips (best-effort — see below).
+const isPlainRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+
+// Fetch + collapse the Cursor catalog. GetUsableModels is the entitlement gate
+// (which per-variant slugs this account may send); AvailableModels(useModel-
+// Parameters) supplies the base grouping, per-mode context windows, and display
+// names. The two are joined into one Floway model per base, with the base's
+// default variant slug as the wire id. AvailableModels is best-effort: on any
+// failure we fall back to the raw per-variant list (no collapse, 200k default)
+// so the upstream keeps working. `fetcher` traverses the same proxy/dial chain
+// as request traffic. `maxMode` selects the max-mode context + default variant.
 export const fetchCursorCatalog = async (opts: {
   accessToken: string;
   timezone: string;
   signal?: AbortSignal;
   fetcher: Fetcher;
+  maxMode?: boolean;
 }): Promise<CursorRawModel[]> => {
   const checksum = await generateCursorChecksum(opts.accessToken);
   const headers = catalogHeaders(opts.accessToken, checksum, opts.timezone);
 
-  // AvailableModels enrichment must never break the catalog refresh (which also
-  // mints the access token) — on any failure fall back to an empty map, and
-  // every model lands on cursorRawToUpstreamModel's default context window.
-  const [usable, contextByKey] = await Promise.all([
+  const [usable, bases] = await Promise.all([
     fetchUsableModels(opts.fetcher, headers, opts.signal),
-    fetchCursorAvailableContext(opts.fetcher, headers, opts.signal).catch(() => new Map<string, number>()),
+    fetchCursorBaseModels(opts.fetcher, headers, opts.signal).catch(() => null),
   ]);
 
-  return usable.map(r => {
-    const contextWindow = contextByKey.get(r.id);
-    return contextWindow === undefined ? r : { ...r, contextWindow };
-  });
+  if (!bases) return usable; // collapse/enrichment unavailable → raw variant list
+  return buildCollapsedCatalog(usable, bases, opts.maxMode ?? false);
 };
 
 const fetchUsableModels = async (fetcher: Fetcher, headers: Record<string, string>, signal?: AbortSignal): Promise<CursorRawModel[]> => {
@@ -86,20 +107,18 @@ export const parseContextWindow = (markdown: string): number | null => {
   return Math.round(value * scale);
 };
 
-// Build a { modelId -> contextWindow } map from AvailableModels. Body is `{}`
-// (the variant-level list of ~153 entries whose `name` aligns with
-// GetUsableModels' modelId) — NOT useModelParameters, which collapses to ~32
-// base models and would not join the per-variant catalog. Each parsed context
-// is keyed by `name` plus every legacySlug/idAlias so more usable ids join.
-export const fetchCursorAvailableContext = async (
+// AvailableModels with useModelParameters=true returns the base-grouped catalog
+// (~32 families, each with a `variants` array + per-mode tooltips) rather than
+// the flat per-variant list. This is the authoritative source for collapsing.
+export const fetchCursorBaseModels = async (
   fetcher: Fetcher,
   headers: Record<string, string>,
   signal?: AbortSignal,
-): Promise<Map<string, number>> => {
+): Promise<CursorBaseModel[]> => {
   const response = await fetcher(`${CURSOR_BACKEND_BASE}${CURSOR_AVAILABLE_MODELS_PATH}`, {
     method: 'POST',
     headers,
-    body: '{}',
+    body: JSON.stringify({ useModelParameters: true }),
     signal,
   });
   if (!response.ok) {
@@ -108,29 +127,87 @@ export const fetchCursorAvailableContext = async (
   }
 
   const parsed = (await response.json()) as { models?: unknown };
-  const out = new Map<string, number>();
+  const out: CursorBaseModel[] = [];
   if (!Array.isArray(parsed.models)) return out;
 
+  const markdown = (v: unknown): string => (isPlainRecord(v) && typeof v.markdownContent === 'string' ? v.markdownContent : '');
   for (const entry of parsed.models) {
-    if (!isPlainRecord(entry)) continue;
-    const tooltip = isPlainRecord(entry.tooltipData) && typeof entry.tooltipData.markdownContent === 'string'
-      ? entry.tooltipData.markdownContent
-      : '';
-    const context = parseContextWindow(tooltip);
-    if (context === null) continue;
+    if (!isPlainRecord(entry) || typeof entry.name !== 'string') continue;
 
-    const keys: string[] = [];
-    if (typeof entry.name === 'string') keys.push(entry.name);
+    const variants: CursorBaseModel['variants'] = [];
+    if (Array.isArray(entry.variants)) {
+      for (const v of entry.variants) {
+        if (!isPlainRecord(v) || typeof v.legacySlug !== 'string') continue;
+        variants.push({
+          legacySlug: v.legacySlug,
+          isDefaultNonMaxConfig: v.isDefaultNonMaxConfig === true,
+          isDefaultMaxConfig: v.isDefaultMaxConfig === true,
+        });
+      }
+    }
+
+    const aliasSlugs: string[] = [];
     for (const field of ['legacySlugs', 'idAliases'] as const) {
       const list = entry[field];
-      if (Array.isArray(list)) for (const s of list) if (typeof s === 'string') keys.push(s);
+      if (Array.isArray(list)) for (const s of list) if (typeof s === 'string') aliasSlugs.push(s);
     }
-    for (const key of keys) if (!out.has(key)) out.set(key, context);
+
+    out.push({
+      name: entry.name,
+      displayName: typeof entry.clientDisplayName === 'string' ? entry.clientDisplayName : entry.name,
+      contextNormal: parseContextWindow(markdown(entry.tooltipData)),
+      contextMax: parseContextWindow(markdown(entry.tooltipDataForMaxMode)),
+      variants,
+      aliasSlugs,
+    });
   }
   return out;
 };
 
-const isPlainRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
+// Collapse the base catalog against the usable-id gate into one Floway model per
+// base. The wire id is the mode-appropriate default variant (or any usable
+// variant, or the base name) that the account can actually send. Bases with no
+// usable variant are dropped (not entitled). Any usable id no base claimed is
+// appended uncollapsed so a request for it never 404s.
+export const buildCollapsedCatalog = (
+  usable: readonly CursorRawModel[],
+  bases: readonly CursorBaseModel[],
+  maxMode: boolean,
+): CursorRawModel[] => {
+  const usableIds = new Set(usable.map(r => r.id));
+  const claimed = new Set<string>();
+  const out: CursorRawModel[] = [];
+
+  for (const b of bases) {
+    // Prefer the mode's default variant, then any variant, then the bare base
+    // name — first one the account can actually send wins.
+    const preferred = b.variants.filter(v => (maxMode ? v.isDefaultMaxConfig : v.isDefaultNonMaxConfig));
+    let wire: string | undefined;
+    for (const v of [...preferred, ...b.variants]) {
+      if (usableIds.has(v.legacySlug)) { wire = v.legacySlug; break; }
+    }
+    if (!wire && usableIds.has(b.name)) wire = b.name;
+    if (!wire) continue; // this account can't use any variant of the base
+
+    const variantIds: string[] = [];
+    for (const v of b.variants) if (usableIds.has(v.legacySlug)) { variantIds.push(v.legacySlug); claimed.add(v.legacySlug); }
+    for (const s of b.aliasSlugs) if (usableIds.has(s)) { variantIds.push(s); claimed.add(s); }
+    claimed.add(wire);
+    claimed.add(b.name);
+
+    const context = maxMode ? (b.contextMax ?? b.contextNormal) : b.contextNormal;
+    out.push({
+      id: b.name,
+      display_name: b.displayName,
+      ...(context !== null ? { contextWindow: context } : {}),
+      wireModelId: wire,
+      variantIds,
+    });
+  }
+
+  for (const r of usable) if (!claimed.has(r.id)) out.push(r);
+  return out;
+};
 
 const assertRawModel = (value: unknown): CursorRawModel => {
   if (!isPlainRecord(value)) throw new TypeError('Cursor model entry is not an object');
@@ -161,23 +238,36 @@ const assertRawModel = (value: unknown): CursorRawModel => {
 // Cursor exposes only the Chat Completions endpoint (RunSSE+BidiAppend).
 // Pricing is looked up from the per-model notional table in pricing.ts so the
 // dashboard can report value consumed vs. the flat Cursor subscription.
-//
-// Modalities / reasoning config are not surfaced by GetUsableModels; left
-// unset here and refined once a real capture documents per-model capabilities.
 export const cursorRawToUpstreamModel = (raw: CursorRawModel, enabledFlags: ReadonlySet<string>): UpstreamModel => {
   const cost = pricingForCursorModelKey(raw.id);
+  // Carry the wire id (so fetch.ts sends the usable variant slug while the
+  // catalog keeps the clean base id) and the pre-collapse variant ids (so the
+  // registry can alias an old per-variant request onto this base).
+  const providerData: { wireModelId?: string; variantIds?: readonly string[] } = {};
+  if (raw.wireModelId && raw.wireModelId !== raw.id) providerData.wireModelId = raw.wireModelId;
+  if (raw.variantIds && raw.variantIds.length > 0) providerData.variantIds = raw.variantIds;
+
   return {
     id: raw.id,
     display_name: raw.display_name,
     owned_by: 'cursor',
     kind: 'chat',
-    // Normal-mode context window parsed from the AvailableModels tooltip prose
-    // (cursor surfaces no numeric field). 200k is the fallback for models whose
-    // tooltip named no window (e.g. Auto) or that AvailableModels didn't cover.
-    // Max Mode's larger window is a separate, deferred feature.
+    // Context window parsed from the AvailableModels tooltip prose (cursor
+    // surfaces no numeric field): normal- or max-mode value per the upstream's
+    // maxMode toggle. 200k is the fallback for models whose tooltip named no
+    // window (e.g. Auto) or that AvailableModels didn't cover.
     limits: { max_context_window_tokens: raw.contextWindow ?? 200_000 },
     endpoints: { chatCompletions: {} },
     enabledFlags,
+    ...(providerData.wireModelId || providerData.variantIds ? { providerData } : {}),
     ...(cost ? { cost } : {}),
   };
+};
+
+// The concrete Cursor model id to put on the RunSSE wire for a resolved model:
+// the collapsed base's usable variant slug (from providerData) or the id itself.
+export const cursorWireModelId = (model: UpstreamModel): string => {
+  const data = model.providerData;
+  if (isPlainRecord(data) && typeof data.wireModelId === 'string') return data.wireModelId;
+  return model.id;
 };

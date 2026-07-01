@@ -144,6 +144,9 @@ export interface CursorAccountIdentity {
 
 export interface CursorUpstreamConfig {
   accounts: [CursorAccountIdentity];
+  // Operator toggle: send every request in Cursor Max Mode (larger context
+  // window, higher usage cost). Absent/false = normal mode.
+  maxMode?: boolean;
 }
 
 export interface CursorAccessTokenState {

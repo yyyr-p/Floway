@@ -70,6 +70,7 @@ import {
   buildCursorImportState,
   refreshCursorAccessToken,
   CursorSessionTerminatedError,
+  assertCursorUpstreamRecord,
   assertCursorUpstreamState,
   type CursorUpstreamConfig,
   type CursorUpstreamState,
@@ -138,6 +139,10 @@ const normalizeConfig = (record: UpstreamRecord): ValidationResult<unknown> => {
     }
     if (record.provider === 'claude-code') {
       assertClaudeCodeUpstreamRecord(record);
+      return { ok: true, value: record.config };
+    }
+    if (record.provider === 'cursor') {
+      assertCursorUpstreamRecord(record);
       return { ok: true, value: record.config };
     }
     return {
@@ -323,7 +328,11 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
   if (existing.provider === 'claude-code' && body.config !== undefined) {
     return c.json({ error: 'Use POST /api/upstreams/:id/claude-code-reimport to update claude-code credentials' }, 400);
   }
-  if (existing.provider === 'cursor' && body.config !== undefined) {
+  // Cursor credentials (config.accounts) belong to the import / re-import
+  // endpoints, but operator settings like config.maxMode patch through here.
+  // Reject only a patch that tries to touch accounts; merge preserves the
+  // existing pool for a settings-only patch.
+  if (existing.provider === 'cursor' && isRecord(body.config) && 'accounts' in body.config) {
     return c.json({ error: 'Use POST /api/upstreams/:id/cursor-reimport to update cursor credentials' }, 400);
   }
 

@@ -14,6 +14,7 @@ import { AgentTransport } from './agent-transport.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION } from './constants.ts';
+import { cursorWireModelId } from './models.ts';
 import { AgentMode, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
 import { isCursorRateLimited } from './quota.ts';
 import { deriveSessionKey, mintSessionKey, decodeToolCallId } from './session-id.ts';
@@ -40,6 +41,8 @@ interface CursorChatCallBase {
 
 export interface CallCursorChatCompletionsOptions extends CursorChatCallBase {
   body: Omit<ChatCompletionsPayload, 'model'>;
+  // Operator's Max Mode toggle — encoded into ModelDetails.max_mode on the wire.
+  maxMode?: boolean;
 }
 
 // Gateway environment reported to Cursor's request_context exec. The gateway
@@ -402,7 +405,7 @@ const performOpen = async (
   const created = Math.floor(Date.now() / 1000);
   const translator = createAgentTranslator({ id, model: opts.model.id, created, composer: isComposerModel(opts.model.id), sessionKey });
 
-  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: opts.model.id, tools, mode } });
+  const gen = transport.openChatStream({ readStream: handle.body, request: { message, model: cursorWireModelId(opts.model), tools, mode, maxMode: opts.maxMode } });
   // The first pull sends the RunRequest (BidiAppend) then reads; pull past
   // cursor's pre-output control frames to the model's first token so the
   // recorded `upstream_success` latency is TTFT, and satisfy the ok=true

@@ -387,6 +387,17 @@ export const resolveModelForProvider = async (
   const exact = providedModels.find(model => model.id === modelId && !disabled.has(model.id));
   if (exact) return { id: exact.id, model: exact, binding: providerModelRecord(instance, exact) };
 
+  // A collapsed catalog may list a base model that also answers to its
+  // pre-collapse variant ids, carried in providerData.variantIds. Matching here
+  // (against the cached list) keeps the alias working without a provider-side
+  // lookup, which a per-request provider instance can't hold across the cache.
+  const variantAlias = providedModels.find(model => {
+    if (disabled.has(model.id)) return false;
+    const data = model.providerData as { variantIds?: unknown } | undefined;
+    return Array.isArray(data?.variantIds) && data.variantIds.includes(modelId);
+  });
+  if (variantAlias) return { id: variantAlias.id, model: variantAlias, binding: providerModelRecord(instance, variantAlias) };
+
   const aliasTarget = instance.resolveRequestedModelId?.(modelId);
   if (!aliasTarget || aliasTarget === modelId) return undefined;
 

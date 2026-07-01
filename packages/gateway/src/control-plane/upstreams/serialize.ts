@@ -110,6 +110,7 @@ const redactedConfig = (upstream: UpstreamRecord): unknown => {
         ...(a.email !== undefined ? { email: clone(a.email) } : {}),
         ...(a.userId !== undefined ? { userId: clone(a.userId) } : {}),
       })),
+      ...(config.maxMode !== undefined ? { maxMode: clone(config.maxMode) } : {}),
     };
   case 'ollama':
     return {

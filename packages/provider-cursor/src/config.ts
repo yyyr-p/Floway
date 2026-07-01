@@ -14,6 +14,11 @@ export interface CursorAccountIdentity {
 // round-robin pool feature can widen the tuple without a schema migration.
 export interface CursorUpstreamConfig {
   accounts: [CursorAccountIdentity];
+  // Operator toggle: send every request in Cursor Max Mode (larger context
+  // window, higher usage cost). Absent/false = normal mode. Persisted via
+  // PATCH /api/upstreams/:id { config: { maxMode } } — the accounts pool is
+  // owned by the import/re-import endpoints and never touched by that patch.
+  maxMode?: boolean;
 }
 
 export type CursorUpstreamRecord = UpstreamRecord & {
@@ -27,9 +32,12 @@ function assertCursorUpstreamConfig(value: unknown): asserts value is CursorUpst
   }
   const obj = value as Record<string, unknown>;
   for (const key of Object.keys(obj)) {
-    if (key !== 'accounts') {
+    if (key !== 'accounts' && key !== 'maxMode') {
       throw new TypeError(`CursorUpstreamConfig has unexpected key '${key}'`);
     }
+  }
+  if (obj.maxMode !== undefined && typeof obj.maxMode !== 'boolean') {
+    throw new TypeError('CursorUpstreamConfig.maxMode must be a boolean');
   }
   if (!Array.isArray(obj.accounts)) {
     throw new TypeError('CursorUpstreamConfig.accounts must be an array');

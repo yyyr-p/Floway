@@ -99,7 +99,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
         }
         throw err;
       }
-      const raw = await fetchCursorCatalog({ accessToken: access.token, timezone: gatewayTimezone(), fetcher });
+      const raw = await fetchCursorCatalog({ accessToken: access.token, timezone: gatewayTimezone(), fetcher, maxMode: config.maxMode });
       return raw.map(r => cursorRawToUpstreamModel(r, enabledFlags));
     },
 
@@ -129,6 +129,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
             signal,
             effects,
             call: opts,
+            maxMode: config.maxMode ?? false,
           });
         },
       );

@@ -114,8 +114,13 @@ export function encodeAgentClientMessageWithConversationAction(conversationActio
   return encodeMessageField(4, conversationAction);
 }
 
-export function encodeModelDetails(modelId: string): Uint8Array {
-  return encodeStringField(1, modelId);
+export function encodeModelDetails(modelId: string, maxMode?: boolean): Uint8Array {
+  const parts: Uint8Array[] = [encodeStringField(1, modelId)];
+  // ModelDetails.max_mode (field 7): opt into Cursor's Max Mode — the larger
+  // context window / higher-cost tier. Only emitted when enabled so the default
+  // wire shape is unchanged.
+  if (maxMode) parts.push(encodeBoolField(7, true));
+  return concatBytes(...parts);
 }
 
 export function encodeEmptyConversationState(): Uint8Array {
