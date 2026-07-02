@@ -1,7 +1,7 @@
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_AVAILABLE_MODELS_PATH, CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION, CURSOR_USABLE_MODELS_PATH, CURSOR_USER_AGENT } from './constants.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
-import { type Fetcher, type UpstreamChatModelConfig, type UpstreamModel } from '@floway-dev/provider';
+import { type Fetcher, type Modality, type UpstreamChatModelConfig, type UpstreamModel } from '@floway-dev/provider';
 
 export interface CursorReasoningInfo {
   supported: readonly string[];
@@ -321,12 +321,15 @@ const assertRawModel = (value: unknown): CursorRawModel => {
   return raw;
 };
 
-const buildChatConfig = (raw: CursorRawModel): UpstreamChatModelConfig | undefined => {
-  // Only reasoning effort is surfaced. Image modality is deliberately omitted:
-  // cursor's supportsImages field disagrees with reality for some models and
-  // image input is not yet wired into the provider.
-  if (!raw.reasoning) return undefined;
-  return { reasoning: { effort: { supported: [...raw.reasoning.supported], default: raw.reasoning.default } } };
+const buildChatConfig = (raw: CursorRawModel): UpstreamChatModelConfig => {
+  // Cursor accepts image input server-side for every model — verified
+  // end-to-end, including models its own (unreliable) supportsImages flag marks
+  // as text-only — so all cursor models advertise image input. Reasoning effort
+  // is surfaced when the model exposes it.
+  const input: Modality[] = ['text', 'image'];
+  const chat: UpstreamChatModelConfig = { modalities: { input, output: ['text'] } };
+  if (raw.reasoning) chat.reasoning = { effort: { supported: [...raw.reasoning.supported], default: raw.reasoning.default } };
+  return chat;
 };
 
 // Cursor exposes only the Chat Completions endpoint (RunSSE+BidiAppend).

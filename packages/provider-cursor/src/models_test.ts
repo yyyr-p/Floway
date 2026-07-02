@@ -81,12 +81,17 @@ describe('cursorRawToUpstreamModel', () => {
     expect(m.providerData).toBeUndefined();
     expect(m.limits.max_context_window_tokens).toBe(200_000);
   });
-  test('builds chat.reasoning.effort from reasoning info; no image modality', () => {
-    const m = cursorRawToUpstreamModel({ id: 'c', display_name: 'c', reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
-    expect(m.chat).toEqual({ reasoning: { effort: { supported: ['low', 'medium', 'high'], default: 'high' } } });
+  test('every model advertises image input; reasoning effort added when present', () => {
+    const withReasoning = cursorRawToUpstreamModel({ id: 'c', display_name: 'c', reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
+    expect(withReasoning.chat).toEqual({
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      reasoning: { effort: { supported: ['low', 'medium', 'high'], default: 'high' } },
+    });
   });
-  test('no chat when reasoning is unknown', () => {
-    expect(cursorRawToUpstreamModel({ id: 'd', display_name: 'd' }, flags).chat).toBeUndefined();
+  test('a model with no reasoning still advertises image input', () => {
+    expect(cursorRawToUpstreamModel({ id: 'd', display_name: 'd' }, flags).chat).toEqual({
+      modalities: { input: ['text', 'image'], output: ['text'] },
+    });
   });
 });
 
