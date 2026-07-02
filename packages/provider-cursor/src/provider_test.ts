@@ -34,7 +34,7 @@ describe('createCursorProvider', () => {
     const inst = await createCursorProvider(record);
     expect(inst.providerKind).toBe('cursor');
     expect(inst.upstream).toBe('up');
-    expect(inst.provider.getPricingForModelKey('composer-2.5')?.input).toBe(3);
+    expect(inst.provider.getPricingForModelKey('composer-2.5')?.input).toBe(0.5);
   });
 
   test('unsupported surfaces return 405', async () => {

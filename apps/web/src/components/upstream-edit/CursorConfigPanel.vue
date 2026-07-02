@@ -171,8 +171,8 @@ const setTabCompletion = async (value: boolean) => {
         <p>
           Token usage for Cursor is recovered from Cursor's own streamed accounting per request. A
           tool-call turn reports no tokens on its own — the run's usage is recorded on the final turn,
-          once Cursor stamps the conversation's context total. Cost is notional (the underlying model's
-          public API rates), since the subscription itself is a flat fee.
+          once Cursor stamps the conversation's context total. Cost is notional, priced at Cursor's
+          published per-token rates (the subscription itself is a flat fee).
         </p>
       </div>
     </template>
