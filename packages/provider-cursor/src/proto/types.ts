@@ -151,6 +151,12 @@ export interface AgentStreamChunk {
   queryId?: number;
   queryType?: string;
   blobContent?: string;
+  // token chunk: cursor's TokenDeltaUpdate.tokens increment (output ticker).
+  tokens?: number;
+  // checkpoint chunk: cursor's ConversationTokenDetails — live context
+  // occupancy (usedTokens) against the active model's window (maxTokens).
+  usedTokens?: number;
+  maxTokens?: number;
 }
 
 export interface AgentServiceOptions {
@@ -219,6 +225,9 @@ export interface ParsedInteractionUpdate {
   thinking: string | null;
   isComplete: boolean;
   isHeartbeat: boolean;
+  // TokenDeltaUpdate.tokens (field 8) — a streamed output-token increment.
+  // null when this update carries no token_delta.
+  tokenDelta: number | null;
   toolCallStarted: {
     callId: string;
     modelCallId: string;

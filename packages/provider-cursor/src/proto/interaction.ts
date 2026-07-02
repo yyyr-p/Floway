@@ -22,6 +22,7 @@ export function parseInteractionUpdate(data: Uint8Array): ParsedInteractionUpdat
   let thinking: string | null = null;
   let isComplete = false;
   let isHeartbeat = false;
+  let tokenDelta: number | null = null;
   let toolCallStarted: ParsedInteractionUpdate['toolCallStarted'] = null;
   let toolCallCompleted: ParsedInteractionUpdate['toolCallCompleted'] = null;
   let partialToolCall: ParsedInteractionUpdate['partialToolCall'] = null;
@@ -70,10 +71,13 @@ export function parseInteractionUpdate(data: Uint8Array): ParsedInteractionUpdat
         argsTextDelta: parsed.argsTextDelta,
       };
     } else if (field.fieldNumber === 8 && field.wireType === 2 && field.value instanceof Uint8Array) {
+      // token_delta (TokenDeltaUpdate): a streamed output-token increment.
+      // `int32 tokens = 1` is a varint (wireType 0) inside the message — the
+      // running sum over a turn is cursor's own output-token count.
       const tokenFields = parseProtoFields(field.value);
       for (const tField of tokenFields) {
-        if (tField.fieldNumber === 1 && tField.wireType === 2 && tField.value instanceof Uint8Array) {
-          text = new TextDecoder().decode(tField.value);
+        if (tField.fieldNumber === 1 && tField.wireType === 0) {
+          tokenDelta = Number(tField.value);
         }
       }
     } else if (field.fieldNumber === 14) {
@@ -83,5 +87,30 @@ export function parseInteractionUpdate(data: Uint8Array): ParsedInteractionUpdat
     }
   }
 
-  return { text, thinking, isComplete, isHeartbeat, toolCallStarted, toolCallCompleted, partialToolCall };
+  return { text, thinking, isComplete, isHeartbeat, tokenDelta, toolCallStarted, toolCallCompleted, partialToolCall };
+}
+
+/**
+ * Parse the token details out of a conversation_checkpoint_update
+ * (AgentServerMessage field 3 → ConversationStateStructure). Cursor pushes
+ * these periodically; they carry the live context accounting the IDE shows.
+ *
+ * ConversationStateStructure field 5: token_details (ConversationTokenDetails)
+ * ConversationTokenDetails field 1: used_tokens (uint32), field 2: max_tokens.
+ *
+ * Returns null when the checkpoint carries no token_details.
+ */
+export function parseCheckpointTokenDetails(data: Uint8Array): { usedTokens: number; maxTokens: number } | null {
+  for (const field of parseProtoFields(data)) {
+    if (field.fieldNumber === 5 && field.wireType === 2 && field.value instanceof Uint8Array) {
+      let usedTokens = 0;
+      let maxTokens = 0;
+      for (const tf of parseProtoFields(field.value)) {
+        if (tf.fieldNumber === 1 && tf.wireType === 0) usedTokens = Number(tf.value);
+        else if (tf.fieldNumber === 2 && tf.wireType === 0) maxTokens = Number(tf.value);
+      }
+      return { usedTokens, maxTokens };
+    }
+  }
+  return null;
 }

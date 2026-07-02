@@ -102,6 +102,12 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
   let thinkingText = '';
   let composerVisibleEmittedLength = 0;
 
+  // Per-request token accounting recovered from the RunSSE stream: cursor's
+  // TokenDeltaUpdate increments summed into the output count, and the latest
+  // ConversationTokenDetails.usedTokens as the authoritative context total.
+  let outputTokens = 0;
+  let contextUsedTokens: number | null = null;
+
   const makeEvent = (
     delta: NonNullable<ChatCompletionsStreamEvent['choices'][number]['delta']>,
     finishReason: FinishReason | null = null,
@@ -220,11 +226,21 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
       return translateExecRequest(chunk.execRequest);
     }
 
+    case 'token':
+      // TokenDeltaUpdate increment — cursor's own output-token ticker.
+      outputTokens += chunk.tokens ?? 0;
+      return [];
+
     case 'checkpoint':
+      // ConversationTokenDetails on a conversation checkpoint: usedTokens is
+      // the live context occupancy (input + history + output-so-far). Keep the
+      // latest; it becomes the request's authoritative total_tokens.
+      if (typeof chunk.usedTokens === 'number' && chunk.usedTokens > 0) contextUsedTokens = chunk.usedTokens;
+      return [];
+
     case 'heartbeat':
     case 'interaction_query':
     case 'exec_server_abort':
-    case 'token':
       return [];
 
     case 'done':
@@ -276,19 +292,26 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
     if (finalized) return [];
     finalized = true;
     const finishReason: FinishReason = endReason === 'tool_calls' ? 'tool_calls' : 'stop';
-    // Trailing all-zero usage frame (choices: []). Cursor's RunSSE stream reports
-    // no per-request token counts, so this carries no real numbers — it exists
-    // only so the gateway records that a (billable) request happened; the real
-    // tokens are back-filled hourly from the account-level dashboard sync. Only
-    // emitted on a clean finish (finalize runs after the turn completes), so
-    // failed turns are not counted.
+    // Per-request usage recovered from cursor's own RunSSE accounting:
+    //   completion_tokens = Σ TokenDeltaUpdate.tokens (the output ticker)
+    //   total_tokens      = latest ConversationTokenDetails.usedTokens
+    //                       (the context the model actually saw + produced —
+    //                        input + history + output; the number the IDE shows)
+    //   prompt_tokens     = total − completion (the input/history remainder)
+    // When no checkpoint arrived (short turns can end before one is stamped),
+    // fall back to total = completion so the split stays coherent. If cursor
+    // sent neither signal, every dimension is 0 — recordUsage still logs a bare
+    // request row (the request is counted), same as an all-zero frame.
+    const completion = outputTokens;
+    const total = contextUsedTokens != null && contextUsedTokens >= completion ? contextUsedTokens : completion;
+    const prompt = Math.max(0, total - completion);
     const usageEvent: ChatCompletionsStreamEvent = {
       id: opts.id,
       object: 'chat.completion.chunk',
       created: opts.created,
       model: opts.model,
       choices: [],
-      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+      usage: { prompt_tokens: prompt, completion_tokens: completion, total_tokens: total },
     };
     return [makeEvent({}, finishReason), usageEvent];
   };

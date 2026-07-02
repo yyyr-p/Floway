@@ -1,11 +1,15 @@
 /**
- * Cursor account-level usage sync (approximate, hourly).
+ * Cursor account-level usage sync (approximate, hourly) — fallback only.
  *
- * Cursor exposes no per-request/per-key token usage to a simulated client (see
- * provider-cursor/usage-sync.ts). The best we can do: pull the whole cursor
- * ACCOUNT's real per-model usage from the dashboard RPC and split each
- * (model, hour) bucket across the Floway API keys that made requests in it, by
- * request count. This is an APPROXIMATION:
+ * The RunSSE stream now carries cursor's own per-request token accounting, so
+ * the data plane records real tokens + notional cost for every cursor request
+ * (see provider-cursor agent-translate finalize). This sync is the fallback
+ * for the residual case where a request was counted but no token signal
+ * arrived: it pulls the whole cursor ACCOUNT's real per-model usage from the
+ * dashboard RPC and splits each (model, hour) bucket across the Floway API
+ * keys whose rows still have zero tokens, by request count. It never touches a
+ * row that already has real per-request tokens. This split is an
+ * APPROXIMATION:
  *   - it includes usage that never went through Floway (the operator's own
  *     Cursor IDE / other clients on the same account);
  *   - it distributes by request count, not by each request's real tokens.
@@ -64,11 +68,21 @@ export const costPricingForBucket = (b: CursorUsageBucket): ModelPricing | null 
  * row (IDE-only usage) are dropped. Model matched by exact id — cursor's
  * modelIntent equals the Floway model id for named models; a mismatch leaves
  * that bucket unattributed (treated as non-Floway usage).
+ *
+ * Rows that already carry real per-request tokens are left untouched: the
+ * RunSSE stream now reports cursor's own token accounting per request (see
+ * provider-cursor agent-translate finalize), so the data plane records real
+ * tokens + notional cost directly. This account-level sync is only a fallback
+ * for rows that got no per-request signal (a request counted, tokens still 0),
+ * and it must never clobber the real numbers with the coarser account split.
  */
+const hasRealTokens = (r: UsageRecord): boolean => Object.values(r.tokens).some(v => (v ?? 0) > 0);
+
 export const attributeCursorUsage = (upstreamId: string, buckets: readonly CursorUsageBucket[], rows: readonly UsageRecord[]): UsageRecord[] => {
   const rowsByBucket = new Map<string, UsageRecord[]>();
   for (const r of rows) {
     if (r.upstream !== upstreamId) continue;
+    if (hasRealTokens(r)) continue; // real per-request tokens already recorded — don't overwrite
     const k = `${r.model} ${r.hour}`;
     const list = rowsByBucket.get(k);
     if (list) list.push(r); else rowsByBucket.set(k, [r]);

@@ -42,6 +42,27 @@ describe('attributeCursorUsage', () => {
     expect(out).toHaveLength(0);
   });
 
+  test('leaves rows that already carry real per-request tokens untouched', () => {
+    // The data plane recorded real tokens for key_a; the account sync must not
+    // clobber them. key_b has a bare (zero-token) row and still gets back-filled.
+    const buckets = [bucket({ input: 400, output: 80, cents: 0.8 })];
+    const rows = [
+      row('key_a', 3, { tokens: { input: 999, output: 111 } }), // real per-request tokens
+      row('key_b', 1), // zero tokens — fallback candidate
+    ];
+    const out = attributeCursorUsage('up_c', buckets, rows);
+    expect(out.find(r => r.keyId === 'key_a')).toBeUndefined(); // skipped entirely
+    const b = out.find(r => r.keyId === 'key_b')!;
+    // Only key_b remains → the whole bucket attributes to it (request share 1/1).
+    expect(b.tokens).toEqual({ input: 400, output: 80, input_cache_read: 0, input_cache_write: 0 });
+  });
+
+  test('emits nothing when every row already has real tokens', () => {
+    const buckets = [bucket({ input: 400, output: 80, cents: 0.8 })];
+    const rows = [row('key_a', 2, { tokens: { output: 50 } })];
+    expect(attributeCursorUsage('up_c', buckets, rows)).toHaveLength(0);
+  });
+
   test("attributed cost reproduces the bucket's real cents, split by request count", () => {
     const buckets = [bucket({ input: 100, output: 400, cents: 1.0 })]; // output is the largest dim
     const rows = [row('key_a', 3), row('key_b', 1)];

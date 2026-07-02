@@ -20,6 +20,7 @@ import {
   decompressGzip,
   parseProtoFields,
   parseInteractionUpdate,
+  parseCheckpointTokenDetails,
   parseExecServerMessage,
   parseKvServerMessage,
   analyzeBlobData,
@@ -585,6 +586,13 @@ export class AgentTransport {
                       partialArgs: parsed.partialToolCall.argsTextDelta,
                     };
                   }
+                  if (parsed.tokenDelta !== null) {
+                    // Cursor's streamed output-token counter. Real activity, so
+                    // it counts as progress; the translator sums it into the
+                    // per-request completion_tokens.
+                    markProgress();
+                    yield { type: 'token', tokens: parsed.tokenDelta };
+                  }
                   if (parsed.isComplete) {
                     // InteractionUpdate field 14 (turn_ended) — cursor's
                     // authoritative end-of-turn marker. Verified on the wire to
@@ -621,9 +629,13 @@ export class AgentTransport {
                   }
                 } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
                   // conversation_checkpoint_update — NOT a completion signal;
-                  // exec_server_message can follow. Just mark progress.
+                  // exec_server_message can follow. Just mark progress. Cursor
+                  // stamps the live context accounting (used/max tokens) here;
+                  // surface it so the translator can report a per-request total.
                   markProgress();
-                  yield { type: 'checkpoint' };
+                  const td = parseCheckpointTokenDetails(field.value);
+                  if (td) yield { type: 'checkpoint', usedTokens: td.usedTokens, maxTokens: td.maxTokens };
+                  else yield { type: 'checkpoint' };
                 } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
                   const execRequest = parseExecServerMessage(field.value);
                   if (execRequest) {

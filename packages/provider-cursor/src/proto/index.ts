@@ -105,4 +105,4 @@ export {
 } from './agent-messages.ts';
 export type { McpDescriptorInput, RequestContextEnv } from './agent-messages.ts';
 
-export { parseInteractionUpdate } from './interaction.ts';
+export { parseInteractionUpdate, parseCheckpointTokenDetails } from './interaction.ts';

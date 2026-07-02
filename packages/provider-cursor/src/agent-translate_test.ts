@@ -152,7 +152,7 @@ describe('createAgentTranslator — tool calls', () => {
 });
 
 describe('createAgentTranslator.finalize', () => {
-  test('emits stop then a zero-usage frame when no tool calls were produced', () => {
+  test('emits stop then a zero-usage frame when no token signal arrived', () => {
     const t = mk('gpt-4o');
     t.translate({ type: 'text', content: 'hi' });
     const fin = t.finalize();
@@ -160,9 +160,38 @@ describe('createAgentTranslator.finalize', () => {
     expect(finishOf(fin[0]!)).toBe('stop');
     expect(deltaOf(fin[0]!)).toEqual({});
     // The trailing usage frame carries empty choices + an all-zero usage block
-    // (cursor reports no per-request tokens; this only gets the request counted).
+    // when cursor sent no tokenDelta/checkpoint (only gets the request counted).
     expect(fin[1]!.choices).toEqual([]);
     expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
+  });
+
+  test('sums tokenDelta into completion and reads usedTokens as the total', () => {
+    const t = mk('gpt-4o');
+    t.translate({ type: 'text', content: 'hi' });
+    t.translate({ type: 'token', tokens: 1 });
+    t.translate({ type: 'token', tokens: 1 });
+    t.translate({ type: 'token', tokens: 4 });
+    t.translate({ type: 'checkpoint', usedTokens: 21132, maxTokens: 262000 });
+    const fin = t.finalize();
+    // completion = Σ tokenDelta = 6; total = usedTokens = 21132; prompt = 21126.
+    expect(fin[1]!.usage).toEqual({ prompt_tokens: 21126, completion_tokens: 6, total_tokens: 21132 });
+  });
+
+  test('falls back to total = completion when no checkpoint arrived', () => {
+    const t = mk('gpt-4o');
+    t.translate({ type: 'token', tokens: 3 });
+    t.translate({ type: 'token', tokens: 2 });
+    const fin = t.finalize();
+    expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 5, total_tokens: 5 });
+  });
+
+  test('keeps the last checkpoint usedTokens when several arrive', () => {
+    const t = mk('gpt-4o');
+    t.translate({ type: 'checkpoint', usedTokens: 100, maxTokens: 262000 });
+    t.translate({ type: 'token', tokens: 10 });
+    t.translate({ type: 'checkpoint', usedTokens: 21132, maxTokens: 262000 });
+    const fin = t.finalize();
+    expect(fin[1]!.usage).toEqual({ prompt_tokens: 21122, completion_tokens: 10, total_tokens: 21132 });
   });
 
   test('emits tool_calls finish_reason after an mcp exec', () => {

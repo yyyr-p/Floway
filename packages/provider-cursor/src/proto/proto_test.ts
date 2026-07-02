@@ -7,6 +7,7 @@ import {
   encodeInt64Field,
   encodeMessageField,
   encodeUint32Field,
+  encodeInt32Field,
   encodeProtobufValue,
   bytesToHex,
   hexToBytes,
@@ -19,6 +20,7 @@ import {
   readConnectFrame,
   isTrailerFrame,
   parseInteractionUpdate,
+  parseCheckpointTokenDetails,
   parseExecServerMessage,
   parseKvServerMessage,
   buildExecClientMessageWithMcpResult,
@@ -171,6 +173,34 @@ describe('parseInteractionUpdate', () => {
   test('flags heartbeat on field 13', () => {
     const update = new Uint8Array([(13 << 3) | 0, 0]);
     expect(parseInteractionUpdate(update).isHeartbeat).toBe(true);
+  });
+
+  test('reads token_delta (field 8 → TokenDeltaUpdate.tokens=1, a varint)', () => {
+    // InteractionUpdate.field8 = TokenDeltaUpdate{ int32 tokens = 1 }.
+    const update = encodeMessageField(8, encodeInt32Field(1, 7));
+    const parsed = parseInteractionUpdate(update);
+    expect(parsed.tokenDelta).toBe(7);
+    expect(parsed.text).toBeNull(); // must NOT be mis-decoded as text
+  });
+
+  test('token_delta absent → tokenDelta null', () => {
+    const update = encodeMessageField(1, encodeStringField(1, 'hi'));
+    expect(parseInteractionUpdate(update).tokenDelta).toBeNull();
+  });
+});
+
+describe('parseCheckpointTokenDetails', () => {
+  test('reads used/max tokens (ConversationStateStructure.field5 → {used=1, max=2})', () => {
+    // ConversationTokenDetails { used_tokens=1, max_tokens=2 } under field 5.
+    const details = concatBytes(encodeUint32Field(1, 21132), encodeUint32Field(2, 262000));
+    const checkpoint = encodeMessageField(5, details);
+    expect(parseCheckpointTokenDetails(checkpoint)).toEqual({ usedTokens: 21132, maxTokens: 262000 });
+  });
+
+  test('no token_details → null', () => {
+    // A checkpoint with only root_prompt_messages_json (field 1), no field 5.
+    const checkpoint = encodeMessageField(1, new Uint8Array([1, 2, 3]));
+    expect(parseCheckpointTokenDetails(checkpoint)).toBeNull();
   });
 });
 
