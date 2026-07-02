@@ -107,6 +107,24 @@ const setMaxMode = async (value: boolean) => {
   if (error) { maxMode.value = !value; emit('error', error.message); return; }
   emit('imported', data);
 };
+
+// Cursor Tab (StreamCpp) exposed as an OpenAI /v1/completions "cursor-tab"
+// model for edit-prediction clients (e.g. Zed). Config-only patch; the model
+// appears on the next model-list refresh.
+const tabCompletion = ref(props.mode === 'edit' ? (props.record.config.tabCompletion?.enabled ?? false) : false);
+const savingTab = ref(false);
+
+const setTabCompletion = async (value: boolean) => {
+  if (props.mode !== 'edit' || savingTab.value) return;
+  savingTab.value = true;
+  tabCompletion.value = value;
+  const { data, error } = await callApi<UpstreamRecord>(
+    () => api.api.upstreams[':id'].$patch({ param: { id: props.record.id }, json: { config: { tabCompletion: { enabled: value } } } }),
+  );
+  savingTab.value = false;
+  if (error) { tabCompletion.value = !value; emit('error', error.message); return; }
+  emit('imported', data);
+};
 </script>
 
 <template>
@@ -136,6 +154,17 @@ const setMaxMode = async (value: boolean) => {
           </p>
         </div>
         <Switch :model-value="maxMode" :disabled="savingMaxMode" @update:model-value="v => setMaxMode(!!v)" />
+      </div>
+      <div class="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-surface-800/40 p-3">
+        <div>
+          <p class="text-sm text-white">Tab completion <span class="text-xs text-gray-500">(experimental)</span></p>
+          <p class="text-xs text-gray-500">
+            Expose Cursor Tab as a <code class="text-gray-400">cursor-tab</code> model on the OpenAI
+            <code class="text-gray-400">/v1/completions</code> endpoint for edit-prediction clients (e.g. Zed with the
+            Zeta 2.1 prompt format, or any FIM autocomplete client). Refresh the model list after toggling.
+          </p>
+        </div>
+        <Switch :model-value="tabCompletion" :disabled="savingTab" @update:model-value="v => setTabCompletion(!!v)" />
       </div>
       <div class="flex items-start gap-2 rounded-md border border-white/5 bg-surface-800/40 p-3 text-xs text-gray-500">
         <i class="i-lucide-info mt-0.5 size-3.5 shrink-0" />
