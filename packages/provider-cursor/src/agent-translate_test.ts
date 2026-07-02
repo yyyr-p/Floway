@@ -177,12 +177,14 @@ describe('createAgentTranslator.finalize', () => {
     expect(fin[1]!.usage).toEqual({ prompt_tokens: 21126, completion_tokens: 6, total_tokens: 21132 });
   });
 
-  test('falls back to total = completion when no checkpoint arrived', () => {
+  test('falls back to all-zero when no checkpoint arrived (turn not accountable)', () => {
     const t = mk('gpt-4o');
     t.translate({ type: 'token', tokens: 3 });
     t.translate({ type: 'token', tokens: 2 });
     const fin = t.finalize();
-    expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 5, total_tokens: 5 });
+    // No ConversationTokenDetails checkpoint → not accountable → all-zero
+    // (the request is still counted via the non-null usage object).
+    expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   });
 
   test('keeps the last checkpoint usedTokens when several arrive', () => {
@@ -192,6 +194,21 @@ describe('createAgentTranslator.finalize', () => {
     t.translate({ type: 'checkpoint', usedTokens: 21132, maxTokens: 262000 });
     const fin = t.finalize();
     expect(fin[1]!.usage).toEqual({ prompt_tokens: 21122, completion_tokens: 10, total_tokens: 21132 });
+  });
+
+  test('tool-call turn reports all-zero usage even with token/checkpoint signal', () => {
+    // Intermediate tool-call turns pause before the run's final checkpoint; the
+    // real usage lands on the final turn. finish_reason tool_calls → all-zero.
+    const t = mk('gpt-4o');
+    t.translate({
+      type: 'exec_request',
+      execRequest: { type: 'mcp', id: 1, name: 'x', args: {}, toolCallId: 'c1', providerIdentifier: 'p', toolName: 'x' },
+    });
+    t.translate({ type: 'token', tokens: 12 });
+    t.translate({ type: 'checkpoint', usedTokens: 9000, maxTokens: 262000 });
+    const fin = t.finalize();
+    expect(finishOf(fin[0]!)).toBe('tool_calls');
+    expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   });
 
   test('emits tool_calls finish_reason after an mcp exec', () => {

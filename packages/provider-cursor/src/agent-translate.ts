@@ -292,19 +292,24 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
     if (finalized) return [];
     finalized = true;
     const finishReason: FinishReason = endReason === 'tool_calls' ? 'tool_calls' : 'stop';
-    // Per-request usage recovered from cursor's own RunSSE accounting:
-    //   completion_tokens = Σ TokenDeltaUpdate.tokens (the output ticker)
-    //   total_tokens      = latest ConversationTokenDetails.usedTokens
-    //                       (the context the model actually saw + produced —
-    //                        input + history + output; the number the IDE shows)
-    //   prompt_tokens     = total − completion (the input/history remainder)
-    // When no checkpoint arrived (short turns can end before one is stamped),
-    // fall back to total = completion so the split stays coherent. If cursor
-    // sent neither signal, every dimension is 0 — recordUsage still logs a bare
-    // request row (the request is counted), same as an all-zero frame.
-    const completion = outputTokens;
-    const total = contextUsedTokens != null && contextUsedTokens >= completion ? contextUsedTokens : completion;
-    const prompt = Math.max(0, total - completion);
+    // A turn is accountable only when a ConversationTokenDetails checkpoint
+    // arrived AND the turn didn't end on a tool-call pause. That checkpoint
+    // carries cursor's authoritative CUMULATIVE context total and only lands at
+    // the very end of a run, after the model's final answer:
+    //   total_tokens      = usedTokens (input + history + all output so far)
+    //   completion_tokens = Σ TokenDeltaUpdate.tokens (this turn's output),
+    //                       clamped to total
+    //   prompt_tokens     = total − completion
+    // Tool-call turns pause at the exec_request before any checkpoint, so they
+    // report ALL-ZERO here; the real usage lands on the final turn whose
+    // checkpoint totals the whole run. A turn that ends with no checkpoint (a
+    // transient empty turn) is likewise all-zero. In every case the request is
+    // still counted — recordUsage logs the bare request row from the non-null
+    // usage object.
+    const accountable = finishReason !== 'tool_calls' && contextUsedTokens != null;
+    const total = accountable ? contextUsedTokens : 0;
+    const completion = accountable ? Math.min(outputTokens, total) : 0;
+    const prompt = total - completion;
     const usageEvent: ChatCompletionsStreamEvent = {
       id: opts.id,
       object: 'chat.completion.chunk',
