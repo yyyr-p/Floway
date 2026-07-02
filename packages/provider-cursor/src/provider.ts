@@ -10,6 +10,7 @@ import { cursorRawToUpstreamModel, cursorTabModel, fetchCursorCatalog, resolveCu
 import { pricingForCursorModelKey } from './pricing.ts';
 import { assertCursorUpstreamState, type CursorUpstreamState } from './state.ts';
 import { callStreamCpp } from './stream-cpp-transport.ts';
+import { detectPromptFormat, parseZetaV0318, renderZetaV0318Output, streamCppInputForZeta } from './zeta-format.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import {
@@ -159,16 +160,32 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
     callCompletions: async (model, body, signal, opts) => {
       if (!config.tabCompletion?.enabled) return await unsupportedCallResult(opts);
       const emptyResponse = () => new Response(completionsResponseBody(model.id, ''), { status: 200, headers: { 'content-type': 'application/json' } });
+      const modelName = config.tabCompletion?.model ?? 'fast';
       const call = (async (): Promise<Response> => {
         try {
-          const ps = parsePrefixSuffix(typeof body.prompt === 'string' ? body.prompt : '', typeof body.suffix === 'string' ? body.suffix : undefined);
-          const request = streamCppInputForPrefixSuffix(ps, {
-            relativePath: 'completion.txt',
-            languageId: languageIdForCompletion(body),
-            modelName: config.tabCompletion?.model ?? 'fast',
-          });
-          const access = await ensureCursorAccessToken(record.id, accountIdentity.userId, refresh => mintCursorAccessToken(refresh, opts.fetcher, persistRefreshTokenRotation));
-          const checksum = await generateCursorChecksum(access.token);
+          const prompt = typeof body.prompt === 'string' ? body.prompt : '';
+          const format = detectPromptFormat(prompt);
+          const withToken = async () => {
+            const access = await ensureCursorAccessToken(record.id, accountIdentity.userId, refresh => mintCursorAccessToken(refresh, opts.fetcher, persistRefreshTokenRotation));
+            return { access, checksum: await generateCursorChecksum(access.token) };
+          };
+
+          // Zeta 2.1 (V0318) marker path: reconstruct the editable region from
+          // the prompt, ask Cursor Tab to rewrite the file, and re-emit the
+          // rewritten region as a `<|marker_1|>…<|marker_K|>` span. Falls back
+          // to the FIM/plain insertion path for any unparseable prompt.
+          const parsed = format === 'zeta-v0318' ? parseZetaV0318(prompt) : null;
+          if (parsed) {
+            const { access, checksum } = await withToken();
+            const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request: streamCppInputForZeta(parsed, modelName), signal });
+            const rendered = result.ok ? renderZetaV0318Output(parsed, result.rangeToReplace, result.text) : null;
+            return new Response(completionsResponseBody(model.id, rendered ?? ''), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+
+          // FIM / plain-prompt insertion path.
+          const ps = parsePrefixSuffix(prompt, typeof body.suffix === 'string' ? body.suffix : undefined);
+          const request = streamCppInputForPrefixSuffix(ps, { relativePath: 'completion.txt', languageId: languageIdForCompletion(body), modelName });
+          const { access, checksum } = await withToken();
           const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request, signal });
           const insertion = result.ok ? applyStops(extractInsertion(ps, result.rangeToReplace, result.text), body.stop as string | string[] | undefined) : '';
           return new Response(completionsResponseBody(model.id, insertion), { status: 200, headers: { 'content-type': 'application/json' } });
