@@ -406,20 +406,18 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
   const entries = groupKey === 'keyId'
     ? keyChartEntries([...presentGroups], keyMetadataForTokenRecords(allRecords, data.value?.keys ?? []), data.value?.keys.map(k => k.id) ?? [...presentGroups])
     : modelChartEntries([...presentGroups]);
-  // A group can hold all-zero (or, for percent metrics, all-null) values under
-  // the current metric for two distinct reasons, and requests tells them apart:
-  // cross-filtering that emptied the group leaves requests at zero too (details
-  // aggregate the same cross-filtered records), whereas a group with real but
-  // zero-token traffic — e.g. an upstream that reports no usage — still has
-  // requests > 0. Keep the latter as a flat line at zero so it stays visible in
-  // the token/cost views; drop the former outright, legend entry and line both
-  // gone, instead of rendering an inert line for a group with no activity. Own-
-  // dimension hidden groups are a separate, restorable toggle kept struck-through.
-  // Percent metrics stay null-only: a ratio over zero tokens is undefined.
-  const hasRequests = (id: string) => bucketKeys.some(k => (details.get(k)?.get(id)?.requests ?? 0) > 0);
+  // Split the two indistinguishable-by-value cases at the data layer: `null`
+  // means the group had no record in this bucket (cross-filtered out or the
+  // group never served here), `0` means a real record whose selected-metric
+  // value is zero — e.g. a zero-token upstream that reports no usage. The
+  // rest of the pipeline leans on that split: `spanGaps: false` gaps the line
+  // at null, stacked scales skip null instead of piling zeros onto neighbors,
+  // the tooltip filter drops null while keeping zero, and zero-only datasets
+  // get routed to a private stack so they sit at the axis. Percent metrics
+  // fold in for free: their divide-by-zero case already lands as null.
   const datasetEntries = entries
-    .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)?.get(entry.id) ?? (isPercent ? null : 0)) }))
-    .filter(({ entry, data }) => isPercent ? data.some(v => v !== null) : (data.some(v => v !== 0) || hasRequests(entry.id)));
+    .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)?.get(entry.id) ?? null) }))
+    .filter(({ data }) => data.some(v => v !== null));
   const labelWidth = datasetEntries.reduce((max, { entry }) => Math.max(max, entry.label.length), 0);
   return {
     type: 'line',
@@ -427,13 +425,15 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
       labels,
       datasets: datasetEntries.map(({ entry, data: datasetData }) => {
         const color = chartColor(entry.colorSlot);
-        // A dataset kept only because its group has real requests — every
-        // selected-metric value is zero — would, when stacked onto the series
-        // below it, ride invisibly along that series' top edge rather than sit
-        // at zero. Give it a private stack group and drop the fill so it draws
-        // as a flat, hoverable line pinned to the axis. It contributes nothing
-        // to the main stack, so pulling it out leaves the real totals untouched.
-        const zeroLine = !isPercent && !datasetData.some(v => v !== 0);
+        // A group whose every non-null value is zero — typically a zero-token
+        // upstream — still needs a visible presence in the token/cost views.
+        // Left on the main stack, its flat line would ride the top edge of
+        // the series below it rather than sit at zero. Route it to a private
+        // stack with no fill so it draws as a flat line pinned to the axis
+        // and contributes nothing to the main stack, so real totals are
+        // unchanged. Percent metrics never take this branch: their zero-total
+        // case is already encoded as null.
+        const zeroLine = !isPercent && !datasetData.some(v => v !== null && v !== 0);
         return {
           label: entry.label,
           data: datasetData,
@@ -446,7 +446,7 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           tension: 0.3,
           fill: isPercent || zeroLine ? false : 'stack',
           spanGaps: isPercent,
-          stack: zeroLine ? `zero-${entry.id}` : 'main',
+          stack: zeroLine ? 'zero' : 'main',
         };
       }),
     },
@@ -472,16 +472,10 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           bodyColor: '#b0bec5',
           padding: 12,
           bodyFont: { family: chartFont.mono, size: 11 },
-          // Keep a zero-valued row when the group actually served requests in
-          // this bucket, so a zero-token model's hover still reports its
-          // requests/cost; drop rows that are zero because nothing happened.
-          filter: item => {
-            if (item.parsed.y === null) return false;
-            if (isPercent || item.parsed.y > 0) return true;
-            const bucket = bucketKeys[item.dataIndex];
-            const entry = datasetEntries[item.datasetIndex]?.entry;
-            return bucket !== undefined && entry !== undefined && (details.get(bucket)?.get(entry.id)?.requests ?? 0) > 0;
-          },
+          // Null = no record in this bucket (dropped). Zero = a real record
+          // whose metric value is zero (kept, so a zero-token upstream's
+          // hover still reports its requests/cost).
+          filter: item => item.parsed.y !== null,
           itemSort: (a, b) => Number(b.parsed.y ?? 0) - Number(a.parsed.y ?? 0),
           callbacks: {
             beforeBody: items => items.length ? tooltipHeader(labelWidth) : [],
