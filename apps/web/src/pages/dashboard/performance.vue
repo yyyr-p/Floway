@@ -73,16 +73,19 @@ const performanceError = ref<string | null>(initialOverview.data.value.error);
 const performanceLoading = ref(false);
 let performanceRequestId = 0;
 
-// Hidden-series state lives here, keyed by stable dataset label (model name in
-// the By-Model view; p50/p95/p99 in the By-Percentile view), so a legend toggle
-// survives the 60s poll. Chart.js's default legend stores visibility in its
-// internal per-dataset meta, which is discarded when `load()` rebuilds the
-// config with fresh dataset objects; re-deriving `hidden` from this Set instead
-// keeps the toggle stable across refreshes.
+// Hidden-series state lives here, keyed by chart view plus stable dataset label
+// (`model:<name>` in the By-Model view; `percentile:<p>` in the By-Percentile
+// view), so a legend toggle survives the 60s poll and the range/scope/data-view
+// switches that also go through `load()`. Chart.js's default legend stores
+// visibility in its internal per-dataset meta, which is discarded when `load()`
+// rebuilds the config with fresh dataset objects; re-deriving `hidden` from this
+// Set instead keeps the toggle stable. Namespacing by chart view keeps the two
+// views' toggles independent and avoids a model named e.g. `p95` colliding with
+// the percentile line of the same name.
 const hiddenSeries = ref(new Set<string>());
-const toggleHiddenSeries = (label: string) => {
-  if (hiddenSeries.value.has(label)) hiddenSeries.value.delete(label);
-  else hiddenSeries.value.add(label);
+const toggleHiddenSeries = (key: string) => {
+  if (hiddenSeries.value.has(key)) hiddenSeries.value.delete(key);
+  else hiddenSeries.value.add(key);
 };
 
 const load = async () => {
@@ -134,6 +137,7 @@ const formatDuration = (ms: number | null) => {
 
 const chartConfig = computed<ChartConfiguration<'line'>>(() => {
   const { keys: bucketKeys, labels } = dashboardBuckets(loadedPerformanceRange.value, loadedAt.value);
+  const seriesKey = (label: string) => `${performanceChartView.value}:${label}`;
 
   const datasets = performanceChartView.value === 'model'
     ? (() => {
@@ -148,7 +152,7 @@ const chartConfig = computed<ChartConfiguration<'line'>>(() => {
           return {
             label: group,
             data: bucketKeys.map(k => byBucket.get(k) ?? null),
-            hidden: hiddenSeries.value.has(group),
+            hidden: hiddenSeries.value.has(seriesKey(group)),
             borderColor: color,
             backgroundColor: `${color}25`,
             borderWidth: 2,
@@ -167,7 +171,7 @@ const chartConfig = computed<ChartConfiguration<'line'>>(() => {
         return {
           label,
           data: bucketKeys.map(k => byBucket.get(k) ?? null),
-          hidden: hiddenSeries.value.has(label),
+          hidden: hiddenSeries.value.has(seriesKey(label)),
           borderColor: color,
           backgroundColor: `${color}25`,
           borderWidth: 2,
@@ -197,7 +201,7 @@ const chartConfig = computed<ChartConfiguration<'line'>>(() => {
           labels: { color: '#9e9e9e', font: { size: 11, family: chartFont.sans }, boxWidth: 12, padding: 16, usePointStyle: true, pointStyle: 'circle' },
           onClick: (_event, legendItem) => {
             const label = datasets[legendItem.datasetIndex ?? -1]?.label;
-            if (label !== undefined) toggleHiddenSeries(label);
+            if (label !== undefined) toggleHiddenSeries(seriesKey(label));
           },
         },
         tooltip: {
