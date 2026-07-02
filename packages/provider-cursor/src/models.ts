@@ -359,6 +359,20 @@ export const cursorWireModelId = (model: UpstreamModel): string => {
   return model.id;
 };
 
+// Public model id for the Cursor Tab (StreamCpp) edit-prediction completions
+// endpoint. Exposed only when the upstream enables tabCompletion.
+export const CURSOR_TAB_MODEL_ID = 'cursor-tab';
+
+export const cursorTabModel = (enabledFlags: ReadonlySet<string>): UpstreamModel => ({
+  id: CURSOR_TAB_MODEL_ID,
+  display_name: 'Cursor Tab',
+  owned_by: 'cursor',
+  kind: 'chat',
+  limits: { max_context_window_tokens: 200_000 },
+  endpoints: { completions: {} },
+  enabledFlags,
+});
+
 // Ordered reasoning-effort scale spanning every vendor's naming, used to map a
 // request's reasoning_effort onto the nearest value a model actually exposes.
 const EFFORT_SCALE = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'extra-high', 'max'];

@@ -111,6 +111,7 @@ const redactedConfig = (upstream: UpstreamRecord): unknown => {
         ...(a.userId !== undefined ? { userId: clone(a.userId) } : {}),
       })),
       ...(config.maxMode !== undefined ? { maxMode: clone(config.maxMode) } : {}),
+      ...(config.tabCompletion !== undefined ? { tabCompletion: clone(config.tabCompletion) } : {}),
     };
   case 'ollama':
     return {

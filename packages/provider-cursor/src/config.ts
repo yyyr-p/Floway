@@ -19,6 +19,13 @@ export interface CursorUpstreamConfig {
   // PATCH /api/upstreams/:id { config: { maxMode } } — the accounts pool is
   // owned by the import/re-import endpoints and never touched by that patch.
   maxMode?: boolean;
+  // Operator toggle: expose Cursor Tab (StreamCpp) as an OpenAI /v1/completions
+  // edit-prediction model. `model` is the cpp model name sent upstream
+  // (default "fast"). Same settings-only PATCH path as maxMode.
+  tabCompletion?: {
+    enabled: boolean;
+    model?: string;
+  };
 }
 
 export type CursorUpstreamRecord = UpstreamRecord & {
@@ -32,12 +39,30 @@ function assertCursorUpstreamConfig(value: unknown): asserts value is CursorUpst
   }
   const obj = value as Record<string, unknown>;
   for (const key of Object.keys(obj)) {
-    if (key !== 'accounts' && key !== 'maxMode') {
+    if (key !== 'accounts' && key !== 'maxMode' && key !== 'tabCompletion') {
       throw new TypeError(`CursorUpstreamConfig has unexpected key '${key}'`);
     }
   }
   if (obj.maxMode !== undefined && typeof obj.maxMode !== 'boolean') {
     throw new TypeError('CursorUpstreamConfig.maxMode must be a boolean');
+  }
+  if (obj.tabCompletion !== undefined) {
+    const tc = obj.tabCompletion;
+    if (typeof tc !== 'object' || tc === null || Array.isArray(tc)) {
+      throw new TypeError('CursorUpstreamConfig.tabCompletion must be a plain object');
+    }
+    const tco = tc as Record<string, unknown>;
+    for (const key of Object.keys(tco)) {
+      if (key !== 'enabled' && key !== 'model') {
+        throw new TypeError(`CursorUpstreamConfig.tabCompletion has unexpected key '${key}'`);
+      }
+    }
+    if (typeof tco.enabled !== 'boolean') {
+      throw new TypeError('CursorUpstreamConfig.tabCompletion.enabled must be a boolean');
+    }
+    if (tco.model !== undefined && (typeof tco.model !== 'string' || tco.model === '')) {
+      throw new TypeError('CursorUpstreamConfig.tabCompletion.model must be a non-empty string');
+    }
   }
   if (!Array.isArray(obj.accounts)) {
     throw new TypeError('CursorUpstreamConfig.accounts must be an array');

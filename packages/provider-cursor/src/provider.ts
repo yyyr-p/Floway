@@ -1,12 +1,15 @@
 import { ensureCursorAccessToken, mintCursorAccessToken } from './access-token-cache.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
+import { generateCursorChecksum } from './checksum.ts';
+import { applyStops, completionsResponseBody, extractInsertion, languageIdForCompletion, parsePrefixSuffix, streamCppInputForPrefixSuffix } from './completions.ts';
 import { assertCursorUpstreamRecord, type CursorUpstreamConfig } from './config.ts';
 import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
 import { cursorChatCompletionsChain } from './interceptors/chat-completions/index.ts';
 import type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
-import { cursorRawToUpstreamModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
+import { cursorRawToUpstreamModel, cursorTabModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
 import { assertCursorUpstreamState, type CursorUpstreamState } from './state.ts';
+import { callStreamCpp } from './stream-cpp-transport.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import {
@@ -100,7 +103,10 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
         throw err;
       }
       const raw = await fetchCursorCatalog({ accessToken: access.token, timezone: gatewayTimezone(), fetcher, maxMode: config.maxMode });
-      return raw.map(r => cursorRawToUpstreamModel(r, enabledFlags));
+      const models = raw.map(r => cursorRawToUpstreamModel(r, enabledFlags));
+      // Cursor Tab (StreamCpp) is exposed as an extra /v1/completions model.
+      if (config.tabCompletion?.enabled) models.push(cursorTabModel(enabledFlags));
+      return models;
     },
 
     // Cursor bills as a flat-fee subscription; the dashboard reports notional
@@ -147,7 +153,31 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
     callMessages: (_m, _b, _s, opts) => unsupportedStreamResult(opts),
     callResponses: (_m, _b, _s, opts) => unsupportedStreamResult(opts),
     callMessagesCountTokens: (_m, _b, _s, opts) => unsupportedCallResult(opts),
-    callCompletions: (_m, _b, _s, opts) => unsupportedCallResult(opts),
+    // Cursor Tab (StreamCpp) bridged to OpenAI /v1/completions. A completion is
+    // never allowed to hard-fail an editor, so any error / non-clean edit
+    // yields an empty suggestion rather than a 5xx.
+    callCompletions: async (model, body, signal, opts) => {
+      if (!config.tabCompletion?.enabled) return await unsupportedCallResult(opts);
+      const emptyResponse = () => new Response(completionsResponseBody(model.id, ''), { status: 200, headers: { 'content-type': 'application/json' } });
+      const call = (async (): Promise<Response> => {
+        try {
+          const ps = parsePrefixSuffix(typeof body.prompt === 'string' ? body.prompt : '', typeof body.suffix === 'string' ? body.suffix : undefined);
+          const request = streamCppInputForPrefixSuffix(ps, {
+            relativePath: 'completion.txt',
+            languageId: languageIdForCompletion(body),
+            modelName: config.tabCompletion?.model ?? 'fast',
+          });
+          const access = await ensureCursorAccessToken(record.id, accountIdentity.userId, refresh => mintCursorAccessToken(refresh, opts.fetcher, persistRefreshTokenRotation));
+          const checksum = await generateCursorChecksum(access.token);
+          const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request, signal });
+          const insertion = result.ok ? applyStops(extractInsertion(ps, result.rangeToReplace, result.text), body.stop as string | string[] | undefined) : '';
+          return new Response(completionsResponseBody(model.id, insertion), { status: 200, headers: { 'content-type': 'application/json' } });
+        } catch {
+          return emptyResponse();
+        }
+      })();
+      return { response: await opts.recordUpstreamLatency(call), modelKey: model.id };
+    },
     callResponsesCompact: (_m, _b, _s, opts) => unsupportedCompactionResult(opts),
     callEmbeddings: (_m, _b, _s, opts) => unsupportedCallResult(opts),
     callImagesGenerations: (_m, _b, _s, opts) => unsupportedCallResult(opts),

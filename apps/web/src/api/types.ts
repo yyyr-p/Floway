@@ -147,6 +147,12 @@ export interface CursorUpstreamConfig {
   // Operator toggle: send every request in Cursor Max Mode (larger context
   // window, higher usage cost). Absent/false = normal mode.
   maxMode?: boolean;
+  // Operator toggle: expose Cursor Tab (StreamCpp) as an OpenAI /v1/completions
+  // edit-prediction model. `model` is the cpp model name sent upstream.
+  tabCompletion?: {
+    enabled: boolean;
+    model?: string;
+  };
 }
 
 export interface CursorAccessTokenState {
