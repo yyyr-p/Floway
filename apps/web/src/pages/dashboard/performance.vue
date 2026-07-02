@@ -73,6 +73,18 @@ const performanceError = ref<string | null>(initialOverview.data.value.error);
 const performanceLoading = ref(false);
 let performanceRequestId = 0;
 
+// Hidden-series state lives here, keyed by stable dataset label (model name in
+// the By-Model view; p50/p95/p99 in the By-Percentile view), so a legend toggle
+// survives the 60s poll. Chart.js's default legend stores visibility in its
+// internal per-dataset meta, which is discarded when `load()` rebuilds the
+// config with fresh dataset objects; re-deriving `hidden` from this Set instead
+// keeps the toggle stable across refreshes.
+const hiddenSeries = ref(new Set<string>());
+const toggleHiddenSeries = (label: string) => {
+  if (hiddenSeries.value.has(label)) hiddenSeries.value.delete(label);
+  else hiddenSeries.value.add(label);
+};
+
 const load = async () => {
   const requestId = ++performanceRequestId;
   const requestedRange = performanceRange.value;
@@ -136,6 +148,7 @@ const chartConfig = computed<ChartConfiguration<'line'>>(() => {
           return {
             label: group,
             data: bucketKeys.map(k => byBucket.get(k) ?? null),
+            hidden: hiddenSeries.value.has(group),
             borderColor: color,
             backgroundColor: `${color}25`,
             borderWidth: 2,
@@ -150,9 +163,11 @@ const chartConfig = computed<ChartConfiguration<'line'>>(() => {
     : (['p50Ms', 'p95Ms', 'p99Ms'] as PercentileKey[]).map((p, i) => {
         const byBucket = new Map(overview.value.series.filter(r => r.group === performanceModel.value).map(r => [r.bucket, r[p]]));
         const color = chartColor(i);
+        const label = p.replace('Ms', '');
         return {
-          label: p.replace('Ms', ''),
+          label,
           data: bucketKeys.map(k => byBucket.get(k) ?? null),
+          hidden: hiddenSeries.value.has(label),
           borderColor: color,
           backgroundColor: `${color}25`,
           borderWidth: 2,
@@ -180,6 +195,10 @@ const chartConfig = computed<ChartConfiguration<'line'>>(() => {
         legend: {
           position: 'bottom',
           labels: { color: '#9e9e9e', font: { size: 11, family: chartFont.sans }, boxWidth: 12, padding: 16, usePointStyle: true, pointStyle: 'circle' },
+          onClick: (_event, legendItem) => {
+            const label = datasets[legendItem.datasetIndex ?? -1]?.label;
+            if (label !== undefined) toggleHiddenSeries(label);
+          },
         },
         tooltip: {
           backgroundColor: 'rgba(12,16,21,0.95)',
