@@ -416,7 +416,7 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
   // get routed to a private stack so they sit at the axis. Percent metrics
   // fold in for free: their divide-by-zero case already lands as null.
   const datasetEntries = entries
-    .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)?.get(entry.id) ?? null) }))
+    .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)!.get(entry.id) ?? null) }))
     .filter(({ data }) => data.some(v => v !== null));
   const labelWidth = datasetEntries.reduce((max, { entry }) => Math.max(max, entry.label.length), 0);
   return {
@@ -446,7 +446,7 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           tension: 0.3,
           fill: isPercent || zeroLine ? false : 'stack',
           spanGaps: isPercent,
-          stack: zeroLine ? 'zero' : 'main',
+          stack: zeroLine ? 'axis' : 'main',
         };
       }),
     },
