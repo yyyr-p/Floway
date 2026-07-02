@@ -16,6 +16,13 @@ describe('assertCursorUpstreamState', () => {
     expect(() => assertCursorUpstreamState({ accounts: [baseCred] })).not.toThrow();
   });
 
+  test('accepts a modelContext map of observed context windows', () => {
+    expect(() => assertCursorUpstreamState({
+      accounts: [baseCred],
+      modelContext: { 'norm:claude-opus-4-8': { maxTokens: 200000, at: 123 }, 'max:claude-opus-4-8': { maxTokens: 1000000, at: 456 } },
+    })).not.toThrow();
+  });
+
   test.each([
     ['accounts not an array', { accounts: baseCred }],
     ['empty accounts', { accounts: [] }],
@@ -26,6 +33,8 @@ describe('assertCursorUpstreamState', () => {
     ['bad state', { accounts: [{ ...baseCred, state: 'weird' }] }],
     ['missing state_updated_at', { accounts: [{ ...baseCred, state_updated_at: '' }] }],
     ['bad accessToken', { accounts: [{ ...baseCred, accessToken: { token: '', expiresAt: 1, refreshedAt: 'x' } }] }],
+    ['modelContext entry missing maxTokens', { accounts: [baseCred], modelContext: { 'norm:m': { at: 1 } } }],
+    ['modelContext entry with non-number at', { accounts: [baseCred], modelContext: { 'norm:m': { maxTokens: 1, at: 'x' } } }],
   ])('rejects %s', (_label, value) => {
     expect(() => assertCursorUpstreamState(value)).toThrow();
   });

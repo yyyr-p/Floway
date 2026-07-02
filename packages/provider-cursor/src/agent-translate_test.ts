@@ -211,6 +211,16 @@ describe('createAgentTranslator.finalize', () => {
     expect(fin[1]!.usage).toEqual({ prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 });
   });
 
+  test('observedMaxTokens surfaces the checkpoint context window (null until seen)', () => {
+    const t = mk('gpt-4o');
+    expect(t.observedMaxTokens()).toBeNull();
+    t.translate({ type: 'checkpoint', usedTokens: 9000, maxTokens: 262000 });
+    expect(t.observedMaxTokens()).toBe(262000);
+    // A later checkpoint without maxTokens does not clear the observation.
+    t.translate({ type: 'checkpoint', usedTokens: 9100 });
+    expect(t.observedMaxTokens()).toBe(262000);
+  });
+
   test('emits tool_calls finish_reason after an mcp exec', () => {
     const t = mk('gpt-4o');
     t.translate({

@@ -76,6 +76,12 @@ export interface AgentTranslator {
   translate(chunk: AgentStreamChunk): ChatCompletionsStreamEvent[];
   /** Emit the terminal finish_reason chunk. Idempotent. */
   finalize(): ChatCompletionsStreamEvent[];
+  /**
+   * The model's context window as reported by the run's last checkpoint
+   * (ConversationTokenDetails.maxTokens), or null if no checkpoint carried it.
+   * The caller persists this into the per-model context cache.
+   */
+  observedMaxTokens(): number | null;
 }
 
 type FinishReason = 'stop' | 'length' | 'tool_calls' | 'content_filter';
@@ -107,6 +113,9 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
   // ConversationTokenDetails.usedTokens as the authoritative context total.
   let outputTokens = 0;
   let contextUsedTokens: number | null = null;
+  // The model's context window (ConversationTokenDetails.maxTokens), surfaced
+  // to the caller for the per-model context cache.
+  let contextMaxTokens: number | null = null;
 
   const makeEvent = (
     delta: NonNullable<ChatCompletionsStreamEvent['choices'][number]['delta']>,
@@ -234,8 +243,10 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
     case 'checkpoint':
       // ConversationTokenDetails on a conversation checkpoint: usedTokens is
       // the live context occupancy (input + history + output-so-far). Keep the
-      // latest; it becomes the request's authoritative total_tokens.
+      // latest; it becomes the request's authoritative total_tokens. maxTokens
+      // is the model's context window, cached per-model by the caller.
       if (typeof chunk.usedTokens === 'number' && chunk.usedTokens > 0) contextUsedTokens = chunk.usedTokens;
+      if (typeof chunk.maxTokens === 'number' && chunk.maxTokens > 0) contextMaxTokens = chunk.maxTokens;
       return [];
 
     case 'heartbeat':
@@ -320,5 +331,5 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
     return [makeEvent({}, finishReason), usageEvent];
   };
 
-  return { translate, finalize };
+  return { translate, finalize, observedMaxTokens: () => contextMaxTokens };
 }

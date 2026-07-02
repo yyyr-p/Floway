@@ -37,6 +37,18 @@ export interface CursorAccountCredential {
 
 export interface CursorUpstreamState {
   accounts: CursorAccountCredential[];
+  // Observed per-model context windows recovered from the RunSSE stream's
+  // ConversationTokenDetails.maxTokens, keyed by `${maxMode ? 'max' : 'norm'}:${modelId}`
+  // so the two Max-Mode variants of a model cache separately. Best-effort and
+  // TTL-bounded (see context-window.ts): the catalog prefers a fresh entry over
+  // the tooltip-derived heuristic. Absent on legacy rows.
+  modelContext?: Record<string, CursorModelContextEntry>;
+}
+
+// One observed context window: the model's maxTokens and when it was seen.
+export interface CursorModelContextEntry {
+  maxTokens: number;
+  at: number; // unix ms
 }
 
 const ALLOWED_CREDENTIAL_KEYS_MAP: Record<keyof CursorAccountCredential, true> = {
@@ -51,6 +63,7 @@ const ALLOWED_CREDENTIAL_KEYS_MAP: Record<keyof CursorAccountCredential, true> =
 
 const ALLOWED_STATE_KEYS_MAP: Record<keyof CursorUpstreamState, true> = {
   accounts: true,
+  modelContext: true,
 };
 
 const ALLOWED_ACCESS_TOKEN_KEYS_MAP: Record<keyof CursorAccessTokenEntry, true> = {
@@ -136,6 +149,24 @@ const assertCursorAccountCredential = (value: unknown, where: string): void => {
   }
 };
 
+const assertCursorModelContext = (value: unknown, where: string): void => {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new TypeError(`${where} must be a plain object`);
+  }
+  for (const [modelKey, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (typeof entry !== 'object' || entry === null || Array.isArray(entry)) {
+      throw new TypeError(`${where}['${modelKey}'] must be a plain object`);
+    }
+    const obj = entry as Record<string, unknown>;
+    if (typeof obj.maxTokens !== 'number' || !Number.isFinite(obj.maxTokens)) {
+      throw new TypeError(`${where}['${modelKey}'].maxTokens must be a finite number`);
+    }
+    if (typeof obj.at !== 'number' || !Number.isFinite(obj.at)) {
+      throw new TypeError(`${where}['${modelKey}'].at must be a finite number`);
+    }
+  }
+};
+
 export function assertCursorUpstreamState(value: unknown): asserts value is CursorUpstreamState {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new TypeError('CursorUpstreamState must be a plain object');
@@ -154,6 +185,9 @@ export function assertCursorUpstreamState(value: unknown): asserts value is Curs
   }
   for (let i = 0; i < obj.accounts.length; i++) {
     assertCursorAccountCredential(obj.accounts[i], `CursorUpstreamState.accounts[${i}]`);
+  }
+  if (obj.modelContext !== undefined) {
+    assertCursorModelContext(obj.modelContext, 'CursorUpstreamState.modelContext');
   }
 }
 

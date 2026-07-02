@@ -14,12 +14,14 @@ import { AgentTransport } from './agent-transport.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION } from './constants.ts';
+import { contextCacheKey, shouldPersistContext, withObservedContext } from './context-window.ts';
 import { parseCursorImages } from './cursor-images.ts';
 import { cursorWireModelId } from './models.ts';
 import { AgentMode, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
 import { isCursorRateLimited } from './quota.ts';
 import { deriveSessionKey, mintSessionKey, decodeToolCallId } from './session-id.ts';
 import type { CursorAccountCredential } from './state.ts';
+import { assertCursorUpstreamState } from './state.ts';
 import { getDurableHttpSession, type DurableHttpSessionHandle } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent, ChatCompletionsPayload, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
 import { eventFrame, doneFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
@@ -310,8 +312,31 @@ const buildEvents = (
     }
 
     for (const ev of translator.finalize()) yield eventFrame(ev);
+    await persistObservedContext(opts, translator.observedMaxTokens());
     yield doneFrame();
   })();
+};
+
+// Best-effort persist of the run's observed context window into the upstream
+// state, so the next catalog build prefers it over the tooltip heuristic. A
+// per-isolate throttle keeps this off the hot path (at most once per TTL per
+// model+mode); the write is optimistic-concurrency and any miss/error is
+// swallowed — a lost race just re-attempts on a later request.
+const persistObservedContext = async (opts: CallCursorChatCompletionsOptions, maxTokens: number | null): Promise<void> => {
+  if (maxTokens === null) return;
+  const maxMode = opts.maxMode ?? false;
+  const now = Date.now();
+  if (!shouldPersistContext(opts.upstreamId, opts.model.id, maxMode, now)) return;
+  try {
+    const fresh = await getProviderRepo().upstreams.getById(opts.upstreamId);
+    if (fresh?.provider !== 'cursor') return;
+    assertCursorUpstreamState(fresh.state);
+    if (fresh.state.modelContext?.[contextCacheKey(opts.model.id, maxMode)]?.maxTokens === maxTokens) return;
+    const next = withObservedContext(fresh.state, opts.model.id, maxMode, maxTokens, now);
+    await getProviderRepo().upstreams.saveState(opts.upstreamId, next, { expectedState: fresh.state });
+  } catch {
+    // best-effort: concurrency miss / transient error re-attempts next request
+  }
 };
 
 // A cursor turn opens with pre-output control frames — conversation

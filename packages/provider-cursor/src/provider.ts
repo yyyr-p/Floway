@@ -3,6 +3,7 @@ import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
 import { applyStops, completionsResponseBody, extractInsertion, languageIdForCompletion, parsePrefixSuffix, streamCppInputForPrefixSuffix } from './completions.ts';
 import { assertCursorUpstreamRecord, type CursorUpstreamConfig } from './config.ts';
+import { readObservedContext } from './context-window.ts';
 import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
 import { cursorChatCompletionsChain } from './interceptors/chat-completions/index.ts';
 import type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
@@ -105,7 +106,21 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
         throw err;
       }
       const raw = await fetchCursorCatalog({ accessToken: access.token, timezone: gatewayTimezone(), fetcher, maxMode: config.maxMode });
-      const models = raw.map(r => cursorRawToUpstreamModel(r, enabledFlags));
+      // Fresh state carries the per-model context windows observed on prior
+      // RunSSE turns; a read failure just falls back to the tooltip heuristic.
+      let observedState: CursorUpstreamState | null = null;
+      try { observedState = (await readActiveAccount()).state; } catch { observedState = null; }
+      const observedAt = Date.now();
+      const maxMode = config.maxMode ?? false;
+      const models = raw.map(r => {
+        const model = cursorRawToUpstreamModel(r, enabledFlags);
+        // Prefer a real context window observed on the RunSSE stream
+        // (ConversationTokenDetails.maxTokens) over the tooltip-derived
+        // heuristic — it's the authoritative number for the active mode.
+        const observed = observedState ? readObservedContext(observedState, model.id, maxMode, observedAt) : null;
+        if (observed) model.limits = { ...model.limits, max_context_window_tokens: observed };
+        return model;
+      });
       // Cursor Tab (StreamCpp) is exposed as an extra /v1/completions model.
       if (config.tabCompletion?.enabled) models.push(cursorTabModel(enabledFlags));
       return models;
