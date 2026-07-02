@@ -306,9 +306,8 @@ export function createAgentTranslator(opts: TranslatorOptions): AgentTranslator 
     // transient empty turn) is likewise all-zero. In every case the request is
     // still counted — recordUsage logs the bare request row from the non-null
     // usage object.
-    const accountable = finishReason !== 'tool_calls' && contextUsedTokens != null;
-    const total = accountable ? contextUsedTokens : 0;
-    const completion = accountable ? Math.min(outputTokens, total) : 0;
+    const total = finishReason !== 'tool_calls' && contextUsedTokens != null ? contextUsedTokens : 0;
+    const completion = total > 0 ? Math.min(outputTokens, total) : 0;
     const prompt = total - completion;
     const usageEvent: ChatCompletionsStreamEvent = {
       id: opts.id,

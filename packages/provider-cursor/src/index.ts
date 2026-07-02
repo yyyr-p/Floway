@@ -9,8 +9,6 @@ export * from './models.ts';
 export * from './pricing.ts';
 export * from './quota.ts';
 export * from './state.ts';
-export { fetchCursorUsageBuckets } from './usage-sync.ts';
-export type { CursorUsageBucket, FetchCursorUsageOptions } from './usage-sync.ts';
 export { callStreamCpp } from './stream-cpp-transport.ts';
 export type { StreamCppCallResult } from './stream-cpp-transport.ts';
 export type { StreamCppRequestInput } from './proto/stream-cpp.ts';
