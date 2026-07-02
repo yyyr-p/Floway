@@ -220,18 +220,16 @@ const rawEntry = (o: {
 };
 
 describe('fetchCursorBaseModels', () => {
-  test('extracts display name from tooltip heading, stripping the variant parenthetical', async () => {
+  test('uses clientDisplayName for the display name, falling back to the id', async () => {
     const bases = await fetchCursorBaseModels(fetcherOf(() => jsonResponse({
       models: [
-        rawEntry({ name: 'claude-opus-4-8', heading: 'Claude Opus 4.8', clientDisplayName: 'Opus 4.8', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
-        rawEntry({ name: 'claude-sonnet-4-6', heading: 'Claude Sonnet 4.6 (Thinking)', clientDisplayName: 'Sonnet 4.6', variants: [{ slug: 'x', defNonMax: true }] }),
-        rawEntry({ name: 'gpt-5.2', clientDisplayName: 'GPT-5.2', variants: [{ slug: 'y', defNonMax: true }] }), // no heading → fallback
+        rawEntry({ name: 'claude-opus-4-8', clientDisplayName: 'Opus 4.8', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
+        rawEntry({ name: 'gpt-5.2', variants: [{ slug: 'y', defNonMax: true }] }), // no clientDisplayName → id
       ],
     })), noopHeaders);
     const byName = Object.fromEntries(bases.map(b => [b.name, b]));
-    expect(byName['claude-opus-4-8'].displayName).toBe('Claude Opus 4.8');
-    expect(byName['claude-sonnet-4-6'].displayName).toBe('Claude Sonnet 4.6');
-    expect(byName['gpt-5.2'].displayName).toBe('GPT-5.2');
+    expect(byName['claude-opus-4-8'].displayName).toBe('Opus 4.8');
+    expect(byName['gpt-5.2'].displayName).toBe('gpt-5.2');
   });
 
   test('prefers the structured context enum, falls back to tooltip prose', async () => {
@@ -278,7 +276,7 @@ describe('fetchCursorCatalog', () => {
   const opts = (fetcher: Fetcher, maxMode?: boolean) => ({ accessToken: 'tok', timezone: 'UTC', fetcher, maxMode });
   const available = () => jsonResponse({
     models: [
-      rawEntry({ name: 'claude-opus-4-8', heading: 'Claude Opus 4.8', ctxEnum: ['300k', '1m'], effortId: 'effort', efforts: ['low', 'high'], defaultEffort: 'high', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
+      rawEntry({ name: 'claude-opus-4-8', clientDisplayName: 'Opus 4.8', ctxEnum: ['300k', '1m'], effortId: 'effort', efforts: ['low', 'high'], defaultEffort: 'high', variants: [{ slug: 'claude-opus-4-8-high', defNonMax: true }] }),
     ],
   });
 
@@ -287,7 +285,7 @@ describe('fetchCursorCatalog', () => {
     expect(raw).toHaveLength(1);
     const opus = raw[0];
     expect(opus.id).toBe('claude-opus-4-8');
-    expect(opus.display_name).toBe('Claude Opus 4.8');
+    expect(opus.display_name).toBe('Opus 4.8');
     expect(opus.wireModelId).toBe('claude-opus-4-8-high');
     expect(opus.contextWindow).toBe(300_000);
     expect(opus.reasoning).toEqual({ supported: ['low', 'high'], default: 'high' });

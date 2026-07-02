@@ -121,17 +121,6 @@ export const parseContextWindow = (markdown: string): number | null => {
   return m ? scaleTokenCount(m[1].replace(/\s+/g, '')) : null;
 };
 
-// The tooltip's first bold heading is the model's full brand name
-// ("**Claude Opus 4.8**") — richer than clientDisplayName ("Opus 4.8"). The
-// trailing variant parenthetical ("(Fast)", "(Thinking)") is stripped. Null
-// when the tooltip carries no bold heading.
-const tooltipHeading = (markdown: string): string | null => {
-  const m = /^\s*\*\*(.+?)\*\*/.exec(markdown);
-  if (!m) return null;
-  const name = m[1].replace(/\s*\([^)]*\)\s*$/, '').trim();
-  return name.length > 0 ? name : null;
-};
-
 // AvailableModels with useModelParameters=true returns the base-grouped catalog
 // (~32 families, each with a `variants` array, `parameterDefinitions`, per-mode
 // tooltips). Authoritative source for the collapse + capability metadata.
@@ -228,7 +217,7 @@ export const fetchCursorBaseModels = async (
 
     out.push({
       name: entry.name,
-      displayName: tooltipHeading(markdown(entry.tooltipData)) ?? (typeof entry.clientDisplayName === 'string' ? entry.clientDisplayName : entry.name),
+      displayName: typeof entry.clientDisplayName === 'string' ? entry.clientDisplayName : entry.name,
       contextNormal,
       contextMax,
       reasoning,
