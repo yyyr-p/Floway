@@ -719,9 +719,25 @@ export class AgentTransport {
         }
 
         if (turnEnded) {
-          if (!hasStreamedText && pendingAssistantBlobs.length > 0) {
-            for (const blob of pendingAssistantBlobs) {
-              yield { type: 'kv_blob_assistant', blobContent: blob.content };
+          if (pendingAssistantBlobs.length > 0) {
+            if (!hasStreamedText) {
+              // Recovery path: the model streamed no text this turn (an
+              // observed empty continuation), but cursor checkpointed the
+              // answer into KV blobs — surface them so the caller isn't left
+              // with nothing.
+              for (const blob of pendingAssistantBlobs) {
+                yield { type: 'kv_blob_assistant', blobContent: blob.content };
+              }
+            } else {
+              // Discard boundary: the streamed text is the answer and the KV
+              // blob is a redundant checkpoint mirror, so it's dropped to avoid
+              // duplicating the reply. Counted here (no behaviour change) to
+              // quantify how often a discarded blob might carry content beyond
+              // the stream — the theoretical loss when a turn is truncated.
+              const chars = pendingAssistantBlobs.reduce((n, b) => n + b.content.length, 0);
+              console.info(
+                `Cursor KV-blob discard: req=${this.currentRequestId ?? '?'} blobs=${pendingAssistantBlobs.length} chars=${chars} (streamed text present)`,
+              );
             }
           }
           yield { type: 'done' };
