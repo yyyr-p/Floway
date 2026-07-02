@@ -123,17 +123,21 @@ export const streamCppInputForV0615 = (parsed: ParsedV0615, modelName: string): 
   };
 };
 
+// See applyRewrite in completions.ts: splice on characters so the replaced
+// region contains exactly as many newlines as `text`, consuming the trailing
+// partial content line only when `text` has no final newline.
 const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
   if (!range) return text;
   const lines = contents.split('\n');
   const start = range.startLineNumber - 1;
-  const end = range.endLineNumberInclusive - 1;
   if (start < 0 || start > lines.length) return contents;
   let startOff = 0;
   for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
+  const newlines = (text.match(/\n/g) ?? []).length;
   let endOff = startOff;
-  for (let i = start; i <= end && i < lines.length; i++) endOff += lines[i].length + 1;
-  endOff = Math.min(endOff, contents.length);
+  let seen = 0;
+  while (endOff < contents.length && seen < newlines) { if (contents[endOff] === '\n') seen += 1; endOff += 1; }
+  if (!text.endsWith('\n')) { while (endOff < contents.length && contents[endOff] !== '\n') endOff += 1; }
   return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 

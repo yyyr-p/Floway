@@ -68,14 +68,15 @@ describe('streamCppInputForZeta', () => {
 
 describe('renderZetaV0318Output', () => {
   const p = parseZetaV0318(zetaPrompt)!;
-  // Editable region occupies file lines 2..5 (1-indexed inclusive).
+  // Editable region occupies file lines 2..5. Cursor's end line co-varies with
+  // text's trailing newline; the splice keys off newline counts, not this value.
   const startLine = codeBefore.split('\n').length; // 2
   const editableLines = editable.endsWith('\n') ? editable.split('\n').length - 1 : editable.split('\n').length;
-  const endLine = startLine + editableLines - 1;
+  const endLine = startLine + editableLines; // Cursor's end line for a full-region rewrite
 
   test('emits marker_1…marker_K span with the rewritten region + cursor + end token', () => {
     const newEditable = editable.replace('let c = a', 'let c = a + b;');
-    const out = renderZetaV0318Output(p, { startLineNumber: startLine, endLineNumberInclusive: endLine }, newEditable)!;
+    const out = renderZetaV0318Output(p, { startLineNumber: startLine, endLine }, newEditable)!;
     expect(out.startsWith('<|marker_1|>')).toBe(true);
     expect(out.endsWith(`<|marker_3|>${ZETA_END_MARKER}`)).toBe(true);
     expect(out).toContain('<|user_cursor|>');
@@ -87,18 +88,18 @@ describe('renderZetaV0318Output', () => {
 
   test('cursor marker sits at the end of the change span', () => {
     const newEditable = editable.replace('let c = a', 'let c = a + b;');
-    const out = renderZetaV0318Output(p, { startLineNumber: startLine, endLineNumberInclusive: endLine }, newEditable)!;
+    const out = renderZetaV0318Output(p, { startLineNumber: startLine, endLine }, newEditable)!;
     expect(out).toContain('let c = a + b;<|user_cursor|>');
   });
 
   test('no in-region change → null (no suggestion)', () => {
-    const out = renderZetaV0318Output(p, { startLineNumber: startLine, endLineNumberInclusive: endLine }, editable);
+    const out = renderZetaV0318Output(p, { startLineNumber: startLine, endLine }, editable);
     expect(out).toBeNull();
   });
 
   test('edit outside the region (breaks codeBefore) → null', () => {
     // Rewrite the whole file changing codeBefore — codeAfter/codeBefore no longer match.
-    const out = renderZetaV0318Output(p, { startLineNumber: 1, endLineNumberInclusive: 1 }, 'fn changed() {');
+    const out = renderZetaV0318Output(p, { startLineNumber: 1, endLine: 2 }, 'fn changed() {');
     expect(out).toBeNull();
   });
 

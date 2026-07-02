@@ -69,14 +69,17 @@ export const encodeStreamCppRequest = (input: StreamCppRequestInput): Uint8Array
   return concatBytes(...parts);
 };
 
-// range_to_replace (field 11) is a 2-field LineRange on the wire — field 1 is
-// the start line, field 2 the inclusive end line, both 1-indexed varints. The
-// cursor-unchained reverse-engineered proto declares field 11 as a 4-field
-// RangeToReplace (start/end line + start/end column); a live capture of the
-// gcpp endpoint shows only fields {1,2} present, so this is the real shape.
+// range_to_replace (field 11) is a 2-field LineRange on the wire — field 1 the
+// start line, field 2 the end line, both 1-indexed. A live capture shows only
+// fields {1,2} (cursor-unchained's proto declares a 4-field RangeToReplace with
+// columns, but no column fields appear on the wire). The end line's
+// inclusive/exclusive meaning is NOT fixed: it co-varies with whether `text`
+// ends in a newline, so the splice in applyRewrite ignores this value and
+// instead balances newline counts (see applyRewrite in completions.ts). We keep
+// the field decoded for reference and future telemetry.
 export interface StreamCppLineRange {
   startLineNumber: number;
-  endLineNumberInclusive: number;
+  endLine: number;
 }
 
 export interface StreamCppResponseFrame {
@@ -101,10 +104,10 @@ export const decodeStreamCppResponse = (bytes: Uint8Array): StreamCppResponseFra
     case 1: if (field.wireType === 2) frame.text = new TextDecoder().decode(asBytes(field.value)); break;
     case 4: frame.doneStream = asNumber(field.value) !== 0; break;
     case 11: if (field.wireType === 2) {
-      const range: StreamCppLineRange = { startLineNumber: 0, endLineNumberInclusive: 0 };
+      const range: StreamCppLineRange = { startLineNumber: 0, endLine: 0 };
       for (const f of parseProtoFields(asBytes(field.value))) {
         if (f.fieldNumber === 1) range.startLineNumber = asNumber(f.value);
-        else if (f.fieldNumber === 2) range.endLineNumberInclusive = asNumber(f.value);
+        else if (f.fieldNumber === 2) range.endLine = asNumber(f.value);
       }
       frame.rangeToReplace = range;
       break;

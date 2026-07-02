@@ -65,11 +65,11 @@ describe('decodeStreamCppResponse', () => {
   test('reads streamed text (field 1)', () => {
     expect(decodeStreamCppResponse(encodeStringField(1, 'return ')).text).toBe('return ');
   });
-  test('reads range_to_replace (field 11) as a 1-indexed inclusive LineRange', () => {
-    // LineRange { start_line_number=1, end_line_number_inclusive=2 }
-    const range = respFrame([encodeInt32Field(1, 1), encodeInt32Field(2, 2)]);
+  test('reads range_to_replace (field 11) as a LineRange with exclusive end', () => {
+    // LineRange { start_line=1, end_line=3 } → replace 1-indexed lines [1, 3)
+    const range = respFrame([encodeInt32Field(1, 1), encodeInt32Field(2, 3)]);
     const decoded = decodeStreamCppResponse(encodeMessageField(11, range));
-    expect(decoded.rangeToReplace).toEqual({ startLineNumber: 1, endLineNumberInclusive: 2 });
+    expect(decoded.rangeToReplace).toEqual({ startLineNumber: 1, endLine: 3 });
   });
   test('reads done_stream (field 4)', () => {
     const bytes = respFrame([encodeFieldTag(4, 0), new Uint8Array([1])]);

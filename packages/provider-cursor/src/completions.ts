@@ -71,22 +71,28 @@ export const streamCppInputForPrefixSuffix = (ps: PrefixSuffix, opts: { relative
   };
 };
 
-// Apply StreamCpp's rewritten-region `text` to the original file, replacing the
-// 1-indexed inclusive `range` (whole file when no range was emitted). Operates
-// on character offsets so `text` is spliced in verbatim — Cursor's replacement
-// carries the trailing newline of its last line, which a line-array splice
-// would drop when the range reaches the end of the file.
+// Apply StreamCpp's rewritten-region `text` to the original file (whole file
+// when no range was emitted). Cursor's `text` restates the region's new content
+// starting at `startLineNumber`; the invariant that holds across captures is
+// that the region it replaces contains exactly as many line breaks as `text`.
+// So we splice on characters: advance from the start line past N newlines
+// (N = newlines in `text`), and when `text` has no trailing newline its last
+// line is partial, so also consume the remainder of that content line. This
+// keeps newline count balanced — neither swallowing a following line nor
+// duplicating the last one — regardless of the end line's inclusive/exclusive
+// convention. (`range.endLine` is retained for reference/telemetry.)
 export const applyRewrite = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
   if (!range) return text;
   const lines = contents.split('\n');
   const start = range.startLineNumber - 1;
-  const end = range.endLineNumberInclusive - 1;
   if (start < 0 || start > lines.length) return contents;
   let startOff = 0;
   for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
+  const newlines = (text.match(/\n/g) ?? []).length;
   let endOff = startOff;
-  for (let i = start; i <= end && i < lines.length; i++) endOff += lines[i].length + 1;
-  endOff = Math.min(endOff, contents.length);
+  let seen = 0;
+  while (endOff < contents.length && seen < newlines) { if (contents[endOff] === '\n') seen += 1; endOff += 1; }
+  if (!text.endsWith('\n')) { while (endOff < contents.length && contents[endOff] !== '\n') endOff += 1; }
   return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 

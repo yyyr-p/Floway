@@ -33,11 +33,25 @@ describe('cursorAtBoundary', () => {
 });
 
 describe('applyRewrite', () => {
-  test('replaces a 1-indexed inclusive line range', () => {
-    expect(applyRewrite('a\nb\nc', { startLineNumber: 2, endLineNumberInclusive: 2 }, 'B\n')).toBe('a\nB\nc');
+  test('replaces a single line (text ends in newline)', () => {
+    expect(applyRewrite('a\nb\nc', { startLineNumber: 2, endLine: 3 }, 'B\n')).toBe('a\nB\nc');
   });
   test('no range → replaces the whole file verbatim', () => {
     expect(applyRewrite('a\nb', undefined, 'x\ny\n')).toBe('x\ny\n');
+  });
+  // Regressions for the observed Zed bugs: the replaced span must contain
+  // exactly as many newlines as `text`, so the end line's inclusive/exclusive
+  // ambiguity never swallows a following line or duplicates the last one.
+  test('text without trailing newline does not duplicate the landing line', () => {
+    // Restate lines 1-6 as-is (no trailing newline) over a 6-line-then-blanks file.
+    const file = 'def f():\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n    e = 5\n\n\nf()\n';
+    const text = 'def f():\n    a = 1\n    b = 2\n    c = 3\n    d = 4\n    e = 5';
+    expect(applyRewrite(file, { startLineNumber: 1, endLine: 6 }, text)).toBe(file);
+  });
+  test('text with trailing newline does not swallow the following blank line', () => {
+    const file = 'def f():\n    a = 1\n    b = 2\n\n\nf()\n';
+    const text = '    a = 1\n    b = 2\n';
+    expect(applyRewrite(file, { startLineNumber: 2, endLine: 4 }, text)).toBe(file);
   });
 });
 

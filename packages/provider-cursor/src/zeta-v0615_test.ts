@@ -85,14 +85,14 @@ describe('renderV0615Output', () => {
   const newExcerpt = excerpt.replace('    y\n', '    y = 1;\n');
 
   test('emits a marker-bounded span + end token, cursor at the change', () => {
-    const out = renderV0615Output(p, { startLineNumber: 5, endLineNumberInclusive: 5 }, '    y = 1;\n')!;
+    const out = renderV0615Output(p, { startLineNumber: 5, endLine: 6 }, '    y = 1;\n')!;
     expect(out.endsWith(ZETA_END_MARKER)).toBe(true);
     expect(out).toMatch(/^<\|marker_[A-Z]{4}\|>\n/);
     expect(out).toContain('<|user_cursor|>');
   });
 
   test('a simulated Zed parse (id→offset lookup, replace span) reconstructs the new excerpt', () => {
-    const out = renderV0615Output(p, { startLineNumber: 5, endLineNumberInclusive: 5 }, '    y = 1;\n')!;
+    const out = renderV0615Output(p, { startLineNumber: 5, endLine: 6 }, '    y = 1;\n')!;
     const body = out.slice(0, out.length - ZETA_END_MARKER.length);
     // pair the two markers, take content between them, strip a leading newline + cursor
     const tags = [...body.matchAll(/<\|marker_([A-Z]{4})\|>/g)];
@@ -111,6 +111,6 @@ describe('renderV0615Output', () => {
   });
 
   test('unchanged excerpt → null', () => {
-    expect(renderV0615Output(p, { startLineNumber: 5, endLineNumberInclusive: 5 }, '    y\n')).toBeNull();
+    expect(renderV0615Output(p, { startLineNumber: 5, endLine: 6 }, '    y\n')).toBeNull();
   });
 });

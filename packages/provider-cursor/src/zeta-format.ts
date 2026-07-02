@@ -157,21 +157,25 @@ export const streamCppInputForZeta = (parsed: ParsedZeta, modelName: string): St
   ...(parsed.diffHistory.length > 0 ? { diffHistory: parsed.diffHistory } : {}),
 });
 
-// Apply StreamCpp's rewritten-region text to the whole file, replacing the
-// 1-indexed inclusive line range (whole file when no range was emitted).
-// Character-offset based so Cursor's replacement (which carries its last line's
-// trailing newline) splices in verbatim.
+// Apply StreamCpp's rewritten-region text to the whole file (whole file when no
+// range was emitted). Splice on characters so the region replaced contains
+// exactly as many newlines as `text`: advance from the start line past N
+// newlines (N = newlines in `text`), and when `text` has no trailing newline
+// also consume the remainder of the final content line it lands on. This keeps
+// newline count balanced regardless of the end line's inclusive/exclusive
+// convention (see applyRewrite in completions.ts for the full rationale).
 const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
   if (!range) return text;
   const lines = contents.split('\n');
   const start = range.startLineNumber - 1;
-  const end = range.endLineNumberInclusive - 1;
   if (start < 0 || start > lines.length) return contents;
   let startOff = 0;
   for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
+  const newlines = (text.match(/\n/g) ?? []).length;
   let endOff = startOff;
-  for (let i = start; i <= end && i < lines.length; i++) endOff += lines[i].length + 1;
-  endOff = Math.min(endOff, contents.length);
+  let seen = 0;
+  while (endOff < contents.length && seen < newlines) { if (contents[endOff] === '\n') seen += 1; endOff += 1; }
+  if (!text.endsWith('\n')) { while (endOff < contents.length && contents[endOff] !== '\n') endOff += 1; }
   return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 
