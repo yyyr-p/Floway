@@ -69,6 +69,11 @@ export const encodeStreamCppRequest = (input: StreamCppRequestInput): Uint8Array
   return concatBytes(...parts);
 };
 
+// range_to_replace (field 11) is a 2-field LineRange on the wire — field 1 is
+// the start line, field 2 the inclusive end line, both 1-indexed varints. The
+// cursor-unchained reverse-engineered proto declares field 11 as a 4-field
+// RangeToReplace (start/end line + start/end column); a live capture of the
+// gcpp endpoint shows only fields {1,2} present, so this is the real shape.
 export interface StreamCppLineRange {
   startLineNumber: number;
   endLineNumberInclusive: number;
