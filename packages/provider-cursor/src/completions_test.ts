@@ -53,6 +53,13 @@ describe('applyRewrite', () => {
     const text = '    a = 1\n    b = 2\n';
     expect(applyRewrite(file, { startLineNumber: 2, endLine: 4 }, text)).toBe(file);
   });
+  test('insertion (text longer than the span) does not eat the following line', () => {
+    // Captured INS1: adding a route must preserve `export default routes;`.
+    const file = "const routes = {\n  home: '/',\n  about: '/about',\n};\n\nexport default routes;\n";
+    const text = "const routes = {\n  home: '/',\n  about: '/about',\n  contact: '/contact',\n};\n\n";
+    const want = "const routes = {\n  home: '/',\n  about: '/about',\n  contact: '/contact',\n};\n\nexport default routes;\n";
+    expect(applyRewrite(file, { startLineNumber: 1, endLine: 6 }, text)).toBe(want);
+  });
 });
 
 describe('extractInsertion', () => {

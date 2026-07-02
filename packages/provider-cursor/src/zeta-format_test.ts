@@ -106,4 +106,23 @@ describe('renderZetaV0318Output', () => {
   test('empty text → null', () => {
     expect(renderZetaV0318Output(p, undefined, '')).toBeNull();
   });
+
+  test('multi-line insertion: preserves the trailing line and places the cursor after the inserted line', () => {
+    // Captured INS1 shape: object literal gains a new entry; the region rewrite
+    // spans the object, text ends in a newline. Cursor must not jump past `};`.
+    const cb = 'const routes = {\n';
+    const ca = '\nexport default routes;\n';
+    const prompt =
+      `<[fim-suffix]>\n${ca}<[fim-prefix]><filename>r.js\n` +
+      '<filename>edit_history\n--- a/r.js\n+++ b/r.js\n@@\n home\n+ x\n' +
+      `<filename>r.js\n${cb}<|marker_1|>  home: '/',\n  about: '/about',<|user_cursor|>\n};\n<|marker_2|>\n<[fim-middle]>`;
+    const parsed = parseZetaV0318(prompt)!;
+    const text = "const routes = {\n  home: '/',\n  about: '/about',\n  contact: '/contact',\n};\n\n";
+    const out = renderZetaV0318Output(parsed, { startLineNumber: 1, endLine: 6 }, text)!;
+    // cursor sits before `};`, after the inserted `  contact: '/contact',` line
+    expect(out).toContain("  contact: '/contact',\n<|user_cursor|>};");
+    // the region rewrite (cursor stripped) is the new object body (region keeps its trailing newline)
+    const inner = out.slice('<|marker_1|>'.length, out.lastIndexOf('<|marker_2|>')).replace('<|user_cursor|>', '');
+    expect(inner).toBe("  home: '/',\n  about: '/about',\n  contact: '/contact',\n};\n");
+  });
 });

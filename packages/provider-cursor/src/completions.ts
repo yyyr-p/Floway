@@ -72,15 +72,15 @@ export const streamCppInputForPrefixSuffix = (ps: PrefixSuffix, opts: { relative
 };
 
 // Apply StreamCpp's rewritten-region `text` to the original file (whole file
-// when no range was emitted). Cursor's `text` restates the region's new content
-// starting at `startLineNumber`; the invariant that holds across captures is
-// that the region it replaces contains exactly as many line breaks as `text`.
-// So we splice on characters: advance from the start line past N newlines
-// (N = newlines in `text`), and when `text` has no trailing newline its last
-// line is partial, so also consume the remainder of that content line. This
-// keeps newline count balanced — neither swallowing a following line nor
-// duplicating the last one — regardless of the end line's inclusive/exclusive
-// convention. (`range.endLine` is retained for reference/telemetry.)
+// when no range was emitted). The removed span is bounded by `range` — NOT by
+// text's newline count — so an insertion (where `text` has more lines than the
+// span) does not consume following lines. `endLine`'s inclusive/exclusive sense
+// is inferred from `text`: a trailing newline means the edit ends at a line
+// boundary (exclusive — stop at the start of line `endLine`), otherwise the
+// last line is partial (inclusive — through line `endLine`'s content). Verified
+// against live captures: {2,7}+trailing-\n replaced lines 2-6; {1,6} and a
+// no-trailing-\n extractKey case were inclusive; an insertion sent {1,6} with a
+// longer `text` and must preserve the line after the object.
 export const applyRewrite = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
   if (!range) return text;
   const lines = contents.split('\n');
@@ -88,11 +88,12 @@ export const applyRewrite = (contents: string, range: StreamCppLineRange | undef
   if (start < 0 || start > lines.length) return contents;
   let startOff = 0;
   for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
-  const newlines = (text.match(/\n/g) ?? []).length;
-  let endOff = startOff;
-  let seen = 0;
-  while (endOff < contents.length && seen < newlines) { if (contents[endOff] === '\n') seen += 1; endOff += 1; }
-  if (!text.endsWith('\n')) { while (endOff < contents.length && contents[endOff] !== '\n') endOff += 1; }
+  let endIdx = range.endLine - 1;
+  if (endIdx < start) endIdx = start;
+  let endOff = 0;
+  for (let i = 0; i < endIdx && i < lines.length; i++) endOff += lines[i].length + 1;
+  if (!text.endsWith('\n') && endIdx < lines.length) endOff += lines[endIdx].length;
+  endOff = Math.min(Math.max(endOff, startOff), contents.length);
   return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 

@@ -158,12 +158,9 @@ export const streamCppInputForZeta = (parsed: ParsedZeta, modelName: string): St
 });
 
 // Apply StreamCpp's rewritten-region text to the whole file (whole file when no
-// range was emitted). Splice on characters so the region replaced contains
-// exactly as many newlines as `text`: advance from the start line past N
-// newlines (N = newlines in `text`), and when `text` has no trailing newline
-// also consume the remainder of the final content line it lands on. This keeps
-// newline count balanced regardless of the end line's inclusive/exclusive
-// convention (see applyRewrite in completions.ts for the full rationale).
+// range was emitted). The removed span is bounded by `range` so insertions
+// don't eat following lines; `endLine`'s inclusive/exclusive sense is inferred
+// from text's trailing newline (see applyRewrite in completions.ts).
 const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
   if (!range) return text;
   const lines = contents.split('\n');
@@ -171,16 +168,30 @@ const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefi
   if (start < 0 || start > lines.length) return contents;
   let startOff = 0;
   for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
-  const newlines = (text.match(/\n/g) ?? []).length;
-  let endOff = startOff;
-  let seen = 0;
-  while (endOff < contents.length && seen < newlines) { if (contents[endOff] === '\n') seen += 1; endOff += 1; }
-  if (!text.endsWith('\n')) { while (endOff < contents.length && contents[endOff] !== '\n') endOff += 1; }
+  let endIdx = range.endLine - 1;
+  if (endIdx < start) endIdx = start;
+  let endOff = 0;
+  for (let i = 0; i < endIdx && i < lines.length; i++) endOff += lines[i].length + 1;
+  if (!text.endsWith('\n') && endIdx < lines.length) endOff += lines[endIdx].length;
+  endOff = Math.min(Math.max(endOff, startOff), contents.length);
   return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 
 const commonPrefixLen = (a: string, b: string): number => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
 const commonSuffixLen = (a: string, b: string, cap: number): number => { let i = 0; while (i < cap && a[a.length - 1 - i] === b[b.length - 1 - i]) i++; return i; };
+
+// Offset in `newText` at the end of the change vs `oldText` (after the common
+// prefix / before the common suffix). A lone trailing-newline difference is
+// ignored first — Cursor's rewrite often drops the region's final newline, and
+// letting that zero the common suffix would push the cursor to the very end of
+// the region (past the real edit). Exported for the V0615 renderer.
+export const cursorAtChangeEnd = (oldText: string, newText: string): number => {
+  const o = oldText.endsWith('\n') ? oldText.slice(0, -1) : oldText;
+  const n = newText.endsWith('\n') ? newText.slice(0, -1) : newText;
+  const cp = commonPrefixLen(o, n);
+  const cs = commonSuffixLen(o, n, Math.min(o.length, n.length) - cp);
+  return n.length - cs;
+};
 
 // Render Cursor's edit as a Zeta V0318 output span. Applies Cursor's
 // (text, range_to_replace) to the file, extracts the new editable region (must
@@ -199,9 +210,7 @@ export const renderZetaV0318Output = (parsed: ParsedZeta, range: StreamCppLineRa
   }
   if (newEditable === parsed.editable) return null;
 
-  const cp = commonPrefixLen(parsed.editable, newEditable);
-  const cs = commonSuffixLen(parsed.editable, newEditable, Math.min(parsed.editable.length, newEditable.length) - cp);
-  const cursorAt = newEditable.length - cs;
+  const cursorAt = cursorAtChangeEnd(parsed.editable, newEditable);
   const withCursor = newEditable.slice(0, cursorAt) + CURSOR + newEditable.slice(cursorAt);
 
   return `<|marker_1|>${withCursor}<|marker_${parsed.markerCount}|>${ZETA_END_MARKER}`;

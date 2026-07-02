@@ -25,7 +25,7 @@
  */
 
 import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
-import { ZETA_END_MARKER } from './zeta-format.ts';
+import { cursorAtChangeEnd, ZETA_END_MARKER } from './zeta-format.ts';
 
 const FIM_PREFIX = '<[fim-prefix]>';
 const FIM_MIDDLE = '<[fim-middle]>';
@@ -123,9 +123,9 @@ export const streamCppInputForV0615 = (parsed: ParsedV0615, modelName: string): 
   };
 };
 
-// See applyRewrite in completions.ts: splice on characters so the replaced
-// region contains exactly as many newlines as `text`, consuming the trailing
-// partial content line only when `text` has no final newline.
+// See applyRewrite in completions.ts: removal bounded by `range` (so insertions
+// don't eat following lines), with end line inclusive/exclusive inferred from
+// whether `text` ends in a newline.
 const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
   if (!range) return text;
   const lines = contents.split('\n');
@@ -133,11 +133,12 @@ const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefi
   if (start < 0 || start > lines.length) return contents;
   let startOff = 0;
   for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
-  const newlines = (text.match(/\n/g) ?? []).length;
-  let endOff = startOff;
-  let seen = 0;
-  while (endOff < contents.length && seen < newlines) { if (contents[endOff] === '\n') seen += 1; endOff += 1; }
-  if (!text.endsWith('\n')) { while (endOff < contents.length && contents[endOff] !== '\n') endOff += 1; }
+  let endIdx = range.endLine - 1;
+  if (endIdx < start) endIdx = start;
+  let endOff = 0;
+  for (let i = 0; i < endIdx && i < lines.length; i++) endOff += lines[i].length + 1;
+  if (!text.endsWith('\n') && endIdx < lines.length) endOff += lines[endIdx].length;
+  endOff = Math.min(Math.max(endOff, startOff), contents.length);
   return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 
@@ -188,7 +189,6 @@ export const renderV0615Output = (parsed: ParsedV0615, range: StreamCppLineRange
   const newText = applyRewriteToFile(oldText, range, text);
   if (newText === oldText) return null;
 
-  const cs = commonSuffixLen(oldText, newText, Math.min(oldText.length, newText.length));
-  const cursorInNew = newText.length - cs; // place cursor at the end of the change
+  const cursorInNew = cursorAtChangeEnd(oldText, newText); // trailing-newline-insensitive
   return encodeFromOldAndNew(oldText, newText, snip.markers, cursorInNew) + ZETA_END_MARKER;
 };
