@@ -36,8 +36,8 @@ describe('applyRewrite', () => {
   test('replaces a 1-indexed inclusive line range', () => {
     expect(applyRewrite('a\nb\nc', { startLineNumber: 2, endLineNumberInclusive: 2 }, 'B\n')).toBe('a\nB\nc');
   });
-  test('no range → replaces the whole file', () => {
-    expect(applyRewrite('a\nb', undefined, 'x\ny\n')).toBe('x\ny');
+  test('no range → replaces the whole file verbatim', () => {
+    expect(applyRewrite('a\nb', undefined, 'x\ny\n')).toBe('x\ny\n');
   });
 });
 

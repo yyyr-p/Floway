@@ -124,12 +124,17 @@ export const streamCppInputForV0615 = (parsed: ParsedV0615, modelName: string): 
 };
 
 const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
+  if (!range) return text;
   const lines = contents.split('\n');
-  const start = (range?.startLineNumber ?? 1) - 1;
-  const end = (range?.endLineNumberInclusive ?? lines.length) - 1;
+  const start = range.startLineNumber - 1;
+  const end = range.endLineNumberInclusive - 1;
   if (start < 0 || start > lines.length) return contents;
-  const replacement = text.endsWith('\n') ? text.slice(0, -1) : text;
-  return [...lines.slice(0, start), ...replacement.split('\n'), ...lines.slice(Math.max(start, end) + 1)].join('\n');
+  let startOff = 0;
+  for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
+  let endOff = startOff;
+  for (let i = start; i <= end && i < lines.length; i++) endOff += lines[i].length + 1;
+  endOff = Math.min(endOff, contents.length);
+  return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 
 const commonPrefixLen = (a: string, b: string): number => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };

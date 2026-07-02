@@ -72,28 +72,40 @@ export const streamCppInputForPrefixSuffix = (ps: PrefixSuffix, opts: { relative
 };
 
 // Apply StreamCpp's rewritten-region `text` to the original file, replacing the
-// 1-indexed inclusive `range` (whole file when no range was emitted).
+// 1-indexed inclusive `range` (whole file when no range was emitted). Operates
+// on character offsets so `text` is spliced in verbatim — Cursor's replacement
+// carries the trailing newline of its last line, which a line-array splice
+// would drop when the range reaches the end of the file.
 export const applyRewrite = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
+  if (!range) return text;
   const lines = contents.split('\n');
-  const start = (range?.startLineNumber ?? 1) - 1;
-  const end = (range?.endLineNumberInclusive ?? lines.length) - 1;
+  const start = range.startLineNumber - 1;
+  const end = range.endLineNumberInclusive - 1;
   if (start < 0 || start > lines.length) return contents;
-  const replacement = text.endsWith('\n') ? text.slice(0, -1) : text;
-  return [...lines.slice(0, start), ...replacement.split('\n'), ...lines.slice(Math.max(start, end) + 1)].join('\n');
+  let startOff = 0;
+  for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
+  let endOff = startOff;
+  for (let i = start; i <= end && i < lines.length; i++) endOff += lines[i].length + 1;
+  endOff = Math.min(endOff, contents.length);
+  return contents.slice(0, startOff) + text + contents.slice(endOff);
 };
 
 // Reduce the rewritten file to the pure insertion at the cursor: the text that
 // sits between the original prefix and suffix. Returns '' when the model's edit
 // isn't a clean cursor-anchored insertion (it rewrote prefix/suffix) — the FIM
-// client then simply shows no suggestion.
+// client then simply shows no suggestion. Tolerates a trailing-newline mismatch
+// at EOF (Cursor's rewrite carries the final line's newline; the client's
+// suffix may or may not).
 export const extractInsertion = (ps: PrefixSuffix, range: StreamCppLineRange | undefined, text: string): string => {
   if (!text) return '';
   const rewritten = applyRewrite(ps.prefix + ps.suffix, range, text);
   if (!rewritten.startsWith(ps.prefix)) return '';
   let mid = rewritten.slice(ps.prefix.length);
   if (ps.suffix) {
-    if (!mid.endsWith(ps.suffix)) return '';
-    mid = mid.slice(0, mid.length - ps.suffix.length);
+    if (mid.endsWith(ps.suffix)) mid = mid.slice(0, mid.length - ps.suffix.length);
+    else if (mid.endsWith(`${ps.suffix}\n`)) mid = mid.slice(0, mid.length - ps.suffix.length - 1);
+    else if (ps.suffix.endsWith('\n') && mid.endsWith(ps.suffix.slice(0, -1))) mid = mid.slice(0, mid.length - ps.suffix.length + 1);
+    else return '';
   }
   return mid;
 };
