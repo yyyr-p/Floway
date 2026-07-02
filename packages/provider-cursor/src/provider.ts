@@ -11,6 +11,7 @@ import { pricingForCursorModelKey } from './pricing.ts';
 import { assertCursorUpstreamState, type CursorUpstreamState } from './state.ts';
 import { callStreamCpp } from './stream-cpp-transport.ts';
 import { detectPromptFormat, parseZetaV0318, renderZetaV0318Output, streamCppInputForZeta } from './zeta-format.ts';
+import { parseZetaV0615, renderV0615Output, streamCppInputForV0615 } from './zeta-v0615.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import {
@@ -179,6 +180,16 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
             const { access, checksum } = await withToken();
             const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request: streamCppInputForZeta(parsed, modelName), signal });
             const rendered = result.ok ? renderZetaV0318Output(parsed, result.rangeToReplace, result.text) : null;
+            return new Response(completionsResponseBody(model.id, rendered ?? ''), { status: 200, headers: { 'content-type': 'application/json' } });
+          }
+
+          // Zeta V0615 hashed-regions path (custom clients only — not a Zed GUI
+          // option). Same shape as V0318 but the region is one file excerpt.
+          const parsed615 = format === 'zeta-v0615' ? parseZetaV0615(prompt) : null;
+          if (parsed615) {
+            const { access, checksum } = await withToken();
+            const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request: streamCppInputForV0615(parsed615, modelName), signal });
+            const rendered = result.ok ? renderV0615Output(parsed615, result.rangeToReplace, result.text) : null;
             return new Response(completionsResponseBody(model.id, rendered ?? ''), { status: 200, headers: { 'content-type': 'application/json' } });
           }
 
