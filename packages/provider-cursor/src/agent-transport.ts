@@ -485,6 +485,7 @@ export class AgentTransport {
 
     const pendingAssistantBlobs: Array<{ blobId: string; content: string }> = [];
     let hasStreamedText = false;
+    let streamedTextChars = 0;
 
     try {
       let buffer = initialBuffer;
@@ -540,6 +541,7 @@ export class AgentTransport {
 
                   if (parsed.text) {
                     hasStreamedText = true;
+                    streamedTextChars += parsed.text.length;
                     markProgress();
                     yield { type: 'text', content: parsed.text };
                   }
@@ -731,13 +733,20 @@ export class AgentTransport {
             } else {
               // Discard boundary: the streamed text is the answer and the KV
               // blob is a redundant checkpoint mirror, so it's dropped to avoid
-              // duplicating the reply. Counted here (no behaviour change) to
-              // quantify how often a discarded blob might carry content beyond
-              // the stream — the theoretical loss when a turn is truncated.
-              const chars = pendingAssistantBlobs.reduce((n, b) => n + b.content.length, 0);
-              console.info(
-                `Cursor KV-blob discard: req=${this.currentRequestId ?? '?'} blobs=${pendingAssistantBlobs.length} chars=${chars} (streamed text present)`,
-              );
+              // duplicating the reply. Measured over batches of long kimi-k2.5
+              // conversations, this fires on essentially every turn and the blob
+              // is a byte-for-byte mirror of the stream (zero content lost). So
+              // we stay silent on the normal case and only warn if a blob ever
+              // carries MORE than the stream did — the one shape where the drop
+              // would lose real content (e.g. a stream truncated mid-answer).
+              const blobChars = pendingAssistantBlobs.reduce((n, b) => n + b.content.length, 0);
+              if (blobChars > streamedTextChars) {
+                console.warn(
+                  `Cursor KV-blob exceeds stream: req=${this.currentRequestId ?? '?'} ` +
+                    `blobChars=${blobChars} streamedChars=${streamedTextChars} ` +
+                    `blobs=${pendingAssistantBlobs.length} — discarded blob carried content beyond the stream`,
+                );
+              }
             }
           }
           yield { type: 'done' };
