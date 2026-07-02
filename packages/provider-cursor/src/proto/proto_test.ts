@@ -23,6 +23,7 @@ import {
   parseCheckpointTokenDetails,
   parseExecServerMessage,
   parseKvServerMessage,
+  buildKvClientMessage,
   buildExecClientMessageWithMcpResult,
   buildExecClientMessageWithRejectedTool,
   buildAgentClientMessageWithExec,
@@ -299,5 +300,27 @@ describe('AgentMode enum', () => {
     expect(AgentMode.AGENT).toBe(1);
     expect(AgentMode.ASK).toBe(2);
     expect(AgentMode.UNSPECIFIED).toBe(0);
+  });
+});
+
+describe('buildKvClientMessage', () => {
+  test('wraps get_blob_result payload as GetBlobResult{ blob_data = 1 }', () => {
+    const blob = new Uint8Array([0x7b, 0x22, 0x61, 0x22, 0x7d]); // {"a"}
+    const msg = buildKvClientMessage(7, 'get_blob_result', blob);
+    const fields = parseProtoFields(msg);
+    expect((fields.find(f => f.fieldNumber === 1)!.value as number)).toBe(7); // id
+    // field 2 is the GetBlobResult message, whose field 1 carries the raw blob —
+    // cursor parses field 2 as the result message, so the bytes must NOT sit
+    // directly in field 2 (that regressed to a stall).
+    const getBlobResult = fields.find(f => f.fieldNumber === 2)!.value as Uint8Array;
+    const inner = parseProtoFields(getBlobResult);
+    expect(Array.from(inner.find(f => f.fieldNumber === 1)!.value as Uint8Array)).toEqual(Array.from(blob));
+  });
+
+  test('set_blob_result stays an empty SetBlobResult message (field 3)', () => {
+    const msg = buildKvClientMessage(3, 'set_blob_result', new Uint8Array(0));
+    const fields = parseProtoFields(msg);
+    const setBlobResult = fields.find(f => f.fieldNumber === 3)!.value as Uint8Array;
+    expect(setBlobResult.length).toBe(0);
   });
 });

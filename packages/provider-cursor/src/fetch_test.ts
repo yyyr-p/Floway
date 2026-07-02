@@ -145,6 +145,7 @@ describe('callCursorChatCompletions', () => {
       body: { messages: [{ role: 'user', content: 'hi' }] },
       headers: new Headers(),
       effects: makeEffects(),
+      privacyMode: true,
       call: noopUpstreamCallOptions(),
     });
     expect(result.ok).toBe(false);
@@ -163,6 +164,7 @@ describe('callCursorChatCompletions', () => {
       body: { messages: [{ role: 'user', content: 'hi' }] },
       headers: new Headers(),
       effects: makeEffects(),
+      privacyMode: true,
       call: noopUpstreamCallOptions(),
     });
     expect(result.ok).toBe(true);
@@ -186,6 +188,7 @@ describe('callCursorChatCompletions', () => {
       body: { messages: [{ role: 'user', content: 'hi' }] },
       headers: new Headers(),
       effects: makeEffects(),
+      privacyMode: true,
       call: noopUpstreamCallOptions(),
     });
     expect(result.ok).toBe(true);
@@ -208,7 +211,7 @@ describe('callCursorChatCompletions', () => {
     const result = await callCursorChatCompletions({
       upstreamId, account: activeAccount, model,
       body: { messages: [{ role: 'user', content: 'hi' }] },
-      headers: new Headers(), effects: makeEffects(), call,
+      headers: new Headers(), effects: makeEffects(), privacyMode: true, call,
     });
     expect(result.ok).toBe(true);
     if (!result.ok) return;

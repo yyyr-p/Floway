@@ -26,6 +26,10 @@ const emit = defineEmits<{
   error: [message: string];
 }>();
 
+// Ghost/privacy mode toggle. Persisted by the page's Save button via a
+// config PATCH (see UpstreamEditPage.save). Only meaningful in edit mode.
+const privacyMode = defineModel<boolean>('privacyMode', { required: true });
+
 const api = useApi();
 
 interface CursorAuthorizeResult {
@@ -133,6 +137,14 @@ const setTabCompletion = async (value: boolean) => {
       <div class="rounded-md border border-white/5 bg-surface-800/60 p-3 text-sm">
         <p class="text-white">{{ record.config.accounts[0].email }}</p>
         <p class="text-xs text-gray-500">Cursor · {{ record.state?.accounts[0].state ?? 'unknown' }}</p>
+      </div>
+
+      <div class="flex items-center justify-between rounded-md border border-white/5 bg-surface-800/60 p-3">
+        <div class="pr-3">
+          <p class="text-xs font-medium text-white">Privacy mode</p>
+          <p class="text-[11px] text-gray-500">Send the ghost-mode header so Cursor does not retain request data. On by default.</p>
+        </div>
+        <Switch v-model="privacyMode" />
       </div>
       <div class="flex flex-wrap items-center gap-2">
         <Button :loading="refreshing" @click="refreshTokenNow">

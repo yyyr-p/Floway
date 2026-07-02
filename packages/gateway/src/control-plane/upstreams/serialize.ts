@@ -112,6 +112,7 @@ const redactedConfig = (upstream: UpstreamRecord): unknown => {
       })),
       ...(config.maxMode !== undefined ? { maxMode: clone(config.maxMode) } : {}),
       ...(config.tabCompletion !== undefined ? { tabCompletion: clone(config.tabCompletion) } : {}),
+      ...(config.privacyMode !== undefined ? { privacyMode: clone(config.privacyMode) } : {}),
     };
   case 'ollama':
     return {

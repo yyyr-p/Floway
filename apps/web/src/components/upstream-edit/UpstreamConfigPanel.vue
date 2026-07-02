@@ -24,6 +24,7 @@ const disabledIds = defineModel<string[]>('disabledIds', { required: true });
 const customDraft = defineModel<CustomDraft>('custom', { required: true });
 const azureDraft = defineModel<AzureDraft>('azure', { required: true });
 const ollamaDraft = defineModel<OllamaDraft>('ollama', { required: true });
+const cursorPrivacyMode = defineModel<boolean>('cursorPrivacyMode', { required: true });
 const proxyFallbackList = defineModel<ProxyFallbackEntry[]>('proxyFallbackList', { required: true });
 const modelPrefix = defineModel<ModelPrefixConfig | null>('modelPrefix', { required: true });
 
@@ -234,6 +235,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
       <section v-else-if="provider === 'cursor' && cursorPanel" class="shrink-0">
         <CursorConfigPanel
           v-bind="cursorPanel"
+          v-model:privacy-mode="cursorPrivacyMode"
           :proxy-fallback-list="proxyFallbackList"
           @imported="u => $emit('imported', u)"
           @error="m => $emit('error', m)"

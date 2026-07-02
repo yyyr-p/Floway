@@ -157,6 +157,9 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
             call: opts,
             maxMode: config.maxMode ?? false,
             wireModelId,
+            // Absent config value = privacy on (safe default). Only the chat
+            // data plane honors this; model-catalog fetch stays always-private.
+            privacyMode: config.privacyMode ?? true,
           });
         },
       );

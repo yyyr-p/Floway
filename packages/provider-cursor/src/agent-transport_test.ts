@@ -179,3 +179,22 @@ describe('AgentTransport.sendRejectedTool', () => {
     ).rejects.toThrow('No active chat stream');
   });
 });
+
+describe('AgentTransport privacy mode', () => {
+  test('x-ghost-mode on the RunSSE init headers reflects privacyMode (default on)', () => {
+    const make = (privacyMode: boolean | undefined): Record<string, string> =>
+      new AgentTransport({
+        getAuthToken: () => 'tok',
+        baseUrl: 'https://api2.cursor.sh',
+        env: ENV,
+        clientVersion: 'cli-test',
+        privacyMode,
+        getChecksum: () => 'checksum-value',
+        fetch: vi.fn() as unknown as typeof fetch,
+      }).runSseInit('req-1').headers;
+
+    expect(make(false)['x-ghost-mode']).toBe('false');
+    expect(make(true)['x-ghost-mode']).toBe('true');
+    expect(make(undefined)['x-ghost-mode']).toBe('true');
+  });
+});

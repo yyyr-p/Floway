@@ -53,7 +53,12 @@ export function buildKvClientMessage(
   result: Uint8Array,
 ): Uint8Array {
   const fieldNumber = resultType === 'get_blob_result' ? 2 : 3;
-  return concatBytes(encodeUint32Field(1, id), encodeMessageField(fieldNumber, result));
+  // The oneof value is a message: GetBlobResult { blob_data = 1 } / SetBlobResult
+  // { error = 1 }. `result` is the raw blob bytes (get) or empty (set/miss); wrap
+  // non-empty get payloads as GetBlobResult.blob_data (field 1) so cursor reads
+  // the blob instead of parsing the raw bytes as the result message and stalling.
+  const inner = resultType === 'get_blob_result' && result.length > 0 ? encodeMessageField(1, result) : result;
+  return concatBytes(encodeUint32Field(1, id), encodeMessageField(fieldNumber, inner));
 }
 
 /**

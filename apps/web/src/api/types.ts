@@ -153,6 +153,9 @@ export interface CursorUpstreamConfig {
     enabled: boolean;
     model?: string;
   };
+  // Ghost/privacy mode toggle sent as the x-ghost-mode data-plane header.
+  // Absent = privacy on (default). Editable via the config panel.
+  privacyMode?: boolean;
 }
 
 export interface CursorAccessTokenState {
