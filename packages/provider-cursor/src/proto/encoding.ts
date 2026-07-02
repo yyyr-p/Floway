@@ -34,20 +34,29 @@ export function encodeVarint(value: number | bigint): Uint8Array {
 }
 
 /**
+ * Encode a field tag `(field_number << 3) | wire_type` as a varint. Field
+ * numbers ≥ 16 need a multi-byte tag, so this must never be truncated to a
+ * single byte.
+ */
+export function encodeFieldTag(fieldNumber: number, wireType: number): Uint8Array {
+  return encodeVarint((fieldNumber << 3) | wireType);
+}
+
+/**
  * Encode a string field in protobuf format.
  * Field format: (field_number << 3) | wire_type; string wire type = 2.
  */
 export function encodeStringField(fieldNumber: number, value: string): Uint8Array {
   if (!value) return new Uint8Array(0);
 
-  const fieldTag = (fieldNumber << 3) | 2;
+  const tag = encodeFieldTag(fieldNumber, 2);
   const encoded = new TextEncoder().encode(value);
   const length = encodeVarint(encoded.length);
 
-  const result = new Uint8Array(1 + length.length + encoded.length);
-  result[0] = fieldTag;
-  result.set(length, 1);
-  result.set(encoded, 1 + length.length);
+  const result = new Uint8Array(tag.length + length.length + encoded.length);
+  result.set(tag, 0);
+  result.set(length, tag.length);
+  result.set(encoded, tag.length + length.length);
 
   return result;
 }
@@ -59,15 +68,7 @@ export function encodeStringField(fieldNumber: number, value: string): Uint8Arra
  */
 export function encodeUint32Field(fieldNumber: number, value: number): Uint8Array {
   if (value === 0) return new Uint8Array(0);
-
-  const fieldTag = (fieldNumber << 3) | 0;
-  const encoded = encodeVarint(value);
-
-  const result = new Uint8Array(1 + encoded.length);
-  result[0] = fieldTag;
-  result.set(encoded, 1);
-
-  return result;
+  return concatBytes(encodeFieldTag(fieldNumber, 0), encodeVarint(value));
 }
 
 /**
@@ -75,15 +76,7 @@ export function encodeUint32Field(fieldNumber: number, value: number): Uint8Arra
  */
 export function encodeInt32Field(fieldNumber: number, value: number): Uint8Array {
   if (value === 0) return new Uint8Array(0);
-
-  const fieldTag = (fieldNumber << 3) | 0;
-  const encoded = encodeVarint(value);
-
-  const result = new Uint8Array(1 + encoded.length);
-  result[0] = fieldTag;
-  result.set(encoded, 1);
-
-  return result;
+  return concatBytes(encodeFieldTag(fieldNumber, 0), encodeVarint(value));
 }
 
 /**
@@ -91,49 +84,30 @@ export function encodeInt32Field(fieldNumber: number, value: number): Uint8Array
  * seqno is meaningful on the Cursor wire.
  */
 export function encodeInt64Field(fieldNumber: number, value: bigint): Uint8Array {
-  const fieldTag = (fieldNumber << 3) | 0;
-  const encoded = encodeVarint(value);
-
-  const result = new Uint8Array(1 + encoded.length);
-  result[0] = fieldTag;
-  result.set(encoded, 1);
-
-  return result;
+  return concatBytes(encodeFieldTag(fieldNumber, 0), encodeVarint(value));
 }
 
 /**
  * Encode a nested message field (length-delimited, wire type 2).
  */
 export function encodeMessageField(fieldNumber: number, data: Uint8Array): Uint8Array {
-  const fieldTag = (fieldNumber << 3) | 2;
-  const length = encodeVarint(data.length);
-
-  const result = new Uint8Array(1 + length.length + data.length);
-  result[0] = fieldTag;
-  result.set(length, 1);
-  result.set(data, 1 + length.length);
-
-  return result;
+  return concatBytes(encodeFieldTag(fieldNumber, 2), encodeVarint(data.length), data);
 }
 
 /**
  * Encode a bool field (varint, wire type 0).
  */
 export function encodeBoolField(fieldNumber: number, value: boolean): Uint8Array {
-  const fieldTag = (fieldNumber << 3) | 0;
-  return new Uint8Array([fieldTag, value ? 1 : 0]);
+  return concatBytes(encodeFieldTag(fieldNumber, 0), new Uint8Array([value ? 1 : 0]));
 }
 
 /**
  * Encode a double field (64-bit, wire type 1, little-endian).
  */
 export function encodeDoubleField(fieldNumber: number, value: number): Uint8Array {
-  const fieldTag = (fieldNumber << 3) | 1;
-  const buffer = new ArrayBuffer(9);
-  const view = new DataView(buffer);
-  view.setUint8(0, fieldTag);
-  view.setFloat64(1, value, true);
-  return new Uint8Array(buffer);
+  const bytes = new Uint8Array(8);
+  new DataView(bytes.buffer).setFloat64(0, value, true);
+  return concatBytes(encodeFieldTag(fieldNumber, 1), bytes);
 }
 
 /**

@@ -12,6 +12,18 @@ export const CURSOR_USABLE_MODELS_PATH = '/aiserver.v1.AiService/GetUsableModels
 // (prose-only) of each model's context window — see fetchCursorAvailableContext.
 export const CURSOR_AVAILABLE_MODELS_PATH = '/aiserver.v1.AiService/AvailableModels';
 
+// Cursor Tab (Copilot++ / "cpp") lives on a separate, geo-routed backend and
+// is a Connect proto server-stream (not the RunSSE dual channel). Used by the
+// /v1/completions edit-prediction bridge.
+export const CURSOR_GCPP_BACKEND_BASE = 'https://us-only.gcpp.cursor.sh';
+export const CURSOR_STREAM_CPP_PATH = '/aiserver.v1.AiService/StreamCpp';
+export const CURSOR_AVAILABLE_CPP_MODELS_PATH = '/aiserver.v1.AiService/AvailableModels';
+
+// The Tab backend is entered as the Cursor IDE (client-type `ide`) and gates on
+// an IDE-style client version — the CLI version string yields empty completions.
+// Bump against the current Cursor desktop release.
+export const CURSOR_TAB_CLIENT_VERSION = '2.2.30';
+
 // Cursor CLI client version we impersonate on the data plane. Pinned from
 // yet-another-opencode-cursor-auth / opencode-cursor-proxy; newer models may
 // gate behind a minimal client version, so bump against the latest CLI tag.
