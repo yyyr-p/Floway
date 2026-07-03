@@ -10,7 +10,6 @@ import { Card } from '@floway-dev/ui';
 // specially: the Refresh button is disabled otherwise.
 const props = defineProps<{
   upstreamId: string;
-  accountEmail: string;
   accountState: string;
   initialQuota?: CursorDashboardUsage | null;
   initialQuotaError?: string | null;
@@ -77,59 +76,50 @@ const rows = computed<UsageRow[]>(() => {
 </script>
 
 <template>
-  <div class="space-y-4">
-    <Card :padded="false" class="space-y-3 p-4">
-      <div>
-        <p class="text-sm font-medium text-white">{{ accountEmail }}</p>
-        <p class="text-xs text-gray-400">Cursor · {{ accountState }}</p>
-      </div>
-    </Card>
+  <Card :padded="false" class="space-y-3 p-4">
+    <header class="flex items-center justify-between">
+      <h4 class="text-sm font-semibold text-white">Subscription usage</h4>
+      <button
+        type="button"
+        class="text-xs text-accent-cyan hover:text-accent-cyan disabled:opacity-40"
+        :disabled="loadingQuota || accountState !== 'active'"
+        @click="loadQuota"
+      >
+        {{ loadingQuota ? 'Loading…' : 'Refresh' }}
+      </button>
+    </header>
 
-    <Card :padded="false" class="space-y-3 p-4">
-      <header class="flex items-center justify-between">
-        <h4 class="text-sm font-semibold text-white">Subscription usage</h4>
-        <button
-          type="button"
-          class="text-xs text-accent-cyan hover:text-accent-cyan disabled:opacity-40"
-          :disabled="loadingQuota || accountState !== 'active'"
-          @click="loadQuota"
-        >
-          {{ loadingQuota ? 'Loading…' : 'Refresh' }}
-        </button>
-      </header>
+    <p v-if="accountState !== 'active'" class="text-xs text-accent-rose">
+      Account is {{ accountState }} — re-import the credential to fetch usage.
+    </p>
 
-      <p v-if="accountState !== 'active'" class="text-xs text-accent-rose">
-        Account is {{ accountState }} — re-import the credential to fetch usage.
+    <template v-else-if="quotaError">
+      <p class="text-xs text-accent-rose">{{ quotaError }}</p>
+      <p v-if="sessionExpired" class="text-xs text-gray-500">
+        Use the Re-import credential button above to recover.
       </p>
+    </template>
 
-      <template v-else-if="quotaError">
-        <p class="text-xs text-accent-rose">{{ quotaError }}</p>
-        <p v-if="sessionExpired" class="text-xs text-gray-500">
-          Use the Re-import credential button below to recover.
-        </p>
-      </template>
-
-      <template v-else-if="quota">
-        <p class="text-sm text-white">
-          {{ totalDollars }} <span class="text-xs text-gray-500">of {{ limitDollars }} this cycle</span>
-        </p>
-        <div class="space-y-2.5">
-          <div v-for="row in rows" :key="row.label" class="space-y-1">
-            <div class="flex items-baseline justify-between text-xs">
-              <span class="text-gray-300">{{ row.label }}</span>
-              <span class="text-gray-400">{{ row.percent.toFixed(1) }}%</span>
-            </div>
-            <div class="h-1.5 overflow-hidden rounded-full bg-surface-700">
-              <div class="h-full bg-accent-cyan transition-[width]" :style="{ width: `${row.percent}%` }" />
-            </div>
+    <template v-else-if="quota">
+      <p class="text-sm text-white">
+        {{ totalDollars }} <span class="text-xs text-gray-500">of {{ limitDollars }} this cycle</span>
+      </p>
+      <div class="space-y-2.5">
+        <div v-for="row in rows" :key="row.label" class="space-y-1">
+          <div class="flex items-baseline justify-between text-xs">
+            <span class="text-gray-300">{{ row.label }}</span>
+            <span class="text-gray-400">{{ row.percent.toFixed(1) }}%</span>
+          </div>
+          <div class="h-1.5 overflow-hidden rounded-full bg-surface-700">
+            <div class="h-full bg-accent-cyan transition-[width]" :style="{ width: `${row.percent}%` }" />
           </div>
         </div>
-        <p v-if="resetLabel" class="text-xs text-gray-500">Resets at {{ resetLabel }}</p>
-      </template>
+      </div>
+      <p v-if="resetLabel" class="text-xs text-gray-500">Resets at {{ resetLabel }}</p>
+    </template>
 
-      <p v-else-if="!loadingQuota" class="text-xs text-gray-500">
-        No usage snapshot yet. Click Refresh to fetch.
-      </p>
-    </Card>
-  </div>
+    <p v-else-if="!loadingQuota" class="text-xs text-gray-500">
+      No usage snapshot yet. Click Refresh to fetch.
+    </p>
+  </Card>
 </template>

@@ -4,7 +4,7 @@ import { ref } from 'vue';
 import CursorAccountCard from './CursorAccountCard.vue';
 import { callApi, useApi } from '../../api/client.ts';
 import type { CursorDashboardUsage, ProxyFallbackEntry, UpstreamRecord } from '../../api/types.ts';
-import { Button, Spinner, Switch } from '@floway-dev/ui';
+import { Button, Card, Spinner, Switch } from '@floway-dev/ui';
 
 type CursorUpstreamRecord = Extract<UpstreamRecord, { kind: 'cursor' }>;
 
@@ -139,56 +139,104 @@ const setTabCompletion = async (value: boolean) => {
 <template>
   <div class="space-y-4">
     <template v-if="mode === 'edit' && record">
+      <!-- Account & credentials: identity + recovery actions (Refresh token /
+           Re-import) grouped as one section — credential rotation logically
+           belongs with the identity it manages, not sandwiched between
+           unrelated setting toggles. The re-import authorize flow expands
+           inline so the button and its response stay adjacent. -->
+      <Card :padded="false" class="space-y-3 p-4">
+        <div>
+          <p class="text-sm font-medium text-white">{{ record.config.accounts[0].email }}</p>
+          <p class="text-xs text-gray-400">Cursor · {{ record.state?.accounts[0].state ?? 'unknown' }}</p>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <Button size="sm" :loading="refreshing" @click="refreshTokenNow">
+            <Spinner v-if="refreshing" class="size-3.5" />
+            <i v-else class="i-lucide-refresh-cw size-3.5" />
+            Refresh token now
+          </Button>
+          <Button size="sm" variant="secondary" @click="reimportOpen = !reimportOpen">
+            <i class="i-lucide-key-round size-3.5" />
+            {{ reimportOpen ? 'Cancel re-import' : 'Re-import credential' }}
+          </Button>
+        </div>
+        <template v-if="reimportOpen">
+          <div class="border-t border-white/5 pt-3 space-y-3">
+            <p class="text-xs text-gray-500">
+              Open the authorize URL in a browser and sign in to Cursor, then click Re-import —
+              the gateway waits for login to complete and rotates the credential.
+            </p>
+            <div v-if="!authorize" class="flex justify-end">
+              <Button size="sm" :loading="loading" @click="prepareAuthorize">
+                <Spinner v-if="loading" class="size-3.5" />
+                <i v-else class="i-lucide-link size-3.5" />
+                Get authorize URL
+              </Button>
+            </div>
+            <template v-else>
+              <div class="rounded-md border border-white/5 bg-surface-800/60 p-3">
+                <p class="mb-1 text-xs text-gray-500">Authorize URL</p>
+                <code class="break-all text-[11px] text-gray-300">{{ authorize.authorize_url }}</code>
+              </div>
+              <div class="flex justify-end">
+                <Button size="sm" :loading="polling" @click="poll">
+                  <Spinner v-if="polling" class="size-3.5" />
+                  Re-import
+                </Button>
+              </div>
+            </template>
+          </div>
+        </template>
+      </Card>
+
+      <!-- Subscription usage: read-only observation of the account above. -->
       <CursorAccountCard
         :upstream-id="record.id"
-        :account-email="record.config.accounts[0].email"
         :account-state="record.state?.accounts[0].state ?? 'unknown'"
         :initial-quota="initialQuota"
         :initial-quota-error="initialQuotaError"
       />
 
-      <div class="flex items-center justify-between rounded-md border border-white/5 bg-surface-800/60 p-3">
-        <div class="pr-3">
-          <p class="text-xs font-medium text-white">Privacy mode</p>
-          <p class="text-[11px] text-gray-500">Send the ghost-mode header so Cursor does not retain request data. On by default.</p>
+      <!-- Settings: three uniform toggle rows in one card. Each row keeps the
+           same label / description / switch structure so the eye reads them
+           as members of the same collection rather than three unrelated
+           mini-cards with drifting typography. -->
+      <Card :padded="false" class="p-4">
+        <div class="space-y-4 divide-y divide-white/5">
+          <div class="flex items-center justify-between gap-3">
+            <div class="pr-3">
+              <p class="text-sm font-medium text-white">Privacy mode</p>
+              <p class="text-xs text-gray-500">Send the ghost-mode header so Cursor does not retain request data. On by default.</p>
+            </div>
+            <Switch v-model="privacyMode" />
+          </div>
+          <div class="flex items-center justify-between gap-3 pt-4">
+            <div class="pr-3">
+              <p class="text-sm font-medium text-white">Max Mode</p>
+              <p class="text-xs text-gray-500">
+                Send every request in Cursor Max Mode for the largest context window. Consumes more
+                usage. Refresh the model list after toggling to see updated context sizes.
+              </p>
+            </div>
+            <Switch :model-value="maxMode" :disabled="savingMaxMode" @update:model-value="v => setMaxMode(!!v)" />
+          </div>
+          <div class="flex items-center justify-between gap-3 pt-4">
+            <div class="pr-3">
+              <p class="text-sm font-medium text-white">Tab completion <span class="text-xs text-gray-500">(experimental)</span></p>
+              <p class="text-xs text-gray-500">
+                Expose Cursor Tab as a <code class="text-gray-400">cursor-tab</code> model on the OpenAI
+                <code class="text-gray-400">/v1/completions</code> endpoint for edit-prediction clients (e.g. Zed with the
+                Zeta 2.1 prompt format, or any FIM autocomplete client). Refresh the model list after toggling.
+              </p>
+            </div>
+            <Switch :model-value="tabCompletion" :disabled="savingTab" @update:model-value="v => setTabCompletion(!!v)" />
+          </div>
         </div>
-        <Switch v-model="privacyMode" />
-      </div>
-      <div class="flex flex-wrap items-center gap-2">
-        <Button :loading="refreshing" @click="refreshTokenNow">
-          <Spinner v-if="refreshing" class="size-3.5" />
-          <i v-else class="i-lucide-refresh-cw size-3.5" />
-          Refresh token now
-        </Button>
-        <Button variant="secondary" @click="reimportOpen = !reimportOpen">
-          <i class="i-lucide-key-round size-3.5" />
-          {{ reimportOpen ? 'Cancel re-import' : 'Re-import credential' }}
-        </Button>
-      </div>
-      <div class="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-surface-800/40 p-3">
-        <div>
-          <p class="text-sm text-white">Max Mode</p>
-          <p class="text-xs text-gray-500">
-            Send every request in Cursor Max Mode for the largest context window. Consumes more
-            usage. Refresh the model list after toggling to see updated context sizes.
-          </p>
-        </div>
-        <Switch :model-value="maxMode" :disabled="savingMaxMode" @update:model-value="v => setMaxMode(!!v)" />
-      </div>
-      <div class="flex items-center justify-between gap-3 rounded-md border border-white/5 bg-surface-800/40 p-3">
-        <div>
-          <p class="text-sm text-white">Tab completion <span class="text-xs text-gray-500">(experimental)</span></p>
-          <p class="text-xs text-gray-500">
-            Expose Cursor Tab as a <code class="text-gray-400">cursor-tab</code> model on the OpenAI
-            <code class="text-gray-400">/v1/completions</code> endpoint for edit-prediction clients (e.g. Zed with the
-            Zeta 2.1 prompt format, or any FIM autocomplete client). Refresh the model list after toggling.
-          </p>
-        </div>
-        <Switch :model-value="tabCompletion" :disabled="savingTab" @update:model-value="v => setTabCompletion(!!v)" />
-      </div>
+      </Card>
     </template>
 
-    <template v-if="mode === 'create' || reimportOpen">
+    <!-- Create mode: first-time login via authorize URL + poll. -->
+    <template v-if="mode === 'create'">
       <p class="text-xs text-gray-500">
         Open the authorize URL in a browser and sign in to Cursor, then click
         Poll — the gateway waits for login to complete and persists the upstream.
@@ -210,7 +258,7 @@ const setTabCompletion = async (value: boolean) => {
         <div class="flex justify-end">
           <Button :loading="polling" @click="poll">
             <Spinner v-if="polling" class="size-3.5" />
-            {{ mode === 'edit' ? 'Re-import' : 'Poll & import' }}
+            Poll & import
           </Button>
         </div>
       </template>
