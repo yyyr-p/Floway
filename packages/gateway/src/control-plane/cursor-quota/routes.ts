@@ -22,7 +22,7 @@ export const cursorQuota = async (c: Context) => {
   try {
     const id = c.req.param('id')!;
     const upstream = await getRepo().upstreams.getById(id);
-    if (!upstream || upstream.kind !== 'cursor') {
+    if (upstream?.kind !== 'cursor') {
       return c.json({ error: 'Cursor upstream not found' }, 404);
     }
     assertCursorUpstreamState(upstream.state);
@@ -38,15 +38,14 @@ export const cursorQuota = async (c: Context) => {
     // Re-reads state before writing so we don't clobber a racing update.
     const persistRefreshTokenRotation = async (newRefreshToken: string): Promise<void> => {
       const fresh = await getRepo().upstreams.getById(id);
-      if (!fresh || fresh.kind !== 'cursor') return;
+      if (fresh?.kind !== 'cursor') return;
       assertCursorUpstreamState(fresh.state);
       const nextState: CursorUpstreamState = {
         ...fresh.state,
         accounts: fresh.state.accounts.map(a =>
           a.userId === account.userId
             ? { ...a, refresh_token: newRefreshToken, state_updated_at: new Date().toISOString() }
-            : a,
-        ),
+            : a),
       };
       await getRepo().upstreams.saveState(id, nextState, { expectedState: fresh.state });
     };

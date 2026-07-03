@@ -1,9 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import CursorAccountCard from './CursorAccountCard.vue';
 import { callApi, useApi } from '../../api/client.ts';
 import type { CursorDashboardUsage, ProxyFallbackEntry, UpstreamRecord } from '../../api/types.ts';
-import CursorAccountCard from './CursorAccountCard.vue';
 import { Button, Spinner, Switch } from '@floway-dev/ui';
 
 type CursorUpstreamRecord = Extract<UpstreamRecord, { kind: 'cursor' }>;
