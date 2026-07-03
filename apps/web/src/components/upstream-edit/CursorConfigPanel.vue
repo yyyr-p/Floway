@@ -227,6 +227,8 @@ const setTabCompletion = async (value: boolean) => {
                 Expose Cursor Tab as a <code class="text-gray-400">cursor-tab</code> model on the OpenAI
                 <code class="text-gray-400">/v1/completions</code> endpoint for edit-prediction clients (e.g. Zed with the
                 Zeta 2.1 prompt format, or any FIM autocomplete client). Refresh the model list after toggling.
+                Token usage is <strong class="font-medium text-gray-400">estimated</strong> — Cursor's Tab wire returns no
+                per-request usage, so counts are derived from a static byte-per-token ratio (~±10%).
               </p>
             </div>
             <Switch :model-value="tabCompletion" :disabled="savingTab" @update:model-value="v => setTabCompletion(!!v)" />
