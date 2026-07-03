@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 
+import CursorAccountCard from './CursorAccountCard.vue';
 import { callApi, useApi } from '../../api/client.ts';
-import type { ProxyFallbackEntry, UpstreamRecord } from '../../api/types.ts';
+import type { CursorDashboardUsage, ProxyFallbackEntry, UpstreamRecord } from '../../api/types.ts';
 import { Button, Spinner, Switch } from '@floway-dev/ui';
 
 type CursorUpstreamRecord = Extract<UpstreamRecord, { kind: 'cursor' }>;
@@ -13,11 +14,15 @@ const props = defineProps<
     record: null;
     // In-flight proxy chain forwarded into authorize-url / poll / refresh-now.
     proxyFallbackList: ProxyFallbackEntry[];
+    initialQuota?: CursorDashboardUsage | null;
+    initialQuotaError?: string | null;
   }
   | {
     mode: 'edit';
     record: CursorUpstreamRecord;
     proxyFallbackList: ProxyFallbackEntry[];
+    initialQuota?: CursorDashboardUsage | null;
+    initialQuotaError?: string | null;
   }
 >();
 
@@ -134,10 +139,13 @@ const setTabCompletion = async (value: boolean) => {
 <template>
   <div class="space-y-4">
     <template v-if="mode === 'edit' && record">
-      <div class="rounded-md border border-white/5 bg-surface-800/60 p-3 text-sm">
-        <p class="text-white">{{ record.config.accounts[0].email }}</p>
-        <p class="text-xs text-gray-500">Cursor · {{ record.state?.accounts[0].state ?? 'unknown' }}</p>
-      </div>
+      <CursorAccountCard
+        :upstream-id="record.id"
+        :account-email="record.config.accounts[0].email"
+        :account-state="record.state?.accounts[0].state ?? 'unknown'"
+        :initial-quota="initialQuota"
+        :initial-quota-error="initialQuotaError"
+      />
 
       <div class="flex items-center justify-between rounded-md border border-white/5 bg-surface-800/60 p-3">
         <div class="pr-3">
@@ -177,15 +185,6 @@ const setTabCompletion = async (value: boolean) => {
           </p>
         </div>
         <Switch :model-value="tabCompletion" :disabled="savingTab" @update:model-value="v => setTabCompletion(!!v)" />
-      </div>
-      <div class="flex items-start gap-2 rounded-md border border-white/5 bg-surface-800/40 p-3 text-xs text-gray-500">
-        <i class="i-lucide-info mt-0.5 size-3.5 shrink-0" />
-        <p>
-          Token usage for Cursor is recovered from Cursor's own streamed accounting per request. A
-          tool-call turn reports no tokens on its own — the run's usage is recorded on the final turn,
-          once Cursor stamps the conversation's context total. Cost is notional, priced at Cursor's
-          published per-token rates (the subscription itself is a flat fee).
-        </p>
       </div>
     </template>
 

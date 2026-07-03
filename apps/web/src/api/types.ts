@@ -397,6 +397,18 @@ export interface CopilotQuotaSnapshot {
   };
 }
 
+// Mirror of the provider-cursor CursorDashboardUsage shape. Fetched from
+// GET /api/upstreams/:id/cursor/quota on the dashboard's Cursor upstream page;
+// see packages/provider-cursor/src/quota.ts for field semantics.
+export interface CursorDashboardUsage {
+  limitCents: number | null;
+  totalSpendCents: number;
+  autoPercentUsed: number;
+  apiPercentUsed: number;
+  totalPercentUsed: number;
+  billingCycleEndMs: number | null;
+}
+
 export interface DeviceFlowStart {
   user_code: string;
   verification_uri: string;
