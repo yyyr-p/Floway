@@ -130,15 +130,50 @@ export const applyStops = (text: string, stop: string | readonly string[] | unde
 };
 
 // A minimal, well-formed OpenAI text_completion body for the passthrough serve.
-export const completionsResponseBody = (model: string, text: string): string =>
+// `usage` is required — callers pass estimated token counts so the shared
+// passthrough usage recorder (data-plane/completions/usage.ts) has real numbers
+// to store. Estimates come from `estimateCursorTabTokens` below.
+export interface CompletionsUsage {
+  promptTokens: number;
+  completionTokens: number;
+}
+
+export const completionsResponseBody = (model: string, text: string, usage: CompletionsUsage): string =>
   JSON.stringify({
     id: `cmpl-cursor-${crypto.randomUUID()}`,
     object: 'text_completion',
     created: Math.floor(Date.now() / 1000),
     model,
     choices: [{ text, index: 0, finish_reason: 'stop', logprobs: null }],
-    usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    usage: {
+      prompt_tokens: usage.promptTokens,
+      completion_tokens: usage.completionTokens,
+      total_tokens: usage.promptTokens + usage.completionTokens,
+    },
   });
+
+// Static per-request token estimator for Cursor Tab. StreamCpp returns no
+// usage of its own, and Cursor's aiserver.v1.AiService/CountTokens takes
+// ~1s per call — too slow to bolt onto autocomplete latency — and ignores
+// its `model_name` field entirely (one fixed BPE tokenizer, probed
+// 2026-07-03). Ratios below are calibrated against that endpoint on
+// representative Lorem-ipsum prose and Python code samples.
+//
+// Cursor Tab is code-domain by design; the code ratio is the default. The
+// prose ratio kicks in only when the client tags a plain-text file
+// (`body.language = 'markdown' | 'txt' | ...`).
+const CURSOR_TAB_BYTES_PER_TOKEN_CODE = 2.55;
+const CURSOR_TAB_BYTES_PER_TOKEN_PROSE = 5.67;
+const PROSE_LANGUAGES: ReadonlySet<string> = new Set(['markdown', 'md', 'mdx', 'rst', 'txt']);
+
+export const estimateCursorTabTokens = (text: string, languageId: string): number => {
+  if (!text) return 0;
+  const bytes = new TextEncoder().encode(text).length;
+  const ratio = PROSE_LANGUAGES.has(languageId.toLowerCase())
+    ? CURSOR_TAB_BYTES_PER_TOKEN_PROSE
+    : CURSOR_TAB_BYTES_PER_TOKEN_CODE;
+  return Math.max(1, Math.ceil(bytes / ratio));
+};
 
 // Rough language id from a file extension / OpenAI-style hint.
 export const languageIdForCompletion = (body: { language?: unknown; suffix?: unknown }): string =>

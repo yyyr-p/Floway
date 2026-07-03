@@ -1,7 +1,7 @@
 import { ensureCursorAccessToken, mintCursorAccessToken } from './access-token-cache.ts';
 import { CursorSessionTerminatedError } from './auth/oauth.ts';
 import { generateCursorChecksum } from './checksum.ts';
-import { applyStops, completionsResponseBody, extractInsertion, languageIdForCompletion, parsePrefixSuffix, streamCppInputForPrefixSuffix } from './completions.ts';
+import { applyStops, completionsResponseBody, type CompletionsUsage, estimateCursorTabTokens, extractInsertion, languageIdForCompletion, parsePrefixSuffix, streamCppInputForPrefixSuffix } from './completions.ts';
 import { assertCursorUpstreamRecord, type CursorUpstreamConfig } from './config.ts';
 import { readObservedContext } from './context-window.ts';
 import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
@@ -9,6 +9,7 @@ import { cursorChatCompletionsChain } from './interceptors/chat-completions/inde
 import type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
 import { cursorRawToProviderModel, cursorTabModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
+import type { StreamCppRequestInput } from './proto/stream-cpp.ts';
 import { assertCursorUpstreamState, type CursorUpstreamState } from './state.ts';
 import { callStreamCpp } from './stream-cpp-transport.ts';
 import { detectPromptFormat, parseZetaV0318, renderZetaV0318Output, streamCppInputForZeta } from './zeta-format.ts';
@@ -179,7 +180,16 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Prov
     // yields an empty suggestion rather than a 5xx.
     callCompletions: async (model, body, signal, opts) => {
       if (!config.tabCompletion?.enabled) return await unsupportedCallResult(opts);
-      const emptyResponse = () => new Response(completionsResponseBody(model.id, ''), { status: 200, headers: { 'content-type': 'application/json' } });
+      const zeroUsage: CompletionsUsage = { promptTokens: 0, completionTokens: 0 };
+      const emptyResponse = () => new Response(completionsResponseBody(model.id, '', zeroUsage), { status: 200, headers: { 'content-type': 'application/json' } });
+      // Static token estimator — StreamCpp returns no usage of its own, so we
+      // derive prompt tokens from the file we sent Cursor and completion
+      // tokens from the raw upstream text (pre-render). See
+      // `estimateCursorTabTokens` in completions.ts for the ratio calibration.
+      const usageOf = (request: StreamCppRequestInput, outputText: string): CompletionsUsage => ({
+        promptTokens: estimateCursorTabTokens(request.contents, request.languageId),
+        completionTokens: estimateCursorTabTokens(outputText, request.languageId),
+      });
       const modelName = config.tabCompletion?.model ?? 'fast';
       const call = (async (): Promise<Response> => {
         try {
@@ -197,9 +207,10 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Prov
           const parsed = format === 'zeta-v0318' ? parseZetaV0318(prompt) : null;
           if (parsed) {
             const { access, checksum } = await withToken();
-            const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request: streamCppInputForZeta(parsed, modelName), signal });
+            const request = streamCppInputForZeta(parsed, modelName);
+            const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request, signal });
             const rendered = result.ok ? renderZetaV0318Output(parsed, result.rangeToReplace, result.text) : null;
-            return new Response(completionsResponseBody(model.id, rendered ?? ''), { status: 200, headers: { 'content-type': 'application/json' } });
+            return new Response(completionsResponseBody(model.id, rendered ?? '', usageOf(request, result.ok ? result.text : '')), { status: 200, headers: { 'content-type': 'application/json' } });
           }
 
           // Zeta V0615 hashed-regions path (custom clients only — not a Zed GUI
@@ -207,9 +218,10 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Prov
           const parsed615 = format === 'zeta-v0615' ? parseZetaV0615(prompt) : null;
           if (parsed615) {
             const { access, checksum } = await withToken();
-            const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request: streamCppInputForV0615(parsed615, modelName), signal });
+            const request = streamCppInputForV0615(parsed615, modelName);
+            const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request, signal });
             const rendered = result.ok ? renderV0615Output(parsed615, result.rangeToReplace, result.text) : null;
-            return new Response(completionsResponseBody(model.id, rendered ?? ''), { status: 200, headers: { 'content-type': 'application/json' } });
+            return new Response(completionsResponseBody(model.id, rendered ?? '', usageOf(request, result.ok ? result.text : '')), { status: 200, headers: { 'content-type': 'application/json' } });
           }
 
           // FIM / plain-prompt insertion path.
@@ -218,7 +230,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Prov
           const { access, checksum } = await withToken();
           const result = await callStreamCpp({ fetcher: opts.fetcher, accessToken: access.token, checksum, request, signal });
           const insertion = result.ok ? applyStops(extractInsertion(ps, result.rangeToReplace, result.text), body.stop as string | string[] | undefined) : '';
-          return new Response(completionsResponseBody(model.id, insertion), { status: 200, headers: { 'content-type': 'application/json' } });
+          return new Response(completionsResponseBody(model.id, insertion, usageOf(request, result.ok ? result.text : '')), { status: 200, headers: { 'content-type': 'application/json' } });
         } catch {
           return emptyResponse();
         }
