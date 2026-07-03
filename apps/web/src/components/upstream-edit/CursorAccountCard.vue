@@ -5,12 +5,13 @@ import { callApi, useApi } from '../../api/client.ts';
 import type { CursorDashboardUsage } from '../../api/types.ts';
 import { Card } from '@floway-dev/ui';
 
-type AccountState = 'active' | 'session_terminated' | 'refresh_failed';
-
+// String rather than a strict enum so callers can pass "unknown" for legacy
+// state rows that predate CursorCredentialHealth. Only 'active' is treated
+// specially: the Refresh button is disabled otherwise.
 const props = defineProps<{
   upstreamId: string;
   accountEmail: string;
-  accountState: AccountState;
+  accountState: string;
   initialQuota?: CursorDashboardUsage | null;
   initialQuotaError?: string | null;
 }>();

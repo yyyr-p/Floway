@@ -13,7 +13,7 @@ import ModelPrefixEditor from './ModelPrefixEditor.vue';
 import ModelsCacheStatus from './ModelsCacheStatus.vue';
 import OllamaConfigPanel from './OllamaConfigPanel.vue';
 import ProxyFallbackListPanel from './ProxyFallbackListPanel.vue';
-import type { CopilotQuotaSnapshot, FlagDef, ModelPrefixConfig, ProxyFallbackEntry, UpstreamProviderKind, UpstreamRecord } from '../../api/types.ts';
+import type { CopilotQuotaSnapshot, CursorDashboardUsage, FlagDef, ModelPrefixConfig, ProxyFallbackEntry, UpstreamProviderKind, UpstreamRecord } from '../../api/types.ts';
 import { providerBadgeClass, providerMeta } from '../upstreams/provider-meta.ts';
 import { Input, Switch, TagCombobox } from '@floway-dev/ui';
 
@@ -40,6 +40,8 @@ type CommonConfigPanelProps = {
   availableModelItems: { value: string; label: string }[];
   initialCopilotQuota?: CopilotQuotaSnapshot | null;
   initialCopilotQuotaError?: string | null;
+  initialCursorQuota?: CursorDashboardUsage | null;
+  initialCursorQuotaError?: string | null;
   // Live cache snapshot for the saved upstream. Null in create mode and for
   // Azure (which has no fetch step) — `ModelsCacheStatus` is rendered only
   // when this is provided.
@@ -237,6 +239,8 @@ onBeforeUnmount(() => floorObserver?.disconnect());
           v-bind="cursorPanel"
           v-model:privacy-mode="cursorPrivacyMode"
           :proxy-fallback-list="proxyFallbackList"
+          :initial-quota="initialCursorQuota"
+          :initial-quota-error="initialCursorQuotaError"
           @imported="u => $emit('imported', u)"
           @error="m => $emit('error', m)"
         />

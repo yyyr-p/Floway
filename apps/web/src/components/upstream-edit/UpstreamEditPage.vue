@@ -20,7 +20,7 @@ import {
 import ModelsPanel from './ModelsPanel.vue';
 import UpstreamConfigPanel from './UpstreamConfigPanel.vue';
 import { authFetch, callApi, useApi } from '../../api/client.ts';
-import type { CopilotQuotaSnapshot, CustomRawModel, FlagDef, ModelEndpoints, ModelPrefixConfig, OllamaUpstreamConfig, ProxyFallbackEntry, UpstreamModelConfig, UpstreamProviderKind, UpstreamRecord } from '../../api/types.ts';
+import type { CopilotQuotaSnapshot, CursorDashboardUsage, CustomRawModel, FlagDef, ModelEndpoints, ModelPrefixConfig, OllamaUpstreamConfig, ProxyFallbackEntry, UpstreamModelConfig, UpstreamProviderKind, UpstreamRecord } from '../../api/types.ts';
 import { useRuntimeInfo } from '../../composables/useRuntimeInfo.ts';
 import { useUpstreamsStore } from '../../composables/useUpstreams.ts';
 import { providerMeta } from '../upstreams/provider-meta.ts';
@@ -37,6 +37,8 @@ type CommonPageProps = {
   initialUpstreamModelsError?: string | null;
   initialCopilotQuota?: CopilotQuotaSnapshot | null;
   initialCopilotQuotaError?: string | null;
+  initialCursorQuota?: CursorDashboardUsage | null;
+  initialCursorQuotaError?: string | null;
 };
 
 const props = defineProps<
@@ -579,6 +581,8 @@ const workbenchStyle = computed(() => ({ '--right-pane-h': `${Math.ceil(rightCon
         :available-model-items="availableModelItems"
         :initial-copilot-quota="initialCopilotQuota"
         :initial-copilot-quota-error="initialCopilotQuotaError"
+        :initial-cursor-quota="initialCursorQuota"
+        :initial-cursor-quota-error="initialCursorQuotaError"
         :models-cache="showCacheStatus ? liveRecord!.modelsCache : null"
         :refreshing="refreshing"
         @fetch-models="fetchDraftModels"
