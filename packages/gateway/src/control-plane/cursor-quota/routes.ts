@@ -57,12 +57,17 @@ export const cursorQuota = async (c: Context) => {
         mintCursorAccessToken(refresh, fetcher, persistRefreshTokenRotation));
     } catch (err) {
       // A dead refresh_token surfaces here; the account flip to refresh_failed
-      // is owned by the data-plane's persistTerminalState (fetch.ts). Here we
-      // just map to 401 so the dashboard prompts re-import.
+      // is owned by the data-plane's persistTerminalState (fetch.ts). Map to
+      // 502 (not 401 — the frontend authFetch treats 401 as *our* session
+      // expiring and force-logs-out) with a machine-readable `kind` field so
+      // the panel can render a re-import hint.
       if (err instanceof CursorSessionTerminatedError) {
         return c.json(
-          { error: `Cursor refresh failed: ${err.upstreamMessage}. Re-import the credential to recover.` },
-          401,
+          {
+            error: `Cursor refresh failed: ${err.upstreamMessage}. Re-import the credential to recover.`,
+            kind: 'session_expired' as const,
+          },
+          502,
         );
       }
       throw err;
@@ -73,7 +78,7 @@ export const cursorQuota = async (c: Context) => {
       return c.json(usage);
     } catch (err) {
       if (err instanceof CursorDashboardSessionExpiredError) {
-        return c.json({ error: err.message }, 401);
+        return c.json({ error: err.message, kind: 'session_expired' as const }, 502);
       }
       if (err instanceof CursorDashboardUpstreamError) {
         return c.json({ error: err.message }, 502);
