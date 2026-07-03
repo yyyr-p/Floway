@@ -7,7 +7,7 @@ import { readObservedContext } from './context-window.ts';
 import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
 import { cursorChatCompletionsChain } from './interceptors/chat-completions/index.ts';
 import type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
-import { cursorRawToUpstreamModel, cursorTabModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
+import { cursorRawToProviderModel, cursorTabModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
 import { assertCursorUpstreamState, type CursorUpstreamState } from './state.ts';
 import { callStreamCpp } from './stream-cpp-transport.ts';
@@ -19,18 +19,19 @@ import {
   defaultsForProvider,
   getProviderRepo,
   resolveEffectiveFlags,
-  type ModelProvider,
-  type ModelProviderInstance,
+  type Provider,
   type ProviderCallResult,
-  type ProviderCompactionResult,
+  type ProviderInstance,
+  type ProviderResponsesResult,
   type ProviderStreamResult,
+  type ResponsesAction,
   type UpstreamCallOptions,
   type UpstreamRecord,
 } from '@floway-dev/provider';
 
 const gatewayTimezone = (): string => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
 
-export const createCursorProvider = async (record: UpstreamRecord): Promise<ModelProviderInstance> => {
+export const createCursorProvider = async (record: UpstreamRecord): Promise<Provider> => {
   assertCursorUpstreamRecord(record);
   assertCursorUpstreamState(record.state);
   const config: CursorUpstreamConfig = record.config;
@@ -90,7 +91,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
 
   const effects: CursorCallEffects = { persistRefreshTokenRotation, persistTerminalState };
 
-  const provider: ModelProvider = {
+  const provider: ProviderInstance = {
     getProvidedModels: async fetcher => {
       // A model-list refresh is the first thing a brand-new Cursor upstream
       // does, and it mints an access token. If the refresh_token has been
@@ -113,7 +114,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
       const observedAt = Date.now();
       const maxMode = config.maxMode ?? false;
       const models = raw.map(r => {
-        const model = cursorRawToUpstreamModel(r, enabledFlags);
+        const model = cursorRawToProviderModel(r, enabledFlags);
         // Prefer a real context window observed on the RunSSE stream
         // (ConversationTokenDetails.maxTokens) over the tooltip-derived
         // heuristic — it's the authoritative number for the active mode.
@@ -171,7 +172,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
     // The synthetic response still flows through the per-call latency recorder
     // so the gateway's wrap-once contract holds.
     callMessages: (_m, _b, _s, opts) => unsupportedStreamResult(opts),
-    callResponses: (_m, _b, _s, opts) => unsupportedStreamResult(opts),
+    callResponses: (_m, _b, action, _s, opts) => unsupportedResponsesResult(action, opts),
     callMessagesCountTokens: (_m, _b, _s, opts) => unsupportedCallResult(opts),
     // Cursor Tab (StreamCpp) bridged to OpenAI /v1/completions. A completion is
     // never allowed to hard-fail an editor, so any error / non-clean edit
@@ -224,7 +225,6 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
       })();
       return { response: await opts.recordUpstreamLatency(call), modelKey: model.id };
     },
-    callResponsesCompact: (_m, _b, _s, opts) => unsupportedCompactionResult(opts),
     callEmbeddings: (_m, _b, _s, opts) => unsupportedCallResult(opts),
     callImagesGenerations: (_m, _b, _s, opts) => unsupportedCallResult(opts),
     callImagesEdits: (_m, _b, _s, opts) => unsupportedCallResult(opts),
@@ -232,11 +232,11 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Mode
 
   return {
     upstream: record.id,
-    providerKind: 'cursor',
+    kind: 'cursor',
     name: record.name,
     disabledPublicModelIds: record.disabledPublicModelIds,
     modelPrefix: record.modelPrefix,
-    provider,
+    instance: provider,
     supportsResponsesItemReference: false,
   };
 };
@@ -258,7 +258,8 @@ const unsupportedCallResult = async (opts: UpstreamCallOptions): Promise<Provide
   response: await opts.recordUpstreamLatency(Promise.resolve(synthetic405())),
 });
 
-const unsupportedCompactionResult = async (opts: UpstreamCallOptions): Promise<ProviderCompactionResult> => ({
+const unsupportedResponsesResult = async (action: ResponsesAction, opts: UpstreamCallOptions): Promise<ProviderResponsesResult> => ({
+  action,
   ok: false,
   modelKey: '',
   response: await opts.recordUpstreamLatency(Promise.resolve(synthetic405())),

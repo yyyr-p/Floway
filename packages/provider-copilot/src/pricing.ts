@@ -69,6 +69,19 @@ const COPILOT_MODEL_PRICING: readonly PricingRule[] = [
       },
     },
   ],
+  // Sonnet 5 — Anthropic introductory pricing through 2026-08-31; sticker is
+  // $3/$15 (same as Sonnet 4 family) afterwards. Cross-checked against
+  // OpenRouter (openrouter.ai/api/v1/models) and models.dev, both mirroring
+  // Anthropic's live rate.
+  [
+    'claude-sonnet-5',
+    {
+      input: 2,
+      input_cache_read: 0.2,
+      input_cache_write: 2.5,
+      output: 10,
+    },
+  ],
   [
     /^claude-sonnet-4(-[56])?$/,
     {
@@ -119,6 +132,7 @@ const COPILOT_MODEL_PRICING: readonly PricingRule[] = [
   ['goldeneye', { input: 1.25, input_cache_read: 0.125, output: 10 }],
   ['raptor-mini', { input: 0.25, input_cache_read: 0.025, output: 2 }],
   ['minimax-m2.5', { input: 0.3, output: 1.2 }],
+  [/^mai-code-1-flash/, { input: 0.75, input_cache_read: 0.075, output: 4.5 }],
   [/^text-embedding-3-small/, { input: 0.02, output: 0 }],
   ['text-embedding-ada-002', { input: 0.1, output: 0 }],
 ];

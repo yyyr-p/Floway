@@ -1,5 +1,5 @@
 import type { ChatCompletionsPayload } from '@floway-dev/protocols/chat-completions';
-import type { UpstreamModel } from '@floway-dev/provider';
+import type { ProviderModel } from '@floway-dev/provider';
 
 // Boundary ctx for Cursor Chat Completions interceptors. The payload is the
 // OpenAI ChatCompletions request body; interceptors mutate it before fetch.ts
@@ -7,5 +7,5 @@ import type { UpstreamModel } from '@floway-dev/provider';
 export interface ChatCompletionsBoundaryCtx {
   payload: ChatCompletionsPayload;
   headers: Headers;
-  readonly model: UpstreamModel;
+  readonly model: ProviderModel;
 }

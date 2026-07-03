@@ -2,26 +2,30 @@ import { test } from 'vitest';
 
 import type { ChatCompletionsInvocation } from './types.ts';
 import { withVendorKimiChatCompletionsNormalize } from './vendor-kimi-normalize.ts';
-import type { GatewayCtx } from '../../shared/gateway-ctx.ts';
+import { createNonResponsesSourceStore } from '../../responses/items/store.ts';
+import type { ChatGatewayCtx } from '../../shared/gateway-ctx.ts';
 import type { ChatCompletionsPayload, ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import { eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
 import { type ExecuteResult, eventResult } from '@floway-dev/provider';
-import { assertEquals, stubProviderCandidate, testTelemetryModelIdentity } from '@floway-dev/test-utils';
+import { assertEquals, stubModelCandidate, testTelemetryModelIdentity } from '@floway-dev/test-utils';
 
-const stubCtx: GatewayCtx = {
+const stubCtx: ChatGatewayCtx = {
   apiKeyId: 'test-key',
   upstreamIds: null,
   wantsStream: false,
   runtimeLocation: 'TEST',
   currentColo: 'TEST',
   dump: null,
+  responseHeaders: new Headers(),
   backgroundScheduler: () => {},
   requestStartedAt: 0,
+  store: createNonResponsesSourceStore('test-key'),
 };
 
 const invocation = (payload: ChatCompletionsPayload, enabledFlags: ReadonlySet<string> = new Set(['vendor-kimi'])): ChatCompletionsInvocation => ({
   payload,
-  candidate: stubProviderCandidate({ targetApi: 'chat-completions', binding: { enabledFlags } }),
+  candidate: stubModelCandidate({ enabledFlags }),
+  targetApi: 'chat-completions',
   headers: new Headers(),
 });
 
@@ -67,7 +71,7 @@ test('rewrites flat cached_tokens into prompt_tokens_details.cached_tokens', asy
   assertEquals('cached_tokens' in usage, false);
 });
 
-test('early-returns when its flag is not set on the binding', async () => {
+test('early-returns when its flag is not set on the candidate', async () => {
   const ctx = invocation(baseRequest(), new Set());
   const result = await withVendorKimiChatCompletionsNormalize(ctx, stubCtx, () =>
     Promise.resolve(eventResult(

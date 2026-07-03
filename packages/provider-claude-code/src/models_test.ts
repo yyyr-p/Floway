@@ -4,7 +4,6 @@ import {
   aliasFromApiId,
   buildClaudeCodeCatalog,
   chatFromCapabilities,
-  claudeCodeResolveRequestedModelId,
   type ClaudeCodeApiModel,
 } from './models.ts';
 import { pricingForClaudeCodeModelKey } from './pricing.ts';
@@ -40,7 +39,7 @@ describe('chatFromCapabilities', () => {
       effort: { supported: false },
       thinking: { types: { enabled: { supported: true } } },
     });
-    expect(chat).toEqual({ reasoning: { budget_tokens: {} } });
+    expect(chat).toEqual({ reasoning: { budget_tokens: { min: 1024 } } });
   });
 
   // Case 2: effort with 4 levels + xhigh=false + max=true, both thinking types (mirrors Opus 4.6)
@@ -59,7 +58,7 @@ describe('chatFromCapabilities', () => {
     expect(chat).toEqual({
       reasoning: {
         effort: { supported: ['low', 'medium', 'high', 'max'], default: 'medium' },
-        budget_tokens: {},
+        budget_tokens: { min: 1024 },
         adaptive: true,
       },
     });
@@ -108,7 +107,7 @@ describe('chatFromCapabilities', () => {
       modalities: { input: ['text', 'image'], output: ['text'] },
       reasoning: {
         effort: { supported: ['low', 'medium', 'high'], default: 'medium' },
-        budget_tokens: {},
+        budget_tokens: { min: 1024 },
         adaptive: true,
       },
     });
@@ -125,7 +124,7 @@ describe('chatFromCapabilities', () => {
       image_input: { supported: false },
       thinking: { types: { enabled: { supported: true } } },
     });
-    expect(chat).toEqual({ reasoning: { budget_tokens: {} } });
+    expect(chat).toEqual({ reasoning: { budget_tokens: { min: 1024 } } });
   });
 
   // Case 8: default selection — 'medium' preferred; fallback to first
@@ -233,7 +232,7 @@ describe('buildClaudeCodeCatalog', () => {
       modalities: { input: ['text', 'image'], output: ['text'] },
       reasoning: {
         effort: { supported: ['low', 'medium', 'high', 'max'], default: 'medium' },
-        budget_tokens: {},
+        budget_tokens: { min: 1024 },
         adaptive: true,
       },
     });
@@ -244,31 +243,5 @@ describe('buildClaudeCodeCatalog', () => {
     for (const m of built) {
       expect(m.chat).toBeUndefined();
     }
-  });
-});
-
-describe('claudeCodeResolveRequestedModelId', () => {
-  test('resolves a dated id to its public alias', () => {
-    expect(claudeCodeResolveRequestedModelId('claude-sonnet-4-5-20250929')).toBe('claude-sonnet-4-5');
-    expect(claudeCodeResolveRequestedModelId('claude-opus-4-5-20251101')).toBe('claude-opus-4-5');
-    expect(claudeCodeResolveRequestedModelId('claude-haiku-4-5-20251001')).toBe('claude-haiku-4-5');
-    expect(claudeCodeResolveRequestedModelId('claude-opus-4-1-20250805')).toBe('claude-opus-4-1');
-  });
-
-  test('returns undefined when the id is already in alias shape', () => {
-    expect(claudeCodeResolveRequestedModelId('claude-sonnet-4-5')).toBeUndefined();
-    expect(claudeCodeResolveRequestedModelId('claude-opus-4-5')).toBeUndefined();
-    expect(claudeCodeResolveRequestedModelId('claude-opus-4-7')).toBeUndefined();
-    expect(claudeCodeResolveRequestedModelId('claude-fable-5')).toBeUndefined();
-  });
-
-  test('returns undefined for ids outside the claude- namespace', () => {
-    expect(claudeCodeResolveRequestedModelId('gpt-4')).toBeUndefined();
-    expect(claudeCodeResolveRequestedModelId('gemini-2.5-pro')).toBeUndefined();
-  });
-
-  test('returns undefined for malformed dated ids (not exactly 8 digits)', () => {
-    expect(claudeCodeResolveRequestedModelId('claude-sonnet-4-5-foo')).toBeUndefined();
-    expect(claudeCodeResolveRequestedModelId('claude-sonnet-4-5-2025')).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import { generateCursorChecksum } from './checksum.ts';
 import { CURSOR_AVAILABLE_MODELS_PATH, CURSOR_BACKEND_BASE, CURSOR_CLIENT_VERSION, CURSOR_USABLE_MODELS_PATH, CURSOR_USER_AGENT } from './constants.ts';
 import { pricingForCursorModelKey } from './pricing.ts';
-import { type Fetcher, type Modality, type UpstreamChatModelConfig, type UpstreamModel } from '@floway-dev/provider';
+import { type Fetcher, type Modality, type UpstreamChatModelConfig, type ProviderModel } from '@floway-dev/provider';
 
 export interface CursorReasoningInfo {
   supported: readonly string[];
@@ -22,7 +22,7 @@ export interface CursorRawModel {
   id: string;
   display_name: string;
   aliases?: readonly string[];
-  // Context window (tokens) — undefined leaves cursorRawToUpstreamModel on 200k.
+  // Context window (tokens) — undefined leaves cursorRawToProviderModel on 200k.
   contextWindow?: number;
   // The concrete Cursor model id to put on the wire (a usable variant slug),
   // when this base's display id differs from what RunSSE accepts.
@@ -324,7 +324,7 @@ const buildChatConfig = (raw: CursorRawModel): UpstreamChatModelConfig => {
 // Cursor exposes only the Chat Completions endpoint (RunSSE+BidiAppend).
 // Pricing is looked up from the per-model notional table in pricing.ts so the
 // dashboard can report value consumed vs. the flat Cursor subscription.
-export const cursorRawToUpstreamModel = (raw: CursorRawModel, enabledFlags: ReadonlySet<string>): UpstreamModel => {
+export const cursorRawToProviderModel = (raw: CursorRawModel, enabledFlags: ReadonlySet<string>): ProviderModel => {
   const cost = pricingForCursorModelKey(raw.id);
   // Carry the wire id (so fetch.ts sends the usable variant slug while the
   // catalog keeps the clean base id) and the pre-collapse variant ids (so the
@@ -353,7 +353,7 @@ export const cursorRawToUpstreamModel = (raw: CursorRawModel, enabledFlags: Read
 
 // The concrete Cursor model id to put on the RunSSE wire for a resolved model:
 // the collapsed base's usable variant slug (from providerData) or the id itself.
-export const cursorWireModelId = (model: UpstreamModel): string => {
+export const cursorWireModelId = (model: ProviderModel): string => {
   const data = model.providerData;
   if (isPlainRecord(data) && typeof data.wireModelId === 'string') return data.wireModelId;
   return model.id;
@@ -363,7 +363,7 @@ export const cursorWireModelId = (model: UpstreamModel): string => {
 // endpoint. Exposed only when the upstream enables tabCompletion.
 export const CURSOR_TAB_MODEL_ID = 'cursor-tab';
 
-export const cursorTabModel = (enabledFlags: ReadonlySet<string>): UpstreamModel => ({
+export const cursorTabModel = (enabledFlags: ReadonlySet<string>): ProviderModel => ({
   id: CURSOR_TAB_MODEL_ID,
   display_name: 'Cursor Tab',
   owned_by: 'cursor',
@@ -397,7 +397,7 @@ const nearestEffort = (want: string, supported: readonly string[]): string => {
 // ('none' = off, any other effort = on). Context is untouched here — it rides
 // the max_mode proto flag. Falls back to the default wire id when the model has
 // no routable variants or no reasoning_effort was given.
-export const resolveCursorWireModel = (model: UpstreamModel, reasoningEffort: string | null | undefined): string => {
+export const resolveCursorWireModel = (model: ProviderModel, reasoningEffort: string | null | undefined): string => {
   const defaultSlug = cursorWireModelId(model);
   const data = model.providerData;
   if (!reasoningEffort || !isPlainRecord(data) || !Array.isArray(data.variants)) return defaultSlug;

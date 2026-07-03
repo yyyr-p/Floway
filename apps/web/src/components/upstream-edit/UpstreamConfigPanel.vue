@@ -29,7 +29,7 @@ const proxyFallbackList = defineModel<ProxyFallbackEntry[]>('proxyFallbackList',
 const modelPrefix = defineModel<ModelPrefixConfig | null>('modelPrefix', { required: true });
 
 type CommonConfigPanelProps = {
-  provider: UpstreamProviderKind;
+  kind: UpstreamProviderKind;
   flags: FlagDef[];
   customApiKeySet: boolean;
   azureApiKeySet: boolean;
@@ -65,30 +65,30 @@ defineEmits<{
 
 // Per-provider narrowed views of (mode, record) so each child panel receives
 // the matching discriminated variant without inline casts. Edit mode and a
-// record-of-the-wrong-provider both yield null — the per-provider section is
-// already gated on `provider === '<kind>'` in the template, so this only
+// record-of-the-wrong-kind both yield null — the per-provider section is
+// already gated on `kind === '<kind>'` in the template, so this only
 // happens during the brief window when a sibling section is mounting.
-type CodexRecord = Extract<UpstreamRecord, { provider: 'codex' }>;
-type ClaudeCodeRecord = Extract<UpstreamRecord, { provider: 'claude-code' }>;
-type CopilotRecord = Extract<UpstreamRecord, { provider: 'copilot' }>;
-type CursorRecord = Extract<UpstreamRecord, { provider: 'cursor' }>;
+type CodexRecord = Extract<UpstreamRecord, { kind: 'codex' }>;
+type ClaudeCodeRecord = Extract<UpstreamRecord, { kind: 'claude-code' }>;
+type CopilotRecord = Extract<UpstreamRecord, { kind: 'copilot' }>;
+type CursorRecord = Extract<UpstreamRecord, { kind: 'cursor' }>;
 type PanelMode<R> = { mode: 'create'; record: null } | { mode: 'edit'; record: R };
 
 const codexPanel = computed<PanelMode<CodexRecord> | null>(() => {
   if (props.mode === 'create') return { mode: 'create', record: null };
-  return props.record.provider === 'codex' ? { mode: 'edit', record: props.record } : null;
+  return props.record.kind === 'codex' ? { mode: 'edit', record: props.record } : null;
 });
 const claudeCodePanel = computed<PanelMode<ClaudeCodeRecord> | null>(() => {
   if (props.mode === 'create') return { mode: 'create', record: null };
-  return props.record.provider === 'claude-code' ? { mode: 'edit', record: props.record } : null;
+  return props.record.kind === 'claude-code' ? { mode: 'edit', record: props.record } : null;
 });
 const copilotPanel = computed<PanelMode<CopilotRecord> | null>(() => {
   if (props.mode === 'create') return { mode: 'create', record: null };
-  return props.record.provider === 'copilot' ? { mode: 'edit', record: props.record } : null;
+  return props.record.kind === 'copilot' ? { mode: 'edit', record: props.record } : null;
 });
 const cursorPanel = computed<PanelMode<CursorRecord> | null>(() => {
   if (props.mode === 'create') return { mode: 'create', record: null };
-  return props.record.provider === 'cursor' ? { mode: 'edit', record: props.record } : null;
+  return props.record.kind === 'cursor' ? { mode: 'edit', record: props.record } : null;
 });
 
 // Intrinsic floor for the aside: smallest height at which every
@@ -120,7 +120,7 @@ const measureFloor = () => {
   if (header) h += header.getBoundingClientRect().height;
   intrinsicFloorPx.value = h;
 };
-watch([contentRef, flagSectionRef, headerRef, () => props.provider], () => {
+watch([contentRef, flagSectionRef, headerRef, () => props.kind], () => {
   floorObserver?.disconnect();
   const content = contentRef.value;
   if (!content) return;
@@ -142,8 +142,8 @@ onBeforeUnmount(() => floorObserver?.disconnect());
     <header ref="headerRef" class="flex shrink-0 items-center gap-3 border-b border-white/[0.06] px-5 py-4">
       <span
         class="rounded border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider"
-        :class="providerBadgeClass(provider)"
-      >{{ providerMeta(provider).label }}</span>
+        :class="providerBadgeClass(kind)"
+      >{{ providerMeta(kind).label }}</span>
       <h2 class="min-w-0 truncate text-sm font-semibold text-white">
         {{ name || (mode === 'create' ? 'New upstream' : 'Upstream') }}
       </h2>
@@ -152,7 +152,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
 
     <div ref="contentRef" class="flex min-h-0 flex-1 flex-col gap-6 px-5 py-5">
 
-      <section v-if="!(mode === 'create' && (provider === 'copilot' || provider === 'codex' || provider === 'claude-code' || provider === 'cursor'))" class="shrink-0">
+      <section v-if="!(mode === 'create' && (kind === 'copilot' || kind === 'codex' || kind === 'claude-code' || kind === 'cursor'))" class="shrink-0">
         <label class="mb-1.5 block text-xs font-medium text-gray-500">Name</label>
         <Input v-model="name" placeholder="e.g. OpenAI Production" />
       </section>
@@ -171,7 +171,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         class="shrink-0"
       />
 
-      <section v-if="provider === 'custom'" class="shrink-0">
+      <section v-if="kind === 'custom'" class="shrink-0">
         <CustomConfigPanel
           v-model="customDraft"
           :api-key-set="customApiKeySet"
@@ -183,7 +183,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         />
       </section>
 
-      <section v-else-if="provider === 'azure'" class="shrink-0">
+      <section v-else-if="kind === 'azure'" class="shrink-0">
         <AzureConfigPanel
           v-model="azureDraft"
           :api-key-set="azureApiKeySet"
@@ -191,7 +191,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         />
       </section>
 
-      <section v-else-if="provider === 'ollama'" class="shrink-0">
+      <section v-else-if="kind === 'ollama'" class="shrink-0">
         <OllamaConfigPanel
           v-model="ollamaDraft"
           :api-key-set="ollamaApiKeySet"
@@ -203,7 +203,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         />
       </section>
 
-      <section v-else-if="provider === 'copilot' && copilotPanel" class="shrink-0">
+      <section v-else-if="kind === 'copilot' && copilotPanel" class="shrink-0">
         <CopilotConfigPanel
           v-bind="copilotPanel"
           :initial-quota="initialCopilotQuota"
@@ -213,7 +213,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         />
       </section>
 
-      <section v-else-if="provider === 'codex' && codexPanel" class="shrink-0">
+      <section v-else-if="kind === 'codex' && codexPanel" class="shrink-0">
         <CodexConfigPanel
           v-bind="codexPanel"
           :proxy-fallback-list="proxyFallbackList"
@@ -222,7 +222,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         />
       </section>
 
-      <section v-else-if="provider === 'claude-code' && claudeCodePanel" class="shrink-0">
+      <section v-else-if="kind === 'claude-code' && claudeCodePanel" class="shrink-0">
         <ClaudeCodeConfigPanel
           v-bind="claudeCodePanel"
           :proxy-fallback-list="proxyFallbackList"
@@ -232,7 +232,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         />
       </section>
 
-      <section v-else-if="provider === 'cursor' && cursorPanel" class="shrink-0">
+      <section v-else-if="kind === 'cursor' && cursorPanel" class="shrink-0">
         <CursorConfigPanel
           v-bind="cursorPanel"
           v-model:privacy-mode="cursorPrivacyMode"
@@ -281,7 +281,7 @@ onBeforeUnmount(() => floorObserver?.disconnect());
         <FlagOverridesEditor
           v-model="flagOverrides"
           :flags="flags"
-          :provider-kind="provider"
+          :kind="kind"
           name-prefix="upstream-flag"
           class="min-h-0 flex-1"
         />

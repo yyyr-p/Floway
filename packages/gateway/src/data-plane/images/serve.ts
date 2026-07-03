@@ -10,7 +10,8 @@
 
 import type { Context } from 'hono';
 
-import { createGatewayCtxFromHono } from '../chat/shared/gateway-ctx.ts';
+import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
+import { createGatewayCtxFromHono, finalizeGatewayResponse } from '../chat/shared/gateway-ctx.ts';
 import { readRequestBody } from '../chat/shared/request-body.ts';
 import { passthroughApiError, passthroughServe } from '../shared/passthrough-serve.ts';
 import { tokenUsageFromImagesBody } from '../shared/telemetry/usage.ts';
@@ -44,12 +45,11 @@ const prepareImagesGenerationsRequest = (bytes: Uint8Array): PreparedRequest => 
 
 export const imagesGenerations = async (c: Context): Promise<Response> => {
   const requestBody = await readRequestBody(c);
-  const ctx = createGatewayCtxFromHono(c, { wantsStream: false, requestBody });
+  const ctx = createGatewayCtxFromHono(c, { wantsStream: false, requestBody, backgroundScheduler: backgroundSchedulerFromContext(c) });
   const request = prepareImagesGenerationsRequest(requestBody.bytes);
   if (request.type === 'invalid') {
     ctx.dump?.error('gateway');
-    const response = passthroughApiError(c, request.message, 400);
-    return (ctx.dump?.finalize(response) ?? response);
+    return finalizeGatewayResponse(ctx, passthroughApiError(c, request.message, 400));
   }
 
   ctx.dump?.requestedModel(request.model);
@@ -58,14 +58,15 @@ export const imagesGenerations = async (c: Context): Promise<Response> => {
     ctx,
     sourceApi: '/images/generations',
     model: request.model,
-    bindingServesEndpoint: binding => binding.upstreamModel.endpoints.imagesGenerations !== undefined,
-    call: (binding, opts) => {
+    kind: 'image',
+    modelServesEndpoint: model => model.endpoints.imagesGenerations !== undefined,
+    call: (provider, model, opts) => {
       const { model: _model, ...body } = request.body;
-      return binding.provider.callImagesGenerations(binding.upstreamModel, body, undefined, opts);
+      return provider.instance.callImagesGenerations(model, body, undefined, opts);
     },
     response: { format: 'json', extractBilling: tokenUsageFromImagesBody },
   });
-  return (ctx.dump?.finalize(response) ?? response);
+  return finalizeGatewayResponse(ctx, response);
 };
 
 export const imagesEdits = async (c: Context): Promise<Response> => {
@@ -73,7 +74,7 @@ export const imagesEdits = async (c: Context): Promise<Response> => {
   // c.req.raw.body internally; re-parsing from the captured bytes via a fresh
   // Response keeps the dump capture honest without a second read on the wire.
   const requestBody = await readRequestBody(c);
-  const ctx = createGatewayCtxFromHono(c, { wantsStream: false, requestBody });
+  const ctx = createGatewayCtxFromHono(c, { wantsStream: false, requestBody, backgroundScheduler: backgroundSchedulerFromContext(c) });
   let form: FormData;
   try {
     form = await new Response(requestBody.bytes as BodyInit, { headers: { 'content-type': c.req.header('content-type') ?? '' } }).formData();
@@ -82,15 +83,13 @@ export const imagesEdits = async (c: Context): Promise<Response> => {
     // parser's error text. The wording is enough for a client to know
     // they sent the wrong content type or a malformed body.
     ctx.dump?.error('gateway');
-    const response = passthroughApiError(c, 'Image edits request body must be a valid multipart/form-data payload.', 400);
-    return (ctx.dump?.finalize(response) ?? response);
+    return finalizeGatewayResponse(ctx, passthroughApiError(c, 'Image edits request body must be a valid multipart/form-data payload.', 400));
   }
 
   const modelRaw = form.get('model');
   if (typeof modelRaw !== 'string' || modelRaw.length === 0) {
     ctx.dump?.error('gateway');
-    const response = passthroughApiError(c, 'Image edits request body must include a model field.', 400);
-    return (ctx.dump?.finalize(response) ?? response);
+    return finalizeGatewayResponse(ctx, passthroughApiError(c, 'Image edits request body must include a model field.', 400));
   }
 
   ctx.dump?.requestedModel(modelRaw);
@@ -99,21 +98,22 @@ export const imagesEdits = async (c: Context): Promise<Response> => {
     ctx,
     sourceApi: '/images/edits',
     model: modelRaw,
-    bindingServesEndpoint: binding => binding.upstreamModel.endpoints.imagesEdits !== undefined,
-    call: (binding, opts) => {
-      // ModelProvider.callImagesEdits takes ownership of the FormData and
+    kind: 'image',
+    modelServesEndpoint: model => model.endpoints.imagesEdits !== undefined,
+    call: (provider, model, opts) => {
+      // ProviderInstance.callImagesEdits takes ownership of the FormData and
       // appends the upstream-specific model/deployment id; allocate a fresh
-      // copy per binding so the contract holds even if cross-binding
-      // fallback is ever extended to try a second binding. File-blob entries
+      // copy per candidate so the contract holds even if cross-candidate
+      // fallback is ever extended to try a second match. File-blob entries
       // are passed by reference so no buffer copy happens.
       const passthrough = new FormData();
       for (const [name, value] of form.entries()) {
         if (name === 'model') continue;
         passthrough.append(name, value);
       }
-      return binding.provider.callImagesEdits(binding.upstreamModel, passthrough, undefined, opts);
+      return provider.instance.callImagesEdits(model, passthrough, undefined, opts);
     },
     response: { format: 'json', extractBilling: tokenUsageFromImagesBody },
   });
-  return (ctx.dump?.finalize(response) ?? response);
+  return finalizeGatewayResponse(ctx, response);
 };

@@ -47,6 +47,62 @@ them. Code-level rules about error handling, comments, and style live in the
 global agent instructions and in ESLint config — read those, not a copy
 here.
 
+## Design Principle: Upstream Models And Field Values Are Opaque
+
+Floway assumes each upstream speaks the protocol declared for it. The
+model catalog and the enum values in open-string protocol slots are
+upstream-owned; Floway must not silently collapse either onto a fixed
+vendor family.
+
+Allowed:
+
+- **Identified-model special cases** — `if (model.id === 'X')`,
+  `if (isOpus47Plus(id))`, `if (isClaudeFamily(id))`. Vendor knowledge
+  lives in the code that talks to that vendor.
+- **Provider-wide uniform defaults on a bounded scope** — e.g.,
+  `provider-ollama` advertising `reasoning.effort: { supported: ['low',
+  'medium', 'high'] }` for every thinking-capable Ollama model. The
+  scope is bounded by the provider itself.
+- **Metadata-first id-inference fallbacks.** Endpoint capability comes
+  from upstream metadata first (Copilot `supported_endpoints`, a
+  Floway-shaped upstream's `kind`, capabilities blocks, operator
+  override); a name-token or prefix fallback that fires AFTER the
+  metadata check is silent is fine, provided it lives in the provider
+  package that owns the workaround and — for upstream-bug workarounds
+  — carries a reference URL and a listing in the
+  `audit-copilot-workarounds` skill or equivalent.
+- **Client-tool-compat name filters.** Dashboard helpers that build a
+  config for a CLI which itself expects a name family (Claude Code CLI
+  expects `claude-*`, Codex CLI expects `gpt-5-*`) MAY filter that
+  picker by the same pattern. Mirroring the CLI's own expectation, not
+  Floway asserting an endpoint mapping. Scope must be the CLI setup
+  helper; general model pickers still read `endpoints` from the DTO.
+
+Forbidden — silent narrowing at wire / translate / control-plane
+boundaries. Open-string fields declared `| (string & {})` or bare
+`string` in `packages/protocols/` (`reasoning_effort`, `verbosity`,
+`service_tier`, `reasoning.summary`, `thinkingLevel`, `speed`, Messages
+`thinking.display`, …) MUST be forwarded verbatim: `z.string()` in
+control-plane schemas, direct pass-through in translators, no `switch`
+default that drops unknown values. The upstream owns the accept/reject
+decision. Cross-protocol synthesis between different shapes — Gemini
+`includeThoughts: true` ↔ Responses `summary`, Messages
+`thinking.type: 'enabled'` (no effort) ↔ Chat `reasoning_effort` — is
+legit translation, distinct from within-protocol enum gating.
+
+**Every vendor constant needs a reference URL** — image caps, effort→
+budget bin edges, canonical enum values, header sets, protocol quirks.
+Prose like "per Anthropic's vision docs" without a permalink doesn't
+count.
+
+Beyond the allowed patterns above, three carve-outs also fall outside
+the prohibition: per-provider pricing tables (`pricing.ts` — return
+null for unknown keys); provider config discriminators naming the OWN
+kind (`kind: 'claude-code'`); and vendor-locked provider packages
+(`provider-claude-code`, `provider-codex`) doing fixed-catalog
+request/header mimicry captured verbatim from a live wire probe with a
+reference URL.
+
 Stack: Hono on Web APIs, TypeScript, pnpm, Vitest. The dashboard is a
 Vue + Vite SPA. Cloudflare Workers is the production deployment target;
 Node.js (`node:sqlite` + `sharp` + filesystem) is a parallel deployment
@@ -296,10 +352,12 @@ KV) only ever grow, never shrink — `pnpm run deploy` runs
 `pnpm install --frozen-lockfile` first (so a fast-forward that introduced
 a new workspace package wires its symlinks before the build runs) then
 `scripts/check-wrangler.ts` and refuses to publish if `wrangler.jsonc`
-drifts from `wrangler.example.jsonc` (bindings, `main`,
-`compatibility_date`, `triggers.crons`, the SPA `assets` block, and the
-Worker-first route list) — so plain code rollback stays safe; D1 state is
-rolled back separately as above.
+drifts from `wrangler.example.jsonc` in either direction — every key,
+value, and binding in the example must appear in the real config, and
+the real config must not carry anything the example doesn't pin (aside
+from `account_id`, the one personal-only key the gate allowlists). So
+plain code rollback stays safe; D1 state is rolled back separately as
+above.
 
 A complete deploy fits in a strict turn budget: **three agent turns when
 migrations are pending** (Step 1 = gather, Step 2 = bookmark + report +

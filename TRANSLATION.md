@@ -36,7 +36,7 @@ translators.
 2. translated `/v1/messages`
 3. translated `/responses`
 
-If no provider binding exposes a capability-backed Chat plan, the gateway
+If no upstream's catalog advertises a capability-backed Chat target, the gateway
 returns a source-shaped unsupported-model error. It does not invent legacy
 model-name routing outside provider capability metadata. Copilot Claude models
 still route through Messages because the Copilot provider does not expose Chat
@@ -49,8 +49,8 @@ support for them.
 2. translated `/v1/messages`
 3. translated `/responses`
 
-If no provider binding exposes a capability-backed Gemini generation plan, the
-gateway returns a Gemini-shaped unsupported-model error.
+If no upstream's catalog advertises a capability-backed Gemini generation target,
+the gateway returns a Gemini-shaped unsupported-model error.
 
 ## Boundary Rules
 
@@ -648,3 +648,35 @@ directly where both APIs define them:
 
 These fields are not bridged through Anthropic Messages-only paths unless the
 Messages API has an explicit equivalent.
+
+## Alias Rule Application
+
+Alias rules apply **post-translate**, on the target IR, at the terminal
+wire call. Each chat target has one `applyRulesToUpstream<Target>` helper
+(`applyRulesToUpstreamChatCompletions`, `applyRulesToUpstreamMessages`,
+`applyRulesToUpstreamResponses`) that reads `ctx.aliasRules` and writes
+each rule onto the target protocol's native slot before dispatch. Gemini
+is inbound-only — Gemini requests translate to a chat target, and the
+rules apply on that chosen target.
+
+Cross-protocol translation itself is pure native ↔ native; the
+translators never lift or lower alias rules. A rule that has no native
+slot on the chosen target is silently dropped by design — the wire has
+nowhere to put it, and forcing the rule through a nearby field would
+mean lying about what the operator asked for.
+
+The mapping from `AliasRules` fields onto target-protocol slots:
+
+| rule | -> Chat Completions | -> Messages | -> Responses |
+|---|---|---|---|
+| `reasoning.effort` | `reasoning_effort` | `output_config.effort` | `reasoning.effort` |
+| `reasoning.budget_tokens` | dropped | `thinking.budget_tokens` + `thinking.type: 'enabled'` | dropped |
+| `reasoning.adaptive` | dropped | `thinking.type: 'adaptive'` | dropped |
+| `reasoning.summary` | dropped | `thinking.display` (`summarized` / `omitted`) | `reasoning.summary` |
+| `verbosity` | `verbosity` | dropped | `text.verbosity` |
+| `serviceTier` | `service_tier` | `speed: 'fast'` for `'fast'`, else `service_tier` | `service_tier` |
+
+Passthrough endpoints (`/v1/embeddings`, `/v1/images/*`,
+`/v1/completions`) have no rule-application step; a passthrough alias
+must be seeded with empty rules (enforced at write time by a zod
+refinement on the alias schema).

@@ -5,7 +5,7 @@ import { callApi, useApi } from '../../api/client.ts';
 import type { ProxyFallbackEntry, UpstreamRecord } from '../../api/types.ts';
 import { Button, Spinner, Switch } from '@floway-dev/ui';
 
-type CursorUpstreamRecord = Extract<UpstreamRecord, { provider: 'cursor' }>;
+type CursorUpstreamRecord = Extract<UpstreamRecord, { kind: 'cursor' }>;
 
 const props = defineProps<
   | {

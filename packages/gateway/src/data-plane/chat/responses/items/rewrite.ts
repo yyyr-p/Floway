@@ -1,10 +1,10 @@
 import { createTemporaryResponsesItemId, hashResponsesItemEncryptedContent, responsesItemEncryptedContent, responsesItemId } from './format.ts';
 import type { StatefulResponsesStore } from './store.ts';
 import type { StoredResponsesItem } from '../../../../repo/types.ts';
-import type { ProviderCandidate } from '../../shared/candidates.ts';
 import { throwChatServeFailure } from '../../shared/errors.ts';
-import type { ResponsesInputItem, ResponsesPayload } from '@floway-dev/protocols/responses';
-import type { ResponsesItemsView } from '@floway-dev/translate/via-responses/responses-items';
+import type { ResponsesInputItem } from '@floway-dev/protocols/responses';
+import type { ModelCandidate } from '@floway-dev/provider';
+import type { CanonicalResponsesPayload, ResponsesItemsView } from '@floway-dev/translate/via-responses/responses-items';
 
 const isUpstreamOwned = (row: StoredResponsesItem): row is StoredResponsesItem & { upstreamId: string } =>
   row.upstreamId !== null;
@@ -25,12 +25,12 @@ const itemWithId = (item: ResponsesInputItem, id: string): ResponsesInputItem =>
 const rewriteItemForCandidate = (
   item: ResponsesInputItem,
   row: StoredResponsesItem,
-  candidate: ProviderCandidate,
+  candidate: ModelCandidate,
 ): ResponsesInputItem | null => {
   // An `item_reference` whose stored row has no inline payload can only
   // travel as a reference on the wire; a provider that doesn't support
   // `item_reference` input has no way to expand it.
-  if (item.type === 'item_reference' && row.payload === null && !candidate.binding.supportsResponsesItemReference) {
+  if (item.type === 'item_reference' && row.payload === null && !candidate.provider.supportsResponsesItemReference) {
     throwChatServeFailure({ kind: 'item-not-found', itemId: row.id });
   }
 
@@ -45,13 +45,13 @@ const rewriteItemForCandidate = (
 
   // Owned reasoning is bound to the upstream that produced it; drop it when
   // routing elsewhere.
-  if (row.itemType === 'reasoning' && row.upstreamId !== candidate.binding.upstream) return null;
+  if (row.itemType === 'reasoning' && row.upstreamId !== candidate.provider.upstream) return null;
 
-  if (row.upstreamId === candidate.binding.upstream && row.upstreamItemId) {
+  if (row.upstreamId === candidate.provider.upstream && row.upstreamItemId) {
     // Same upstream: substitute the original upstream-issued id. A
     // reference-capable provider keeps the wire item as `item_reference`;
     // others inline-expand against the stored payload.
-    return item.type === 'item_reference' && candidate.binding.supportsResponsesItemReference
+    return item.type === 'item_reference' && candidate.provider.supportsResponsesItemReference
       ? itemWithId(item, row.upstreamItemId)
       : itemWithId(storedItemReplacementBase(item, row), row.upstreamItemId);
   }
@@ -79,14 +79,14 @@ export interface RewrittenResponsesReference {
 }
 
 export interface RewrittenResponsesPayload {
-  readonly payload: ResponsesPayload;
+  readonly payload: CanonicalResponsesPayload;
   readonly references: ReadonlyArray<RewrittenResponsesReference>;
 }
 
 const rewriteOneItemAgainstStore = (
   item: ResponsesInputItem,
   store: StatefulResponsesStore,
-  candidate: ProviderCandidate,
+  candidate: ModelCandidate,
   hashByEncryptedContent: ReadonlyMap<string, string>,
   references: RewrittenResponsesReference[],
 ): ResponsesInputItem | null => {
@@ -103,12 +103,10 @@ const rewriteOneItemAgainstStore = (
 };
 
 export const rewriteResponsesItemsForCandidate = async (
-  payload: ResponsesPayload,
+  payload: CanonicalResponsesPayload,
   store: StatefulResponsesStore,
-  candidate: ProviderCandidate,
+  candidate: ModelCandidate,
 ): Promise<RewrittenResponsesPayload> => {
-  if (typeof payload.input === 'string') return { payload, references: [] };
-
   // Pre-compute encrypted_content hashes so each item lookup is a single
   // synchronous map access rather than a fresh hash per item.
   const hashByEncryptedContent = await collectEncryptedContents(payload.input);
@@ -129,7 +127,7 @@ export const rewriteStoredResponsesItemsForCandidate = async <TSourceItems>(
   sourceItems: TSourceItems,
   view: ResponsesItemsView<TSourceItems>,
   store: StatefulResponsesStore,
-  candidate: ProviderCandidate,
+  candidate: ModelCandidate,
 ): Promise<TSourceItems> => {
   // Pre-compute encrypted_content hashes so the per-item walk is a single
   // synchronous lookup instead of re-hashing on every visit.

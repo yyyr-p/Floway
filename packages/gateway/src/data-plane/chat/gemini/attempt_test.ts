@@ -4,27 +4,28 @@ import { geminiAttempt } from './attempt.ts';
 import { initRepo } from '../../../repo/index.ts';
 import { InMemoryRepo } from '../../../repo/memory.ts';
 import { createNonResponsesSourceStore } from '../responses/items/store.ts';
-import type { ProviderCandidate } from '../shared/candidates.ts';
-import type { GatewayCtx } from '../shared/gateway-ctx.ts';
+import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
-import { doneFrame, eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
+import { doneFrame, eventFrame, type ModelEndpoints, type ProtocolFrame } from '@floway-dev/protocols/common';
 import type { GeminiPayload } from '@floway-dev/protocols/gemini';
 import type { MessagesStreamEvent } from '@floway-dev/protocols/messages';
 import type { ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
-import { directFetcher, type ProviderCallResult, type ProviderStreamResult, type UpstreamCallOptions } from '@floway-dev/provider';
-import { assertEquals, stubProvider, stubUpstreamModel } from '@floway-dev/test-utils';
+import { type ModelCandidate, directFetcher, type ProviderCallResult, type ProviderResponsesResult, type ProviderStreamResult, type ResponsesAction, type UpstreamCallOptions } from '@floway-dev/provider';
+import { assertEquals, stubProvider, stubInternalModel } from '@floway-dev/test-utils';
 
 const API_KEY_ID = 'key_gemini_attempt_test';
 
-const makeGatewayCtx = (): GatewayCtx => ({
+const makeGatewayCtx = (): ChatGatewayCtx => ({
   apiKeyId: API_KEY_ID,
   upstreamIds: null,
   wantsStream: true,
   runtimeLocation: 'TEST',
   currentColo: 'TEST',
   dump: null,
+  responseHeaders: new Headers(),
   backgroundScheduler: () => {},
   requestStartedAt: 0,
+  store: createNonResponsesSourceStore(API_KEY_ID),
 });
 
 const makePayload = (overrides: Partial<GeminiPayload> = {}): GeminiPayload => ({
@@ -84,15 +85,13 @@ const makeChatCompletionsEvents = (): readonly ChatCompletionsStreamEvent[] => [
 
 const makeCandidate = (overrides: {
   upstream?: string;
-  targetApi?: ProviderCandidate['targetApi'];
+  endpoints?: ModelEndpoints;
   callMessages?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<MessagesStreamEvent>>;
-  callResponses?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<ResponsesStreamEvent>>;
+  callResponses?: (model: unknown, body: unknown, action: ResponsesAction, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderResponsesResult>;
   callChatCompletions?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<ChatCompletionsStreamEvent>>;
   callMessagesCountTokens?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderCallResult>;
-} = {}): ProviderCandidate => {
+} = {}): ModelCandidate => {
   const upstream = overrides.upstream ?? 'up_test';
-  const targetApi = overrides.targetApi ?? 'chat-completions';
-  const upstreamModel = stubUpstreamModel();
   const provider = stubProvider({
     callMessages: overrides.callMessages,
     callResponses: overrides.callResponses,
@@ -101,14 +100,10 @@ const makeCandidate = (overrides: {
   });
   return {
     provider: {
-      upstream, providerKind: 'custom', name: upstream,
-      disabledPublicModelIds: [], modelPrefix: null, provider, supportsResponsesItemReference: true,
+      upstream, kind: 'custom', name: upstream,
+      disabledPublicModelIds: [], modelPrefix: null, instance: provider, supportsResponsesItemReference: true,
     },
-    binding: {
-      upstream, upstreamName: upstream, providerKind: 'custom', provider, upstreamModel,
-      enabledFlags: upstreamModel.enabledFlags, supportsResponsesItemReference: true,
-    },
-    targetApi,
+    model: stubInternalModel(overrides.endpoints ? { endpoints: overrides.endpoints } : {}, upstream),
     fetcher: directFetcher,
   };
 };
@@ -129,8 +124,7 @@ test('generate translates through Chat Completions when targetApi is chat-comple
   const result = await geminiAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
-    candidate: makeCandidate({ targetApi: 'chat-completions', callChatCompletions }),
+    candidate: makeCandidate({ callChatCompletions }),
     headers: new Headers(),
   });
 
@@ -148,8 +142,7 @@ test('generate translates through Messages when targetApi is messages', async ()
   const result = await geminiAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
-    candidate: makeCandidate({ targetApi: 'messages', callMessages }),
+    candidate: makeCandidate({ callMessages, endpoints: { messages: {} } }),
     headers: new Headers(),
   });
 
@@ -161,14 +154,13 @@ test('generate translates through Messages when targetApi is messages', async ()
 
 test('generate translates through Responses when targetApi is responses', async () => {
   installRepo();
-  const callResponses = vi.fn(async (): Promise<ProviderStreamResult<ResponsesStreamEvent>> => ({
-    ok: true, events: makeProtocolFrames([makeResponsesResultEvent()]), modelKey: 'k', headers: new Headers(),
+  const callResponses = vi.fn(async (): Promise<ProviderResponsesResult> => ({
+    action: 'generate', ok: true, events: makeProtocolFrames([makeResponsesResultEvent()]), modelKey: 'k', headers: new Headers(),
   }));
   const result = await geminiAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
-    candidate: makeCandidate({ targetApi: 'responses', callResponses }),
+    candidate: makeCandidate({ callResponses, endpoints: { responses: {} } }),
     headers: new Headers(),
   });
 
@@ -194,8 +186,7 @@ test('countTokens translates Gemini to Messages count_tokens and reshapes to tot
   const result = await geminiAttempt.countTokens({
     payload: makePayload({ systemInstruction: { parts: [{ text: 'system' }] } }),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
-    candidate: makeCandidate({ targetApi: 'messages', callMessagesCountTokens }),
+    candidate: makeCandidate({ callMessagesCountTokens }),
     headers: new Headers(),
   });
 
@@ -216,9 +207,7 @@ test('countTokens accepts the upstream total_tokens dialect and refuses unknown 
   const totalTokensResp = await geminiAttempt.countTokens({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
     candidate: makeCandidate({
-      targetApi: 'messages',
       callMessagesCountTokens: async () => ({
         response: new Response(JSON.stringify({ total_tokens: 19 }), { status: 200, headers: new Headers({ 'content-type': 'application/json' }) }),
         modelKey: 'k',
@@ -233,9 +222,7 @@ test('countTokens accepts the upstream total_tokens dialect and refuses unknown 
   const unexpectedResp = await geminiAttempt.countTokens({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
     candidate: makeCandidate({
-      targetApi: 'messages',
       callMessagesCountTokens: async () => ({
         response: new Response(JSON.stringify({ unexpected: true }), { status: 200, headers: new Headers({ 'content-type': 'application/json' }) }),
         modelKey: 'k',
@@ -258,15 +245,14 @@ test('countTokens refuses a non-messages candidate', async () => {
     await geminiAttempt.countTokens({
       payload: makePayload(),
       ctx: makeGatewayCtx(),
-      store: createNonResponsesSourceStore(API_KEY_ID),
-      candidate: makeCandidate({ targetApi: 'responses' }),
+      candidate: makeCandidate({ endpoints: { responses: {} } }),
       headers: new Headers(),
     });
   } catch (error) {
     thrown = error;
   }
   if (!(thrown instanceof Error)) throw new Error('expected an Error to be thrown');
-  assertEquals(thrown.message.includes("targetApi='messages'"), true);
+  assertEquals(thrown.message.includes('chatTargetPicker.pick'), true);
 });
 
 test('generate propagates upstream response headers through the chat-completions translation', async () => {
@@ -281,8 +267,7 @@ test('generate propagates upstream response headers through the chat-completions
   const result = await geminiAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
-    candidate: makeCandidate({ targetApi: 'chat-completions', callChatCompletions }),
+    candidate: makeCandidate({ callChatCompletions }),
     headers: new Headers(),
   });
   assertEquals(result.type, 'events');

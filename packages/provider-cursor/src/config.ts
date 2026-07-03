@@ -102,8 +102,8 @@ function assertCursorUpstreamConfig(value: unknown): asserts value is CursorUpst
 }
 
 export function assertCursorUpstreamRecord(record: UpstreamRecord): asserts record is CursorUpstreamRecord {
-  if (record.provider !== 'cursor') {
-    throw new TypeError(`Expected provider 'cursor', got '${record.provider}'`);
+  if (record.kind !== 'cursor') {
+    throw new TypeError(`Expected kind 'cursor', got '${record.kind}'`);
   }
   assertCursorUpstreamConfig(record.config);
 }

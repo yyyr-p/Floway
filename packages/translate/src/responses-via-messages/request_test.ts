@@ -51,7 +51,7 @@ test('translateResponsesToMessages omits both speed and service_tier when servic
   assertFalse('service_tier' in result.target);
 });
 
-test('translateResponsesToMessages maps reasoning.effort none to thinking.disabled', async () => {
+test('translateResponsesToMessages maps reasoning.effort none to thinking.disabled (summary ignored when reasoning is disabled)', async () => {
   const result = await translateResponsesToMessages({
     model: 'claude-test',
     input: [{ type: 'message', role: 'user', content: 'hi' }],
@@ -86,7 +86,7 @@ test('translateResponsesToMessages maps reasoning.effort directly to output_conf
     stream: null,
     store: false,
     parallel_tool_calls: true,
-    reasoning: { effort: 'minimal', summary: 'detailed' },
+    reasoning: { effort: 'minimal' },
   });
 
   assertEquals(result.target.output_config, { effort: 'minimal' });
@@ -501,7 +501,63 @@ test('translateResponsesToMessages throws on a stray web_search_call input item 
       parallel_tool_calls: true,
     }),
     Error,
-    'Responses → Messages translator does not accept web_search_call input items',
+    "Invalid input item type 'web_search_call'",
+  );
+});
+
+test('translateResponsesToMessages throws on a stray compaction_trigger input item (compact-shim owns the strip)', async () => {
+  // The compact-shim is structurally required on non-responses targets and
+  // strips compaction_trigger items before reaching this translator.
+  // Reaching here with one in input means the shim disengaged; the
+  // translator's exhaustive default surfaces the regression.
+  await assertRejects(
+    () => translateResponsesToMessages({
+      model: 'claude-test',
+      input: [
+        { type: 'message', role: 'user', content: 'hi' },
+        { type: 'compaction_trigger' },
+      ],
+      instructions: null,
+      temperature: null,
+      top_p: null,
+      max_output_tokens: 256,
+      tools: null,
+      tool_choice: 'auto',
+      metadata: null,
+      stream: null,
+      store: false,
+      parallel_tool_calls: true,
+    }),
+    Error,
+    'Invalid input item:',
+  );
+});
+
+test('translateResponsesToMessages throws on a stray compaction input item (compact-shim owns the expansion)', async () => {
+  // The compact-shim expands its own shim-encoded compaction items inline
+  // before reaching this translator and round-trips foreign compactions
+  // back to the upstream as raw items. Either way the translator should
+  // never see one.
+  await assertRejects(
+    () => translateResponsesToMessages({
+      model: 'claude-test',
+      input: [
+        { type: 'message', role: 'user', content: 'hi' },
+        { type: 'compaction', id: 'cmp_x', encrypted_content: 'opaque', created_by: 'compaction_session' },
+      ],
+      instructions: null,
+      temperature: null,
+      top_p: null,
+      max_output_tokens: 256,
+      tools: null,
+      tool_choice: 'auto',
+      metadata: null,
+      stream: null,
+      store: false,
+      parallel_tool_calls: true,
+    }),
+    Error,
+    'Invalid input item:',
   );
 });
 
@@ -752,7 +808,7 @@ test('translateResponsesToMessages throws when a system input message contains a
         { loadRemoteImage: stubRemoteImageLoader(null) },
       ),
     Error,
-    'does not accept image content parts in system messages',
+    "Invalid 'input_image' content part in system message",
   );
 });
 
@@ -787,6 +843,10 @@ test('translateResponsesToMessages throws when a non-leading developer input mes
         { loadRemoteImage: stubRemoteImageLoader(null) },
       ),
     Error,
-    'does not accept image content parts in developer messages',
+    "Invalid 'input_image' content part in developer message",
   );
 });
+
+// (Native native↔native only — Responses no longer carries thinking-mode
+// extension fields; alias overlays land on the Messages IR at the wire
+// call via `applyRulesToUpstreamMessages`.)

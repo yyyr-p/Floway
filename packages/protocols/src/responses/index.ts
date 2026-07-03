@@ -26,10 +26,14 @@ export interface ResponsesPayload {
   parallel_tool_calls?: boolean | null;
   reasoning?: {
     effort?: string;
-    summary?: 'detailed' | 'auto' | 'concise';
+    summary?: 'detailed' | 'auto' | 'concise' | (string & {});
   };
   include?: string[];
-  text?: { format?: Record<string, unknown> | null } | null;
+  // `text.verbosity` is a native GPT-5-family Responses field that controls
+  // response length; `text.format` carries structured-output schemas. Both
+  // ride on the same `text` object.
+  // Reference: https://platform.openai.com/docs/api-reference/responses/create
+  text?: { format?: Record<string, unknown> | null; verbosity?: string | null } | null;
   prompt_cache_key?: string | null;
   safety_identifier?: string | null;
   service_tier?: 'default' | 'auto' | 'flex' | 'priority' | 'scale' | (string & {}) | null;
@@ -56,6 +60,23 @@ export interface ResponsesCompactPayload {
   // provider call body.
   store?: boolean | null;
 }
+
+// Project a (possibly-wider) ResponsesPayload-shaped object into the strict
+// compact wire shape. Every native-compact provider terminal calls this
+// before dispatching to its upstream's `/responses/compact` endpoint, so a
+// post-chain action pivot that arrived carrying generate-only fields
+// (tools/temperature/reasoning/...) cannot leak them onto the compact wire.
+// `model` and `store` are caller-supplied at the dispatch site (model is
+// the resolved upstream id; store is gateway-only). `prompt_cache_retention`
+// only exists on the compact payload type today, so there is no
+// generate-side value to forward.
+export const toCompactPayloadShape = (payload: Omit<ResponsesPayload, 'model'>): Omit<ResponsesCompactPayload, 'model' | 'store'> => ({
+  input: payload.input,
+  ...(payload.instructions !== undefined && { instructions: payload.instructions }),
+  ...(payload.previous_response_id !== undefined && { previous_response_id: payload.previous_response_id }),
+  ...(payload.prompt_cache_key !== undefined && { prompt_cache_key: payload.prompt_cache_key }),
+  ...(payload.service_tier !== undefined && { service_tier: payload.service_tier }),
+});
 
 export type ResponsesInputItem =
   | ResponsesInputMessage
@@ -397,6 +418,12 @@ export interface ResponsesResult {
   error: { message: string; code: string; type?: string } | null;
   // https://developers.openai.com/api/reference/resources/responses/methods/create
   service_tier?: 'default' | 'auto' | 'flex' | 'priority' | 'scale' | (string & {}) | null;
+  // Request params echoed back on the response body. The `Response`
+  // schema in OpenAI's openapi.yaml composes `ResponseProperties`, which
+  // declares both fields; observed upstream echoes (Copilot, Azure)
+  // confirm they're populated with server-enriched defaults.
+  tools?: ResponsesTool[];
+  tool_choice?: ResponsesToolChoice;
   usage?: {
     input_tokens: number;
     output_tokens: number;

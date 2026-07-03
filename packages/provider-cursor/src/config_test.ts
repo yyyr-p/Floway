@@ -8,7 +8,7 @@ const good = { accounts: [goodAccount] };
 
 const wrap = (config: unknown): UpstreamRecord => ({
   id: 'up',
-  provider: 'cursor',
+  kind: 'cursor',
   name: 'n',
   enabled: true,
   sortOrder: 0,
@@ -27,8 +27,8 @@ describe('assertCursorUpstreamRecord (config validation)', () => {
     expect(() => assertCursorUpstreamRecord(wrap(good))).not.toThrow();
   });
 
-  test('rejects the wrong provider', () => {
-    expect(() => assertCursorUpstreamRecord({ ...wrap(good), provider: 'codex' })).toThrow("Expected provider 'cursor'");
+  test('rejects the wrong kind', () => {
+    expect(() => assertCursorUpstreamRecord({ ...wrap(good), kind: 'codex' })).toThrow("Expected kind 'cursor'");
   });
 
   test.each([

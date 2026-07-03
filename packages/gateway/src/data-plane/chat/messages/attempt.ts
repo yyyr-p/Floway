@@ -1,89 +1,102 @@
 import { messagesInterceptors, messagesCountTokensInterceptors } from './interceptors/index.ts';
 import type { MessagesInvocation } from './interceptors/types.ts';
+import { applyRulesToUpstreamMessages } from '../../model-aliases/apply-rules.ts';
 import { requireRecordedDurationMs } from '../../shared/telemetry/performance.ts';
 import { chatCompletionsAttempt } from '../chat-completions/attempt.ts';
 import { responsesAttempt } from '../responses/attempt.ts';
 import { rewriteStoredResponsesItemsForCandidate } from '../responses/items/rewrite.ts';
 import type { StatefulResponsesStore } from '../responses/items/store.ts';
-import { providerStreamResultToExecuteResult, buildUpstreamCallOptions } from '../shared/attempt-helpers.ts';
-import type { ProviderCandidate } from '../shared/candidates.ts';
+import { providerStreamResultToExecuteResult, buildUpstreamCallOptions, chatTargetPicker } from '../shared/attempt-helpers.ts';
 import { tryCatchChatServeFailure } from '../shared/errors.ts';
-import type { GatewayCtx } from '../shared/gateway-ctx.ts';
+import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { plainResultFromResponse } from '../shared/respond.ts';
 import { traverseTranslation } from '../shared/translate-traverse.ts';
 import { createUpstreamLatencyRecorder } from '../shared/upstream-telemetry.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { MessagesMessage, MessagesPayload, MessagesStreamEvent } from '@floway-dev/protocols/messages';
-import { type ExecuteResult, type PlainResult } from '@floway-dev/provider';
+import type { ModelCandidate, ExecuteResult, PlainResult } from '@floway-dev/provider';
+import { providerModelOf } from '@floway-dev/provider';
 import { translateMessagesViaChatCompletions, translateMessagesViaResponses } from '@floway-dev/translate';
 import { messagesViaResponsesItemsView } from '@floway-dev/translate/via-responses/responses-items';
 
+// `/v1/messages` generate prefers a native Messages target, then the
+// translated Responses path, then the translated Chat Completions path.
+export const messagesGenerateTarget = chatTargetPicker(['messages', 'responses', 'chat-completions']);
+
+// `count_tokens` has no translation path — only a native Messages target
+// satisfies the operation.
+export const messagesCountTokensTarget = chatTargetPicker(['messages']);
+
 export interface MessagesAttemptGenerateArgs {
   readonly payload: MessagesPayload;
-  readonly ctx: GatewayCtx;
-  readonly store: StatefulResponsesStore;
-  readonly candidate: ProviderCandidate;
+  readonly ctx: ChatGatewayCtx;
+  readonly candidate: ModelCandidate;
   readonly headers: Headers;
 }
 
 export interface MessagesAttemptCountTokensArgs {
   readonly payload: MessagesPayload;
-  readonly ctx: GatewayCtx;
-  readonly store: StatefulResponsesStore;
-  readonly candidate: ProviderCandidate;
+  readonly ctx: ChatGatewayCtx;
+  readonly candidate: ModelCandidate;
   readonly headers: Headers;
 }
 
 export const messagesAttempt = {
   generate: async (args: MessagesAttemptGenerateArgs): Promise<ExecuteResult<ProtocolFrame<MessagesStreamEvent>>> => {
-    const { payload, ctx, store, candidate, headers } = args;
+    const { payload, ctx, candidate, headers } = args;
+    const { store } = ctx;
+    const targetApi = messagesGenerateTarget.pick(candidate.model.endpoints);
     const rewritten = await rewriteOrRenderMessagesFailure(payload, store, candidate);
     if (rewritten.failure) return rewritten.failure;
     const invocation: MessagesInvocation = {
       payload: rewritten.payload,
       candidate,
+      targetApi,
       headers,
     };
     return await runInterceptors(invocation, ctx, messagesInterceptors, async () => {
-      if (candidate.targetApi === 'messages') {
+      if (targetApi === 'messages') {
+        if (candidate.rules !== undefined) applyRulesToUpstreamMessages(invocation.payload, candidate.rules);
         const { model: _model, ...body } = invocation.payload;
         const recorder = createUpstreamLatencyRecorder();
-        const providerResult = await candidate.binding.provider.callMessages(
-          candidate.binding.upstreamModel,
+        const providerResult = await candidate.provider.instance.callMessages(
+          providerModelOf(candidate),
           body,
           ctx.abortSignal,
           buildUpstreamCallOptions(candidate, ctx, recorder.record, invocation.headers),
         );
-        return await providerStreamResultToExecuteResult(providerResult, candidate, ctx, recorder);
+        return await providerStreamResultToExecuteResult(providerResult, candidate, targetApi, ctx, recorder);
       }
-      if (candidate.targetApi === 'responses') {
+      if (targetApi === 'responses') {
         return await traverseTranslation(
           invocation.payload,
-          p => translateMessagesViaResponses(p, { model: candidate.binding.upstreamModel.id }),
+          p => translateMessagesViaResponses(p, { model: candidate.model.id }),
           translated => responsesAttempt.generate({
-            payload: translated, ctx, store, candidate, snapshotMode: 'none', headers: invocation.headers,
+            payload: translated, ctx, candidate, headers: invocation.headers,
           }),
         );
       }
-      if (candidate.targetApi === 'chat-completions') {
+      if (targetApi === 'chat-completions') {
         return await traverseTranslation(
           invocation.payload,
-          p => translateMessagesViaChatCompletions(p, { model: candidate.binding.upstreamModel.id }),
+          p => translateMessagesViaChatCompletions(p, { model: candidate.model.id }),
           translated => chatCompletionsAttempt.generate({
-            payload: translated, ctx, store, candidate, headers: invocation.headers,
+            payload: translated, ctx, candidate, headers: invocation.headers,
           }),
         );
       }
-      throw new Error(`messagesAttempt.generate: unexpected targetApi '${(candidate as { targetApi: string }).targetApi}'`);
+      throw new Error(`messagesAttempt.generate: unexpected targetApi '${targetApi as string}'`);
     });
   },
 
   countTokens: async (args: MessagesAttemptCountTokensArgs): Promise<PlainResult> => {
-    const { payload, ctx, store, candidate, headers } = args;
-    if (candidate.targetApi !== 'messages') {
-      throw new Error(`messagesAttempt.countTokens requires targetApi='messages', got '${candidate.targetApi}'`);
-    }
+    const { payload, ctx, candidate, headers } = args;
+    const { store } = ctx;
+    // `pick` here is contractually total — serve filtered with
+    // `messagesCountTokensTarget.canServe`, so a non-messages candidate is
+    // a contract breach.
+    const targetApi = messagesCountTokensTarget.pick(candidate.model.endpoints);
     const rewritten = await rewriteOrRenderMessagesFailure(payload, store, candidate);
     if (rewritten.failure) {
       // count_tokens has no streaming envelope; surface the rewrite-time
@@ -93,13 +106,15 @@ export const messagesAttempt = {
     const invocation: MessagesInvocation = {
       payload: rewritten.payload,
       candidate,
+      targetApi,
       headers,
     };
     const recorder = createUpstreamLatencyRecorder();
     const response = await runInterceptors(invocation, ctx, messagesCountTokensInterceptors, async () => {
+      if (candidate.rules !== undefined) applyRulesToUpstreamMessages(invocation.payload, candidate.rules);
       const { model: _model, ...body } = invocation.payload;
-      const { response } = await candidate.binding.provider.callMessagesCountTokens(
-        candidate.binding.upstreamModel,
+      const { response } = await candidate.provider.instance.callMessagesCountTokens(
+        providerModelOf(candidate),
         body,
         ctx.abortSignal,
         buildUpstreamCallOptions(candidate, ctx, recorder.record, invocation.headers),
@@ -111,7 +126,7 @@ export const messagesAttempt = {
     // contract still has to fire so a provider that forgets to wrap fails
     // loud on the happy path.
     requireRecordedDurationMs(recorder, 'callMessagesCountTokens');
-    return await plainResultFromResponse(response, candidate.binding.upstream);
+    return await plainResultFromResponse(response, candidate.provider.upstream);
   },
 };
 
@@ -124,7 +139,7 @@ export const messagesAttempt = {
 const rewriteOrRenderMessagesFailure = async (
   payload: MessagesPayload,
   store: StatefulResponsesStore,
-  candidate: ProviderCandidate,
+  candidate: ModelCandidate,
 ): Promise<{ payload: MessagesPayload; failure?: undefined } | { payload?: undefined; failure: ExecuteResult<ProtocolFrame<MessagesStreamEvent>> & { type: 'api-error' } }> => {
   try {
     const rewrittenMessages = await rewriteStoredResponsesItemsForCandidate(

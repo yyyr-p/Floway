@@ -3,12 +3,12 @@ import { describe, expect, test } from 'vitest';
 import { injectDefaultInstructions } from './inject-default-instructions.ts';
 import type { ChatCompletionsBoundaryCtx } from './types.ts';
 import type { ChatCompletionsPayload } from '@floway-dev/protocols/chat-completions';
-import type { UpstreamModel } from '@floway-dev/provider';
+import type { ProviderModel } from '@floway-dev/provider';
 
 const mkCtx = (messages: ChatCompletionsPayload['messages']): ChatCompletionsBoundaryCtx => ({
   payload: { model: 'm', messages },
   headers: new Headers(),
-  model: { id: 'm' } as UpstreamModel,
+  model: { id: 'm' } as ProviderModel,
 });
 
 describe('injectDefaultInstructions', () => {

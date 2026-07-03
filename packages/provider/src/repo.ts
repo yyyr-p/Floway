@@ -12,7 +12,7 @@ export interface UpstreamsRepoSlim {
 // turn — the read stream lives in the DurableHttpSession). Persisted in D1 so
 // a tool-result follow-up landing on a different isolate can resume the
 // upstream RunSSE without the in-process transport. See migration
-// 0047_cursor_sessions.sql. Structurally matched by the gateway SqlRepo.
+// 0049_cursor_sessions.sql. Structurally matched by the gateway SqlRepo.
 export interface CursorSessionRow {
   sessionKey: string;
   requestId: string;

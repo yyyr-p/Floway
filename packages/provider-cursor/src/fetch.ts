@@ -25,7 +25,7 @@ import { assertCursorUpstreamState } from './state.ts';
 import { getDurableHttpSession, type DurableHttpSessionHandle } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent, ChatCompletionsPayload, ChatCompletionsMessage, ChatCompletionsTool } from '@floway-dev/protocols/chat-completions';
 import { eventFrame, doneFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
-import { getProviderRepo, type ProviderStreamResult, type UpstreamCallOptions, type UpstreamModel } from '@floway-dev/provider';
+import { getProviderRepo, type ProviderStreamResult, type UpstreamCallOptions, type ProviderModel } from '@floway-dev/provider';
 
 export interface CursorCallEffects {
   persistRefreshTokenRotation(newRefreshToken: string): Promise<void>;
@@ -35,7 +35,7 @@ export interface CursorCallEffects {
 interface CursorChatCallBase {
   upstreamId: string;
   account: CursorAccountCredential;
-  model: UpstreamModel;
+  model: ProviderModel;
   headers: Headers;
   signal?: AbortSignal;
   effects: CursorCallEffects;
@@ -332,7 +332,7 @@ const persistObservedContext = async (opts: CallCursorChatCompletionsOptions, ma
   if (!shouldPersistContext(opts.upstreamId, opts.model.id, maxMode, now)) return;
   try {
     const fresh = await getProviderRepo().upstreams.getById(opts.upstreamId);
-    if (fresh?.provider !== 'cursor') return;
+    if (fresh?.kind !== 'cursor') return;
     assertCursorUpstreamState(fresh.state);
     if (fresh.state.modelContext?.[contextCacheKey(opts.model.id, maxMode)]?.maxTokens === maxTokens) return;
     const next = withObservedContext(fresh.state, opts.model.id, maxMode, maxTokens, now);

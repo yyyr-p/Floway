@@ -2,7 +2,7 @@ import { describe, expect, test } from 'vitest';
 
 import {
   buildCollapsedCatalog,
-  cursorRawToUpstreamModel,
+  cursorRawToProviderModel,
   cursorWireModelId,
   fetchCursorBaseModels,
   fetchCursorCatalog,
@@ -11,7 +11,7 @@ import {
   type CursorBaseModel,
   type CursorRawModel,
 } from './models.ts';
-import { type Fetcher, type UpstreamModel } from '@floway-dev/provider';
+import { type Fetcher, type ProviderModel } from '@floway-dev/provider';
 
 const jsonResponse = (body: unknown): Response =>
   new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -69,27 +69,27 @@ describe('parseContextWindow', () => {
   });
 });
 
-describe('cursorRawToUpstreamModel', () => {
+describe('cursorRawToProviderModel', () => {
   const flags = new Set<string>();
   test('carries context, wire id, and variant ids in providerData', () => {
-    const m = cursorRawToUpstreamModel({ id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8', contextWindow: 300_000, wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] }, flags);
+    const m = cursorRawToProviderModel({ id: 'claude-opus-4-8', display_name: 'Claude Opus 4.8', contextWindow: 300_000, wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] }, flags);
     expect(m.limits.max_context_window_tokens).toBe(300_000);
     expect(m.providerData).toEqual({ wireModelId: 'claude-opus-4-8-high', variantIds: ['claude-opus-4-8-high', 'claude-opus-4-8-max'] });
   });
   test('no providerData when wire id equals id; 200k fallback', () => {
-    const m = cursorRawToUpstreamModel({ id: 'default', display_name: 'Auto', wireModelId: 'default' }, flags);
+    const m = cursorRawToProviderModel({ id: 'default', display_name: 'Auto', wireModelId: 'default' }, flags);
     expect(m.providerData).toBeUndefined();
     expect(m.limits.max_context_window_tokens).toBe(200_000);
   });
   test('every model advertises image input; reasoning effort added when present', () => {
-    const withReasoning = cursorRawToUpstreamModel({ id: 'c', display_name: 'c', reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
+    const withReasoning = cursorRawToProviderModel({ id: 'c', display_name: 'c', reasoning: { supported: ['low', 'medium', 'high'], default: 'high' } }, flags);
     expect(withReasoning.chat).toEqual({
       modalities: { input: ['text', 'image'], output: ['text'] },
       reasoning: { effort: { supported: ['low', 'medium', 'high'], default: 'high' } },
     });
   });
   test('a model with no reasoning still advertises image input', () => {
-    expect(cursorRawToUpstreamModel({ id: 'd', display_name: 'd' }, flags).chat).toEqual({
+    expect(cursorRawToProviderModel({ id: 'd', display_name: 'd' }, flags).chat).toEqual({
       modalities: { input: ['text', 'image'], output: ['text'] },
     });
   });
@@ -97,15 +97,15 @@ describe('cursorRawToUpstreamModel', () => {
 
 describe('cursorWireModelId', () => {
   test('reads providerData.wireModelId, else the id', () => {
-    expect(cursorWireModelId({ id: 'claude-opus-4-8', providerData: { wireModelId: 'claude-opus-4-8-high' } } as UpstreamModel)).toBe('claude-opus-4-8-high');
-    expect(cursorWireModelId({ id: 'gpt-5.5' } as UpstreamModel)).toBe('gpt-5.5');
+    expect(cursorWireModelId({ id: 'claude-opus-4-8', providerData: { wireModelId: 'claude-opus-4-8-high' } } as ProviderModel)).toBe('claude-opus-4-8-high');
+    expect(cursorWireModelId({ id: 'gpt-5.5' } as ProviderModel)).toBe('gpt-5.5');
   });
 });
 
 describe('resolveCursorWireModel', () => {
   const flags = new Set<string>();
   // thinking + effort model (opus-like)
-  const opus = cursorRawToUpstreamModel({
+  const opus = cursorRawToProviderModel({
     id: 'opus', display_name: 'Opus', wireModelId: 'opus-thinking-high',
     variants: [
       { slug: 'opus-low', effort: 'low', thinking: false, fast: false },
@@ -115,17 +115,17 @@ describe('resolveCursorWireModel', () => {
     ],
   }, flags);
   // thinking-only model (sonnet-4-5-like)
-  const sonnet = cursorRawToUpstreamModel({
+  const sonnet = cursorRawToProviderModel({
     id: 'sonnet', display_name: 'Sonnet', wireModelId: 'sonnet-thinking',
     variants: [{ slug: 'sonnet', thinking: false }, { slug: 'sonnet-thinking', thinking: true }],
   }, flags);
   // effort-only model (gpt-like, incl 'none')
-  const gpt = cursorRawToUpstreamModel({
+  const gpt = cursorRawToProviderModel({
     id: 'gpt', display_name: 'GPT', wireModelId: 'gpt-high',
     variants: [{ slug: 'gpt-none', effort: 'none' }, { slug: 'gpt-low', effort: 'low' }, { slug: 'gpt-high', effort: 'high' }],
   }, flags);
   // single-variant model (kimi-like)
-  const kimi = cursorRawToUpstreamModel({ id: 'kimi', display_name: 'Kimi', wireModelId: 'kimi', variants: [{ slug: 'kimi' }] }, flags);
+  const kimi = cursorRawToProviderModel({ id: 'kimi', display_name: 'Kimi', wireModelId: 'kimi', variants: [{ slug: 'kimi' }] }, flags);
 
   test('no reasoning_effort → default wire', () => {
     expect(resolveCursorWireModel(opus, null)).toBe('opus-thinking-high');

@@ -3,7 +3,7 @@ import { assertClaudeCodeUpstreamRecord } from './config.ts';
 import { isClaudeCodeShapedRequest } from './detection.ts';
 import { detectHaikuProbe, callClaudeCodeMessages } from './fetch.ts';
 import { claudeCodeMessagesChain, type ClaudeCodeMessagesBoundaryCtx } from './interceptors/messages/index.ts';
-import { buildClaudeCodeCatalog, claudeCodeResolveRequestedModelId, fetchClaudeCodeModelsList } from './models.ts';
+import { buildClaudeCodeCatalog, fetchClaudeCodeModelsList } from './models.ts';
 import { pricingForClaudeCodeModelKey } from './pricing.ts';
 import { assertClaudeCodeUpstreamState } from './state.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
@@ -12,19 +12,19 @@ import {
   defaultsForProvider,
   getProviderRepo,
   resolveEffectiveFlags,
-  type ModelProvider,
-  type ModelProviderInstance,
+  type ProviderInstance,
+  type Provider,
   type ProviderStreamResult,
   type UpstreamRecord,
 } from '@floway-dev/provider';
 
-export const createClaudeCodeProvider = async (record: UpstreamRecord): Promise<ModelProviderInstance> => {
+export const createClaudeCodeProvider = async (record: UpstreamRecord): Promise<Provider> => {
   assertClaudeCodeUpstreamRecord(record);
   assertClaudeCodeUpstreamState(record.state);
 
   const enabledFlags = resolveEffectiveFlags(defaultsForProvider('claude-code'), [record.flagOverrides]);
 
-  const provider: ModelProvider = {
+  const instance: ProviderInstance = {
     // Catalog refresh mints an access token and hits /v1/models on every
     // dispatcher poll. `ensureClaudeCodeAccessToken` flips the row to
     // `refresh_failed` and throws `ClaudeCodeOAuthSessionTerminatedError`
@@ -63,9 +63,9 @@ export const createClaudeCodeProvider = async (record: UpstreamRecord): Promise<
 
       const terminal = async (): Promise<ProviderStreamResult<MessagesStreamEvent>> => {
         // Drop `model` from the payload: callClaudeCodeMessages re-attaches the
-        // dated upstream id (from `opts.model.providerData.upstreamModelId`)
-        // on the wire so Anthropic sees a stable per-revision id rather than
-        // the public alias the catalog exposes to clients.
+        // dated upstream id (from `opts.model.providerData.upstreamModelId`) on
+        // the wire so Anthropic sees a stable per-revision id rather than the
+        // public alias the catalog exposes to clients.
         const { model: _ignored, ...wireBody } = ctx.payload;
         return await callClaudeCodeMessages({
           upstreamId: record.id,
@@ -93,7 +93,6 @@ export const createClaudeCodeProvider = async (record: UpstreamRecord): Promise<
     callCompletions: rejectUnsupported('callCompletions'),
     callChatCompletions: rejectUnsupported('callChatCompletions'),
     callResponses: rejectUnsupported('callResponses'),
-    callResponsesCompact: rejectUnsupported('callResponsesCompact'),
     callEmbeddings: rejectUnsupported('callEmbeddings'),
     callImagesGenerations: rejectUnsupported('callImagesGenerations'),
     callImagesEdits: rejectUnsupported('callImagesEdits'),
@@ -101,13 +100,12 @@ export const createClaudeCodeProvider = async (record: UpstreamRecord): Promise<
 
   return {
     upstream: record.id,
-    providerKind: 'claude-code',
+    kind: 'claude-code',
     name: record.name,
     disabledPublicModelIds: record.disabledPublicModelIds,
     modelPrefix: record.modelPrefix,
-    provider,
+    instance,
     supportsResponsesItemReference: false,
-    resolveRequestedModelId: claudeCodeResolveRequestedModelId,
   };
 };
 

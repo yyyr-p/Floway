@@ -4,26 +4,27 @@ import { messagesAttempt } from './attempt.ts';
 import { initRepo } from '../../../repo/index.ts';
 import { InMemoryRepo } from '../../../repo/memory.ts';
 import { createNonResponsesSourceStore } from '../responses/items/store.ts';
-import type { ProviderCandidate } from '../shared/candidates.ts';
-import type { GatewayCtx } from '../shared/gateway-ctx.ts';
+import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
-import { doneFrame, eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
+import { doneFrame, eventFrame, type ModelEndpoints, type ProtocolFrame } from '@floway-dev/protocols/common';
 import type { MessagesPayload, MessagesStreamEvent } from '@floway-dev/protocols/messages';
-import type { ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
-import { directFetcher, type ProviderCallResult, type ProviderStreamResult, type UpstreamCallOptions } from '@floway-dev/provider';
-import { assertEquals, assertExists, stubProvider, stubUpstreamModel } from '@floway-dev/test-utils';
+import type { ResponsesResult } from '@floway-dev/protocols/responses';
+import { type ModelCandidate, directFetcher, type ProviderCallResult, type ProviderResponsesResult, type ProviderStreamResult, type ResponsesAction, type UpstreamCallOptions } from '@floway-dev/provider';
+import { assertEquals, assertExists, stubProvider, stubInternalModel } from '@floway-dev/test-utils';
 
 const API_KEY_ID = 'key_messages_attempt_test';
 
-const makeGatewayCtx = (): GatewayCtx => ({
+const makeGatewayCtx = (): ChatGatewayCtx => ({
   apiKeyId: API_KEY_ID,
   upstreamIds: null,
   wantsStream: true,
   runtimeLocation: 'TEST',
   currentColo: 'TEST',
   dump: null,
+  responseHeaders: new Headers(),
   backgroundScheduler: () => {},
   requestStartedAt: 0,
+  store: createNonResponsesSourceStore(API_KEY_ID),
 });
 
 const makePayload = (overrides: Partial<MessagesPayload> = {}): MessagesPayload => ({
@@ -61,15 +62,13 @@ const makeProtocolFrames = async function* <TEvent>(events: readonly TEvent[]): 
 
 const makeCandidate = (overrides: {
   upstream?: string;
-  targetApi?: ProviderCandidate['targetApi'];
+  endpoints?: ModelEndpoints;
   callMessages?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<MessagesStreamEvent>>;
-  callResponses?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<ResponsesStreamEvent>>;
+  callResponses?: (model: unknown, body: unknown, action: ResponsesAction, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderResponsesResult>;
   callChatCompletions?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<ChatCompletionsStreamEvent>>;
   callMessagesCountTokens?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderCallResult>;
-} = {}): ProviderCandidate => {
+} = {}): ModelCandidate => {
   const upstream = overrides.upstream ?? 'up_test';
-  const targetApi = overrides.targetApi ?? 'messages';
-  const upstreamModel = stubUpstreamModel();
   const provider = stubProvider({
     callMessages: overrides.callMessages,
     callResponses: overrides.callResponses,
@@ -78,24 +77,10 @@ const makeCandidate = (overrides: {
   });
   return {
     provider: {
-      upstream,
-      providerKind: 'custom',
-      name: upstream,
-      disabledPublicModelIds: [],
-      modelPrefix: null,
-      provider,
-      supportsResponsesItemReference: true,
+      upstream, kind: 'custom', name: upstream,
+      disabledPublicModelIds: [], modelPrefix: null, instance: provider, supportsResponsesItemReference: true,
     },
-    binding: {
-      upstream,
-      upstreamName: upstream,
-      providerKind: 'custom',
-      provider,
-      upstreamModel,
-      enabledFlags: upstreamModel.enabledFlags,
-      supportsResponsesItemReference: true,
-    },
-    targetApi,
+    model: stubInternalModel(overrides.endpoints ? { endpoints: overrides.endpoints } : {}, upstream),
     fetcher: directFetcher,
   };
 };
@@ -122,7 +107,6 @@ test('generate native messages target calls provider.callMessages with no rewrit
   const result = await messagesAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
     candidate: makeCandidate({ callMessages }),
     headers: new Headers(),
   });
@@ -143,8 +127,8 @@ test('generate translate-to-responses branch routes through responsesAttempt', a
     }],
     output_text: 'hi', error: null, incomplete_details: null,
   };
-  const callResponses = vi.fn(async (): Promise<ProviderStreamResult<ResponsesStreamEvent>> => ({
-    ok: true,
+  const callResponses = vi.fn(async (): Promise<ProviderResponsesResult> => ({
+    action: 'generate', ok: true,
     events: makeProtocolFrames([{ type: 'response.completed', sequence_number: 0, response: respResp }]),
     modelKey: 'k',
     headers: new Headers(),
@@ -152,8 +136,7 @@ test('generate translate-to-responses branch routes through responsesAttempt', a
   const result = await messagesAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
-    candidate: makeCandidate({ targetApi: 'responses', callResponses }),
+    candidate: makeCandidate({ callResponses, endpoints: { responses: {} } }),
     headers: new Headers(),
   });
 
@@ -173,7 +156,6 @@ test('countTokens proxies the upstream response as a plain result', async () => 
   const result = await messagesAttempt.countTokens({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
     candidate: makeCandidate({ callMessagesCountTokens }),
     headers: new Headers(),
   });
@@ -193,24 +175,23 @@ test('countTokens refuses a non-messages candidate', async () => {
     await messagesAttempt.countTokens({
       payload: makePayload(),
       ctx: makeGatewayCtx(),
-      store: createNonResponsesSourceStore(API_KEY_ID),
-      candidate: makeCandidate({ targetApi: 'responses' }),
+      candidate: makeCandidate({ endpoints: { responses: {} } }),
       headers: new Headers(),
     });
   } catch (error) {
     thrown = error;
   }
   if (!(thrown instanceof Error)) throw new Error('expected an Error to be thrown');
-  assertEquals(thrown.message.includes("targetApi='messages'"), true);
+  assertEquals(thrown.message.includes('chatTargetPicker.pick'), true);
 });
 
 test('generate attaches the performance context and records upstream_success', async () => {
   const repo = installRepo();
   const background: Promise<unknown>[] = [];
-  const ctx: GatewayCtx = {
+  const ctx: ChatGatewayCtx = {
     ...makeGatewayCtx(),
     runtimeLocation: 'SJC',
-    backgroundScheduler: promise => { background.push(promise); },
+    backgroundScheduler: (promise: Promise<unknown>) => { background.push(promise); },
   };
   const callMessages = vi.fn(async (): Promise<ProviderStreamResult<MessagesStreamEvent>> => ({
     ok: true, events: makeProtocolFrames(makeMessagesEvents()), modelKey: 'gpt-test', headers: new Headers(),
@@ -219,7 +200,6 @@ test('generate attaches the performance context and records upstream_success', a
   const result = await messagesAttempt.generate({
     payload: makePayload(),
     ctx,
-    store: createNonResponsesSourceStore(API_KEY_ID),
     candidate: makeCandidate({ upstream: 'up_perf', callMessages }),
     headers: new Headers(),
   });
@@ -256,7 +236,6 @@ test('generate propagates upstream response headers onto the EventResult so resp
   const result = await messagesAttempt.generate({
     payload: makePayload(),
     ctx: makeGatewayCtx(),
-    store: createNonResponsesSourceStore(API_KEY_ID),
     candidate: makeCandidate({ callMessages }),
     headers: new Headers(),
   });

@@ -6,24 +6,29 @@ import type { AuthVars } from '../../../middleware/auth.ts';
 import { initRepo } from '../../../repo/index.ts';
 import { InMemoryRepo } from '../../../repo/memory.ts';
 import type { ApiKey, StoredResponsesItem, User } from '../../../repo/types.ts';
-import type { ProviderCandidate } from '../shared/candidates.ts';
-import { doneFrame, eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
-import type { ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
-import { directFetcher, type ProviderStreamResult, type UpstreamCallOptions } from '@floway-dev/provider';
-import { assert, assertEquals, stubProvider, stubUpstreamModel } from '@floway-dev/test-utils';
+import { type AliasRules, doneFrame, eventFrame, type ModelEndpoints, type ProtocolFrame } from '@floway-dev/protocols/common';
+import type { ResponsesPayload, ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
+import { type ModelCandidate, directFetcher, type ProviderResponsesResult, type ResponsesAction, type UpstreamCallOptions } from '@floway-dev/provider';
+import { assert, assertEquals, stubProvider, stubInternalModel } from '@floway-dev/test-utils';
 
-// Mock the candidates seam so each test hands the http entry exactly the
-// provider candidates it wants. Mirrors the pattern from serve_test.ts.
-const candidatesQueue: { readonly candidates: readonly ProviderCandidate[]; readonly sawModel: boolean }[] = [];
-const seenModels: string[] = [];
-vi.mock('../shared/candidates.ts', async importOriginal => {
-  const original = await importOriginal<typeof import('../shared/candidates.ts')>();
+// Mock the resolver seam so each test hands the http entry exactly the
+// provider candidates it wants, optionally with an alias-rules overlay
+// attached.
+interface QueuedResolution {
+  readonly candidates: readonly ModelCandidate[];
+  readonly sawModel: boolean;
+  readonly failedUpstreams: readonly string[];
+}
+const resolutionsQueue: QueuedResolution[] = [];
+const lastSeenModel: { value: string | null } = { value: null };
+vi.mock('../../providers/registry.ts', async importOriginal => {
+  const original = await importOriginal<typeof import('../../providers/registry.ts')>();
   return {
     ...original,
-    enumerateProviderCandidates: vi.fn(async (args: { model: string }) => {
-      seenModels.push(args.model);
-      const next = candidatesQueue.shift();
-      if (next === undefined) throw new Error('http_test: no candidates enqueued');
+    enumerateModelCandidates: vi.fn(async ({ model }: { model: string }) => {
+      lastSeenModel.value = model;
+      const next = resolutionsQueue.shift();
+      if (next === undefined) throw new Error('http_test: no resolution enqueued');
       return next;
     }),
   };
@@ -33,8 +38,16 @@ const { responsesHttp } = await import('./http.ts');
 
 const API_KEY_ID = 'key_http_test';
 
-const queueCandidates = (candidates: readonly ProviderCandidate[], sawModel = candidates.length > 0): void => {
-  candidatesQueue.push({ candidates, sawModel });
+const queueResolution = (
+  candidates: readonly ModelCandidate[],
+  extra: { sawModel?: boolean; aliasRules?: AliasRules } = {},
+): void => {
+  const rules = extra.aliasRules;
+  resolutionsQueue.push({
+    candidates: rules !== undefined ? candidates.map(c => ({ ...c, rules })) : candidates,
+    sawModel: extra.sawModel ?? candidates.length > 0,
+    failedUpstreams: [],
+  });
 };
 
 const installRepo = (): InMemoryRepo => {
@@ -105,37 +118,24 @@ const makeProviderEvents = async function* (events: readonly ResponsesStreamEven
 
 const makeCandidate = (overrides: {
   upstream?: string;
-  targetApi?: ProviderCandidate['targetApi'];
-  callResponses?: (model: unknown, body: unknown, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderStreamResult<ResponsesStreamEvent>>;
-  callResponsesCompact?: (...args: unknown[]) => Promise<unknown>;
-} = {}): ProviderCandidate => {
+  endpoints?: ModelEndpoints;
+  callResponses?: (model: unknown, body: unknown, action: ResponsesAction, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderResponsesResult>;
+} = {}): ModelCandidate => {
   const upstream = overrides.upstream ?? 'up_test';
-  const targetApi = overrides.targetApi ?? 'responses';
-  const upstreamModel = stubUpstreamModel();
   const provider = stubProvider({
     callResponses: overrides.callResponses,
-    ...(overrides.callResponsesCompact !== undefined ? { callResponsesCompact: overrides.callResponsesCompact as never } : {}),
   });
   return {
     provider: {
       upstream,
-      providerKind: 'custom',
+      kind: 'custom',
       name: upstream,
       disabledPublicModelIds: [],
       modelPrefix: null,
-      provider,
+      instance: provider,
       supportsResponsesItemReference: true,
     },
-    binding: {
-      upstream,
-      upstreamName: upstream,
-      providerKind: 'custom',
-      provider,
-      upstreamModel,
-      enabledFlags: upstreamModel.enabledFlags,
-      supportsResponsesItemReference: true,
-    },
-    targetApi,
+    model: stubInternalModel(overrides.endpoints ? { endpoints: overrides.endpoints } : {}, upstream),
     fetcher: directFetcher,
   };
 };
@@ -148,13 +148,13 @@ const completedEvent = (id = 'resp_test'): ResponsesStreamEvent => ({
 
 test('POST /v1/responses streams a successful SSE body', async () => {
   installRepo();
-  const callResponses = vi.fn(async (): Promise<ProviderStreamResult<ResponsesStreamEvent>> => ({
-    ok: true,
+  const callResponses = vi.fn(async (): Promise<ProviderResponsesResult> => ({
+    action: 'generate', ok: true,
     events: makeProviderEvents([completedEvent()]),
     modelKey: 'test-model-key',
     headers: new Headers(),
   }));
-  queueCandidates([makeCandidate({ callResponses })]);
+  queueResolution([makeCandidate({ callResponses })]);
 
   const response = await makeApp().request('/v1/responses', {
     method: 'POST',
@@ -175,13 +175,13 @@ test('POST /v1/responses streams a successful SSE body', async () => {
 
 test('POST /v1/responses returns a single JSON body when stream is omitted', async () => {
   installRepo();
-  const callResponses = vi.fn(async (): Promise<ProviderStreamResult<ResponsesStreamEvent>> => ({
-    ok: true,
+  const callResponses = vi.fn(async (): Promise<ProviderResponsesResult> => ({
+    action: 'generate', ok: true,
     events: makeProviderEvents([completedEvent('resp_nonstream')]),
     modelKey: 'test-model-key',
     headers: new Headers(),
   }));
-  queueCandidates([makeCandidate({ callResponses })]);
+  queueResolution([makeCandidate({ callResponses })]);
 
   const response = await makeApp().request('/v1/responses', {
     method: 'POST',
@@ -204,12 +204,11 @@ test('POST /v1/responses/compact returns a non-streaming compaction envelope', a
     object: 'response.compaction',
     output: [compactionItem] as unknown as ResponsesResult['output'],
   };
-  const callResponsesCompact = vi.fn(async () => ({
-    ok: true as const,
-    result: compactionResult,
-    modelKey: 'test-model-key',
-  }));
-  queueCandidates([makeCandidate({ callResponsesCompact })]);
+  const callResponses = vi.fn(async (_model: unknown, _body: unknown, action: ResponsesAction): Promise<ProviderResponsesResult> => {
+    if (action !== 'compact') throw new Error(`expected compact, got ${action}`);
+    return { action: 'compact', ok: true, result: compactionResult, modelKey: 'test-model-key' };
+  });
+  queueResolution([makeCandidate({ callResponses })]);
 
   const response = await makeApp().request('/v1/responses/compact', {
     method: 'POST',
@@ -269,7 +268,7 @@ test('POST /v1/responses renders a routing-unavailable 400 when a forcing item n
     refreshedAt: 1_000,
   };
   await repo.responsesItems.insertMany([row]);
-  queueCandidates([makeCandidate({ upstream: 'up_b' })]);
+  queueResolution([makeCandidate({ upstream: 'up_b' })]);
 
   const response = await makeApp().request('/v1/responses', {
     method: 'POST',
@@ -285,49 +284,66 @@ test('POST /v1/responses renders a routing-unavailable 400 when a forcing item n
   assertEquals(body.error.code, 'responses_item_routing_unavailable');
 });
 
-test('POST /v1/responses rewrites the codex-auto-review alias before routing', async () => {
+// Alias flow: the resolver returns a candidate whose upstream catalog id
+// is the target model id, plus the alias's rule overlay. Serve rewrites
+// `payload.model` to `candidate.model.id` before dispatching, and the
+// attempt's leaf wire call reads `candidate.rules` to overlay the rules
+// onto the target IR.
+const queueCodexAutoReviewCandidate = (
+  callResponses: (model: unknown, body: unknown, action: ResponsesAction, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderResponsesResult>,
+): void => {
+  const candidate = makeCandidate({ callResponses });
+  Object.assign(candidate.model, { id: 'gpt-5.4' });
+  queueResolution([candidate], { aliasRules: { reasoning: { effort: 'low' } } });
+};
+
+test('POST /v1/responses routes a codex-auto-review request through the seeded alias: rewrites the model to gpt-5.4 and stamps reasoning.effort=low', async () => {
   installRepo();
-  seenModels.length = 0;
-  const observedBodies: { reasoning?: { effort?: string } }[] = [];
-  const callResponses = vi.fn(async (_model: unknown, body: unknown): Promise<ProviderStreamResult<ResponsesStreamEvent>> => {
-    observedBodies.push(body as { reasoning?: { effort?: string } });
+  lastSeenModel.value = null;
+  const observedBodies: ResponsesPayload[] = [];
+  queueCodexAutoReviewCandidate(async (_model, body): Promise<ProviderResponsesResult> => {
+    observedBodies.push(body as ResponsesPayload);
     return {
-      ok: true,
+      action: 'generate', ok: true,
       events: makeProviderEvents([completedEvent()]),
       modelKey: 'test-model-key',
       headers: new Headers(),
     };
   });
-  queueCandidates([makeCandidate({ callResponses })]);
 
   const response = await makeApp().request('/v1/responses', {
     method: 'POST',
     headers: new Headers({ 'content-type': 'application/json' }),
-    body: JSON.stringify({ model: 'codex-auto-review', input: 'hello' }),
+    body: JSON.stringify({ model: 'codex-auto-review', input: 'hello', stream: true }),
   });
 
   assertEquals(response.status, 200);
-  assertEquals(seenModels, ['gpt-5.4']);
+  // The resolver sees the inbound alias id verbatim; target-id walking is
+  // internal to `enumerateModelCandidates`.
+  assertEquals(lastSeenModel.value, 'codex-auto-review');
   const observed = observedBodies[0];
   if (observed === undefined) throw new Error('expected callResponses to receive a body');
+  // The attempt strips `model` from the body — the provider re-stamps it
+  // from `candidate.model.id` — so we only verify the rules landed on the
+  // IR.
   assertEquals(observed.reasoning?.effort, 'low');
 });
 
-test('POST /v1/responses/compact rewrites the codex-auto-review alias to gpt-5.4 with no reasoning field', async () => {
+test('POST /v1/responses/compact routes a codex-auto-review request through the seeded alias: rewrites the model to gpt-5.4 and stamps reasoning.effort=low (the alias rule overlays the compact body too)', async () => {
   installRepo();
-  seenModels.length = 0;
-  const observedBodies: { reasoning?: unknown }[] = [];
+  lastSeenModel.value = null;
+  const observedBodies: ResponsesPayload[] = [];
   const compactionItem = { type: 'compaction' as const, id: 'cmp_1', encrypted_content: 'ENC' };
   const compactionResult: ResponsesResult = {
     ...makeResponsesResult(),
     object: 'response.compaction',
     output: [compactionItem] as unknown as ResponsesResult['output'],
   };
-  const callResponsesCompact = vi.fn(async (_model: unknown, body: unknown) => {
-    observedBodies.push(body as { reasoning?: unknown });
-    return { ok: true as const, result: compactionResult, modelKey: 'test-model-key' };
+  queueCodexAutoReviewCandidate(async (_model, body, action): Promise<ProviderResponsesResult> => {
+    if (action !== 'compact') throw new Error(`expected compact, got ${action}`);
+    observedBodies.push(body as ResponsesPayload);
+    return { action: 'compact', ok: true, result: compactionResult, modelKey: 'test-model-key' };
   });
-  queueCandidates([makeCandidate({ callResponsesCompact })]);
 
   const response = await makeApp().request('/v1/responses/compact', {
     method: 'POST',
@@ -339,8 +355,29 @@ test('POST /v1/responses/compact rewrites the codex-auto-review alias to gpt-5.4
   });
 
   assertEquals(response.status, 200);
-  assertEquals(seenModels, ['gpt-5.4']);
+  assertEquals(lastSeenModel.value, 'codex-auto-review');
   const observed = observedBodies[0];
-  if (observed === undefined) throw new Error('expected callResponsesCompact to receive a body');
-  assertEquals(observed.reasoning, undefined);
+  if (observed === undefined) throw new Error('expected callResponses to receive a body');
+  assertEquals(observed.reasoning?.effort, 'low');
+});
+
+test('POST /v1/responses renders the OpenAI-shaped model-unsupported 400 when no candidate matches the responses picker', async () => {
+  installRepo();
+  // Queue a chat-kind candidate whose endpoints expose only `completions` —
+  // responsesTarget (responses > messages > chat-completions) rejects it,
+  // leaving zero viable candidates, and with sawModel=true the serve renders
+  // model-unsupported as a 400.
+  queueResolution([makeCandidate({ endpoints: { completions: {} } })]);
+
+  const response = await makeApp().request('/v1/responses', {
+    method: 'POST',
+    headers: new Headers({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ model: 'wrong-endpoint-model', input: 'hello' }),
+  });
+
+  assertEquals(response.status, 400);
+  assertEquals(response.headers.get('content-type')?.split(';')[0], 'application/json');
+  const body = await response.json() as { error: { type: string; message: string } };
+  assertEquals(body.error.type, 'invalid_request_error');
+  assert(body.error.message.includes('does not support'));
 });

@@ -3,7 +3,8 @@
 
 import type { Context } from 'hono';
 
-import { createGatewayCtxFromHono } from '../chat/shared/gateway-ctx.ts';
+import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
+import { createGatewayCtxFromHono, finalizeGatewayResponse } from '../chat/shared/gateway-ctx.ts';
 import { readRequestBody } from '../chat/shared/request-body.ts';
 import { passthroughApiError, passthroughServe } from '../shared/passthrough-serve.ts';
 import { tokenUsageFromEmbeddingsBody } from '../shared/telemetry/usage.ts';
@@ -45,12 +46,11 @@ const prepareEmbeddingsRequest = (bytes: Uint8Array): { type: 'ok'; body: Record
 
 export const embeddings = async (c: Context): Promise<Response> => {
   const requestBody = await readRequestBody(c);
-  const ctx = createGatewayCtxFromHono(c, { wantsStream: false, requestBody });
+  const ctx = createGatewayCtxFromHono(c, { wantsStream: false, requestBody, backgroundScheduler: backgroundSchedulerFromContext(c) });
   const request = prepareEmbeddingsRequest(requestBody.bytes);
   if (request.type === 'invalid') {
     ctx.dump?.error('gateway');
-    const response = passthroughApiError(c, request.message, 400);
-    return (ctx.dump?.finalize(response) ?? response);
+    return finalizeGatewayResponse(ctx, passthroughApiError(c, request.message, 400));
   }
 
   ctx.dump?.requestedModel(request.model);
@@ -59,12 +59,13 @@ export const embeddings = async (c: Context): Promise<Response> => {
     ctx,
     sourceApi: '/embeddings',
     model: request.model,
-    bindingServesEndpoint: binding => binding.upstreamModel.endpoints.embeddings !== undefined,
-    call: async (binding, opts) => {
+    kind: 'embedding',
+    modelServesEndpoint: model => model.endpoints.embeddings !== undefined,
+    call: async (provider, model, opts) => {
       const { model: _model, ...body } = request.body;
-      return await binding.provider.callEmbeddings(binding.upstreamModel, body, undefined, opts);
+      return await provider.instance.callEmbeddings(model, body, undefined, opts);
     },
     response: { format: 'json', extractBilling: tokenUsageFromEmbeddingsBody },
   });
-  return (ctx.dump?.finalize(response) ?? response);
+  return finalizeGatewayResponse(ctx, response);
 };

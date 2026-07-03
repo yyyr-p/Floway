@@ -16,9 +16,17 @@
 import { CLAUDE_CODE_HEADERS_SONNET_OPUS } from './headers.ts';
 import { pricingForClaudeCodeModelKey } from './pricing.ts';
 import type { ClaudeCodeProviderData } from './types.ts';
-import type { Fetcher, UpstreamModel, UpstreamChatModelConfig } from '@floway-dev/provider';
+import type { Fetcher, ProviderModel, UpstreamChatModelConfig } from '@floway-dev/provider';
 
 const ANTHROPIC_MODELS_ENDPOINT = 'https://api.anthropic.com/v1/models?limit=100';
+
+// Anthropic extended-thinking minimum `budget_tokens`. Uniform across every
+// thinking-capable Claude model; the upper bound is request-relative
+// (`budget_tokens < max_tokens`) and has no catalog-side constant, so we
+// leave `max` unset and let the dashboard warning surface only the floor.
+// https://docs.claude.com/en/docs/build-with-claude/extended-thinking#technical-considerations-for-thinking-budgets
+// https://github.com/anthropics/anthropic-sdk-python/blob/main/src/anthropic/types/thinking_config_enabled_param.py
+const ANTHROPIC_THINKING_BUDGET_MIN = 1024;
 
 // `/v1/models` returns more fields than we consume; the parser keeps the
 // ones the catalog needs and ignores the rest so a benign upstream
@@ -139,7 +147,7 @@ export const aliasFromApiId = (apiId: string): string => apiId.replace(/-\d{8}$/
 
 // Derives the `chat` metadata from a model's capabilities block.
 // Returns undefined when no relevant capability is present so the
-// caller can omit the key entirely and keep the UpstreamModel lean.
+// caller can omit the key entirely and keep the ProviderModel lean.
 export const chatFromCapabilities = (
   capabilities: ClaudeCodeApiModel['capabilities'],
 ): UpstreamChatModelConfig | undefined => {
@@ -165,7 +173,7 @@ export const chatFromCapabilities = (
   }
 
   if (capabilities.thinking?.types?.enabled?.supported === true) {
-    reasoning.budget_tokens = {};
+    reasoning.budget_tokens = { min: ANTHROPIC_THINKING_BUDGET_MIN };
   }
 
   if (capabilities.thinking?.types?.adaptive?.supported === true) {
@@ -182,7 +190,7 @@ export const chatFromCapabilities = (
 export const buildClaudeCodeCatalog = (
   apiModels: readonly ClaudeCodeApiModel[],
   enabledFlags: ReadonlySet<string>,
-): UpstreamModel[] => apiModels.map(api => {
+): ProviderModel[] => apiModels.map(api => {
   const alias = aliasFromApiId(api.id);
   const cost = pricingForClaudeCodeModelKey(api.id);
   const providerData: ClaudeCodeProviderData = { upstreamModelId: api.id };
@@ -200,14 +208,3 @@ export const buildClaudeCodeCatalog = (
     ...(chat ? { chat } : {}),
   };
 });
-
-// Hook for `ModelProviderInstance.resolveRequestedModelId`: a client that
-// addresses a model by its dated upstream id resolves to the catalog alias
-// the dispatcher actually carries. The catalog publishes only aliases, so
-// any id that already lacks a date suffix needs no remap. We don't validate
-// against the live catalog here — the dispatcher's own model-id lookup is
-// what fails a request that names a model the upstream doesn't expose.
-export const claudeCodeResolveRequestedModelId = (modelId: string): string | undefined => {
-  const alias = aliasFromApiId(modelId);
-  return alias === modelId ? undefined : alias;
-};

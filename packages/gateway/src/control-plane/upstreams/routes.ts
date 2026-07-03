@@ -85,7 +85,7 @@ import { assertOllamaUpstreamRecord, createOllamaProvider } from '@floway-dev/pr
 // expects.
 const serializeForResponse = async (record: UpstreamRecord): Promise<SerializedUpstreamRecord> => {
   let codexQuotaPromise: Promise<CodexQuotaSnapshot | null> | null = null;
-  if (record.provider === 'codex') {
+  if (record.kind === 'codex') {
     assertCodexUpstreamRecord(record);
     codexQuotaPromise = getCodexQuota(record.id, record.config.accounts[0].chatgptAccountId);
   }
@@ -130,18 +130,18 @@ const providerDataUpstreamModelId = (data: unknown): string | undefined => {
 // that the provider packages own.
 const normalizeConfig = (record: UpstreamRecord): ValidationResult<unknown> => {
   try {
-    if (record.provider === 'custom') return { ok: true, value: assertCustomUpstreamRecord(record).config };
-    if (record.provider === 'azure') return { ok: true, value: assertAzureUpstreamRecord(record).config };
-    if (record.provider === 'ollama') return { ok: true, value: assertOllamaUpstreamRecord(record).config };
-    if (record.provider === 'codex') {
+    if (record.kind === 'custom') return { ok: true, value: assertCustomUpstreamRecord(record).config };
+    if (record.kind === 'azure') return { ok: true, value: assertAzureUpstreamRecord(record).config };
+    if (record.kind === 'ollama') return { ok: true, value: assertOllamaUpstreamRecord(record).config };
+    if (record.kind === 'codex') {
       assertCodexUpstreamRecord(record);
       return { ok: true, value: record.config };
     }
-    if (record.provider === 'claude-code') {
+    if (record.kind === 'claude-code') {
       assertClaudeCodeUpstreamRecord(record);
       return { ok: true, value: record.config };
     }
-    if (record.provider === 'cursor') {
+    if (record.kind === 'cursor') {
       assertCursorUpstreamRecord(record);
       return { ok: true, value: record.config };
     }
@@ -241,7 +241,7 @@ export const listUpstreamOptions = async (c: Context) => {
     .map(upstream => ({
       id: upstream.id,
       name: upstream.name,
-      provider: upstream.provider,
+      kind: upstream.kind,
       enabled: upstream.enabled,
     })));
 };
@@ -253,20 +253,20 @@ export const createUpstream = async (c: CtxWithJson<typeof createUpstreamBody>) 
 
   // Codex credentials carry an OAuth refresh_token + id_token-derived identity
   // that this endpoint cannot synthesize. Route the operator to the dedicated
-  // PKCE / import flow instead of letting a `provider: 'codex'` body through
+  // PKCE / import flow instead of letting a `kind: 'codex'` body through
   // with no credential material.
-  if (body.provider === 'codex') {
+  if (body.kind === 'codex') {
     return c.json({ error: 'Use POST /api/upstreams/codex-import for codex provider' }, 400);
   }
   // Same rationale for claude-code: the row carries an OAuth refresh token and
   // an identity derived from /api/oauth/profile, neither of which is
   // synthesizable from a plain POST.
-  if (body.provider === 'claude-code') {
+  if (body.kind === 'claude-code') {
     return c.json({ error: 'Use POST /api/upstreams/claude-code-import for claude-code provider' }, 400);
   }
   // Same rationale for cursor: the row carries an OAuth refresh token derived
   // from the poll-based login flow, not a config the operator can type in.
-  if (body.provider === 'cursor') {
+  if (body.kind === 'cursor') {
     return c.json({ error: 'Use POST /api/upstreams/cursor-authorize-url + /api/upstreams/cursor-poll for cursor provider' }, 400);
   }
 
@@ -282,7 +282,7 @@ export const createUpstream = async (c: CtxWithJson<typeof createUpstreamBody>) 
   const now = new Date().toISOString();
   const upstream: UpstreamRecord = {
     id: newId(),
-    provider: body.provider,
+    kind: body.kind,
     name: body.name,
     enabled: body.enabled ?? true,
     sortOrder: body.sort_order ?? nextSortOrder(existing),
@@ -311,21 +311,21 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
   if (!existing) return c.json({ error: 'Upstream not found' }, 404);
 
   const body = c.req.valid('json');
-  if (body.provider !== undefined && body.provider !== existing.provider) {
-    return c.json({ error: 'provider cannot be changed' }, 400);
+  if (body.kind !== undefined && body.kind !== existing.kind) {
+    return c.json({ error: 'kind cannot be changed' }, 400);
   }
 
   // Codex `config` (id_token-derived identity) and credential state are
   // owned by the dedicated re-import / refresh endpoints. Generic PATCH still
   // adjusts the surrounding row metadata (name, enabled, sort_order, flag
   // overrides, disabled model ids) but never the credential payload.
-  if (existing.provider === 'codex' && body.config !== undefined) {
+  if (existing.kind === 'codex' && body.config !== undefined) {
     return c.json({ error: 'Use POST /api/upstreams/:id/codex-reimport to update codex credentials' }, 400);
   }
   // Same gate for claude-code: identity comes from /api/oauth/profile at
   // import time and the credential state belongs to refresh-now / re-import,
   // not a generic field patch.
-  if (existing.provider === 'claude-code' && body.config !== undefined) {
+  if (existing.kind === 'claude-code' && body.config !== undefined) {
     return c.json({ error: 'Use POST /api/upstreams/:id/claude-code-reimport to update claude-code credentials' }, 400);
   }
   // Cursor credentials (config.accounts) belong to the import / re-import
@@ -333,7 +333,7 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
   // and config.privacyMode patch through here. Reject only a patch that tries to
   // touch accounts (or that isn't an object at all); a settings-only patch
   // merges over the existing account pool.
-  if (existing.provider === 'cursor' && body.config !== undefined) {
+  if (existing.kind === 'cursor' && body.config !== undefined) {
     if (!isRecord(body.config) || 'accounts' in body.config) {
       return c.json({ error: 'Use POST /api/upstreams/:id/cursor-reimport to update cursor credentials' }, 400);
     }
@@ -357,7 +357,7 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
     next = { ...next, modelPrefix: result.value };
   }
   if (body.config !== undefined) {
-    const config = mergeConfigPatch(existing.provider, existing.config, body.config);
+    const config = mergeConfigPatch(existing.kind, existing.config, body.config);
     if (!config.ok) return c.json({ error: config.error }, 400);
     next = { ...next, config: config.value };
   }
@@ -402,8 +402,8 @@ export const fetchModels = async (c: CtxWithJson<typeof fetchModelsBody>) => {
   const now = new Date().toISOString();
   const record: UpstreamRecord = {
     id: newId(),
-    provider: body.provider,
-    name: `Draft ${body.provider} upstream`,
+    kind: body.kind,
+    name: `Draft ${body.kind} upstream`,
     enabled: true,
     sortOrder: 0,
     createdAt: now,
@@ -417,18 +417,18 @@ export const fetchModels = async (c: CtxWithJson<typeof fetchModelsBody>) => {
   };
 
   try {
-    if (body.provider === 'custom') {
+    if (body.kind === 'custom') {
       const assertedConfig = assertCustomUpstreamRecord(record).config;
       const result = await fetchCustomModels(assertedConfig, directFetcher);
       return c.json(result);
     }
-    // body.provider === 'ollama' — the provider's own getProvidedModels
-    // already projects /api/tags + /api/show into UpstreamModel; reshape each
+    // body.kind === 'ollama' — the provider's own getProvidedModels
+    // already projects /api/tags + /api/show into ProviderModel; reshape each
     // into UpstreamModelConfig so the dashboard can drop them straight into
     // the auto rows without re-deriving endpoints from capabilities.
     assertOllamaUpstreamRecord(record);
     const instance = createOllamaProvider(record);
-    const models = await instance.provider.getProvidedModels(directFetcher);
+    const models = await instance.instance.getProvidedModels(directFetcher);
     const data = models.map(model => {
       const upstreamModelId = model.providerData as string;
       const config: Record<string, unknown> = {
@@ -529,7 +529,7 @@ export const copilotAuthPoll = async (c: CtxWithJson<typeof copilotAuthPollBody>
 
     const repo = getRepo().upstreams;
     const upstreams = await repo.list();
-    const existing = upstreams.find(upstream => upstream.provider === 'copilot' && copilotConfigUserId(upstream.config) === user.id);
+    const existing = upstreams.find(upstream => upstream.kind === 'copilot' && copilotConfigUserId(upstream.config) === user.id);
     const now = new Date().toISOString();
     const config: CopilotUpstreamConfig = {
       githubToken: data.access_token,
@@ -550,7 +550,7 @@ export const copilotAuthPoll = async (c: CtxWithJson<typeof copilotAuthPollBody>
         }
       : {
           id: newId(),
-          provider: 'copilot',
+          kind: 'copilot',
           name: user.login ? `GitHub Copilot (${user.login})` : 'GitHub Copilot',
           enabled: true,
           sortOrder: nextSortOrder(upstreams),
@@ -653,7 +653,7 @@ export const codexImport = async (c: CtxWithJson<typeof codexImportBody>) => {
   const defaultName = `ChatGPT Codex (${ingestion.config.accounts[0].email})`;
   const upstream: UpstreamRecord = {
     id: newId(),
-    provider: 'codex',
+    kind: 'codex',
     name: body.name ?? defaultName,
     enabled: true,
     sortOrder: body.sort_order ?? nextSortOrder(existing),
@@ -676,7 +676,7 @@ export const codexImport = async (c: CtxWithJson<typeof codexImportBody>) => {
 export const codexReimport = async (c: CtxWithJson<typeof codexReimportBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'codex') {
+  if (existing?.kind !== 'codex') {
     return c.json({ error: 'Codex upstream not found' }, 404);
   }
 
@@ -717,7 +717,7 @@ export const codexReimport = async (c: CtxWithJson<typeof codexReimportBody, '/:
 export const codexRefreshNow = async (c: CtxWithJson<typeof codexRefreshNowBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'codex') {
+  if (existing?.kind !== 'codex') {
     return c.json({ error: 'Codex upstream not found' }, 404);
   }
   // A throw from assertCodexUpstreamState means the row's state column was
@@ -844,7 +844,7 @@ export const cursorPoll = async (c: CtxWithJson<typeof cursorPollBody>) => {
   const defaultName = `Cursor (${ingestion.config.accounts[0].email})`;
   const upstream: UpstreamRecord = {
     id: newId(),
-    provider: 'cursor',
+    kind: 'cursor',
     name: body.name ?? defaultName,
     enabled: true,
     sortOrder: body.sort_order ?? nextSortOrder(existing),
@@ -865,7 +865,7 @@ export const cursorPoll = async (c: CtxWithJson<typeof cursorPollBody>) => {
 export const cursorReimport = async (c: CtxWithJson<typeof cursorReimportBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'cursor') {
+  if (existing?.kind !== 'cursor') {
     return c.json({ error: 'Cursor upstream not found' }, 404);
   }
   const body = c.req.valid('json');
@@ -894,7 +894,7 @@ export const cursorReimport = async (c: CtxWithJson<typeof cursorReimportBody, '
 export const cursorRefreshNow = async (c: CtxWithJson<typeof cursorRefreshNowBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'cursor') {
+  if (existing?.kind !== 'cursor') {
     return c.json({ error: 'Cursor upstream not found' }, 404);
   }
   assertCursorUpstreamState(existing.state);
@@ -1017,7 +1017,7 @@ export const claudeCodeImport = async (c: CtxWithJson<typeof claudeCodeImportBod
   const defaultName = `Claude Code (${ingestion.config.accounts[0].email})`;
   const upstream: UpstreamRecord = {
     id: newId(),
-    provider: 'claude-code',
+    kind: 'claude-code',
     name: body.name ?? defaultName,
     enabled: true,
     sortOrder: body.sort_order ?? nextSortOrder(existing),
@@ -1040,7 +1040,7 @@ export const claudeCodeImport = async (c: CtxWithJson<typeof claudeCodeImportBod
 export const claudeCodeReimport = async (c: CtxWithJson<typeof claudeCodeReimportBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'claude-code') {
+  if (existing?.kind !== 'claude-code') {
     return c.json({ error: 'Claude Code upstream not found' }, 404);
   }
   // Cross-kind re-import would silently replace a setup-token credential
@@ -1102,7 +1102,7 @@ export const claudeCodeSetupTokenImport = async (c: CtxWithJson<typeof claudeCod
   const defaultName = `Claude Code Setup Token (${account.email ?? account.accountUuid.slice(0, 8)})`;
   const upstream: UpstreamRecord = {
     id: newId(),
-    provider: 'claude-code',
+    kind: 'claude-code',
     name: body.name ?? defaultName,
     enabled: true,
     sortOrder: body.sort_order ?? nextSortOrder(existing),
@@ -1123,7 +1123,7 @@ export const claudeCodeSetupTokenImport = async (c: CtxWithJson<typeof claudeCod
 export const claudeCodeSetupTokenReimport = async (c: CtxWithJson<typeof claudeCodeSetupTokenReimportBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'claude-code') {
+  if (existing?.kind !== 'claude-code') {
     return c.json({ error: 'Claude Code upstream not found' }, 404);
   }
   // Symmetric guard to claudeCodeReimport: an OAuth row must not be replaced
@@ -1272,7 +1272,7 @@ const attemptClaudeCodeRefresh = async (id: string, fetcher: Fetcher): Promise<R
 export const claudeCodeRefreshNow = async (c: CtxWithJson<typeof claudeCodeRefreshNowBody, '/:id'>) => {
   const id = c.req.param('id');
   const existing = await getRepo().upstreams.getById(id);
-  if (existing?.provider !== 'claude-code') {
+  if (existing?.kind !== 'claude-code') {
     return c.json({ error: 'Claude Code upstream not found' }, 404);
   }
 
@@ -1401,7 +1401,7 @@ export const claudeCodeProbeQuota = async (c: CtxWithJson<typeof claudeCodeProbe
   // still answers under inference-only scopes (sub2api hits it identically
   // for setup tokens), so we don't gate by tokenKind. The provider gate is
   // the only relevant filter.
-  if (existing.provider !== 'claude-code') {
+  if (existing.kind !== 'claude-code') {
     return c.json({ error: 'Quota probe is only supported for claude-code upstreams' }, 400);
   }
 

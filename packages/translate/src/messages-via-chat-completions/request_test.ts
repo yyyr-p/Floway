@@ -391,7 +391,7 @@ test('translateMessagesToChatCompletions rejects an unknown assistant content bl
         messages: [{ role: 'assistant', content: [{ type: 'audio' } as unknown as MessagesAssistantContentBlock] }],
       }),
     Error,
-    'does not accept audio assistant content blocks',
+    "messages.0.content.0.type: 'audio' assistant content blocks are not supported",
   );
 });
 
@@ -404,7 +404,7 @@ test('translateMessagesToChatCompletions rejects an unknown user content block t
         messages: [{ role: 'user', content: [{ type: 'audio' } as unknown as MessagesUserContentBlock] }],
       }),
     Error,
-    'does not accept audio content blocks',
+    "messages.0.content.0.type: 'audio' content blocks are not supported",
   );
 });
 
@@ -517,9 +517,26 @@ test('translateMessagesToChatCompletions rejects an unknown message role', () =>
         messages: [{ role: 'tool', content: 'oops' } as unknown as { role: 'user'; content: string }],
       }),
     Error,
-    'does not accept role tool',
+    "messages.0.role: role 'tool' is not supported",
   );
 });
+
+test('translateMessagesToChatCompletions drops Anthropic-only knobs that have no Chat-completions slot', () => {
+  const result = translateMessagesToChatCompletions({
+    model: 'gpt-test',
+    max_tokens: 256,
+    messages: [{ role: 'user', content: 'hi' }],
+    thinking: { type: 'enabled', budget_tokens: 4096, display: 'summarized' },
+  });
+
+  // Only the OpenAI-canonical effort axis survives; budget_tokens and display
+  // have no Chat-completions equivalent and translate emits nothing for
+  // them. `speed` has its own bridge test below and is intentionally
+  // excluded here.
+  assertEquals(result.reasoning_effort, 'medium');
+});
+
+// ── speed ↔ service_tier bridge ──
 
 test('translateMessagesToChatCompletions maps speed:fast to service_tier:fast on the outbound Chat Completions payload', () => {
   const result = translateMessagesToChatCompletions({

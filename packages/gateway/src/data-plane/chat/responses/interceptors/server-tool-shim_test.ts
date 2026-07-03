@@ -26,9 +26,8 @@ import type {
   WebSearchProviderRequest,
   WebSearchProviderResult,
 } from '../../../tools/web-search/types.ts';
-import type { GatewayCtx } from '../../shared/gateway-ctx.ts';
-import { MemoryStatefulResponsesBacking, LayeredStatefulResponsesStore } from '../items/store.ts';
-import type { StatefulResponsesStore } from '../items/store.ts';
+import type { ChatGatewayCtx } from '../../shared/gateway-ctx.ts';
+import { createNonResponsesSourceStore } from '../items/store.ts';
 import { eventFrame } from '@floway-dev/protocols/common';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type {
@@ -39,10 +38,13 @@ import type {
   ResponsesPayload,
   ResponsesResult,
   ResponsesStreamEvent,
+  ResponsesTool,
+  ResponsesToolChoice,
   ResponsesWebSearchAction,
 } from '@floway-dev/protocols/responses';
-import { directFetcher, type EventResult, type ExecuteResult } from '@floway-dev/provider';
-import { assert, assertEquals, assertFalse } from '@floway-dev/test-utils';
+import { type EventResult, type ExecuteResult } from '@floway-dev/provider';
+import { assert, assertEquals, assertFalse, stubModelCandidate } from '@floway-dev/test-utils';
+import type { CanonicalResponsesPayload } from '@floway-dev/translate/via-responses/responses-items';
 
 const withResponsesWebSearchShim = withResponsesServerToolShim([webSearchServerTool]);
 
@@ -305,28 +307,15 @@ interface InvocationOverrides {
   payload?: Partial<ResponsesPayload>;
 }
 
-const makeStore = (apiKeyId: string | null = 'k1'): StatefulResponsesStore =>
-  new LayeredStatefulResponsesStore({
-    apiKeyId,
-    reads: [new MemoryStatefulResponsesBacking()],
-    itemWrites: [],
-    snapshotWrites: [],
-    stageInputs: false,
-  });
-
 const makeInvocation = (overrides: InvocationOverrides = {}): ResponsesInvocation => ({
-  candidate: {
-    // Default chat-completions so existing tests exercise the
-    // function_call_output path. Tests that care about a specific target
-    // set targetApi explicitly.
-    targetApi: overrides.targetApi ?? 'chat-completions',
-    provider: {} as never,
-    binding: {
-      enabledFlags: overrides.enabledFlags ?? new Set<string>(),
-    } as never,
-    fetcher: directFetcher,
-  },
-  store: makeStore(),
+  candidate: stubModelCandidate({
+    ...(overrides.enabledFlags ? { enabledFlags: overrides.enabledFlags } : {}),
+    model: { id: 'claude-x', endpoints: { chatCompletions: {}, responses: {}, messages: {} } },
+  }),
+  // Default chat-completions so existing tests exercise the
+  // function_call_output path. Tests that care about a specific target
+  // set targetApi explicitly.
+  targetApi: overrides.targetApi ?? 'chat-completions',
   payload: {
     model: 'claude-x',
     input: [{ type: 'message', role: 'user', content: 'hi' }],
@@ -336,19 +325,22 @@ const makeInvocation = (overrides: InvocationOverrides = {}): ResponsesInvocatio
     // assert the wire-item shape without `results`.
     include: ['web_search_call.results'],
     ...overrides.payload,
-  } as ResponsesPayload,
+  } as CanonicalResponsesPayload,
   headers: new Headers(),
+  action: 'generate',
 });
 
-const makeGatewayCtx = (apiKeyId: string = 'k1'): GatewayCtx => ({
+const makeGatewayCtx = (apiKeyId: string = 'k1'): ChatGatewayCtx => ({
   apiKeyId,
   upstreamIds: null,
   wantsStream: true,
   runtimeLocation: 'TEST',
   currentColo: 'TEST',
   dump: null,
+  responseHeaders: new Headers(),
   backgroundScheduler: () => {},
   requestStartedAt: 0,
+  store: createNonResponsesSourceStore(apiKeyId),
 });
 
 const collectFrames = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
@@ -363,7 +355,7 @@ const collectFrames = async <T>(iter: AsyncIterable<T>): Promise<T[]> => {
 const runShimAndDrain = async (
   shim: ResponsesInterceptor,
   inv: ResponsesInvocation,
-  gatewayCtx: GatewayCtx,
+  gatewayCtx: ChatGatewayCtx,
   run: () => Promise<ExecuteResult<ProtocolFrame<ResponsesStreamEvent>>>,
 ): Promise<{
   result: ExecuteResult<ProtocolFrame<ResponsesStreamEvent>>;
@@ -652,19 +644,20 @@ test('synthesized web_search_call ids are registered as gateway-synthetic on the
   makeStubDeps();
   const shim = withResponsesWebSearchShim;
   const inv = makeInvocation();
+  const ctx = makeGatewayCtx();
   const script = scriptedRun([
     searchCallTurn(0, 'call_1', 'q1'),
     messageTurn('summary', 0),
   ]);
 
-  const { frames } = await runShimAndDrain(shim, inv, makeGatewayCtx(), script.run);
+  const { frames } = await runShimAndDrain(shim, inv, ctx, script.run);
 
   // Every web_search_call the shim synthesizes carries a gateway-minted id no
   // upstream issued; persistence relies on these being registered so it stores
   // them with no upstream identity (non_affinity).
   const doneEvents = outputItemDoneEvents(frames);
   const wsCallDoneIds = doneEvents.filter(e => e.item.type === 'web_search_call').map(e => e.item.id!);
-  const store = inv.store;
+  const store = ctx.store;
   assert(wsCallDoneIds.length > 0, 'expected a synthesized web_search_call');
   for (const id of wsCallDoneIds) {
     assert(id.startsWith('ws_gw_'));
@@ -4488,15 +4481,17 @@ test('downstream AbortSignal threads through to provider search / fetchPage and 
   });
   const shim = withResponsesWebSearchShim;
   const inv = makeInvocation();
-  const gatewayCtx: GatewayCtx = {
+  const gatewayCtx: ChatGatewayCtx = {
     apiKeyId: 'k1',
     upstreamIds: null,
     wantsStream: true,
     runtimeLocation: 'TEST',
     currentColo: 'TEST',
     dump: null,
+    responseHeaders: new Headers(),
     backgroundScheduler: () => {},
     requestStartedAt: 0,
+    store: createNonResponsesSourceStore('k1'),
     abortSignal: controller.signal,
   };
   const script = scriptedRun([
@@ -4609,7 +4604,7 @@ const consumeTurn = async (
 ): Promise<DrainResult> => {
   const records: DispatchRecord[] = [];
   return await drain(
-    consumeTurnStreaming(frames, state, isFirstTurn, new Map([[SHIM_TOOL_NAME, recordingDispatcher(records)]]), loopState()),
+    consumeTurnStreaming(frames, state, isFirstTurn, new Map([[SHIM_TOOL_NAME, recordingDispatcher(records)]]), loopState(), []),
     records,
   );
 };
@@ -4672,6 +4667,7 @@ test('consumeTurn throws when upstream response.created has no model field (no c
     true,
     new Map([[SHIM_TOOL_NAME, recordingDispatcher([])]]),
     loopState(),
+    [],
   );
   let thrown: unknown;
   try {
@@ -4865,6 +4861,7 @@ test('consumeTurn synthesizes response.failed when upstream terminates without c
       true,
       new Map([[SHIM_TOOL_NAME, recordingDispatcher(records)]]),
       loopState(),
+      [],
     ),
     records,
   );
@@ -5539,6 +5536,7 @@ test('consumeTurnStreaming yields forwarded frames before upstream completes', a
     true,
     new Map([[SHIM_TOOL_NAME, recordingDispatcher(records)]]),
     loopState(),
+    [],
   );
 
   const first = await iter.next();
@@ -5584,6 +5582,7 @@ test('dispatcher start frames yield IN-LINE at function_call.done (shim call slo
       true,
       new Map([[SHIM_TOOL_NAME, dispatcher]]),
       loopState(),
+      [],
     ),
     records,
   );
@@ -5626,6 +5625,7 @@ test('shim call output_index is reserved at output_item.added so interleaved ite
       true,
       new Map([[SHIM_TOOL_NAME, dispatcher]]),
       loopState(),
+      [],
     ),
     records,
   );
@@ -5836,4 +5836,234 @@ test('ServerToolResultSlot run() yields nothing and returns the terminal', async
   const first = await gen.next();
   assert(first.done === true);
   assertEquals(first.value.item.status, 'completed');
+});
+
+// ── Echo restore on `response.tools` / `response.tool_choice` ─────────────
+//
+// The shim rewrites the request's hosted `web_search` to a function tool
+// before upstream; on echo (per OpenAI spec, `Response` composes
+// `ResponseProperties`, so `tools` and `tool_choice` are echoed) the
+// synthesized envelope must restore the canonical hosted form so the
+// client never sees the gateway-internal function tool name.
+
+const mkResponseCreatedWithTools = (
+  tools: ResponsesTool[],
+  toolChoice?: ResponsesToolChoice,
+): ProtocolFrame<ResponsesStreamEvent> =>
+  eventFrame({
+    type: 'response.created',
+    response: {
+      ...emptyResult('upstream_test', 'in_progress'),
+      tools,
+      ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+    },
+  });
+
+const mkResponseCompletedWithTools = (
+  tools: ResponsesTool[],
+  toolChoice?: ResponsesToolChoice,
+): ProtocolFrame<ResponsesStreamEvent> =>
+  eventFrame<ResponsesStreamEvent>({
+    type: 'response.completed',
+    response: {
+      ...emptyResult('upstream_test', 'completed'),
+      tools,
+      ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+    },
+  });
+
+const findResponseCompleted = (
+  frames: ProtocolFrame<ResponsesStreamEvent>[],
+): Extract<ResponsesStreamEvent, { type: 'response.completed' }> => {
+  for (const f of frames) {
+    if (f.type === 'event' && f.event.type === 'response.completed') {
+      return f.event;
+    }
+  }
+  throw new Error('no response.completed in downstream frames');
+};
+
+test('echo restore swaps the injected function tool back to the canonical hosted web_search', async () => {
+  makeStubDeps();
+  // Upstream's echoed `tools` includes the function tool the shim
+  // injected plus an ordinary client function tool — restore should
+  // touch only the injected one. (Spec defaults like
+  // `additionalProperties:false` that Copilot injects on function
+  // tools must pass through verbatim on the non-shim tool.)
+  const upstreamEchoedTools: ResponsesTool[] = [
+    {
+      type: 'function',
+      name: SHIM_TOOL_NAME,
+      parameters: { type: 'object', properties: {}, additionalProperties: false },
+      strict: false,
+      description: 'gateway-internal',
+    },
+    {
+      type: 'function',
+      name: 'get_weather',
+      parameters: { type: 'object', properties: { city: { type: 'string' } }, required: ['city'], additionalProperties: false },
+      strict: true,
+      description: null as unknown as string,
+    },
+  ];
+  const shim = withResponsesWebSearchShim;
+  const inv = makeInvocation({
+    payload: {
+      tools: [
+        { type: 'web_search' },
+        { type: 'function', name: 'get_weather', parameters: { type: 'object' }, strict: false },
+      ],
+    },
+  });
+  const script = scriptedRun([[
+    mkResponseCreatedWithTools(upstreamEchoedTools),
+    mkResponseInProgress(),
+    mkMessageAdded(0),
+    mkMessageDone(0, 'done'),
+    mkResponseCompletedWithTools(upstreamEchoedTools),
+  ]]);
+
+  const { frames } = await runShimAndDrain(shim, inv, makeGatewayCtx(), script.run);
+
+  const completed = findResponseCompleted(frames);
+  assert(Array.isArray(completed.response.tools));
+  assertEquals(completed.response.tools!.length, 2);
+  assertEquals(completed.response.tools![0].type, 'web_search');
+  assertEquals((completed.response.tools![0] as { search_context_size: string }).search_context_size, 'medium');
+  assertEquals((completed.response.tools![0] as { return_token_budget: string }).return_token_budget, 'default');
+  // Pass-through tool retains its upstream-enriched shape.
+  assertEquals(completed.response.tools![1].type, 'function');
+  assertEquals((completed.response.tools![1] as { name: string }).name, 'get_weather');
+});
+
+test('echo restore preserves client-supplied filters / user_location on the canonical hosted form', async () => {
+  makeStubDeps();
+  const userLoc = { city: 'Tokyo', country: 'JP' };
+  const filters = { allowed_domains: ['weather.gov'] };
+  const upstreamEchoedTools: ResponsesTool[] = [
+    { type: 'function', name: SHIM_TOOL_NAME, parameters: { type: 'object', properties: {}, additionalProperties: false }, strict: false },
+  ];
+  const inv = makeInvocation({ payload: { tools: [{ type: 'web_search', filters, user_location: userLoc }] } });
+  const script = scriptedRun([[
+    mkResponseCreatedWithTools(upstreamEchoedTools),
+    mkResponseInProgress(),
+    mkMessageAdded(0),
+    mkMessageDone(0, 'done'),
+    mkResponseCompletedWithTools(upstreamEchoedTools),
+  ]]);
+
+  const { frames } = await runShimAndDrain(withResponsesWebSearchShim, inv, makeGatewayCtx(), script.run);
+
+  const completed = findResponseCompleted(frames);
+  assertEquals(completed.response.tools![0].type, 'web_search');
+  assertEquals((completed.response.tools![0] as { filters: typeof filters }).filters, filters);
+  assertEquals((completed.response.tools![0] as { user_location: typeof userLoc }).user_location, userLoc);
+});
+
+test('duplicate hosted web_search entries silently collapse into one echoed canonical', async () => {
+  makeStubDeps();
+  const inv = makeInvocation({
+    payload: {
+      tools: [
+        { type: 'web_search', search_context_size: 'high' },
+        { type: 'web_search' },
+      ],
+    },
+  });
+  // Upstream sees exactly one function tool because the framework
+  // dedupes before run().
+  const upstreamEchoedTools: ResponsesTool[] = [
+    { type: 'function', name: SHIM_TOOL_NAME, parameters: { type: 'object', properties: {}, additionalProperties: false }, strict: false },
+  ];
+  const script = scriptedRun([[
+    mkResponseCreatedWithTools(upstreamEchoedTools),
+    mkResponseInProgress(),
+    mkMessageAdded(0),
+    mkMessageDone(0, 'done'),
+    mkResponseCompletedWithTools(upstreamEchoedTools),
+  ]]);
+
+  const { frames } = await runShimAndDrain(withResponsesWebSearchShim, inv, makeGatewayCtx(), script.run);
+
+  // Request side: only one function tool was sent upstream.
+  assertEquals(inv.payload.tools?.length, 1);
+  assertEquals(inv.payload.tools?.[0].type, 'function');
+  // Response side: one restored canonical entry, preserving the FIRST
+  // hosted block's `search_context_size`.
+  const completed = findResponseCompleted(frames);
+  assertEquals(completed.response.tools!.length, 1);
+  assertEquals(completed.response.tools![0].type, 'web_search');
+  assertEquals((completed.response.tools![0] as { search_context_size: string }).search_context_size, 'high');
+});
+
+test('echo restore swaps the function-typed tool_choice back to a hosted tool_choice', async () => {
+  makeStubDeps();
+  const upstreamEchoedTools: ResponsesTool[] = [
+    { type: 'function', name: SHIM_TOOL_NAME, parameters: { type: 'object', properties: {}, additionalProperties: false }, strict: false },
+  ];
+  const inv = makeInvocation({
+    payload: {
+      tools: [{ type: 'web_search' }],
+      tool_choice: { type: 'web_search' },
+    },
+  });
+  const script = scriptedRun([[
+    mkResponseCreatedWithTools(upstreamEchoedTools, { type: 'function', name: SHIM_TOOL_NAME }),
+    mkResponseInProgress(),
+    mkMessageAdded(0),
+    mkMessageDone(0, 'done'),
+    mkResponseCompletedWithTools(upstreamEchoedTools, { type: 'function', name: SHIM_TOOL_NAME }),
+  ]]);
+
+  const { frames } = await runShimAndDrain(withResponsesWebSearchShim, inv, makeGatewayCtx(), script.run);
+
+  // Request side: tool_choice was rewritten to the function form.
+  assertEquals(inv.payload.tool_choice, { type: 'function', name: SHIM_TOOL_NAME });
+  const completed = findResponseCompleted(frames);
+  assertEquals(completed.response.tool_choice, { type: 'web_search' });
+});
+
+test('echo restore leaves a non-injected function-typed tool_choice untouched', async () => {
+  makeStubDeps();
+  // Upstream echoes a tool_choice naming a CLIENT-supplied function
+  // tool, not the shim's. Restore must not rewrite that.
+  const upstreamEchoedTools: ResponsesTool[] = [
+    { type: 'function', name: SHIM_TOOL_NAME, parameters: { type: 'object', properties: {}, additionalProperties: false }, strict: false },
+    { type: 'function', name: 'get_weather', parameters: { type: 'object', properties: {}, additionalProperties: false }, strict: false },
+  ];
+  const inv = makeInvocation({
+    payload: {
+      tools: [
+        { type: 'web_search' },
+        { type: 'function', name: 'get_weather', parameters: { type: 'object' }, strict: false },
+      ],
+      tool_choice: { type: 'function', name: 'get_weather' },
+    },
+  });
+  const script = scriptedRun([[
+    mkResponseCreatedWithTools(upstreamEchoedTools, { type: 'function', name: 'get_weather' }),
+    mkResponseInProgress(),
+    mkMessageAdded(0),
+    mkMessageDone(0, 'done'),
+    mkResponseCompletedWithTools(upstreamEchoedTools, { type: 'function', name: 'get_weather' }),
+  ]]);
+
+  const { frames } = await runShimAndDrain(withResponsesWebSearchShim, inv, makeGatewayCtx(), script.run);
+
+  const completed = findResponseCompleted(frames);
+  assertEquals(completed.response.tool_choice, { type: 'function', name: 'get_weather' });
+});
+
+test('upstream that does not echo `tools` produces a synthesized envelope without `tools`', async () => {
+  makeStubDeps();
+  const inv = makeInvocation({ payload: { tools: [{ type: 'web_search' }] } });
+  // mkResponseCompleted() carries no `tools` field — simulating an
+  // upstream that simply omits the echo.
+  const script = scriptedRun([messageTurn('done')]);
+
+  const { frames } = await runShimAndDrain(withResponsesWebSearchShim, inv, makeGatewayCtx(), script.run);
+
+  const completed = findResponseCompleted(frames);
+  assertEquals(completed.response.tools, undefined);
+  assertEquals(completed.response.tool_choice, undefined);
 });

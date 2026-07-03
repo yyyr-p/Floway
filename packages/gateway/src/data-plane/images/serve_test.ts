@@ -78,8 +78,9 @@ test('/v1/images/generations rejects model on custom upstream without /images/ge
   clearInProcessCopilotTokenCache();
 
   // Chat-only custom upstream. Its /models response advertises gpt-4o
-  // (which the id heuristic leaves as the chat fallback), so the model exists
-  // in the registry but no binding accepts an /images/generations request.
+  // (which the id heuristic leaves as the chat fallback), so the resolver
+  // returns `sawModel=true` with zero candidates after the kind filter
+  // — distinguishing wrong-kind from unknown-id at the resolver layer.
   await repo.upstreams.save(buildCustomUpstreamRecord({
     id: 'up_chat_only',
     name: 'Chat Only Provider',
@@ -172,7 +173,7 @@ test('/v1/images/edits forwards a multipart request through an Azure model and r
   clearInProcessCopilotTokenCache();
   await repo.upstreams.save({
     id: 'az-image',
-    provider: 'azure',
+    kind: 'azure',
     name: 'azure-images',
     enabled: true,
     sortOrder: 1,

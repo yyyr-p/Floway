@@ -1,67 +1,65 @@
 import { responsesAttempt } from './attempt.ts';
 import type { ResponsesAttemptResult } from './interceptors/types.ts';
-import type { ResponsesSnapshotMode, StatefulResponsesStore } from './items/store.ts';
 import { prepareResponsesServePlan } from './serve-prep.ts';
-import type { GatewayCtx } from '../shared/gateway-ctx.ts';
+import { iterateCandidates } from '../../shared/iterate-candidates.ts';
+import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
-import type { ResponsesPayload, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
+import type { ResponsesStreamEvent } from '@floway-dev/protocols/responses';
 import type { ExecuteResult } from '@floway-dev/provider';
+import type { CanonicalResponsesPayload } from '@floway-dev/translate/via-responses/responses-items';
 
 export interface ResponsesServeGenerateArgs {
-  readonly payload: ResponsesPayload;
-  readonly ctx: GatewayCtx;
-  readonly store: StatefulResponsesStore;
-  // HTTP defaults to 'append'; WS overrides per-message based on `payload.store`.
-  // The cross-protocol translation-in path never reaches this entry — it goes
-  // straight into `responsesAttempt.generate`.
-  readonly snapshotMode?: ResponsesSnapshotMode;
+  readonly payload: CanonicalResponsesPayload;
+  readonly ctx: ChatGatewayCtx;
   readonly headers: Headers;
 }
 
 export interface ResponsesServeCompactArgs {
-  readonly payload: ResponsesPayload;
-  readonly ctx: GatewayCtx;
-  readonly store: StatefulResponsesStore;
+  readonly payload: CanonicalResponsesPayload;
+  readonly ctx: ChatGatewayCtx;
   readonly headers: Headers;
 }
 
-// Codex's RemoteCompactionV2 performs compaction through the generate path
-// by appending a `compaction_trigger` control item to the input. Semantically
-// this is the same operation as `/responses/compact`: the upstream replaces
-// the prior history with a single `compaction` output, and any later
-// `previous_response_id` should resolve to that blob alone — not the dropped
-// history. Treat such a request like compact at the snapshot seam.
-const containsCompactionTrigger = (input: ResponsesPayload['input']): boolean =>
-  typeof input !== 'string' && input.some(item => item.type === 'compaction_trigger');
-
 export const responsesServe = {
   generate: async (args: ResponsesServeGenerateArgs): Promise<ExecuteResult<ProtocolFrame<ResponsesStreamEvent>>> => {
-    const { payload, ctx, store, snapshotMode = 'append', headers } = args;
-    const plan = await prepareResponsesServePlan({
-      payload, ctx, store,
-      pickTarget: endpoints =>
-        endpoints.responses ? 'responses'
-          : endpoints.messages ? 'messages'
-            : endpoints.chatCompletions ? 'chat-completions'
-              : null,
-    });
+    const { payload, ctx, headers } = args;
+    const plan = await prepareResponsesServePlan({ payload, ctx });
     if (plan.kind === 'failure') return plan.result;
-    const effectiveSnapshotMode: ResponsesSnapshotMode = snapshotMode !== 'none' && containsCompactionTrigger(plan.prepared.input)
-      ? 'replace'
-      : snapshotMode;
-    return await responsesAttempt.generate({ payload: plan.prepared, ctx, store, candidate: plan.candidate, snapshotMode: effectiveSnapshotMode, headers });
+    // Iterate the narrowed candidates: success (SSE stream opened) is the
+    // final answer; per-candidate failures fall through so a transient
+    // 5xx/429/network does not become the request's verdict when another
+    // candidate can serve. The last failure surfaces verbatim on exhaustion.
+    // Normalize `prepared.model` to the candidate's real id so every
+    // attempt sees the canonical resolved public id.
+    return await iterateCandidates(
+      plan.candidates,
+      'responsesServe.generate',
+      candidate => {
+        plan.prepared.model = candidate.model.id;
+        return responsesAttempt.generate({ payload: plan.prepared, ctx, candidate, headers });
+      },
+    );
   },
 
   compact: async (args: ResponsesServeCompactArgs): Promise<ResponsesAttemptResult> => {
-    const { payload, ctx, store, headers } = args;
+    const { payload, ctx, headers } = args;
     // Compact accepts `previous_response_id` (the official endpoint documents
-    // it). When present we expand it the same way generate does so the
-    // upstream sees the same item_reference + current input shape.
-    const plan = await prepareResponsesServePlan({
-      payload, ctx, store,
-      pickTarget: endpoints => endpoints.responses ? 'responses' : null,
-    });
+    // it). When present serve-prep expands it the same way generate does so
+    // the upstream sees the same item_reference + current input shape.
+    //
+    // For non-responses targets the responses-compact-shim picks up the
+    // request inside the interceptor chain, flips action='compact' to
+    // 'generate', runs a SUMMARIZATION_PROMPT turn through translation, and
+    // re-tags the result as compact on the way out.
+    const plan = await prepareResponsesServePlan({ payload, ctx });
     if (plan.kind === 'failure') return plan.result;
-    return await responsesAttempt.compact({ payload: plan.prepared, ctx, store, candidate: plan.candidate, headers });
+    return await iterateCandidates(
+      plan.candidates,
+      'responsesServe.compact',
+      candidate => {
+        plan.prepared.model = candidate.model.id;
+        return responsesAttempt.invoke({ payload: plan.prepared, action: 'compact', ctx, candidate, headers });
+      },
+    );
   },
 };

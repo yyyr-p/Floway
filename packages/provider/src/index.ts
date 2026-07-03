@@ -3,9 +3,10 @@ export type {
   GeminiInvocation,
   ChatTargetApi,
   MessagesInvocation,
-  ProviderCandidate,
+  ModelCandidate,
   ResponsesInvocation,
 } from './invocation.ts';
+export { providerModelOf } from './invocation.ts';
 
 export type { InternalDebugError } from './error.ts';
 export { toInternalDebugError } from './error.ts';
@@ -28,11 +29,12 @@ export {
 } from './result.ts';
 
 export type {
+  InternalAliasedFrom,
   InternalModel,
   PerformanceTelemetryContext,
+  ProviderModel,
   ProxyFallbackEntry,
   TelemetryModelIdentity,
-  UpstreamModel,
   UpstreamProviderKind,
   UpstreamRecord,
 } from './model.ts';
@@ -42,16 +44,16 @@ export type { AddressableForm, ModelPrefixConfig } from './model-prefix.ts';
 export { MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, normalizeModelPrefix } from './model-prefix.ts';
 
 export type {
-  ModelProvider,
-  ModelProviderInstance,
+  Provider,
+  ProviderInstance,
   ProviderCallResult,
-  ProviderCompactionResult,
-  ProviderModelRecord,
+  ProviderResponsesResult,
   ProviderStreamResult,
-  ResolvedModel,
+  ResponsesAction,
   UpstreamCallOptions,
 } from './provider.ts';
-export { streamingProviderCall, type ProviderStreamParser } from './streaming.ts';
+export type { ProviderStreamParser } from './streaming.ts';
+export { streamingProviderCall } from './streaming.ts';
 
 export type { CursorSessionRow, CursorSessionsRepoSlim, ProviderRepo, UpstreamsRepoSlim } from './repo.ts';
 export { getProviderRepo, initProviderRepo } from './repo.ts';
@@ -107,3 +109,4 @@ export {
 } from './image-helpers.ts';
 
 export { COMPACTION_TRIGGER, compactionResponse } from './compaction.ts';
+export { uuidV7 } from './ids.ts';

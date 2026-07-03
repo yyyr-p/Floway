@@ -6,8 +6,8 @@ import type { CursorAccessTokenEntry, CursorAccountCredential, CursorUpstreamSta
 import { initDurableHttpSession, resetDurableHttpSessionForTesting, type DurableHttpSession } from '@floway-dev/platform';
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
-import { initProviderRepo, type UpstreamModel, type UpstreamRecord } from '@floway-dev/provider';
-import { noopUpstreamCallOptions, stubUpstreamModel } from '@floway-dev/test-utils';
+import { initProviderRepo, type ProviderModel, type UpstreamRecord } from '@floway-dev/provider';
+import { noopUpstreamCallOptions, stubProviderModel } from '@floway-dev/test-utils';
 
 // Minimal DurableHttpSession that does the RunSSE fetch via globalThis.fetch
 // (which the tests mock), so the read stream flows through the same channel the
@@ -46,12 +46,12 @@ const activeAccount: CursorAccountCredential = {
   quotaSnapshot: null,
 };
 
-const model: UpstreamModel = stubUpstreamModel({ id: 'gpt-4o', display_name: 'gpt-4o', endpoints: { chatCompletions: {} } });
+const model: ProviderModel = stubProviderModel({ id: 'gpt-4o', display_name: 'gpt-4o', endpoints: { chatCompletions: {} } });
 const upstreamId = 'up_a';
 
 const makeRecord = (state: CursorUpstreamState): UpstreamRecord => ({
   id: upstreamId,
-  provider: 'cursor',
+  kind: 'cursor',
   name: 'Cursor',
   enabled: true,
   sortOrder: 0,

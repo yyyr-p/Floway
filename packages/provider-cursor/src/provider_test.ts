@@ -2,11 +2,11 @@ import { describe, expect, test } from 'vitest';
 
 import { createCursorProvider } from './provider.ts';
 import type { UpstreamRecord } from '@floway-dev/provider';
-import { noopUpstreamCallOptions, stubUpstreamModel } from '@floway-dev/test-utils';
+import { noopUpstreamCallOptions, stubProviderModel } from '@floway-dev/test-utils';
 
 const record: UpstreamRecord = {
   id: 'up',
-  provider: 'cursor',
+  kind: 'cursor',
   name: 'Cursor',
   enabled: true,
   sortOrder: 0,
@@ -32,24 +32,24 @@ const record: UpstreamRecord = {
 describe('createCursorProvider', () => {
   test('returns a cursor provider instance', async () => {
     const inst = await createCursorProvider(record);
-    expect(inst.providerKind).toBe('cursor');
+    expect(inst.kind).toBe('cursor');
     expect(inst.upstream).toBe('up');
-    expect(inst.provider.getPricingForModelKey('composer-2.5')?.input).toBe(0.5);
+    expect(inst.instance.getPricingForModelKey('composer-2.5')?.input).toBe(0.5);
   });
 
   test('unsupported surfaces return 405', async () => {
     const inst = await createCursorProvider(record);
-    const model = stubUpstreamModel({ id: 'gpt-4o' });
+    const model = stubProviderModel({ id: 'gpt-4o' });
     const opts = noopUpstreamCallOptions();
 
-    const messages = await inst.provider.callMessages(model, {} as never, undefined, opts);
+    const messages = await inst.instance.callMessages(model, {} as never, undefined, opts);
     expect(messages.ok).toBe(false);
     if (!messages.ok) expect(messages.response.status).toBe(405);
 
-    const embeddings = await inst.provider.callEmbeddings(model, {} as never, undefined, opts);
+    const embeddings = await inst.instance.callEmbeddings(model, {} as never, undefined, opts);
     expect(embeddings.response.status).toBe(405);
 
-    const completions = await inst.provider.callCompletions(model, {} as never, undefined, opts);
+    const completions = await inst.instance.callCompletions(model, {} as never, undefined, opts);
     expect(completions.response.status).toBe(405);
   });
 });
