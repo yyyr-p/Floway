@@ -206,7 +206,7 @@ const setTabCompletion = async (value: boolean) => {
           <div class="flex items-center justify-between gap-3">
             <div class="pr-3">
               <p class="text-sm font-medium text-white">Privacy mode</p>
-              <p class="text-xs text-gray-500">Send the ghost-mode header so Cursor does not retain request data. On by default.</p>
+              <p class="text-xs text-gray-500">Send the ghost-mode header so Cursor does not use request data for model training. On by default.</p>
             </div>
             <Switch v-model="privacyMode" />
           </div>
