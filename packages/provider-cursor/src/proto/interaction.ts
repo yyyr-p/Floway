@@ -1,4 +1,4 @@
-import { parseProtoFields } from './decoding.ts';
+import { TEXT_DECODER, parseProtoFields } from './decoding.ts';
 import { parseToolCallStartedUpdate, parsePartialToolCallUpdate } from './tool-calls.ts';
 import type { ParsedInteractionUpdate } from './types.ts';
 
@@ -32,7 +32,7 @@ export function parseInteractionUpdate(data: Uint8Array): ParsedInteractionUpdat
       const innerFields = parseProtoFields(field.value);
       for (const innerField of innerFields) {
         if (innerField.fieldNumber === 1 && innerField.wireType === 2 && innerField.value instanceof Uint8Array) {
-          text = new TextDecoder().decode(innerField.value);
+          text = TEXT_DECODER.decode(innerField.value);
         }
       }
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
@@ -61,7 +61,7 @@ export function parseInteractionUpdate(data: Uint8Array): ParsedInteractionUpdat
       const innerFields = parseProtoFields(field.value);
       for (const innerField of innerFields) {
         if (innerField.fieldNumber === 1 && innerField.wireType === 2 && innerField.value instanceof Uint8Array) {
-          thinking = new TextDecoder().decode(innerField.value);
+          thinking = TEXT_DECODER.decode(innerField.value);
         }
       }
     } else if (field.fieldNumber === 7 && field.wireType === 2 && field.value instanceof Uint8Array) {

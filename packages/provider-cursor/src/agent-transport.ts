@@ -57,6 +57,7 @@ import {
   type McpResult,
   type RequestContextEnv,
 } from './proto/index.ts';
+import { TEXT_DECODER } from './proto/decoding.ts';
 import {
   CURSOR_BIDI_APPEND_PATH,
   CURSOR_GRPC_WEB_CONTENT_TYPE,
@@ -524,7 +525,7 @@ export class AgentTransport {
             }
 
             if (isTrailerFrame(frame.flags)) {
-              const trailer = new TextDecoder().decode(payload);
+              const trailer = TEXT_DECODER.decode(payload);
               const meta = parseTrailerMetadata(trailer);
               const grpcStatus = Number(meta['grpc-status'] ?? '0');
               if (grpcStatus !== 0) {

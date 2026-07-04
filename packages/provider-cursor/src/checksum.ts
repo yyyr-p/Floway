@@ -16,6 +16,8 @@
 
 import { sha256Hex } from '@floway-dev/platform';
 
+import { TEXT_ENCODER } from './proto/encoding.ts';
+
 /** Base64url-encode a byte buffer (no padding), Workers-clean. */
 export function bytesToBase64Url(bytes: Uint8Array): string {
   let bin = '';
@@ -32,7 +34,7 @@ function obfuscate(data: Uint8Array): void {
 }
 
 async function shortSha256Hex(input: string): Promise<string> {
-  const hex = await sha256Hex(new TextEncoder().encode(input));
+  const hex = await sha256Hex(TEXT_ENCODER.encode(input));
   return hex.slice(0, 8);
 }
 

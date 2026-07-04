@@ -6,6 +6,16 @@
  * DataView — no Buffer.
  */
 
+// Shared TextDecoder — reused across every string decode on the incoming path
+// (text_delta frames, tool call ids/args, KV blob keys, etc.). TextDecoder has
+// no cross-call state for defaults ({ fatal: false, ignoreBOM: false }), so
+// reuse is safe.
+export const TEXT_DECODER = /*@__PURE__*/ new TextDecoder();
+
+// Shared fatal-mode decoder for the KV blob "is this UTF-8 text?" probe path.
+// Separate from TEXT_DECODER because the fatal option changes decode behavior.
+export const TEXT_DECODER_FATAL = /*@__PURE__*/ new TextDecoder('utf-8', { fatal: true });
+
 export interface ParsedField {
   fieldNumber: number;
   wireType: number;
@@ -46,7 +56,10 @@ export function parseProtoFields(data: Uint8Array): ParsedField[] {
     if (wireType === 2) {
       const lengthInfo = decodeVarint(data, offset);
       offset += lengthInfo.bytesRead;
-      const value = data.slice(offset, offset + lengthInfo.value);
+      // subarray, not slice: parseProtoFields is called on owned frame
+      // payloads that outlive the fields we hand back, and no caller mutates
+      // the input in place — the copy was pure overhead.
+      const value = data.subarray(offset, offset + lengthInfo.value);
       offset += lengthInfo.value;
       fields.push({ fieldNumber, wireType, value });
     } else if (wireType === 0) {
@@ -54,11 +67,11 @@ export function parseProtoFields(data: Uint8Array): ParsedField[] {
       offset += valueInfo.bytesRead;
       fields.push({ fieldNumber, wireType, value: valueInfo.value });
     } else if (wireType === 1) {
-      const value = data.slice(offset, offset + 8);
+      const value = data.subarray(offset, offset + 8);
       offset += 8;
       fields.push({ fieldNumber, wireType, value });
     } else if (wireType === 5) {
-      const value = data.slice(offset, offset + 4);
+      const value = data.subarray(offset, offset + 4);
       offset += 4;
       fields.push({ fieldNumber, wireType, value });
     } else {
@@ -81,7 +94,7 @@ export function parseProtobufValue(data: Uint8Array): unknown {
       return view.getFloat64(0, true);
     }
     if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      return new TextDecoder().decode(field.value);
+      return TEXT_DECODER.decode(field.value);
     }
     if (field.fieldNumber === 4 && field.wireType === 0) {
       return field.value === 1;
@@ -109,7 +122,7 @@ export function parseProtobufStruct(data: Uint8Array): Record<string, unknown> {
 
       for (const ef of entryFields) {
         if (ef.fieldNumber === 1 && ef.wireType === 2 && ef.value instanceof Uint8Array) {
-          key = new TextDecoder().decode(ef.value);
+          key = TEXT_DECODER.decode(ef.value);
         }
         if (ef.fieldNumber === 2 && ef.wireType === 2 && ef.value instanceof Uint8Array) {
           value = parseProtobufValue(ef.value);

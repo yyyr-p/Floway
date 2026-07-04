@@ -7,6 +7,7 @@
 // client expects. Zeta marker formats (V0318/V0615) live in zeta-format.ts.
 
 import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
+import { TEXT_ENCODER } from './proto/encoding.ts';
 
 export interface PrefixSuffix {
   prefix: string;
@@ -166,7 +167,7 @@ const PROSE_LANGUAGES: ReadonlySet<string> = new Set(['markdown', 'md', 'mdx', '
 
 export const estimateCursorTabTokens = (text: string, languageId: string): number => {
   if (!text) return 0;
-  const bytes = new TextEncoder().encode(text).length;
+  const bytes = TEXT_ENCODER.encode(text).length;
   const ratio = PROSE_LANGUAGES.has(languageId.toLowerCase())
     ? CURSOR_TAB_BYTES_PER_TOKEN_PROSE
     : CURSOR_TAB_BYTES_PER_TOKEN_CODE;

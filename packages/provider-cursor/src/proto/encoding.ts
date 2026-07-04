@@ -10,6 +10,11 @@
  * Workers-clean: pure Uint8Array + DataView, no Buffer.
  */
 
+// Shared TextEncoder — reused across all string encodes on the outgoing path
+// (tool defs, MCP schemas, ExecMcpResult bodies). TextEncoder has no internal
+// buffered state that survives a call, so reuse is safe.
+export const TEXT_ENCODER = /*@__PURE__*/ new TextEncoder();
+
 // --- Basic Varint and Field Encoding ---
 
 /**
@@ -17,7 +22,10 @@
  * Supports both number and bigint for large values (e.g. append_seqno).
  */
 export function encodeVarint(value: number | bigint): Uint8Array {
-  const bytes: number[] = [];
+  // A 64-bit varint fits in at most 10 bytes; write into a fixed buffer and
+  // return an owned slice so the caller can hold onto it independently.
+  const scratch = new Uint8Array(10);
+  let len = 0;
   let v = BigInt(value);
   if (v < 0n) {
     // Negative ints encode as two's-complement 64-bit varints (10 bytes). We
@@ -26,11 +34,11 @@ export function encodeVarint(value: number | bigint): Uint8Array {
     v = v + (1n << 64n);
   }
   while (v > 127n) {
-    bytes.push(Number(v & 0x7fn) | 0x80);
+    scratch[len++] = Number(v & 0x7fn) | 0x80;
     v >>= 7n;
   }
-  bytes.push(Number(v));
-  return new Uint8Array(bytes);
+  scratch[len++] = Number(v);
+  return scratch.slice(0, len);
 }
 
 /**
@@ -50,7 +58,7 @@ export function encodeStringField(fieldNumber: number, value: string): Uint8Arra
   if (!value) return new Uint8Array(0);
 
   const tag = encodeFieldTag(fieldNumber, 2);
-  const encoded = new TextEncoder().encode(value);
+  const encoded = TEXT_ENCODER.encode(value);
   const length = encodeVarint(encoded.length);
 
   const result = new Uint8Array(tag.length + length.length + encoded.length);

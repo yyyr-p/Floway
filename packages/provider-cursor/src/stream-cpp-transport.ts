@@ -9,6 +9,7 @@
  */
 
 import { CURSOR_GCPP_BACKEND_BASE, CURSOR_STREAM_CPP_PATH, CURSOR_TAB_CLIENT_VERSION, CURSOR_USER_AGENT } from './constants.ts';
+import { TEXT_DECODER } from './proto/decoding.ts';
 import { addConnectEnvelope, decompressGzip, FLAG_END_STREAM, isCompressedFrame, readConnectFrame } from './proto/envelope.ts';
 import { decodeStreamCppResponse, encodeStreamCppRequest, type StreamCppLineRange, type StreamCppRequestInput } from './proto/stream-cpp.ts';
 import type { Fetcher } from '@floway-dev/provider';
@@ -81,7 +82,7 @@ export const callStreamCpp = async (opts: {
       // payload is the EndStreamResponse JSON ({} on success, {"error":…} on
       // failure) — not a gRPC-web 0x80 trailer.
       if ((frame.flags & FLAG_END_STREAM) !== 0) {
-        endStream = new TextDecoder().decode(payload);
+        endStream = TEXT_DECODER.decode(payload);
         continue;
       }
       const decoded = decodeStreamCppResponse(payload);

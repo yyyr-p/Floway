@@ -11,7 +11,7 @@
  */
 
 import type { RequestContextEnv } from './agent-messages.ts';
-import { parseProtoFields, parseProtobufValue } from './decoding.ts';
+import { TEXT_DECODER, parseProtoFields, parseProtobufValue } from './decoding.ts';
 import {
   encodeStringField,
   encodeUint32Field,
@@ -40,9 +40,9 @@ function parseShellArgs(data: Uint8Array): { command: string; cwd?: string } {
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      command = new TextDecoder().decode(field.value);
+      command = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      cwd = new TextDecoder().decode(field.value);
+      cwd = TEXT_DECODER.decode(field.value);
     }
   }
 
@@ -55,7 +55,7 @@ function parseLsArgs(data: Uint8Array): { path: string } {
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
+      path = TEXT_DECODER.decode(field.value);
     }
   }
 
@@ -68,7 +68,7 @@ function parseReadArgs(data: Uint8Array): { path: string } {
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
+      path = TEXT_DECODER.decode(field.value);
     }
   }
 
@@ -83,11 +83,11 @@ function parseGrepArgs(data: Uint8Array): { pattern: string; path?: string; glob
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      pattern = new TextDecoder().decode(field.value);
+      pattern = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
+      path = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      glob = new TextDecoder().decode(field.value);
+      glob = TEXT_DECODER.decode(field.value);
     }
   }
 
@@ -110,11 +110,11 @@ function parseWriteArgs(data: Uint8Array): {
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
+      path = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      fileText = new TextDecoder().decode(field.value);
+      fileText = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      toolCallId = new TextDecoder().decode(field.value);
+      toolCallId = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 4 && field.wireType === 0) {
       returnFileContentAfterWrite = field.value === 1;
     } else if (field.fieldNumber === 5 && field.wireType === 2 && field.value instanceof Uint8Array) {
@@ -135,7 +135,7 @@ function parseMcpArgs(data: Uint8Array): Omit<McpExecRequest, 'id' | 'execId'> {
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      name = new TextDecoder().decode(field.value);
+      name = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
       const entryFields = parseProtoFields(field.value);
       let key = '';
@@ -143,7 +143,7 @@ function parseMcpArgs(data: Uint8Array): Omit<McpExecRequest, 'id' | 'execId'> {
 
       for (const ef of entryFields) {
         if (ef.fieldNumber === 1 && ef.wireType === 2 && ef.value instanceof Uint8Array) {
-          key = new TextDecoder().decode(ef.value);
+          key = TEXT_DECODER.decode(ef.value);
         }
         if (ef.fieldNumber === 2 && ef.wireType === 2 && ef.value instanceof Uint8Array) {
           value = parseProtobufValue(ef.value);
@@ -154,11 +154,11 @@ function parseMcpArgs(data: Uint8Array): Omit<McpExecRequest, 'id' | 'execId'> {
         args[key] = value;
       }
     } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      toolCallId = new TextDecoder().decode(field.value);
+      toolCallId = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 4 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      providerIdentifier = new TextDecoder().decode(field.value);
+      providerIdentifier = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 5 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      toolName = new TextDecoder().decode(field.value);
+      toolName = TEXT_DECODER.decode(field.value);
     }
   }
 
@@ -182,7 +182,7 @@ export function parseExecServerMessage(data: Uint8Array): ExecRequest | null {
     if (field.fieldNumber === 1 && field.wireType === 0) {
       id = field.value as number;
     } else if (field.fieldNumber === 15 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      execId = new TextDecoder().decode(field.value);
+      execId = TEXT_DECODER.decode(field.value);
     }
   }
 

@@ -1,4 +1,4 @@
-import { parseProtoFields } from './decoding.ts';
+import { TEXT_DECODER, parseProtoFields } from './decoding.ts';
 import type { ParsedToolCall, ParsedToolCallStarted, ParsedPartialToolCall } from './types.ts';
 
 export const TOOL_FIELD_MAP: Record<number, { type: string; name: string }> = {
@@ -79,13 +79,13 @@ export function parseToolCall(data: Uint8Array): ParsedToolCall {
 
         if (tf.wireType === 2 && tf.value instanceof Uint8Array) {
           try {
-            let strValue = new TextDecoder().decode(tf.value);
+            let strValue = TEXT_DECODER.decode(tf.value);
 
             if (tf.value.length > 2 && tf.value[0] === 0x0a) {
               const nestedFields = parseProtoFields(tf.value);
               for (const nf of nestedFields) {
                 if (nf.fieldNumber === 1 && nf.wireType === 2 && nf.value instanceof Uint8Array) {
-                  strValue = new TextDecoder().decode(nf.value);
+                  strValue = TEXT_DECODER.decode(nf.value);
                   break;
                 }
               }
@@ -118,11 +118,11 @@ export function parseToolCallStartedUpdate(data: Uint8Array): ParsedToolCallStar
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      callId = new TextDecoder().decode(field.value);
+      callId = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
       toolCall = parseToolCall(field.value);
     } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      modelCallId = new TextDecoder().decode(field.value);
+      modelCallId = TEXT_DECODER.decode(field.value);
     }
   }
 
@@ -138,13 +138,13 @@ export function parsePartialToolCallUpdate(data: Uint8Array): ParsedPartialToolC
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      callId = new TextDecoder().decode(field.value);
+      callId = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
       toolCall = parseToolCall(field.value);
     } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      argsTextDelta = new TextDecoder().decode(field.value);
+      argsTextDelta = TEXT_DECODER.decode(field.value);
     } else if (field.fieldNumber === 4 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      modelCallId = new TextDecoder().decode(field.value);
+      modelCallId = TEXT_DECODER.decode(field.value);
     }
   }
 
