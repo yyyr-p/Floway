@@ -11,6 +11,13 @@
  */
 
 import {
+  CURSOR_BIDI_APPEND_PATH,
+  CURSOR_GRPC_WEB_CONTENT_TYPE,
+  CURSOR_RUN_SSE_PATH,
+  CURSOR_USER_AGENT,
+} from './constants.ts';
+import { TEXT_DECODER } from './proto/decoding.ts';
+import {
   bytesToHex,
   addConnectEnvelope,
   readConnectFrame,
@@ -57,13 +64,6 @@ import {
   type McpResult,
   type RequestContextEnv,
 } from './proto/index.ts';
-import { TEXT_DECODER } from './proto/decoding.ts';
-import {
-  CURSOR_BIDI_APPEND_PATH,
-  CURSOR_GRPC_WEB_CONTENT_TYPE,
-  CURSOR_RUN_SSE_PATH,
-  CURSOR_USER_AGENT,
-} from './constants.ts';
 
 const MAX_BLOB_STORE_SIZE = 64;
 

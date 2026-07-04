@@ -14,9 +14,8 @@
  * obfuscation pass.
  */
 
-import { sha256Hex } from '@floway-dev/platform';
-
 import { TEXT_ENCODER } from './proto/encoding.ts';
+import { sha256Hex } from '@floway-dev/platform';
 
 /** Base64url-encode a byte buffer (no padding), Workers-clean. */
 export function bytesToBase64Url(bytes: Uint8Array): string {

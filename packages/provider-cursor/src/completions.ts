@@ -6,8 +6,8 @@
 // model's rewritten region is reduced back to the pure insertion the FIM
 // client expects. Zeta marker formats (V0318/V0615) live in zeta-format.ts.
 
-import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
 import { TEXT_ENCODER } from './proto/encoding.ts';
+import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
 
 export interface PrefixSuffix {
   prefix: string;

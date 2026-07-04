@@ -120,4 +120,3 @@ export const mintCursorAccessToken = async (
     refreshedAt: new Date().toISOString(),
   };
 };
-
