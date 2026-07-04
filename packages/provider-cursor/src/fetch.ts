@@ -18,7 +18,6 @@ import { contextCacheKey, shouldPersistContext, withObservedContext } from './co
 import { parseCursorImages } from './cursor-images.ts';
 import { cursorWireModelId } from './models.ts';
 import { AgentMode, type AgentStreamChunk, type RequestContextEnv, type OpenAIToolDefinition } from './proto/index.ts';
-import { isCursorRateLimited } from './quota.ts';
 import { deriveSessionKey, mintSessionKey, decodeToolCallId } from './session-id.ts';
 import type { CursorAccountCredential } from './state.ts';
 import { assertCursorUpstreamState } from './state.ts';
@@ -76,12 +75,6 @@ const prepareCursorCall = async (
 
   if (opts.account.state !== 'active') {
     return { ok: false, response: await wrapSynthetic(synthetic503(`Cursor upstream is ${opts.account.state}`)) };
-  }
-
-  if (isCursorRateLimited(opts.account.quotaSnapshot?.data ? 429 : 200)) {
-    // quota parsing is a placeholder; this branch is unreachable until real
-    // 429 headers are captured. Kept so the gate is wired.
-    return { ok: false, response: await wrapSynthetic(synthetic429('Cursor upstream rate-limited')) };
   }
 
   try {
@@ -179,12 +172,6 @@ const toAgentTools = (tools: ChatCompletionsTool[] | null | undefined): OpenAITo
 const synthetic503 = (message: string): Response =>
   new Response(JSON.stringify({ error: { type: 'cursor_upstream_unavailable', message } }), {
     status: 503,
-    headers: { 'content-type': 'application/json' },
-  });
-
-const synthetic429 = (message: string): Response =>
-  new Response(JSON.stringify({ error: { type: 'cursor_rate_limited', message } }), {
-    status: 429,
     headers: { 'content-type': 'application/json' },
   });
 

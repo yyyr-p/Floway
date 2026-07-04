@@ -24,8 +24,9 @@
  * correct new text for the bracketed range.
  */
 
+import { applyRewrite } from './completions.ts';
 import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
-import { cursorAtChangeEnd, ZETA_END_MARKER } from './zeta-format.ts';
+import { commonPrefixLen, commonSuffixLen, cursorAtChangeEnd, ZETA_END_MARKER } from './zeta-format.ts';
 
 const FIM_PREFIX = '<[fim-prefix]>';
 const FIM_MIDDLE = '<[fim-middle]>';
@@ -123,27 +124,7 @@ export const streamCppInputForV0615 = (parsed: ParsedV0615, modelName: string): 
   };
 };
 
-// See applyRewrite in completions.ts: removal bounded by `range` (so insertions
-// don't eat following lines), with end line inclusive/exclusive inferred from
-// whether `text` ends in a newline.
-const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
-  if (!range) return text;
-  const lines = contents.split('\n');
-  const start = range.startLineNumber - 1;
-  if (start < 0 || start > lines.length) return contents;
-  let startOff = 0;
-  for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
-  let endIdx = range.endLine - 1;
-  if (endIdx < start) endIdx = start;
-  let endOff = 0;
-  for (let i = 0; i < endIdx && i < lines.length; i++) endOff += lines[i].length + 1;
-  if (!text.endsWith('\n') && endIdx < lines.length) endOff += lines[endIdx].length;
-  endOff = Math.min(Math.max(endOff, startOff), contents.length);
-  return contents.slice(0, startOff) + text + contents.slice(endOff);
-};
-
-const commonPrefixLen = (a: string, b: string): number => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
-const commonSuffixLen = (a: string, b: string, cap: number): number => { let i = 0; while (i < cap && a[a.length - 1 - i] === b[b.length - 1 - i]) i++; return i; };
+// Apply StreamCpp's rewritten-region text — see `applyRewrite` in completions.ts.
 
 // Port of hashed_regions::encode_from_old_and_new: pick the marker pair that
 // brackets the single contiguous change (common prefix/suffix), emit the new
@@ -186,7 +167,7 @@ export const renderV0615Output = (parsed: ParsedV0615, range: StreamCppLineRange
   const snip = parsed.snippets[parsed.cursorSnippetIx];
   if (snip.markers.length < 2) return null;
   const oldText = snip.text;
-  const newText = applyRewriteToFile(oldText, range, text);
+  const newText = applyRewrite(oldText, range, text);
   if (newText === oldText) return null;
 
   const cursorInNew = cursorAtChangeEnd(oldText, newText); // trailing-newline-insensitive

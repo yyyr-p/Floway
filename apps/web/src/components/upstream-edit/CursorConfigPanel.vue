@@ -49,9 +49,8 @@ const polling = ref(false);
 const refreshing = ref(false);
 const reimportOpen = ref(false);
 
-// Cursor login is poll-based: the server mints the PKCE pair + uuid and
-// returns the authorize URL; the operator opens it, signs in, then we poll
-// the gateway which in turn polls api2.cursor.sh until login completes.
+// Fetch the poll parameters, then let the operator open the authorize URL.
+// See gateway control-plane/upstreams/routes.ts for the poll protocol.
 const prepareAuthorize = async () => {
   if (authorize.value || loading.value) return;
   loading.value = true;

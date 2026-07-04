@@ -455,13 +455,7 @@ export const codexRefreshNowBody = z.object({
 });
 
 // --- cursor import / authorize-url / poll / refresh ---
-//
-// Cursor login is poll-based (not callback-paste): the dashboard gets an
-// authorize URL + a uuid/verifier pair, opens the URL, then polls the gateway
-// which in turn polls api2.cursor.sh/auth/poll until the operator completes
-// login. PKCE state (verifier + uuid) is generated server-side by
-// buildCursorAuthorizeUrl and returned to the dashboard so the poll step can
-// echo it back.
+// See control-plane/upstreams/routes.ts for the poll-based login protocol.
 export const cursorAuthorizeUrlBody = z.object({
   proxy_fallback_list: proxyFallbackListSchema.optional(),
 });

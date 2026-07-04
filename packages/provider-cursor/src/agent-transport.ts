@@ -28,12 +28,7 @@ import {
   buildKvClientMessage,
   buildAgentClientMessageWithKv,
   buildExecClientMessageWithMcpResult,
-  buildExecClientMessageWithShellResult,
-  buildExecClientMessageWithLsResult,
   buildExecClientMessageWithRequestContextResult,
-  buildExecClientMessageWithReadResult,
-  buildExecClientMessageWithGrepResult,
-  buildExecClientMessageWithWriteResult,
   buildExecClientMessageWithRejectedTool,
   buildAgentClientMessageWithExec,
   buildExecClientControlMessage,
@@ -47,8 +42,6 @@ import {
   encodeModelDetails,
   encodeAgentRunRequest,
   encodeAgentClientMessage,
-  encodeConversationActionWithResume,
-  encodeAgentClientMessageWithConversationAction,
   AgentMode,
   type AgentStreamChunk,
   type AgentChatRequest,
@@ -322,14 +315,6 @@ export class AgentTransport {
   }
 
   /**
-   * Reply to an MCP exec request with a result. Single frame, no close — the
-   * server resumes the model turn automatically (see sendExecResultNoClose).
-   */
-  async sendMcpResult(execRequest: Extract<ExecRequest, { type: 'mcp' }>, result: McpResult): Promise<void> {
-    await this.sendMcpResultRaw(execRequest.id, execRequest.execId, result);
-  }
-
-  /**
    * Send an MCP tool result from just the exec identity (id + exec_id) — a
    * cross-instance resume reconstructs these from the client's echoed
    * tool_call_id (see session-id.ts decodeToolCallId), without the original
@@ -350,61 +335,6 @@ export class AgentTransport {
   async sendRequestContextResult(id: number, execId: string | undefined): Promise<void> {
     const execClientMsg = buildExecClientMessageWithRequestContextResult(id, execId, this.env);
     await this.sendExecAndClose(id, execId, execClientMsg);
-  }
-
-  async sendShellResult(
-    id: number,
-    execId: string | undefined,
-    command: string,
-    cwd: string,
-    stdout: string,
-    stderr: string,
-    exitCode: number,
-    executionTimeMs?: number,
-  ): Promise<void> {
-    const execClientMsg = buildExecClientMessageWithShellResult(id, execId, command, cwd, stdout, stderr, exitCode, executionTimeMs);
-    await this.sendExecAndClose(id, execId, execClientMsg);
-  }
-
-  async sendLsResult(id: number, execId: string | undefined, filesString: string): Promise<void> {
-    const execClientMsg = buildExecClientMessageWithLsResult(id, execId, filesString);
-    await this.sendExecAndClose(id, execId, execClientMsg);
-  }
-
-  async sendReadResult(
-    id: number,
-    execId: string | undefined,
-    content: string,
-    path: string,
-    totalLines?: number,
-    fileSize?: bigint,
-    truncated?: boolean,
-  ): Promise<void> {
-    const execClientMsg = buildExecClientMessageWithReadResult(id, execId, content, path, totalLines, fileSize, truncated);
-    await this.sendExecAndClose(id, execId, execClientMsg);
-  }
-
-  async sendGrepResult(id: number, execId: string | undefined, pattern: string, path: string, files: string[]): Promise<void> {
-    const execClientMsg = buildExecClientMessageWithGrepResult(id, execId, pattern, path, files);
-    await this.sendExecAndClose(id, execId, execClientMsg);
-  }
-
-  async sendWriteResult(
-    id: number,
-    execId: string | undefined,
-    result: { success?: { path: string; linesCreated: number; fileSize: number; fileContentAfterWrite?: string }; error?: { path: string; error: string } },
-  ): Promise<void> {
-    const execClientMsg = buildExecClientMessageWithWriteResult(id, execId, result);
-    await this.sendExecAndClose(id, execId, execClientMsg);
-  }
-
-  /** Tell the backend to resume streaming after tool results. */
-  async sendResumeAction(): Promise<void> {
-    if (!this.currentRequestId) throw new Error('No active chat stream — cannot send resume action');
-    const conversationAction = encodeConversationActionWithResume();
-    const agentClientMessage = encodeAgentClientMessageWithConversationAction(conversationAction);
-    await this.bidiAppend(this.currentRequestId, this.currentAppendSeqno, agentClientMessage);
-    this.currentAppendSeqno += 1n;
   }
 
   /**

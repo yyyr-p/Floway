@@ -94,7 +94,9 @@ const modelPrefixInvalid = ref(false);
 const customDraft = ref<CustomDraft>(blankCustomDraft());
 const azureDraft = ref<AzureDraft>(blankAzureDraft());
 const ollamaDraft = ref<OllamaDraft>(blankOllamaDraft());
-// Cursor's only editable config field. Absent on the record = privacy on.
+// Cursor privacy toggle persisted via the page Save button (maxMode /
+// tabCompletion are edited inline in CursorConfigPanel). Absent on the
+// record = privacy on.
 const cursorPrivacyMode = ref(true);
 
 const upstreamModels = ref<UpstreamModelConfig[]>(props.initialUpstreamModels ?? []);

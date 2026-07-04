@@ -96,7 +96,3 @@ export function getTokenExpiry(token: string): number {
   }
   return Date.now() + 3600 * 1000;
 }
-
-export function isTokenExpired(expiresAt: number): boolean {
-  return Date.now() >= expiresAt;
-}

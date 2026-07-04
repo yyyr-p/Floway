@@ -63,7 +63,7 @@ import {
 } from '@floway-dev/provider-codex';
 import { clearInProcessCopilotTokenCache, exchangeCopilotToken, readCopilotUpstreamState, type CopilotUpstreamState } from '@floway-dev/provider-copilot';
 import {
-  buildCursorAuthorizeUrl,
+  generateCursorAuthParams,
   pollCursorAuth,
   deriveCursorIdentity,
   buildCursorImportConfig,
@@ -809,7 +809,7 @@ export const codexRefreshNow = async (c: CtxWithJson<typeof codexRefreshNowBody,
 // from the stored refresh_token (same shape as codexRefreshNow).
 
 export const cursorAuthorizeUrl = async (c: CtxWithJson<typeof cursorAuthorizeUrlBody>) => {
-  const params = await buildCursorAuthorizeUrl();
+  const params = await generateCursorAuthParams();
   return c.json({ authorize_url: params.loginUrl, uuid: params.uuid, verifier: params.verifier });
 };
 

@@ -16,4 +16,3 @@ export { createCursorProvider } from './provider.ts';
 export type { CursorCallEffects, CallCursorChatCompletionsOptions } from './fetch.ts';
 export type { AgentTransport, AgentTransportOptions } from './agent-transport.ts';
 export type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
-export type { CursorRawModel, fetchCursorCatalog, cursorRawToProviderModel } from './models.ts';

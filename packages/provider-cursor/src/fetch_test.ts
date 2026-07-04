@@ -7,7 +7,7 @@ import { initDurableHttpSession, resetDurableHttpSessionForTesting, type Durable
 import type { ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import { initProviderRepo, type ProviderModel, type UpstreamRecord } from '@floway-dev/provider';
-import { noopUpstreamCallOptions, stubProviderModel } from '@floway-dev/test-utils';
+import { noopCursorSessionsRepo, noopUpstreamCallOptions, stubProviderModel } from '@floway-dev/test-utils';
 
 // Minimal DurableHttpSession that does the RunSSE fetch via globalThis.fetch
 // (which the tests mock), so the read stream flows through the same channel the
@@ -72,7 +72,7 @@ beforeEach(() => {
   initDurableHttpSession(testDurableHttpSession);
   currentRecord = makeRecord({ accounts: [{ ...activeAccount }] });
   initProviderRepo(() => ({
-    cursorSessions: { claim: async () => null, put: async () => {}, delete: async () => {} },
+    cursorSessions: noopCursorSessionsRepo(),
     upstreams: {
       getById: async () => currentRecord,
       saveState: async (_id, newState) => {

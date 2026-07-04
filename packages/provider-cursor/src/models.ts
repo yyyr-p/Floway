@@ -345,7 +345,7 @@ export const cursorRawToProviderModel = (raw: CursorRawModel, enabledFlags: Read
     limits: { max_context_window_tokens: raw.contextWindow ?? 200_000 },
     endpoints: { chatCompletions: {} },
     enabledFlags,
-    ...(chat ? { chat } : {}),
+    chat,
     ...(providerData.wireModelId || providerData.variantIds || providerData.variants ? { providerData } : {}),
     ...(cost ? { cost } : {}),
   };

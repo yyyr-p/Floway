@@ -6,9 +6,8 @@ import { stripUnsupportedFields } from './strip-unsupported-fields.ts';
 import type { ChatCompletionsBoundaryCtx } from './types.ts';
 import type { Interceptor } from '@floway-dev/interceptor';
 
-// Order: inject-default-instructions first so the system message is present
-// before strip runs (strip does not touch messages). Neither interceptor reads
-// a field the other writes, so the order is positional only.
+// Neither interceptor reads a field the other writes, so the listing order is
+// positional.
 export const cursorChatCompletionsChain = <TResult>(): readonly Interceptor<ChatCompletionsBoundaryCtx, object, TResult>[] => [
   injectDefaultInstructions,
   stripUnsupportedFields,

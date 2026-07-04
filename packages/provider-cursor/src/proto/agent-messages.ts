@@ -90,11 +90,6 @@ export interface SelectedImageInput {
   mimeType: string;
 }
 
-export interface SelectedImageInput {
-  data: Uint8Array;
-  mimeType: string;
-}
-
 // SelectedImage (agent.v1): inline image bytes. uuid=2, mime_type=7, and the
 // raw bytes ride the `data_or_blob_id` oneof at data=8 (length-delimited, same
 // wire form as an embedded message). dimension is optional and omitted.
@@ -127,13 +122,9 @@ export function encodeConversationAction(userMessageAction: Uint8Array): Uint8Ar
   return encodeMessageField(1, userMessageAction);
 }
 
-export function encodeResumeAction(): Uint8Array {
-  return new Uint8Array(0);
-}
-
+// ResumeAction: empty message on the wire.
 export function encodeConversationActionWithResume(): Uint8Array {
-  const resumeAction = encodeResumeAction();
-  return encodeMessageField(2, resumeAction);
+  return encodeMessageField(2, new Uint8Array(0));
 }
 
 export function encodeAgentClientMessageWithConversationAction(conversationAction: Uint8Array): Uint8Array {
@@ -147,10 +138,6 @@ export function encodeModelDetails(modelId: string, maxMode?: boolean): Uint8Arr
   // wire shape is unchanged.
   if (maxMode) parts.push(encodeBoolField(7, true));
   return concatBytes(...parts);
-}
-
-export function encodeEmptyConversationState(): Uint8Array {
-  return new Uint8Array(0);
 }
 
 export function encodeMcpTools(tools: OpenAIToolDefinition[]): Uint8Array {
@@ -223,10 +210,9 @@ export function encodeAgentRunRequest(
   tools: OpenAIToolDefinition[] | undefined,
   workspacePath: string | undefined,
 ): Uint8Array {
-  const conversationState = encodeEmptyConversationState();
-
+  // ConversationState: empty message on the wire.
   const parts: Uint8Array[] = [
-    encodeMessageField(1, conversationState),
+    encodeMessageField(1, new Uint8Array(0)),
     encodeMessageField(2, action),
     encodeMessageField(3, modelDetails),
   ];

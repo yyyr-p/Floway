@@ -1,22 +1,18 @@
-/**
- * Cursor upstream import flow — poll-based PKCE login.
- *
- * Unlike Codex/Claude (callback paste), Cursor login is poll-based: the
- * operator opens the authorize URL in a browser, and the gateway polls
- * api2.cursor.sh/auth/poll until it returns tokens. This module owns the
- * authorize-url generation and the tokens → persisted config/state mapping;
- * the control-plane routes (Step 7) wire pollCursorAuth in between.
- */
+// Cursor upstream import flow — poll-based login.
+//
+// Unlike Codex/Claude (callback paste), Cursor login is poll-based: the
+// operator opens the authorize URL in a browser, and the gateway polls
+// api2.cursor.sh/auth/poll until it returns tokens. This module owns the
+// tokens → persisted config/state mapping; the authorize URL is generated
+// by generateCursorAuthParams (poll.ts), and the control-plane routes wire
+// pollCursorAuth in between.
 
 import { getTokenExpiry } from './oauth.ts';
-import { generateCursorAuthParams, type CursorAuthParams, type CursorPollTokens } from './poll.ts';
+import type { CursorPollTokens } from './poll.ts';
 import type { CursorAccountIdentity, CursorUpstreamConfig } from '../config.ts';
 import type { CursorAccessTokenEntry, CursorUpstreamState } from '../state.ts';
 
-export type { CursorAuthParams, CursorPollTokens };
-
-/** Start a login: returns the authorize URL for the operator + the verifier/uuid to poll with. */
-export const buildCursorAuthorizeUrl = async (): Promise<CursorAuthParams> => await generateCursorAuthParams();
+export type { CursorPollTokens };
 
 /**
  * Derive the account identity from the access token JWT. Cursor's JWT payload

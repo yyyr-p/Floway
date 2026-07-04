@@ -5,9 +5,9 @@ import { callApi, useApi } from '../../api/client.ts';
 import type { CursorDashboardUsage } from '../../api/types.ts';
 import { Card } from '@floway-dev/ui';
 
-// String rather than a strict enum so callers can pass "unknown" for legacy
-// state rows that predate CursorCredentialHealth. Only 'active' is treated
-// specially: the Refresh button is disabled otherwise.
+// String rather than a strict enum so the caller can pass "unknown" when the
+// state slot is not yet populated. Only 'active' is treated specially: the
+// Refresh button is disabled otherwise.
 const props = defineProps<{
   upstreamId: string;
   accountState: string;

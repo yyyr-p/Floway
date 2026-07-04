@@ -4,7 +4,6 @@ import {
   createAgentTranslator,
   isComposerModel,
   visibleComposerContentFromThinking,
-  composerReasoningRemainder,
 } from './agent-translate.ts';
 import type { AgentStreamChunk, ExecRequest } from './proto/index.ts';
 
@@ -42,15 +41,6 @@ describe('visibleComposerContentFromThinking', () => {
   test('holds back a partial open marker', () => {
     // Only a fragment of the marker arrived — must not leak as content yet.
     expect(visibleComposerContentFromThinking('cot</think><｜fi')).toBe('');
-  });
-});
-
-describe('composerReasoningRemainder', () => {
-  test('null before sentinel', () => {
-    expect(composerReasoningRemainder('thinking...')).toBeNull();
-  });
-  test('prefix before sentinel after it arrives', () => {
-    expect(composerReasoningRemainder('the cot</think>the reply')).toBe('the cot');
   });
 });
 

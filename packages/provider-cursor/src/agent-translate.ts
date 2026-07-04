@@ -49,14 +49,6 @@ export function visibleComposerContentFromThinking(thinking: string): string {
   return visible.replace(COMPOSER_CLOSE_MARKER, '').trim();
 }
 
-/** The chain-of-thought prefix before the last `</think>` (null until sentinel). */
-export function composerReasoningRemainder(thinking: string): string | null {
-  if (!thinking) return null;
-  const endIdx = thinking.lastIndexOf(COMPOSER_THINK_END);
-  if (endIdx < 0) return null;
-  return thinking.slice(0, endIdx);
-}
-
 export interface TranslatorOptions {
   id: string;
   model: string;
