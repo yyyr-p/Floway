@@ -186,7 +186,6 @@ const redactedState = (upstream: UpstreamRecord): unknown => {
           state_updated_at: clone(a.state_updated_at),
           refresh_token_set: hasSecret(a.refresh_token),
           accessToken,
-          quotaSnapshot: serializeOpaqueRecord(upstream, 'quotaSnapshot', a.quotaSnapshot),
         };
       }),
     };

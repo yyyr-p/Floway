@@ -57,11 +57,12 @@ import {
   type McpResult,
   type RequestContextEnv,
 } from './proto/index.ts';
-
-const RUN_SSE_PATH = '/agent.v1.AgentService/RunSSE';
-const BIDI_APPEND_PATH = '/aiserver.v1.BidiService/BidiAppend';
-const USER_AGENT = 'connect-es/1.4.0';
-const GRPC_WEB_PROTO = 'application/grpc-web+proto';
+import {
+  CURSOR_BIDI_APPEND_PATH,
+  CURSOR_GRPC_WEB_CONTENT_TYPE,
+  CURSOR_RUN_SSE_PATH,
+  CURSOR_USER_AGENT,
+} from './constants.ts';
 
 const MAX_BLOB_STORE_SIZE = 64;
 
@@ -163,8 +164,8 @@ export class AgentTransport {
   private getHeaders(requestId?: string): Record<string, string> {
     const headers: Record<string, string> = {
       authorization: `Bearer ${this.getAuthToken()}`,
-      'content-type': GRPC_WEB_PROTO,
-      'user-agent': USER_AGENT,
+      'content-type': CURSOR_GRPC_WEB_CONTENT_TYPE,
+      'user-agent': CURSOR_USER_AGENT,
       'x-cursor-checksum': this.getChecksum(),
       'x-cursor-client-version': this.clientVersion,
       'x-cursor-client-type': 'cli',
@@ -208,7 +209,7 @@ export class AgentTransport {
     const hexData = bytesToHex(data);
     const appendRequest = encodeBidiAppendRequest(hexData, requestId, appendSeqno);
     const envelope = addConnectEnvelope(appendRequest);
-    const url = `${this.baseUrl}${BIDI_APPEND_PATH}`;
+    const url = `${this.baseUrl}${CURSOR_BIDI_APPEND_PATH}`;
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
@@ -428,7 +429,7 @@ export class AgentTransport {
   runSseInit(requestId: string): { method: 'POST'; url: string; headers: Record<string, string>; body: Uint8Array } {
     return {
       method: 'POST',
-      url: `${this.baseUrl}${RUN_SSE_PATH}`,
+      url: `${this.baseUrl}${CURSOR_RUN_SSE_PATH}`,
       headers: this.getHeaders(requestId),
       body: addConnectEnvelope(encodeBidiRequestId(requestId)),
     };

@@ -90,11 +90,6 @@ export interface SelectedImageInput {
   mimeType: string;
 }
 
-export interface SelectedImageInput {
-  data: Uint8Array;
-  mimeType: string;
-}
-
 // SelectedImage (agent.v1): inline image bytes. uuid=2, mime_type=7, and the
 // raw bytes ride the `data_or_blob_id` oneof at data=8 (length-delimited, same
 // wire form as an embedded message). dimension is optional and omitted.
