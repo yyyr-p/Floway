@@ -188,12 +188,13 @@ export class InProcessDurableHttpSession implements DurableHttpSession {
     }
 
     // highWaterMark 0: the stream only pulls to satisfy an active read() — it
-    // never speculatively reads ahead. Without this, the default hWM of 1 makes
-    // the stream pull a chunk into its own internal queue (or park a waiter)
-    // right after the consumer's last read, so at the exec_mcp pause a chunk the
-    // upstream sends next can land in the about-to-be-discarded view instead of
-    // the shared entry buffer — lost across the turn handoff, wedging the
-    // upstream. Pulling 1:1 with reads mirrors reading the socket directly.
+    // never speculatively reads ahead. Without this, the default hWM of 1
+    // makes the stream pull a chunk into its own internal queue (or park a
+    // waiter) right after the consumer's last read, so during a mid-turn
+    // pause a chunk the upstream sends next can land in the about-to-be-
+    // discarded view instead of the shared entry buffer — lost across the
+    // turn handoff, wedging the upstream. Pulling 1:1 with reads mirrors
+    // reading the socket directly.
     const body = new ReadableStream<Uint8Array>({
       async pull(controller): Promise<void> {
         if (released) { controller.close(); return; }
