@@ -407,13 +407,28 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
   const entries = groupKey === 'keyId'
     ? keyChartEntries([...presentGroups], keyMetadataForTokenRecords(allRecords, data.value?.keys ?? []), data.value?.keys.map(k => k.id) ?? [...presentGroups])
     : modelChartEntries([...presentGroups]);
-  // Cross-filtering can leave a group with all-zero (or, for percent metrics,
-  // all-null) values. Drop those datasets outright — legend entry and line both
-  // gone — instead of rendering an inert flat line. The own-dimension hidden set
-  // is a separate, restorable user toggle and keeps its struck-through entry.
+  // A group can hold all-zero (or, for percent metrics, all-null) values under
+  // the current metric for two distinct reasons, and requests tells them apart:
+  // cross-filtering that emptied the group leaves requests at zero too (details
+  // aggregate the same cross-filtered records), whereas a group with real but
+  // zero-token traffic — e.g. an upstream that reports no usage — still has
+  // requests > 0. Keep the latter as a flat line at zero so it stays visible in
+  // the token/cost views; drop the former outright, legend entry and line both
+  // gone, instead of rendering an inert line for a group with no activity. Own-
+  // dimension hidden groups are a separate, restorable toggle kept struck-through.
+  // Percent metrics stay null-only: a ratio over zero tokens is undefined.
+  //
+  // Non-percent buckets fall back to `0` (not `null`) so every dataset carries
+  // a numeric value at every index — stacked line rendering then accumulates
+  // correctly and every series draws a continuous line all the way across the
+  // axis, edges included. `spanGaps` only stitches internal gaps, so leaving
+  // nulls in would leave the leading and trailing "no record" buckets unlit.
+  // The tooltip filter reaches back into `details.requests` to distinguish a
+  // synthesized 0 from a real zero-token record.
+  const hasRequests = (id: string) => bucketKeys.some(k => (details.get(k)?.get(id)?.requests ?? 0) > 0);
   const datasetEntries = entries
-    .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)?.get(entry.id) ?? (isPercent ? null : 0)) }))
-    .filter(({ data }) => isPercent ? data.some(v => v !== null) : data.some(v => v !== 0));
+    .map(entry => ({ entry, data: bucketKeys.map(k => values.get(k)!.get(entry.id) ?? (isPercent ? null : 0)) }))
+    .filter(({ entry, data }) => isPercent ? data.some(v => v !== null) : (data.some(v => v !== 0) || hasRequests(entry.id)));
   const labelWidth = datasetEntries.reduce((max, { entry }) => Math.max(max, entry.label.length), 0);
   return {
     type: 'line',
@@ -421,6 +436,13 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
       labels,
       datasets: datasetEntries.map(({ entry, data: datasetData }) => {
         const color = chartColor(entry.colorSlot);
+        // A dataset kept only because its group has real requests — every
+        // selected-metric value is zero — would, when stacked onto the series
+        // below it, ride invisibly along that series' top edge rather than sit
+        // at zero. Give it a private stack group and drop the fill so it draws
+        // as a flat, hoverable line pinned to the axis. It contributes nothing
+        // to the main stack, so pulling it out leaves the real totals untouched.
+        const zeroLine = !isPercent && !datasetData.some(v => v !== 0);
         return {
           label: entry.label,
           seriesId: entry.id,
@@ -432,8 +454,13 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           pointRadius: 2,
           pointHoverRadius: 5,
           tension: 0.3,
-          fill: isPercent ? false : 'stack',
+          fill: isPercent || zeroLine ? false : 'stack',
           spanGaps: isPercent,
+          stack: zeroLine ? 'axis' : 'main',
+          // Zero-line series draw at y=0 and get painted over by any main-stack
+          // area whose bottom sits at the axis; render them last (lower `order`
+          // = drawn on top) so their flat line and points stay visible.
+          order: zeroLine ? -1 : 0,
         };
       }),
     },
@@ -461,7 +488,19 @@ const buildStackedConfig = (groupKey: 'keyId' | 'model'): ChartConfiguration<'li
           bodyColor: '#b0bec5',
           padding: 12,
           bodyFont: { family: chartFont.mono, size: 11 },
-          filter: item => item.parsed.y !== null && (isPercent || item.parsed.y > 0),
+          // Null y = no record in this bucket (dropped). A stacked-dataset zero
+          // may be either a real zero-token record or a synthesized fill for a
+          // no-record bucket — the latter must not appear in the tooltip, so
+          // reach back into `details.requests` to keep only rows where the
+          // group actually served requests.
+          filter: item => {
+            if (item.parsed.y === null) return false;
+            if (isPercent || item.parsed.y > 0) return true;
+            const bucket = bucketKeys[item.dataIndex];
+            const entry = datasetEntries[item.datasetIndex]?.entry;
+            return bucket !== undefined && entry !== undefined
+              && (details.get(bucket)?.get(entry.id)?.requests ?? 0) > 0;
+          },
           itemSort: (a, b) => Number(b.parsed.y ?? 0) - Number(a.parsed.y ?? 0),
           callbacks: {
             beforeBody: items => items.length ? tooltipHeader(labelWidth) : [],
