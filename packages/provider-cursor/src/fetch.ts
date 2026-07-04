@@ -383,7 +383,10 @@ const performOpen = async (
   const message = flattenMessages(opts.body.messages);
   // Inline images ride the current (last) user turn only — Cursor attaches them
   // to that UserMessage's SelectedContext, and historical turns carry text only.
-  const lastUser = [...opts.body.messages].reverse().find(m => m.role === 'user');
+  let lastUser: ChatCompletionsMessage | undefined;
+  for (let i = opts.body.messages.length - 1; i >= 0; i--) {
+    if (opts.body.messages[i]!.role === 'user') { lastUser = opts.body.messages[i]; break; }
+  }
   const images = lastUser ? parseCursorImages(lastUser) : [];
   // Always advertise the tools: a cold-resume (tool-result follow-up that lost
   // its session) lets cursor re-run the agent loop natively rather than degrade

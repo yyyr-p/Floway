@@ -23,6 +23,7 @@
  * region with the reconstructed new text.
  */
 
+import { applyRewrite } from './completions.ts';
 import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
 
 const FIM_SUFFIX = '<[fim-suffix]>';
@@ -157,28 +158,11 @@ export const streamCppInputForZeta = (parsed: ParsedZeta, modelName: string): St
   ...(parsed.diffHistory.length > 0 ? { diffHistory: parsed.diffHistory } : {}),
 });
 
-// Apply StreamCpp's rewritten-region text to the whole file (whole file when no
-// range was emitted). The removed span is bounded by `range` so insertions
-// don't eat following lines; `endLine`'s inclusive/exclusive sense is inferred
-// from text's trailing newline (see applyRewrite in completions.ts).
-const applyRewriteToFile = (contents: string, range: StreamCppLineRange | undefined, text: string): string => {
-  if (!range) return text;
-  const lines = contents.split('\n');
-  const start = range.startLineNumber - 1;
-  if (start < 0 || start > lines.length) return contents;
-  let startOff = 0;
-  for (let i = 0; i < start; i++) startOff += lines[i].length + 1;
-  let endIdx = range.endLine - 1;
-  if (endIdx < start) endIdx = start;
-  let endOff = 0;
-  for (let i = 0; i < endIdx && i < lines.length; i++) endOff += lines[i].length + 1;
-  if (!text.endsWith('\n') && endIdx < lines.length) endOff += lines[endIdx].length;
-  endOff = Math.min(Math.max(endOff, startOff), contents.length);
-  return contents.slice(0, startOff) + text + contents.slice(endOff);
-};
+// Applying StreamCpp's rewritten-region text to the whole file is the same
+// operation used by the FIM path — see applyRewrite in completions.ts.
 
-const commonPrefixLen = (a: string, b: string): number => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
-const commonSuffixLen = (a: string, b: string, cap: number): number => { let i = 0; while (i < cap && a[a.length - 1 - i] === b[b.length - 1 - i]) i++; return i; };
+export const commonPrefixLen = (a: string, b: string): number => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
+export const commonSuffixLen = (a: string, b: string, cap: number): number => { let i = 0; while (i < cap && a[a.length - 1 - i] === b[b.length - 1 - i]) i++; return i; };
 
 // Offset in `newText` at the end of the change vs `oldText` (after the common
 // prefix / before the common suffix). A lone trailing-newline difference is
@@ -201,7 +185,7 @@ export const cursorAtChangeEnd = (oldText: string, newText: string): number => {
 // is no in-region change (Zed then shows no suggestion).
 export const renderZetaV0318Output = (parsed: ParsedZeta, range: StreamCppLineRange | undefined, text: string): string | null => {
   if (!text) return null;
-  const newFile = applyRewriteToFile(parsed.contents, range, text);
+  const newFile = applyRewrite(parsed.contents, range, text);
   if (!newFile.startsWith(parsed.codeBefore)) return null;
   let newEditable = newFile.slice(parsed.codeBefore.length);
   if (parsed.codeAfter.length > 0) {
