@@ -23,6 +23,7 @@ import {
   parseCheckpointTokenDetails,
   parseExecServerMessage,
   parseKvServerMessage,
+  parseToolCall,
   buildKvClientMessage,
   buildExecClientMessageWithMcpResult,
   buildExecClientMessageWithRejectedTool,
@@ -322,5 +323,32 @@ describe('buildKvClientMessage', () => {
     const fields = parseProtoFields(msg);
     const setBlobResult = fields.find(f => f.fieldNumber === 3)!.value as Uint8Array;
     expect(setBlobResult.length).toBe(0);
+  });
+});
+
+describe('parseToolCall nested-wrapper heuristic', () => {
+  test('preserves a shell command that starts with a newline', () => {
+    // 0x0a is byte-identical with the UTF-8 encoding of `\n`, so a leading
+    // LF in a scalar string used to false-positive into the nested-wrapper
+    // reparse and corrupt the command. The strict length-consistency check
+    // now keeps such strings intact.
+    const shellArgs = encodeStringField(1, '\ncat foo');
+    const toolCall = encodeMessageField(1, shellArgs);
+    const parsed = parseToolCall(toolCall);
+    expect(parsed.toolType).toBe('shell_tool_call');
+    expect(parsed.arguments.command).toBe('\ncat foo');
+  });
+
+  test('preserves a multi-line edit oldString that starts with a newline', () => {
+    const editArgs = concatBytes(
+      encodeStringField(1, 'foo.ts'),
+      encodeStringField(2, '\nconst x = 1;\n'),
+      encodeStringField(3, '\nconst y = 2;\n'),
+    );
+    const toolCall = encodeMessageField(12, editArgs);
+    const parsed = parseToolCall(toolCall);
+    expect(parsed.toolType).toBe('edit_tool_call');
+    expect(parsed.arguments.oldString).toBe('\nconst x = 1;\n');
+    expect(parsed.arguments.newString).toBe('\nconst y = 2;\n');
   });
 });

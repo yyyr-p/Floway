@@ -286,12 +286,13 @@ export class DurableHttpSessionDO extends DurableObject {
     try { await this.ctx.storage.deleteAlarm(); } catch { /* no alarm set */ }
   }
 
-  // Idle eviction. Re-arms while a consumer is attached or activity is recent;
-  // otherwise tears the session down so an abandoned conversation does not pin
-  // the outbound socket to the 15-minute runtime cap.
+  // Idle eviction. Re-arms while activity is recent; otherwise tears the
+  // session down so an abandoned conversation — including one whose consumer
+  // is still attached but has gone silent — does not pin the outbound socket
+  // to the 15-minute runtime cap.
   async alarm(): Promise<void> {
     const idleMs = Date.now() - this.lastActivityAt;
-    if (this.consumer === null && idleMs >= this.idleTimeoutMs) {
+    if (idleMs >= this.idleTimeoutMs) {
       await this.discard('idle timeout');
       return;
     }

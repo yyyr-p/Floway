@@ -62,6 +62,7 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Prov
     state: CursorUpstreamState,
     next: CursorUpstreamState['accounts'][number],
   ): CursorUpstreamState => ({
+    ...state,
     accounts: state.accounts.map(a => (a.userId === next.userId ? next : a)),
   });
 

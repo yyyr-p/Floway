@@ -233,4 +233,20 @@ describe('DurableHttpSessionDO.alarm', () => {
     expect(state.storage.setAlarmCalls).toBe(1);
     expect(h.socketClose).not.toHaveBeenCalled();
   });
+
+  test('evicts an attached-but-silent consumer past the idle timeout', async () => {
+    // A consumer that opened the WS, received bytes, then paused reading past
+    // the idle timeout must not pin the DO to the 15-minute runtime cap; the
+    // alarm has to discard regardless of consumer presence.
+    const { actor, state } = makeDO();
+    await actor.queryOrStart(POST_INIT, 1);
+    await actor.fetch(new Request('https://durable-http.do/body'));
+    await new Promise(resolve => setTimeout(resolve, 5));
+    state.storage.setAlarmCalls = 0;
+    state.storage.deleteAlarmCalls = 0;
+    await actor.alarm();
+    expect(h.socketClose).toHaveBeenCalled();
+    expect(state.storage.deleteAlarmCalls).toBe(1);
+    expect(state.storage.setAlarmCalls).toBe(0);
+  });
 });

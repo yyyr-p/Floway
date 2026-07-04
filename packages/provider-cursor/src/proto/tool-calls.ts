@@ -82,11 +82,23 @@ export function parseToolCall(data: Uint8Array): ParsedToolCall {
             let strValue = TEXT_DECODER.decode(tf.value);
 
             if (tf.value.length > 2 && tf.value[0] === 0x0a) {
-              const nestedFields = parseProtoFields(tf.value);
-              for (const nf of nestedFields) {
-                if (nf.fieldNumber === 1 && nf.wireType === 2 && nf.value instanceof Uint8Array) {
-                  strValue = TEXT_DECODER.decode(nf.value);
-                  break;
+              // The leading 0x0a byte is byte-identical with the UTF-8
+              // encoding of `\n`, so a legitimate string beginning with LF
+              // is indistinguishable from a wrapped `{ field 1 = string }`
+              // by prefix alone. Only accept the reparse when it consumes
+              // the full value as exactly one length-delimited field 1.
+              const nested = parseProtoFields(tf.value);
+              if (
+                nested.length === 1 &&
+                nested[0]!.fieldNumber === 1 &&
+                nested[0]!.wireType === 2 &&
+                nested[0]!.value instanceof Uint8Array
+              ) {
+                const innerLen = nested[0]!.value.length;
+                let varintBytes = 1;
+                for (let n = innerLen; n >= 0x80; n >>>= 7) varintBytes++;
+                if (1 + varintBytes + innerLen === tf.value.length) {
+                  strValue = TEXT_DECODER.decode(nested[0]!.value);
                 }
               }
             }
