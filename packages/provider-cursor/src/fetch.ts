@@ -169,11 +169,14 @@ const toAgentTools = (tools: ChatCompletionsTool[] | null | undefined): OpenAITo
   }));
 };
 
-const synthetic503 = (message: string): Response =>
-  new Response(JSON.stringify({ error: { type: 'cursor_upstream_unavailable', message } }), {
-    status: 503,
+export const syntheticErrorResponse = (status: number, type: string, message: string): Response =>
+  new Response(JSON.stringify({ error: { type, message } }), {
+    status,
     headers: { 'content-type': 'application/json' },
   });
+
+const synthetic503 = (message: string): Response =>
+  syntheticErrorResponse(503, 'cursor_upstream_unavailable', message);
 
 export const callCursorChatCompletions = async (
   opts: CallCursorChatCompletionsOptions,

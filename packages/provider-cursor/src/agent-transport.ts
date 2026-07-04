@@ -67,6 +67,29 @@ import {
 
 const MAX_BLOB_STORE_SIZE = 64;
 
+// Repackage a parsed tool-call started/completed record as an AgentStreamChunk.
+// Both events use the same payload shape and differ only by the chunk `type`.
+type ToolCallLike = {
+  callId: string;
+  modelCallId: string;
+  toolType: string;
+  name: string;
+  arguments: string;
+};
+const toolCallChunk = (
+  type: 'tool_call_started' | 'tool_call_completed',
+  tc: ToolCallLike,
+): AgentStreamChunk => ({
+  type,
+  toolCall: {
+    callId: tc.callId,
+    modelCallId: tc.modelCallId,
+    toolType: tc.toolType,
+    name: tc.name,
+    arguments: tc.arguments,
+  },
+});
+
 const DEFAULT_HEARTBEAT = {
   // No progress yet: be conservative — close fast if the backend stalls before
   // first output so we don't burn a Workers subrequest on a dead turn.
@@ -553,29 +576,11 @@ export class AgentTransport {
                   }
                   if (parsed.toolCallStarted) {
                     markProgress();
-                    yield {
-                      type: 'tool_call_started',
-                      toolCall: {
-                        callId: parsed.toolCallStarted.callId,
-                        modelCallId: parsed.toolCallStarted.modelCallId,
-                        toolType: parsed.toolCallStarted.toolType,
-                        name: parsed.toolCallStarted.name,
-                        arguments: parsed.toolCallStarted.arguments,
-                      },
-                    };
+                    yield toolCallChunk('tool_call_started', parsed.toolCallStarted);
                   }
                   if (parsed.toolCallCompleted) {
                     markProgress();
-                    yield {
-                      type: 'tool_call_completed',
-                      toolCall: {
-                        callId: parsed.toolCallCompleted.callId,
-                        modelCallId: parsed.toolCallCompleted.modelCallId,
-                        toolType: parsed.toolCallCompleted.toolType,
-                        name: parsed.toolCallCompleted.name,
-                        arguments: parsed.toolCallCompleted.arguments,
-                      },
-                    };
+                    yield toolCallChunk('tool_call_completed', parsed.toolCallCompleted);
                   }
                   if (parsed.partialToolCall) {
                     markProgress();
