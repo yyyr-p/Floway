@@ -109,14 +109,13 @@ export interface UpstreamCallOptions {
    * The API key id that authenticated the inbound request. Threaded from the
    * gateway's auth middleware (already exposed as `GatewayCtx.apiKeyId`).
    *
-   * Providers that hold cross-request state — currently only cursor's durable
-   * session — combine this with the upstream id to namespace per-(upstream,
-   * apiKey) so a session opened by one API key is never reachable from
-   * another, even when both keys are bound to the same upstream account.
-   * Mirrors the dump-broker convention of keying observation channels on
-   * `apiKey.id` (`gateway/src/dump/accumulator.ts:275`); compare also the
-   * copilot token cache that keys on upstream id alone because OAuth tokens
-   * are upstream-scoped by nature (`provider-copilot/src/auth.ts:42`).
+   * Providers that hold cross-request state combine this with the upstream id
+   * to namespace per-(upstream, apiKey) so a session opened by one API key is
+   * never reachable from another, even when both keys are bound to the same
+   * upstream account. Mirrors the dump-broker convention of keying observation
+   * channels on `apiKey.id` (`gateway/src/dump/accumulator.ts:275`); compare
+   * also the copilot token cache that keys on upstream id alone because OAuth
+   * tokens are upstream-scoped by nature (`provider-copilot/src/auth.ts:42`).
    */
   apiKeyId: string;
 }

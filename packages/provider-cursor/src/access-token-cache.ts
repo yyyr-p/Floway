@@ -58,13 +58,7 @@ export const ensureCursorAccessToken = async (
   upstreamId: string,
   userId: string,
   mint: (refreshToken: string) => Promise<CursorAccessTokenEntry>,
-): Promise<CursorAccessTokenEntry> => await ensureCursorAccessTokenInner(upstreamId, userId, mint, true);
-
-const ensureCursorAccessTokenInner = async (
-  upstreamId: string,
-  userId: string,
-  mint: (refreshToken: string) => Promise<CursorAccessTokenEntry>,
-  recoveryAllowed: boolean,
+  recoveryAllowed = true,
 ): Promise<CursorAccessTokenEntry> => {
   const fresh = await getProviderRepo().upstreams.getById(upstreamId);
   if (!fresh) throw new Error(`Cursor upstream ${upstreamId} not found`);
@@ -108,7 +102,7 @@ const recoverFromRefreshRace = async (
   if (rereadAccount.accessToken && isAccessTokenFresh(rereadAccount.accessToken)) {
     return rereadAccount.accessToken;
   }
-  return await ensureCursorAccessTokenInner(upstreamId, userId, mint, false);
+  return await ensureCursorAccessToken(upstreamId, userId, mint, false);
 };
 
 // Mints a fresh access token via /auth/exchange_user_api_key and routes the

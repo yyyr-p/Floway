@@ -43,6 +43,5 @@ describe('buildCursorImportState', () => {
     expect(acc.state_updated_at).toMatch(/^\d{4}-\d{2}-\d{2}T/);
     expect(acc.accessToken!.token).toBe(tokens.accessToken);
     expect(acc.accessToken!.expiresAt).toBeGreaterThan(Date.now());
-    expect(acc.quotaSnapshot).toBeNull();
   });
 });

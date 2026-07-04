@@ -43,7 +43,6 @@ const activeAccount: CursorAccountCredential = {
   state: 'active',
   state_updated_at: '2026-01-01T00:00:00Z',
   accessToken: farFutureAccessToken,
-  quotaSnapshot: null,
 };
 
 const model: ProviderModel = stubProviderModel({ id: 'gpt-4o', display_name: 'gpt-4o', endpoints: { chatCompletions: {} } });

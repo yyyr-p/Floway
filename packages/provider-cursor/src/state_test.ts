@@ -8,7 +8,6 @@ const baseCred = {
   state: 'active' as const,
   state_updated_at: '2026-01-01T00:00:00Z',
   accessToken: { token: 'tok', expiresAt: 9999999999999, refreshedAt: '2026-01-01T00:00:00Z' },
-  quotaSnapshot: null,
 };
 
 describe('assertCursorUpstreamState', () => {
@@ -41,7 +40,7 @@ describe('assertCursorUpstreamState', () => {
 });
 
 describe('readCursorUpstreamState', () => {
-  test('normalizes absent accessToken/quotaSnapshot to null', () => {
+  test('normalizes absent accessToken to null', () => {
     const legacy = {
       accounts: [
         {
@@ -54,7 +53,6 @@ describe('readCursorUpstreamState', () => {
     };
     const read = readCursorUpstreamState(legacy);
     expect(read.accounts[0]!.accessToken).toBeNull();
-    expect(read.accounts[0]!.quotaSnapshot).toBeNull();
     // original untouched
     expect((legacy.accounts[0] as Record<string, unknown>)['accessToken']).toBeUndefined();
   });

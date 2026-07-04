@@ -44,7 +44,7 @@ export const buildCursorImportConfig = (identity: CursorAccountIdentity): Cursor
 
 /**
  * Build the initial persisted state from poll tokens: an active credential
- * with the refresh token, a cached access token entry, and no quota snapshot.
+ * with the refresh token and a cached access token entry.
  */
 export const buildCursorImportState = (tokens: CursorPollTokens): CursorUpstreamState => {
   const identity = deriveCursorIdentity(tokens.accessToken);
@@ -61,7 +61,6 @@ export const buildCursorImportState = (tokens: CursorPollTokens): CursorUpstream
         state: 'active',
         state_updated_at: new Date().toISOString(),
         accessToken: accessTokenEntry,
-        quotaSnapshot: null,
       },
     ],
   };

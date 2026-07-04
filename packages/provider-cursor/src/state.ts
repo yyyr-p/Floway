@@ -2,8 +2,6 @@
 // Writes happen via UpstreamRepo.saveState with optimistic concurrency keyed
 // on the prior state JSON.
 
-import type { CursorQuotaSnapshot } from './quota.ts';
-
 export type CursorCredentialHealth = 'active' | 'session_terminated' | 'refresh_failed';
 
 // Short-lived OAuth access token minted by exchanging the stored refresh_token
@@ -13,11 +11,6 @@ export interface CursorAccessTokenEntry {
   token: string;
   expiresAt: number; // unix ms
   refreshedAt: string; // ISO 8601
-}
-
-export interface CursorQuotaSnapshotEntry {
-  fetchedAt: number; // unix ms
-  data: CursorQuotaSnapshot;
 }
 
 // One account's autonomous credential state, joined back to its identity in
@@ -32,7 +25,6 @@ export interface CursorAccountCredential {
   // ISO 8601, written on every state transition.
   state_updated_at: string;
   accessToken: CursorAccessTokenEntry | null;
-  quotaSnapshot: CursorQuotaSnapshotEntry | null;
 }
 
 export interface CursorUpstreamState {
@@ -58,7 +50,6 @@ const ALLOWED_CREDENTIAL_KEYS_MAP: Record<keyof CursorAccountCredential, true> =
   state_message: true,
   state_updated_at: true,
   accessToken: true,
-  quotaSnapshot: true,
 };
 
 const ALLOWED_STATE_KEYS_MAP: Record<keyof CursorUpstreamState, true> = {
@@ -70,11 +61,6 @@ const ALLOWED_ACCESS_TOKEN_KEYS_MAP: Record<keyof CursorAccessTokenEntry, true> 
   token: true,
   expiresAt: true,
   refreshedAt: true,
-};
-
-const ALLOWED_QUOTA_SNAPSHOT_KEYS_MAP: Record<keyof CursorQuotaSnapshotEntry, true> = {
-  fetchedAt: true,
-  data: true,
 };
 
 const assertCursorAccessTokenEntry = (value: unknown, where: string): void => {
@@ -95,24 +81,6 @@ const assertCursorAccessTokenEntry = (value: unknown, where: string): void => {
   }
   if (typeof obj.refreshedAt !== 'string' || obj.refreshedAt === '') {
     throw new TypeError(`${where}.refreshedAt must be a non-empty string`);
-  }
-};
-
-const assertCursorQuotaSnapshotEntry = (value: unknown, where: string): void => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new TypeError(`${where} must be a plain object`);
-  }
-  const obj = value as Record<string, unknown>;
-  for (const key of Object.keys(obj)) {
-    if (!(key in ALLOWED_QUOTA_SNAPSHOT_KEYS_MAP)) {
-      throw new TypeError(`${where} has unexpected key '${key}'`);
-    }
-  }
-  if (typeof obj.fetchedAt !== 'number' || !Number.isFinite(obj.fetchedAt)) {
-    throw new TypeError(`${where}.fetchedAt must be a finite number`);
-  }
-  if (typeof obj.data !== 'object' || obj.data === null || Array.isArray(obj.data)) {
-    throw new TypeError(`${where}.data must be a plain object`);
   }
 };
 
@@ -143,9 +111,6 @@ const assertCursorAccountCredential = (value: unknown, where: string): void => {
   }
   if (obj.accessToken !== undefined && obj.accessToken !== null) {
     assertCursorAccessTokenEntry(obj.accessToken, `${where}.accessToken`);
-  }
-  if (obj.quotaSnapshot !== undefined && obj.quotaSnapshot !== null) {
-    assertCursorQuotaSnapshotEntry(obj.quotaSnapshot, `${where}.quotaSnapshot`);
   }
 };
 
@@ -191,9 +156,9 @@ export function assertCursorUpstreamState(value: unknown): asserts value is Curs
   }
 }
 
-// Boundary normalization: legacy rows may carry no accessToken / quotaSnapshot
-// key; the typed contract promises null rather than undefined. Shallow copy
-// with absent → null; the original raw is left untouched for CAS expectedState.
+// Boundary normalization: legacy rows may carry no accessToken key; the typed
+// contract promises null rather than undefined. Shallow copy with absent →
+// null; the original raw is left untouched for CAS expectedState.
 export const readCursorUpstreamState = (raw: unknown): CursorUpstreamState => {
   assertCursorUpstreamState(raw);
   return {
@@ -201,7 +166,6 @@ export const readCursorUpstreamState = (raw: unknown): CursorUpstreamState => {
     accounts: raw.accounts.map(account => ({
       ...account,
       accessToken: account.accessToken ?? null,
-      quotaSnapshot: account.quotaSnapshot ?? null,
     })),
   };
 };

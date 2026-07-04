@@ -11,7 +11,7 @@
  */
 
 import type { RequestContextEnv } from './agent-messages.ts';
-import { parseProtoFields, parseProtobufValue } from './decoding.ts';
+import { TEXT_DECODER, parseProtoFields, parseProtobufValue, type ParsedField } from './decoding.ts';
 import {
   encodeStringField,
   encodeUint32Field,
@@ -33,65 +33,38 @@ import type {
   WriteResult,
 } from './types.ts';
 
-function parseShellArgs(data: Uint8Array): { command: string; cwd?: string } {
-  const fields = parseProtoFields(data);
-  let command = '';
-  let cwd: string | undefined;
-
-  for (const field of fields) {
-    if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      command = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      cwd = new TextDecoder().decode(field.value);
+// String helper for length-delimited wire fields. Returns undefined when the
+// field is absent — callers coalesce with a default when the proto contract
+// treats missing as empty string.
+function strField(fields: ParsedField[], num: number): string | undefined {
+  for (const f of fields) {
+    if (f.fieldNumber === num && f.wireType === 2 && f.value instanceof Uint8Array) {
+      return TEXT_DECODER.decode(f.value);
     }
   }
+  return undefined;
+}
 
-  return { command, cwd };
+function parseShellArgs(data: Uint8Array): { command: string; cwd?: string } {
+  const fields = parseProtoFields(data);
+  return { command: strField(fields, 1) ?? '', cwd: strField(fields, 2) };
 }
 
 function parseLsArgs(data: Uint8Array): { path: string } {
-  const fields = parseProtoFields(data);
-  let path = '';
-
-  for (const field of fields) {
-    if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
-    }
-  }
-
-  return { path };
+  return { path: strField(parseProtoFields(data), 1) ?? '' };
 }
 
 function parseReadArgs(data: Uint8Array): { path: string } {
-  const fields = parseProtoFields(data);
-  let path = '';
-
-  for (const field of fields) {
-    if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
-    }
-  }
-
-  return { path };
+  return { path: strField(parseProtoFields(data), 1) ?? '' };
 }
 
 function parseGrepArgs(data: Uint8Array): { pattern: string; path?: string; glob?: string } {
   const fields = parseProtoFields(data);
-  let pattern = '';
-  let path: string | undefined;
-  let glob: string | undefined;
-
-  for (const field of fields) {
-    if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      pattern = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      glob = new TextDecoder().decode(field.value);
-    }
-  }
-
-  return { pattern, path, glob };
+  return {
+    pattern: strField(fields, 1) ?? '',
+    path: strField(fields, 2),
+    glob: strField(fields, 3),
+  };
 }
 
 function parseWriteArgs(data: Uint8Array): {
@@ -102,67 +75,51 @@ function parseWriteArgs(data: Uint8Array): {
   fileBytes?: Uint8Array;
 } {
   const fields = parseProtoFields(data);
-  let path = '';
-  let fileText = '';
-  let toolCallId: string | undefined;
   let returnFileContentAfterWrite: boolean | undefined;
   let fileBytes: Uint8Array | undefined;
 
   for (const field of fields) {
-    if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      path = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      fileText = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      toolCallId = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 4 && field.wireType === 0) {
+    if (field.fieldNumber === 4 && field.wireType === 0) {
       returnFileContentAfterWrite = field.value === 1;
     } else if (field.fieldNumber === 5 && field.wireType === 2 && field.value instanceof Uint8Array) {
       fileBytes = field.value;
     }
   }
 
-  return { path, fileText, toolCallId, returnFileContentAfterWrite, fileBytes };
+  return {
+    path: strField(fields, 1) ?? '',
+    fileText: strField(fields, 2) ?? '',
+    toolCallId: strField(fields, 3),
+    returnFileContentAfterWrite,
+    fileBytes,
+  };
 }
 
 function parseMcpArgs(data: Uint8Array): Omit<McpExecRequest, 'id' | 'execId'> {
   const fields = parseProtoFields(data);
-  let name = '';
   const args: Record<string, unknown> = {};
-  let toolCallId = '';
-  let providerIdentifier = '';
-  let toolName = '';
 
   for (const field of fields) {
-    if (field.fieldNumber === 1 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      name = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
+    if (field.fieldNumber === 2 && field.wireType === 2 && field.value instanceof Uint8Array) {
       const entryFields = parseProtoFields(field.value);
-      let key = '';
+      const key = strField(entryFields, 1);
       let value: unknown = undefined;
-
       for (const ef of entryFields) {
-        if (ef.fieldNumber === 1 && ef.wireType === 2 && ef.value instanceof Uint8Array) {
-          key = new TextDecoder().decode(ef.value);
-        }
         if (ef.fieldNumber === 2 && ef.wireType === 2 && ef.value instanceof Uint8Array) {
           value = parseProtobufValue(ef.value);
         }
       }
-
-      if (key) {
-        args[key] = value;
-      }
-    } else if (field.fieldNumber === 3 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      toolCallId = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 4 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      providerIdentifier = new TextDecoder().decode(field.value);
-    } else if (field.fieldNumber === 5 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      toolName = new TextDecoder().decode(field.value);
+      if (key) args[key] = value;
     }
   }
 
-  return { name, args, toolCallId, providerIdentifier, toolName };
+  return {
+    name: strField(fields, 1) ?? '',
+    args,
+    toolCallId: strField(fields, 3) ?? '',
+    providerIdentifier: strField(fields, 4) ?? '',
+    toolName: strField(fields, 5) ?? '',
+  };
 }
 
 /**
@@ -175,16 +132,15 @@ function parseMcpArgs(data: Uint8Array): Omit<McpExecRequest, 'id' | 'execId'> {
 export function parseExecServerMessage(data: Uint8Array): ExecRequest | null {
   const fields = parseProtoFields(data);
   let id = 0;
-  let execId: string | undefined = undefined;
   let result: ExecRequest | null = null;
 
   for (const field of fields) {
     if (field.fieldNumber === 1 && field.wireType === 0) {
       id = field.value as number;
-    } else if (field.fieldNumber === 15 && field.wireType === 2 && field.value instanceof Uint8Array) {
-      execId = new TextDecoder().decode(field.value);
+      break;
     }
   }
+  const execId = strField(fields, 15);
 
   for (const field of fields) {
     if (field.wireType !== 2 || !(field.value instanceof Uint8Array)) continue;
@@ -251,6 +207,16 @@ export function parseExecServerMessage(data: Uint8Array): ExecRequest | null {
 
 // --- Result encoders ---
 
+// Every build*Result wraps its inner encoding with the same 3-part envelope:
+// id (field 1, uint32), optional exec_id (field 15, string), and the
+// tool-specific inner message on a per-tool field number.
+function wrapExecClient(id: number, execId: string | undefined, innerField: number, innerBytes: Uint8Array): Uint8Array {
+  const parts: Uint8Array[] = [encodeUint32Field(1, id)];
+  if (execId) parts.push(encodeStringField(15, execId));
+  parts.push(encodeMessageField(innerField, innerBytes));
+  return concatBytes(...parts);
+}
+
 function encodeMcpTextContent(text: string): Uint8Array {
   return encodeStringField(1, text);
 }
@@ -291,14 +257,7 @@ export function buildExecClientMessageWithMcpResult(
   execId: string | undefined,
   result: McpResult,
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  const mcpResult = encodeMcpResult(result);
-  parts.push(encodeMessageField(11, mcpResult));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 11, encodeMcpResult(result));
 }
 
 function encodeShellResult(
@@ -332,13 +291,7 @@ function buildExecClientMessageWithShellResult(
   exitCode: number,
   executionTimeMs?: number,
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  parts.push(encodeMessageField(2, encodeShellResult(command, cwd, stdout, stderr, exitCode, executionTimeMs)));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 2, encodeShellResult(command, cwd, stdout, stderr, exitCode, executionTimeMs));
 }
 
 function encodeLsResult(filesString: string): Uint8Array {
@@ -351,13 +304,7 @@ function buildExecClientMessageWithLsResult(
   execId: string | undefined,
   filesString: string,
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  parts.push(encodeMessageField(8, encodeLsResult(filesString)));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 8, encodeLsResult(filesString));
 }
 
 function encodeRequestContextResult(env: RequestContextEnv): Uint8Array {
@@ -379,13 +326,7 @@ export function buildExecClientMessageWithRequestContextResult(
   execId: string | undefined,
   env: RequestContextEnv,
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  parts.push(encodeMessageField(10, encodeRequestContextResult(env)));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 10, encodeRequestContextResult(env));
 }
 
 function encodeReadResult(
@@ -420,13 +361,7 @@ function buildExecClientMessageWithReadResult(
   fileSize?: bigint,
   truncated?: boolean,
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  parts.push(encodeMessageField(7, encodeReadResult(content, path, totalLines, fileSize, truncated)));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 7, encodeReadResult(content, path, totalLines, fileSize, truncated));
 }
 
 function encodeGrepFilesResult(files: string[], totalFiles: number, truncated = false): Uint8Array {
@@ -469,13 +404,7 @@ function buildExecClientMessageWithGrepResult(
   path: string,
   files: string[],
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  parts.push(encodeMessageField(5, encodeGrepResult(pattern, path, files)));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 5, encodeGrepResult(pattern, path, files));
 }
 
 function encodeWriteSuccess(
@@ -520,13 +449,7 @@ function buildExecClientMessageWithWriteResult(
   execId: string | undefined,
   result: WriteResult,
 ): Uint8Array {
-  const parts: Uint8Array[] = [];
-  parts.push(encodeUint32Field(1, id));
-  if (execId) {
-    parts.push(encodeStringField(15, execId));
-  }
-  parts.push(encodeMessageField(3, encodeWriteResult(result)));
-  return concatBytes(...parts);
+  return wrapExecClient(id, execId, 3, encodeWriteResult(result));
 }
 
 // --- Rejected-tool encoders ---

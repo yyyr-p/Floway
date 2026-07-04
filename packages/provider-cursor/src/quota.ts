@@ -1,29 +1,15 @@
 /**
- * Cursor rate-limit / quota parsing + subscription usage fetching.
+ * Cursor subscription usage fetch.
  *
- * Two orthogonal concerns, both housed here because they both concern "how
- * much of the Cursor account is left":
- *
- * 1. Data-plane rate-limit gate (agent endpoints, 429). The snapshot shape and
- *    the 429 detection used by fetch.ts.
- *
- * 2. Subscription usage fetch. `POST cursor.com/api/dashboard/get-current-period-usage`
- *    is the same endpoint the browser dashboard's Spending tab uses — it validates
- *    the WorkOS session cookie (`WorkosCursorSessionToken=${userId}::${jwt}`) and
- *    returns the current cycle's spend, per-bucket percentages, and the cycle
- *    end. Called on-demand by the control-plane cursor-quota route (mirrors the
- *    copilot-quota shape); result is not persisted.
+ * `POST cursor.com/api/dashboard/get-current-period-usage` is the same
+ * endpoint the browser dashboard's Spending tab uses — it validates the
+ * WorkOS session cookie (`WorkosCursorSessionToken=${userId}::${jwt}`) and
+ * returns the current cycle's spend, per-bucket percentages, and the cycle
+ * end. Called on-demand by the control-plane cursor-quota route (mirrors the
+ * copilot-quota shape); result is not persisted.
  */
 
 import type { Fetcher } from '@floway-dev/provider';
-
-export interface CursorQuotaSnapshot {
-  remaining?: number;
-  limit?: number;
-  resetAt?: number;
-}
-
-export const isCursorRateLimited = (status: number): boolean => status === 429;
 
 // Subscription usage — cursor.com dashboard endpoint
 

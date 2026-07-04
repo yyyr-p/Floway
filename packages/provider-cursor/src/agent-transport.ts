@@ -11,6 +11,13 @@
  */
 
 import {
+  CURSOR_BIDI_APPEND_PATH,
+  CURSOR_GRPC_WEB_CONTENT_TYPE,
+  CURSOR_RUN_SSE_PATH,
+  CURSOR_USER_AGENT,
+} from './constants.ts';
+import { TEXT_DECODER } from './proto/decoding.ts';
+import {
   bytesToHex,
   addConnectEnvelope,
   readConnectFrame,
@@ -51,12 +58,30 @@ import {
   type RequestContextEnv,
 } from './proto/index.ts';
 
-const RUN_SSE_PATH = '/agent.v1.AgentService/RunSSE';
-const BIDI_APPEND_PATH = '/aiserver.v1.BidiService/BidiAppend';
-const USER_AGENT = 'connect-es/1.4.0';
-const GRPC_WEB_PROTO = 'application/grpc-web+proto';
-
 const MAX_BLOB_STORE_SIZE = 64;
+
+// Repackage a parsed tool-call started/completed record as an AgentStreamChunk.
+// Both events use the same payload shape and differ only by the chunk `type`.
+type ToolCallLike = {
+  callId: string;
+  modelCallId: string;
+  toolType: string;
+  name: string;
+  arguments: string;
+};
+const toolCallChunk = (
+  type: 'tool_call_started' | 'tool_call_completed',
+  tc: ToolCallLike,
+): AgentStreamChunk => ({
+  type,
+  toolCall: {
+    callId: tc.callId,
+    modelCallId: tc.modelCallId,
+    toolType: tc.toolType,
+    name: tc.name,
+    arguments: tc.arguments,
+  },
+});
 
 const DEFAULT_HEARTBEAT = {
   // No progress yet: be conservative — close fast if the backend stalls before
@@ -156,8 +181,8 @@ export class AgentTransport {
   private getHeaders(requestId?: string): Record<string, string> {
     const headers: Record<string, string> = {
       authorization: `Bearer ${this.getAuthToken()}`,
-      'content-type': GRPC_WEB_PROTO,
-      'user-agent': USER_AGENT,
+      'content-type': CURSOR_GRPC_WEB_CONTENT_TYPE,
+      'user-agent': CURSOR_USER_AGENT,
       'x-cursor-checksum': this.getChecksum(),
       'x-cursor-client-version': this.clientVersion,
       'x-cursor-client-type': 'cli',
@@ -201,7 +226,7 @@ export class AgentTransport {
     const hexData = bytesToHex(data);
     const appendRequest = encodeBidiAppendRequest(hexData, requestId, appendSeqno);
     const envelope = addConnectEnvelope(appendRequest);
-    const url = `${this.baseUrl}${BIDI_APPEND_PATH}`;
+    const url = `${this.baseUrl}${CURSOR_BIDI_APPEND_PATH}`;
 
     let lastError: Error | null = null;
     for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
@@ -358,7 +383,7 @@ export class AgentTransport {
   runSseInit(requestId: string): { method: 'POST'; url: string; headers: Record<string, string>; body: Uint8Array } {
     return {
       method: 'POST',
-      url: `${this.baseUrl}${RUN_SSE_PATH}`,
+      url: `${this.baseUrl}${CURSOR_RUN_SSE_PATH}`,
       headers: this.getHeaders(requestId),
       body: addConnectEnvelope(encodeBidiRequestId(requestId)),
     };
@@ -419,6 +444,11 @@ export class AgentTransport {
 
     try {
       let buffer = initialBuffer;
+      // Read cursor into `buffer` — advanced past every complete frame we've
+      // parsed. The next read merges only the still-unparsed tail (buffer from
+      // `offset` onward) with the new chunk instead of re-concatenating the
+      // whole running buffer on every reader.read().
+      let offset = 0;
       let turnEnded = false;
 
       try {
@@ -428,14 +458,19 @@ export class AgentTransport {
             yield { type: 'done' };
             break;
           }
-          if (!value) continue;
+          if (!value || value.byteLength === 0) continue;
 
-          const newBuffer = new Uint8Array(buffer.length + value.length);
-          newBuffer.set(buffer);
-          newBuffer.set(value, buffer.length);
-          buffer = newBuffer;
-
-          let offset = 0;
+          const tailLen = buffer.length - offset;
+          if (tailLen === 0) {
+            // Fast path: buffer was fully consumed, no copy needed.
+            buffer = value;
+          } else {
+            const merged = new Uint8Array(tailLen + value.length);
+            merged.set(buffer.subarray(offset), 0);
+            merged.set(value, tailLen);
+            buffer = merged;
+          }
+          offset = 0;
           // Parse as many complete connect frames as the buffer currently holds.
 
           while (true) {
@@ -453,7 +488,7 @@ export class AgentTransport {
             }
 
             if (isTrailerFrame(frame.flags)) {
-              const trailer = new TextDecoder().decode(payload);
+              const trailer = TEXT_DECODER.decode(payload);
               const meta = parseTrailerMetadata(trailer);
               const grpcStatus = Number(meta['grpc-status'] ?? '0');
               if (grpcStatus !== 0) {
@@ -481,29 +516,11 @@ export class AgentTransport {
                   }
                   if (parsed.toolCallStarted) {
                     markProgress();
-                    yield {
-                      type: 'tool_call_started',
-                      toolCall: {
-                        callId: parsed.toolCallStarted.callId,
-                        modelCallId: parsed.toolCallStarted.modelCallId,
-                        toolType: parsed.toolCallStarted.toolType,
-                        name: parsed.toolCallStarted.name,
-                        arguments: parsed.toolCallStarted.arguments,
-                      },
-                    };
+                    yield toolCallChunk('tool_call_started', parsed.toolCallStarted);
                   }
                   if (parsed.toolCallCompleted) {
                     markProgress();
-                    yield {
-                      type: 'tool_call_completed',
-                      toolCall: {
-                        callId: parsed.toolCallCompleted.callId,
-                        modelCallId: parsed.toolCallCompleted.modelCallId,
-                        toolType: parsed.toolCallCompleted.toolType,
-                        name: parsed.toolCallCompleted.name,
-                        arguments: parsed.toolCallCompleted.arguments,
-                      },
-                    };
+                    yield toolCallChunk('tool_call_completed', parsed.toolCallCompleted);
                   }
                   if (parsed.partialToolCall) {
                     markProgress();
@@ -647,7 +664,6 @@ export class AgentTransport {
 
             if (turnEnded) break;
           }
-          buffer = buffer.slice(offset);
         }
 
         if (turnEnded) {

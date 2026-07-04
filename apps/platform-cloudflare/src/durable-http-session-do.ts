@@ -51,8 +51,11 @@ export class DurableHttpSessionDO extends DurableObject {
   private started = false;
   private done = false;
   private errored = false;
-  // Bytes read off the upstream while no consumer is attached.
+  // Bytes read off the upstream while no consumer is attached. Chunks are
+  // pushed at the tail and consumed via a head-index cursor so a burst that
+  // buffers dozens of chunks doesn't pay O(n) per shift.
   private buffer: Uint8Array[] = [];
+  private bufferHead = 0;
   private bufferedBytes = 0;
   private consumer: WebSocket | null = null;
   // Chunks the current consumer has requested (one credit per broker-side
@@ -180,19 +183,26 @@ export class DurableHttpSessionDO extends DurableObject {
   // upstream is done and the buffer is fully drained, a waiting credit gets the
   // end-of-stream close.
   private flushToConsumer(): void {
-    while (this.consumer && this.credits > 0 && this.buffer.length > 0) {
-      const chunk = this.buffer[0];
+    while (this.consumer && this.credits > 0 && this.bufferHead < this.buffer.length) {
+      const chunk = this.buffer[this.bufferHead]!;
       try {
         this.consumer.send(chunk);
       } catch {
         this.consumer = null;
         return;
       }
-      this.buffer.shift();
+      this.bufferHead += 1;
       this.bufferedBytes -= chunk.byteLength;
       this.credits -= 1;
     }
-    if (this.consumer && this.credits > 0 && this.done && this.buffer.length === 0) {
+    // Reclaim: once the head has walked past every live element the two ends
+    // are back at 0, releasing the underlying array so a subsequent burst
+    // doesn't grow the array unboundedly with dead prefix entries.
+    if (this.bufferHead > 0 && this.bufferHead >= this.buffer.length) {
+      this.buffer = [];
+      this.bufferHead = 0;
+    }
+    if (this.consumer && this.credits > 0 && this.done && this.bufferHead >= this.buffer.length) {
       try {
         this.consumer.close(1000, this.errored ? 'upstream error' : 'upstream ended');
       } catch { /* already closing */ }
@@ -270,6 +280,7 @@ export class DurableHttpSessionDO extends DurableObject {
     this.held = null;
     if (held) { try { await held.close(); } catch { /* idempotent */ } }
     this.buffer = [];
+    this.bufferHead = 0;
     this.bufferedBytes = 0;
     this.started = false;
     try { await this.ctx.storage.deleteAlarm(); } catch { /* no alarm set */ }

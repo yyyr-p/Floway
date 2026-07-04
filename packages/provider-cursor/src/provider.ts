@@ -4,7 +4,7 @@ import { generateCursorChecksum } from './checksum.ts';
 import { applyStops, completionsResponseBody, type CompletionsUsage, estimateCursorTabTokens, extractInsertion, languageIdForCompletion, parsePrefixSuffix, streamCppInputForPrefixSuffix } from './completions.ts';
 import { assertCursorUpstreamRecord, type CursorUpstreamConfig } from './config.ts';
 import { readObservedContext } from './context-window.ts';
-import { callCursorChatCompletions, type CursorCallEffects } from './fetch.ts';
+import { callCursorChatCompletions, syntheticErrorResponse, type CursorCallEffects } from './fetch.ts';
 import { cursorChatCompletionsChain } from './interceptors/chat-completions/index.ts';
 import type { ChatCompletionsBoundaryCtx } from './interceptors/chat-completions/types.ts';
 import { cursorRawToProviderModel, cursorTabModel, fetchCursorCatalog, resolveCursorWireModel } from './models.ts';
@@ -253,26 +253,23 @@ export const createCursorProvider = async (record: UpstreamRecord): Promise<Prov
   };
 };
 
-const synthetic405 = (): Response =>
-  new Response(
-    JSON.stringify({ error: { type: 'method_not_allowed', message: 'Endpoint not supported by cursor provider' } }),
-    { status: 405, headers: { 'content-type': 'application/json' } },
-  );
+const syntheticUnsupportedResponse = (): Response =>
+  syntheticErrorResponse(405, 'method_not_allowed', 'Endpoint not supported by cursor provider');
 
 const unsupportedStreamResult = async <TEvent>(opts: UpstreamCallOptions): Promise<ProviderStreamResult<TEvent>> => ({
   ok: false,
   modelKey: '',
-  response: await opts.recordUpstreamLatency(Promise.resolve(synthetic405())),
+  response: await opts.recordUpstreamLatency(Promise.resolve(syntheticUnsupportedResponse())),
 });
 
 const unsupportedCallResult = async (opts: UpstreamCallOptions): Promise<ProviderCallResult> => ({
   modelKey: '',
-  response: await opts.recordUpstreamLatency(Promise.resolve(synthetic405())),
+  response: await opts.recordUpstreamLatency(Promise.resolve(syntheticUnsupportedResponse())),
 });
 
 const unsupportedResponsesResult = async (action: ResponsesAction, opts: UpstreamCallOptions): Promise<ProviderResponsesResult> => ({
   action,
   ok: false,
   modelKey: '',
-  response: await opts.recordUpstreamLatency(Promise.resolve(synthetic405())),
+  response: await opts.recordUpstreamLatency(Promise.resolve(syntheticUnsupportedResponse())),
 });

@@ -1068,7 +1068,6 @@ test('PATCH /api/upstreams accepts a privacyMode edit on a cursor row but reject
         // Far-future token so warmModelsCache never mints (network-free); its
         // catalog fetch is mocked below and swallowed on failure.
         accessToken: { token: 'at.cursor.test', expiresAt: 4102444800000, refreshedAt: '2026-01-01T00:00:00.000Z' },
-        quotaSnapshot: null,
       }],
     },
   });

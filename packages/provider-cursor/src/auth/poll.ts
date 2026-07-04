@@ -11,6 +11,7 @@
  */
 
 import { bytesToBase64Url } from '../checksum.ts';
+import { TEXT_ENCODER } from '../proto/encoding.ts';
 import type { Fetcher } from '@floway-dev/provider';
 
 const CURSOR_LOGIN_URL = 'https://cursor.com/loginDeepControl';
@@ -39,7 +40,7 @@ async function generatePKCE(): Promise<{ verifier: string; challenge: string }> 
   crypto.getRandomValues(verifierBytes);
   const verifier = bytesToBase64Url(verifierBytes);
 
-  const data = new TextEncoder().encode(verifier);
+  const data = TEXT_ENCODER.encode(verifier);
   const hashBuffer = new Uint8Array(await crypto.subtle.digest('SHA-256', new Uint8Array(data)));
   const challenge = bytesToBase64Url(hashBuffer);
 

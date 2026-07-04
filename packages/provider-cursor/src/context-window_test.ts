@@ -4,7 +4,7 @@ import { CURSOR_CONTEXT_TTL_MS, clearContextThrottleForTesting, contextCacheKey,
 import type { CursorUpstreamState } from './state.ts';
 
 const baseState = (): CursorUpstreamState => ({
-  accounts: [{ userId: 'u1', refresh_token: 'r', state: 'active', state_updated_at: 'x', accessToken: null, quotaSnapshot: null }],
+  accounts: [{ userId: 'u1', refresh_token: 'r', state: 'active', state_updated_at: 'x', accessToken: null }],
 });
 
 describe('contextCacheKey', () => {

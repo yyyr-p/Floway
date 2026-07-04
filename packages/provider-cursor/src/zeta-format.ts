@@ -158,8 +158,8 @@ export const streamCppInputForZeta = (parsed: ParsedZeta, modelName: string): St
   ...(parsed.diffHistory.length > 0 ? { diffHistory: parsed.diffHistory } : {}),
 });
 
-// Apply StreamCpp's rewritten-region text to the whole file — see
-// `applyRewrite` in completions.ts.
+// Applying StreamCpp's rewritten-region text to the whole file is the same
+// operation used by the FIM path — see applyRewrite in completions.ts.
 
 export const commonPrefixLen = (a: string, b: string): number => { let i = 0; while (i < a.length && i < b.length && a[i] === b[i]) i++; return i; };
 export const commonSuffixLen = (a: string, b: string, cap: number): number => { let i = 0; while (i < cap && a[a.length - 1 - i] === b[b.length - 1 - i]) i++; return i; };

@@ -14,6 +14,7 @@
  * obfuscation pass.
  */
 
+import { TEXT_ENCODER } from './proto/encoding.ts';
 import { sha256Hex } from '@floway-dev/platform';
 
 /** Base64url-encode a byte buffer (no padding), Workers-clean. */
@@ -32,7 +33,7 @@ function obfuscate(data: Uint8Array): void {
 }
 
 async function shortSha256Hex(input: string): Promise<string> {
-  const hex = await sha256Hex(new TextEncoder().encode(input));
+  const hex = await sha256Hex(TEXT_ENCODER.encode(input));
   return hex.slice(0, 8);
 }
 

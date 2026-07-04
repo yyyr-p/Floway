@@ -11,9 +11,8 @@
 //
 // Use case: providers whose upstream protocol needs a single long-lived
 // response body that outlives the inbound HTTP request that triggered it —
-// today only cursor's RunSSE stream, which receives ExecMcpResult-driven
-// continuations from later inbound requests on the same logical
-// conversation.
+// the same logical conversation continues via later inbound requests that
+// piggy-back tool results onto the still-open upstream read.
 
 export interface DurableHttpSessionInit {
   method: 'POST' | 'GET' | 'PUT' | 'DELETE';
@@ -25,8 +24,8 @@ export interface DurableHttpSessionInit {
    * upstream through, tried in order; empty/absent = direct. The contract keeps
    * this opaque so the platform package doesn't depend on @floway-dev/proxy —
    * the concrete impls cast and call runProxiedRequest. Streaming responses
-   * (RunSSE) can't go through the gateway's buffered proxy Fetcher, so the
-   * session does its own proxied dial.
+   * can't go through the gateway's buffered proxy Fetcher, so the session
+   * does its own proxied dial.
    */
   proxies?: unknown[];
 }

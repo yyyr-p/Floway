@@ -35,12 +35,11 @@ export class SourceStreamState {
   completed = false;
   usage: TokenUsage | null = null;
 
-  // A frame carrying real (non-zero) usage always wins, so an empty trailing
-  // frame can't wipe a good count. If ONLY zero-usage frames appear — a
-  // provider that couldn't recover any token count still emits an all-zero
-  // usage frame purely to get the request counted — keep the first one, so
-  // `usage` becomes a non-null empty object that recordUsage logs as a bare
-  // request row.
+  // Priority order: a frame carrying real (non-zero) usage always wins, so a
+  // trailing empty frame cannot wipe a good count. If ONLY zero-usage frames
+  // appear — a provider that could not recover any per-request token count —
+  // keep the first one, so `usage` becomes a non-null empty object that
+  // recordUsage logs as a bare request row.
   rememberUsage(usage: TokenUsage | null): void {
     if (usage && hasTokenUsage(usage)) this.usage = usage;
     else if (usage && this.usage === null) this.usage = usage;
@@ -63,15 +62,13 @@ export const eventResultMetadata = async <TEvent>(result: Extract<ExecuteResult<
   });
 
 export const recordUsage = async (ctx: GatewayCtx, modelIdentity: TelemetryModelIdentity, usage: TokenUsage | null): Promise<void> => {
-  // Record whenever the provider produced a usage object at all — even one with
-  // no token dimensions. recordTokenUsage always bumps the request counter and
-  // only writes token dimensions that are > 0, so an empty usage lands a bare
-  // request row (usage_requests +1, no usage dimension rows). Cursor's RunSSE
-  // stream normally carries real per-request tokens (recovered from cursor's
-  // own token accounting), but a turn that ends before any token signal arrives
-  // emits an all-zero usage frame purely to get the request counted — the
-  // account-level dashboard sync then back-fills only those zero-token rows.
-  // `null` (provider produced no usage object) is still skipped.
+  // Record whenever the provider produced a usage object at all — even one
+  // with no token dimensions. recordTokenUsage always bumps the request
+  // counter and only writes token dimensions that are > 0, so an empty usage
+  // lands a bare request row (usage_requests +1, no usage dimension rows).
+  // Providers that can't recover per-request tokens use this to keep the
+  // request-count telemetry correct; `null` (provider produced no usage
+  // object) is still skipped.
   if (usage) await recordTokenUsage(ctx.apiKeyId, modelIdentity, usage);
 };
 

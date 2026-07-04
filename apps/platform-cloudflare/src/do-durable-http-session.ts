@@ -93,7 +93,10 @@ const wsToByteStream = (
   socket: WebSocket,
   signal: AbortSignal | undefined,
 ): ReadableStream<Uint8Array> => {
+  // Head-index cursor over a push-only array so a burst that queues dozens of
+  // chunks before the consumer resumes doesn't pay O(n) per delivered chunk.
   const queue: Uint8Array[] = [];
+  let queueHead = 0;
   let pull: ((v: { value?: Uint8Array; done: boolean }) => void) | null = null;
   let pendingError: unknown = null;
   let closed = false;
@@ -138,7 +141,15 @@ const wsToByteStream = (
 
   return new ReadableStream<Uint8Array>({
     async pull(controller): Promise<void> {
-      if (queue.length > 0) { controller.enqueue(queue.shift()!); return; }
+      if (queueHead < queue.length) {
+        controller.enqueue(queue[queueHead]!);
+        queueHead += 1;
+        if (queueHead >= queue.length) {
+          queue.length = 0;
+          queueHead = 0;
+        }
+        return;
+      }
       if (closed) {
         if (pendingError) { controller.error(pendingError); return; }
         controller.close();

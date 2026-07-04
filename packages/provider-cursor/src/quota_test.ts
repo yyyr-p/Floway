@@ -5,7 +5,6 @@ import {
   CursorDashboardSessionExpiredError,
   CursorDashboardUpstreamError,
   fetchCursorDashboardUsage,
-  isCursorRateLimited,
 } from './quota.ts';
 import type { Fetcher } from '@floway-dev/provider';
 
@@ -20,14 +19,6 @@ const captureFetcher = (respond: (url: string, init: RequestInit) => Response | 
   };
   return { fetcher, calls };
 };
-
-describe('isCursorRateLimited', () => {
-  test('detects HTTP 429 only', () => {
-    expect(isCursorRateLimited(429)).toBe(true);
-    expect(isCursorRateLimited(200)).toBe(false);
-    expect(isCursorRateLimited(500)).toBe(false);
-  });
-});
 
 describe('fetchCursorDashboardUsage', () => {
   const validPlanUsage = {

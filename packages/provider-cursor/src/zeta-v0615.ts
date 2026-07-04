@@ -124,7 +124,9 @@ export const streamCppInputForV0615 = (parsed: ParsedV0615, modelName: string): 
   };
 };
 
-// Apply StreamCpp's rewritten-region text — see `applyRewrite` in completions.ts.
+// The StreamCpp splice + common-prefix/suffix scan are shared with the FIM +
+// V0318 paths — see applyRewrite / commonPrefixLen / commonSuffixLen in
+// completions.ts and zeta-format.ts.
 
 // Port of hashed_regions::encode_from_old_and_new: pick the marker pair that
 // brackets the single contiguous change (common prefix/suffix), emit the new

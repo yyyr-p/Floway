@@ -9,6 +9,7 @@
  */
 
 import { CURSOR_GCPP_BACKEND_BASE, CURSOR_STREAM_CPP_PATH, CURSOR_TAB_CLIENT_VERSION, CURSOR_USER_AGENT } from './constants.ts';
+import { TEXT_DECODER } from './proto/decoding.ts';
 import { addConnectEnvelope, decompressGzip, FLAG_END_STREAM, isCompressedFrame, readConnectFrame } from './proto/envelope.ts';
 import { decodeStreamCppResponse, encodeStreamCppRequest, type StreamCppLineRange, type StreamCppRequestInput } from './proto/stream-cpp.ts';
 import type { Fetcher } from '@floway-dev/provider';
@@ -58,6 +59,7 @@ export const callStreamCpp = async (opts: {
 
   const reader = response.body.getReader();
   let buffer = new Uint8Array(0);
+  let offset = 0;
   let text = '';
   let rangeToReplace: StreamCppLineRange | undefined;
   let endStream: string | undefined;
@@ -66,12 +68,17 @@ export const callStreamCpp = async (opts: {
     const { done, value } = await reader.read();
     if (done) break;
     if (value && value.length > 0) {
-      const next = new Uint8Array(buffer.length + value.length);
-      next.set(buffer);
-      next.set(value, buffer.length);
-      buffer = next;
+      const tailLen = buffer.length - offset;
+      if (tailLen === 0) {
+        buffer = value;
+      } else {
+        const next = new Uint8Array(tailLen + value.length);
+        next.set(buffer.subarray(offset), 0);
+        next.set(value, tailLen);
+        buffer = next;
+      }
+      offset = 0;
     }
-    let offset = 0;
     for (;;) {
       const frame = readConnectFrame(buffer, offset);
       if (!frame) break;
@@ -81,14 +88,13 @@ export const callStreamCpp = async (opts: {
       // payload is the EndStreamResponse JSON ({} on success, {"error":…} on
       // failure) — not a gRPC-web 0x80 trailer.
       if ((frame.flags & FLAG_END_STREAM) !== 0) {
-        endStream = new TextDecoder().decode(payload);
+        endStream = TEXT_DECODER.decode(payload);
         continue;
       }
       const decoded = decodeStreamCppResponse(payload);
       if (decoded.text) text += decoded.text;
       if (decoded.rangeToReplace) rangeToReplace = decoded.rangeToReplace;
     }
-    if (offset > 0) buffer = buffer.slice(offset);
   }
 
   // A non-empty error object in the end-stream frame means the stream failed

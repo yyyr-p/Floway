@@ -10,7 +10,7 @@
  *   KvClientMessage: field 1 id (uint32), field 2 get_blob_result, field 3 set_blob_result
  */
 
-import { parseProtoFields } from './decoding.ts';
+import { TEXT_DECODER_FATAL, parseProtoFields } from './decoding.ts';
 import { encodeUint32Field, encodeMessageField, concatBytes } from './encoding.ts';
 import type { KvServerMessage, BlobAnalysis } from './types.ts';
 
@@ -70,7 +70,7 @@ export function buildAgentClientMessageWithKv(kvClientMessage: Uint8Array): Uint
 
 export function analyzeBlobData(data: Uint8Array): BlobAnalysis {
   try {
-    const text = new TextDecoder('utf-8', { fatal: true }).decode(data);
+    const text = TEXT_DECODER_FATAL.decode(data);
     try {
       const json = JSON.parse(text) as Record<string, unknown>;
       return { type: 'json', json, text };
@@ -93,7 +93,7 @@ export function analyzeBlobData(data: Uint8Array): BlobAnalysis {
         };
         if (f.wireType === 2 && f.value instanceof Uint8Array) {
           try {
-            entry.text = new TextDecoder('utf-8', { fatal: true }).decode(f.value);
+            entry.text = TEXT_DECODER_FATAL.decode(f.value);
           } catch {
             // binary field
           }

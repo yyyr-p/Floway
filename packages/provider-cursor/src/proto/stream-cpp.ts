@@ -8,7 +8,7 @@
  * cpp_intent_info + timestamps. Images/LSP/context are sent empty.
  */
 
-import { parseProtoFields } from './decoding.ts';
+import { TEXT_DECODER, parseProtoFields } from './decoding.ts';
 import { concatBytes, encodeBoolField, encodeDoubleField, encodeInt32Field, encodeMessageField, encodeStringField } from './encoding.ts';
 
 export interface StreamCppRequestInput {
@@ -101,7 +101,7 @@ export const decodeStreamCppResponse = (bytes: Uint8Array): StreamCppResponseFra
   const frame: StreamCppResponseFrame = { text: '', doneStream: false, doneEdit: false, beginEdit: false, shouldRemoveLeadingEol: false };
   for (const field of parseProtoFields(bytes)) {
     switch (field.fieldNumber) {
-    case 1: if (field.wireType === 2) frame.text = new TextDecoder().decode(asBytes(field.value)); break;
+    case 1: if (field.wireType === 2) frame.text = TEXT_DECODER.decode(asBytes(field.value)); break;
     case 4: frame.doneStream = asNumber(field.value) !== 0; break;
     case 11: if (field.wireType === 2) {
       const range: StreamCppLineRange = { startLineNumber: 0, endLine: 0 };
