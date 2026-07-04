@@ -5,6 +5,7 @@
 export const CURSOR_BACKEND_BASE = 'https://api2.cursor.sh';
 
 export const CURSOR_RUN_SSE_PATH = '/agent.v1.AgentService/RunSSE';
+export const CURSOR_BIDI_APPEND_PATH = '/aiserver.v1.BidiService/BidiAppend';
 export const CURSOR_USABLE_MODELS_PATH = '/aiserver.v1.AiService/GetUsableModels';
 // AvailableModels carries the client-facing model tooltips. GetUsableModels
 // says which models the account may use; AvailableModels is the only source
@@ -29,3 +30,5 @@ export const CURSOR_CLIENT_VERSION = 'cli-2025.11.25-d5b3271';
 
 // connect-es UA — matches what the Cursor CLI's connect-rpc client sends.
 export const CURSOR_USER_AGENT = 'connect-es/1.4.0';
+
+export const CURSOR_GRPC_WEB_CONTENT_TYPE = 'application/grpc-web+proto';
