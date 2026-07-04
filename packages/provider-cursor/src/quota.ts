@@ -4,9 +4,8 @@
  * Two orthogonal concerns, both housed here because they both concern "how
  * much of the Cursor account is left":
  *
- * 1. Data-plane rate-limit gate (agent endpoints, 429). Header parsing is a
- *    placeholder until we capture real 429s from the agent path; the 429
- *    detection lives here alongside the snapshot shape it feeds into.
+ * 1. Data-plane rate-limit gate (agent endpoints, 429). The snapshot shape and
+ *    the 429 detection used by fetch.ts.
  *
  * 2. Subscription usage fetch. `POST cursor.com/api/dashboard/get-current-period-usage`
  *    is the same endpoint the browser dashboard's Spending tab uses — it validates
@@ -19,30 +18,14 @@
 import type { Fetcher } from '@floway-dev/provider';
 
 export interface CursorQuotaSnapshot {
-  // Placeholder fields — populate from real 429/Retry-After capture.
   remaining?: number;
   limit?: number;
   resetAt?: number;
 }
 
-// CursorQuotaSnapshotEntry (the fetchedAt + data wrapper) lives in state.ts,
-// alongside the credential that carries it — not here.
-
-/** True when the upstream response signals rate-limiting (HTTP 429). */
 export const isCursorRateLimited = (status: number): boolean => status === 429;
 
-/**
- * Parse quota hints from upstream response headers. Returns null until real
- * header fields are captured; callers treat null as "no quota observation".
- */
-export const parseCursorQuotaHeaders = (_headers: Headers): CursorQuotaSnapshot | null => {
-  // TODO(cursor): populate from real Retry-After / x-cursor-ratelimit-* capture.
-  return null;
-};
-
-// ---------------------------------------------------------------------------
 // Subscription usage — cursor.com dashboard endpoint
-// ---------------------------------------------------------------------------
 
 export const CURSOR_DASHBOARD_USAGE_URL = 'https://cursor.com/api/dashboard/get-current-period-usage';
 
@@ -85,7 +68,7 @@ export class CursorDashboardSessionExpiredError extends Error {
   }
 }
 
-/** Any other non-2xx or transport failure the caller should surface as 502. */
+/** Any other non-2xx or transport failure. */
 export class CursorDashboardUpstreamError extends Error {
   readonly status: number;
   constructor(status: number, message: string) {

@@ -1,12 +1,10 @@
-/**
- * Cursor Tab (StreamCpp) → OpenAI /v1/completions bridge helpers.
- *
- * Phase 2: the FIM / plain-prompt path. An incoming `/v1/completions` prompt is
- * split into prefix/suffix (FIM tokens or plain), turned into a StreamCpp
- * request (contents = prefix+suffix, cursor at the prefix/suffix boundary), and
- * the model's rewritten region is reduced back to the pure insertion the FIM
- * client expects. Zeta marker formats (V0318/V0615) are layered on in Phase 3.
- */
+// Cursor Tab (StreamCpp) → OpenAI /v1/completions bridge helpers.
+//
+// FIM / plain-prompt path: an incoming `/v1/completions` prompt is split into
+// prefix/suffix (FIM tokens or plain), turned into a StreamCpp request
+// (contents = prefix+suffix, cursor at the prefix/suffix boundary), and the
+// model's rewritten region is reduced back to the pure insertion the FIM
+// client expects. Zeta marker formats (V0318/V0615) live in zeta-format.ts.
 
 import type { StreamCppLineRange, StreamCppRequestInput } from './proto/stream-cpp.ts';
 
@@ -175,6 +173,5 @@ export const estimateCursorTabTokens = (text: string, languageId: string): numbe
   return Math.max(1, Math.ceil(bytes / ratio));
 };
 
-// Rough language id from a file extension / OpenAI-style hint.
-export const languageIdForCompletion = (body: { language?: unknown; suffix?: unknown }): string =>
+export const languageIdForCompletion = (body: { language?: unknown }): string =>
   (typeof body.language === 'string' && body.language) || 'plaintext';

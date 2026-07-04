@@ -6,7 +6,6 @@ import {
   CursorDashboardUpstreamError,
   fetchCursorDashboardUsage,
   isCursorRateLimited,
-  parseCursorQuotaHeaders,
 } from './quota.ts';
 import type { Fetcher } from '@floway-dev/provider';
 
@@ -27,12 +26,6 @@ describe('isCursorRateLimited', () => {
     expect(isCursorRateLimited(429)).toBe(true);
     expect(isCursorRateLimited(200)).toBe(false);
     expect(isCursorRateLimited(500)).toBe(false);
-  });
-});
-
-describe('parseCursorQuotaHeaders', () => {
-  test('placeholder returns null until real capture', () => {
-    expect(parseCursorQuotaHeaders(new Headers({ 'retry-after': '30' }))).toBeNull();
   });
 });
 
