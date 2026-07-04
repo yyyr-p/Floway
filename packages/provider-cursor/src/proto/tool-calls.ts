@@ -1,4 +1,4 @@
-import { TEXT_DECODER, parseProtoFields } from './decoding.ts';
+import { TEXT_DECODER, decodeVarint, parseProtoFields } from './decoding.ts';
 import type { ParsedToolCall, ParsedToolCallStarted, ParsedPartialToolCall } from './types.ts';
 
 export const TOOL_FIELD_MAP: Record<number, { type: string; name: string }> = {
@@ -85,21 +85,14 @@ export function parseToolCall(data: Uint8Array): ParsedToolCall {
               // The leading 0x0a byte is byte-identical with the UTF-8
               // encoding of `\n`, so a legitimate string beginning with LF
               // is indistinguishable from a wrapped `{ field 1 = string }`
-              // by prefix alone. Only accept the reparse when it consumes
-              // the full value as exactly one length-delimited field 1.
-              const nested = parseProtoFields(tf.value);
-              if (
-                nested.length === 1 &&
-                nested[0]!.fieldNumber === 1 &&
-                nested[0]!.wireType === 2 &&
-                nested[0]!.value instanceof Uint8Array
-              ) {
-                const innerLen = nested[0]!.value.length;
-                let varintBytes = 1;
-                for (let n = innerLen; n >= 0x80; n >>>= 7) varintBytes++;
-                if (1 + varintBytes + innerLen === tf.value.length) {
-                  strValue = TEXT_DECODER.decode(nested[0]!.value);
-                }
+              // by prefix alone. Read the declared inner length from the
+              // varint at byte 1: only when 1 + varintBytes + declared
+              // exactly equals the buffer size is this actually a wrapped
+              // message (parseProtoFields silently truncates on overflow,
+              // so its returned .value.length can't distinguish the two).
+              const lengthInfo = decodeVarint(tf.value, 1);
+              if (1 + lengthInfo.bytesRead + lengthInfo.value === tf.value.length) {
+                strValue = TEXT_DECODER.decode(tf.value.subarray(1 + lengthInfo.bytesRead));
               }
             }
 
