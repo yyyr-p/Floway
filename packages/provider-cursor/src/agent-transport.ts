@@ -514,6 +514,11 @@ export class AgentTransport {
 
     try {
       let buffer = initialBuffer;
+      // Read cursor into `buffer` — advanced past every complete frame we've
+      // parsed. The next read merges only the still-unparsed tail (buffer from
+      // `offset` onward) with the new chunk instead of re-concatenating the
+      // whole running buffer on every reader.read().
+      let offset = 0;
       let turnEnded = false;
 
       try {
@@ -523,14 +528,19 @@ export class AgentTransport {
             yield { type: 'done' };
             break;
           }
-          if (!value) continue;
+          if (!value || value.byteLength === 0) continue;
 
-          const newBuffer = new Uint8Array(buffer.length + value.length);
-          newBuffer.set(buffer);
-          newBuffer.set(value, buffer.length);
-          buffer = newBuffer;
-
-          let offset = 0;
+          const tailLen = buffer.length - offset;
+          if (tailLen === 0) {
+            // Fast path: buffer was fully consumed, no copy needed.
+            buffer = value;
+          } else {
+            const merged = new Uint8Array(tailLen + value.length);
+            merged.set(buffer.subarray(offset), 0);
+            merged.set(value, tailLen);
+            buffer = merged;
+          }
+          offset = 0;
           // Parse as many complete connect frames as the buffer currently holds.
 
           while (true) {
@@ -724,7 +734,6 @@ export class AgentTransport {
 
             if (turnEnded) break;
           }
-          buffer = buffer.slice(offset);
         }
 
         if (turnEnded) {
