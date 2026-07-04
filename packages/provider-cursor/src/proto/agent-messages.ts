@@ -122,15 +122,6 @@ export function encodeConversationAction(userMessageAction: Uint8Array): Uint8Ar
   return encodeMessageField(1, userMessageAction);
 }
 
-// ResumeAction: empty message on the wire.
-export function encodeConversationActionWithResume(): Uint8Array {
-  return encodeMessageField(2, new Uint8Array(0));
-}
-
-export function encodeAgentClientMessageWithConversationAction(conversationAction: Uint8Array): Uint8Array {
-  return encodeMessageField(4, conversationAction);
-}
-
 export function encodeModelDetails(modelId: string, maxMode?: boolean): Uint8Array {
   const parts: Uint8Array[] = [encodeStringField(1, modelId)];
   // ModelDetails.max_mode (field 7): opt into Cursor's Max Mode — the larger

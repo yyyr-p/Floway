@@ -322,7 +322,7 @@ function encodeShellResult(
   return encodeMessageField(resultField, shellOutcome);
 }
 
-export function buildExecClientMessageWithShellResult(
+function buildExecClientMessageWithShellResult(
   id: number,
   execId: string | undefined,
   command: string,
@@ -346,7 +346,7 @@ function encodeLsResult(filesString: string): Uint8Array {
   return encodeMessageField(1, lsSuccess);
 }
 
-export function buildExecClientMessageWithLsResult(
+function buildExecClientMessageWithLsResult(
   id: number,
   execId: string | undefined,
   filesString: string,
@@ -411,7 +411,7 @@ function encodeReadResult(
   return encodeMessageField(1, readSuccess);
 }
 
-export function buildExecClientMessageWithReadResult(
+function buildExecClientMessageWithReadResult(
   id: number,
   execId: string | undefined,
   content: string,
@@ -462,7 +462,7 @@ function encodeGrepResult(pattern: string, path: string, files: string[]): Uint8
   return encodeMessageField(1, success);
 }
 
-export function buildExecClientMessageWithGrepResult(
+function buildExecClientMessageWithGrepResult(
   id: number,
   execId: string | undefined,
   pattern: string,
@@ -515,7 +515,7 @@ function encodeWriteResult(result: WriteResult): Uint8Array {
   return encodeMessageField(1, encodeWriteSuccess('', 0, 0));
 }
 
-export function buildExecClientMessageWithWriteResult(
+function buildExecClientMessageWithWriteResult(
   id: number,
   execId: string | undefined,
   result: WriteResult,
