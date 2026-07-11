@@ -51,7 +51,7 @@ const importKey = async (): Promise<CryptoKey> => {
   if (secret.length < 32) {
     throw new Error('SESSION_HMAC_SECRET must be at least 32 characters');
   }
-  return crypto.subtle.importKey('raw', new TextEncoder().encode(secret), HMAC_ALGORITHM, false, ['sign', 'verify']);
+  return await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), HMAC_ALGORITHM, false, ['sign', 'verify']);
 };
 
 export const randomNonce = (): string => {

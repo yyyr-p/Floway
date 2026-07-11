@@ -90,7 +90,7 @@ export const unlinkUserIdentityAdmin = async (c: AuthedContext) => {
   const subject = c.req.param('subject')!;
   const repo = getRepo();
   const existing = await repo.userOauthIdentities.getBySubject(providerId, subject);
-  if (!existing || existing.userId !== id) {
+  if (existing?.userId !== id) {
     return c.json({ error: 'Identity not found for that user' }, 404);
   }
   // Admin unlink is exempt from the lockout guard: an admin who intentionally

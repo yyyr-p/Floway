@@ -1,9 +1,9 @@
 import { Hono, type Next } from 'hono';
 
 import { createKey, deleteKey, listKeys, rotateKey, updateKey } from './api-keys/routes.ts';
-import { authLogin, authLogout, authMe } from './auth/routes.ts';
 import { linkUserIdentityAdmin, listOwnIdentities, listUserIdentitiesAdmin, unlinkOwnIdentity, unlinkUserIdentityAdmin } from './auth/oauth/identities.ts';
 import { listOAuthProvidersRoute, oauthAuthorizeUrl, oauthCallback } from './auth/oauth/routes.ts';
+import { authLogin, authLogout, authMe } from './auth/routes.ts';
 import { exportData, importData } from './data-transfer/routes.ts';
 import { dumpRoutes } from './dump.ts';
 import { createAlias, deleteAlias, listAliases, updateAlias } from './model-aliases/routes.ts';

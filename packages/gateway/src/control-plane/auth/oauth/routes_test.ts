@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 
 import { resetOAuthProviderRegistryForTesting } from './registry.ts';
 import { requestApp, setupAppTest } from '../../../test-helpers.ts';

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'vitest';
+import { afterEach, describe, expect, test } from 'vitest';
 
 import { GenericOidcProvider } from './generic-oidc.ts';
 import { getOAuthProvider, listOAuthProviders, publicOrigin, redirectUriFor, resetOAuthProviderRegistryForTesting } from './registry.ts';
