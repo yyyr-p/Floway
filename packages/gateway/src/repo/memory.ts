@@ -38,6 +38,8 @@ import type {
   UsageRecord,
   UsageRepo,
   User,
+  UserOauthIdentity,
+  UserOauthIdentitiesRepo,
   UsersRepo,
 } from './types.ts';
 import { serializeStoredState } from './upstream-json.ts';
@@ -156,6 +158,48 @@ class MemorySessionsRepo implements SessionsRepo {
 
   deleteAll(): Promise<void> {
     this.sessions = [];
+    return Promise.resolve();
+  }
+}
+
+class MemoryUserOauthIdentitiesRepo implements UserOauthIdentitiesRepo {
+  private rows: UserOauthIdentity[] = [];
+
+  getBySubject(providerId: string, subject: string): Promise<UserOauthIdentity | null> {
+    const row = this.rows.find(r => r.providerId === providerId && r.subject === subject);
+    return Promise.resolve(row ? { ...row } : null);
+  }
+
+  listByUserId(userId: number): Promise<UserOauthIdentity[]> {
+    return Promise.resolve(
+      this.rows
+        .filter(r => r.userId === userId)
+        .map(r => ({ ...r }))
+        .sort((a, b) => a.providerId.localeCompare(b.providerId) || a.subject.localeCompare(b.subject)),
+    );
+  }
+
+  async link(identity: UserOauthIdentity): Promise<void> {
+    if (this.rows.some(r => r.providerId === identity.providerId && r.subject === identity.subject)) {
+      throw new Error('UNIQUE constraint failed: user_oauth_identities.provider_id, user_oauth_identities.subject');
+    }
+    this.rows.push({ ...identity });
+  }
+
+  unlink(providerId: string, subject: string): Promise<boolean> {
+    const before = this.rows.length;
+    this.rows = this.rows.filter(r => r.providerId !== providerId || r.subject !== subject);
+    return Promise.resolve(this.rows.length < before);
+  }
+
+  deleteByUserId(userId: number): Promise<number> {
+    const before = this.rows.length;
+    this.rows = this.rows.filter(r => r.userId !== userId);
+    return Promise.resolve(before - this.rows.length);
+  }
+
+  deleteAll(): Promise<void> {
+    this.rows = [];
     return Promise.resolve();
   }
 }
@@ -936,6 +980,7 @@ export class InMemoryRepo implements Repo {
   apiKeys: ApiKeyRepo;
   users: UsersRepo;
   sessions: SessionsRepo;
+  userOauthIdentities: UserOauthIdentitiesRepo;
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
   performance: PerformanceRepo;
@@ -951,6 +996,7 @@ export class InMemoryRepo implements Repo {
   constructor() {
     this.users = new MemoryUsersRepo();
     this.sessions = new MemorySessionsRepo();
+    this.userOauthIdentities = new MemoryUserOauthIdentitiesRepo();
     this.apiKeys = new MemoryApiKeyRepo();
     this.usage = new MemoryUsageRepo();
     this.searchUsage = new MemorySearchUsageRepo();

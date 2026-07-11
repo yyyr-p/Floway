@@ -153,6 +153,26 @@ export interface SessionsRepo {
   deleteAll(): Promise<void>;
 }
 
+export interface UserOauthIdentity {
+  userId: number;
+  providerId: string;
+  subject: string;
+  email: string | null;
+  linkedAt: string;
+}
+
+export interface UserOauthIdentitiesRepo {
+  getBySubject(providerId: string, subject: string): Promise<UserOauthIdentity | null>;
+  listByUserId(userId: number): Promise<UserOauthIdentity[]>;
+  // Throws `UNIQUE constraint failed: user_oauth_identities.provider_id, user_oauth_identities.subject`
+  // when (providerId, subject) already belongs to another user, so the route
+  // layer can surface a 409 without knowing the storage backend.
+  link(identity: UserOauthIdentity): Promise<void>;
+  unlink(providerId: string, subject: string): Promise<boolean>;
+  deleteByUserId(userId: number): Promise<number>;
+  deleteAll(): Promise<void>;
+}
+
 export interface UsageRepo {
   // Additive upsert: on (keyId, model, upstream, modelKey, hour, tier)
   // conflict, token counts are summed. cost is COALESCED — the first write
@@ -368,6 +388,7 @@ export interface Repo {
   apiKeys: ApiKeyRepo;
   users: UsersRepo;
   sessions: SessionsRepo;
+  userOauthIdentities: UserOauthIdentitiesRepo;
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
   performance: PerformanceRepo;

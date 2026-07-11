@@ -33,6 +33,8 @@ import type {
   UsageRecord,
   UsageRepo,
   User,
+  UserOauthIdentity,
+  UserOauthIdentitiesRepo,
   UsersRepo,
 } from './types.ts';
 import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts';
@@ -372,6 +374,71 @@ class SqlSessionsRepo implements SessionsRepo {
 
   async deleteAll(): Promise<void> {
     await this.db.prepare('DELETE FROM sessions').run();
+  }
+}
+
+interface UserOauthIdentityRow {
+  user_id: number;
+  provider_id: string;
+  subject: string;
+  email: string | null;
+  linked_at: string;
+}
+
+const USER_OAUTH_IDENTITY_COLUMNS = 'user_id, provider_id, subject, email, linked_at';
+
+const toUserOauthIdentity = (row: UserOauthIdentityRow): UserOauthIdentity => ({
+  userId: row.user_id,
+  providerId: row.provider_id,
+  subject: row.subject,
+  email: row.email,
+  linkedAt: row.linked_at,
+});
+
+class SqlUserOauthIdentitiesRepo implements UserOauthIdentitiesRepo {
+  constructor(private db: SqlDatabase) {}
+
+  async getBySubject(providerId: string, subject: string): Promise<UserOauthIdentity | null> {
+    const row = await this.db
+      .prepare(`SELECT ${USER_OAUTH_IDENTITY_COLUMNS} FROM user_oauth_identities WHERE provider_id = ? AND subject = ?`)
+      .bind(providerId, subject)
+      .first<UserOauthIdentityRow>();
+    return row ? toUserOauthIdentity(row) : null;
+  }
+
+  async listByUserId(userId: number): Promise<UserOauthIdentity[]> {
+    const { results } = await this.db
+      .prepare(`SELECT ${USER_OAUTH_IDENTITY_COLUMNS} FROM user_oauth_identities WHERE user_id = ? ORDER BY provider_id, subject`)
+      .bind(userId)
+      .all<UserOauthIdentityRow>();
+    return results.map(toUserOauthIdentity);
+  }
+
+  async link(identity: UserOauthIdentity): Promise<void> {
+    await this.db
+      .prepare(`INSERT INTO user_oauth_identities (${USER_OAUTH_IDENTITY_COLUMNS}) VALUES (?, ?, ?, ?, ?)`)
+      .bind(identity.userId, identity.providerId, identity.subject, identity.email, identity.linkedAt)
+      .run();
+  }
+
+  async unlink(providerId: string, subject: string): Promise<boolean> {
+    const result = await this.db
+      .prepare('DELETE FROM user_oauth_identities WHERE provider_id = ? AND subject = ?')
+      .bind(providerId, subject)
+      .run();
+    return (result.meta.changes ?? 0) > 0;
+  }
+
+  async deleteByUserId(userId: number): Promise<number> {
+    const result = await this.db
+      .prepare('DELETE FROM user_oauth_identities WHERE user_id = ?')
+      .bind(userId)
+      .run();
+    return result.meta.changes ?? 0;
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare('DELETE FROM user_oauth_identities').run();
   }
 }
 
@@ -1751,6 +1818,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
 export class SqlRepo implements Repo {
   users: UsersRepo;
   sessions: SessionsRepo;
+  userOauthIdentities: UserOauthIdentitiesRepo;
   apiKeys: ApiKeyRepo;
   usage: UsageRepo;
   searchUsage: SearchUsageRepo;
@@ -1767,6 +1835,7 @@ export class SqlRepo implements Repo {
   constructor(db: SqlDatabase) {
     this.users = new SqlUsersRepo(db);
     this.sessions = new SqlSessionsRepo(db);
+    this.userOauthIdentities = new SqlUserOauthIdentitiesRepo(db);
     this.apiKeys = new SqlApiKeyRepo(db);
     this.usage = new SqlUsageRepo(db);
     this.searchUsage = new SqlSearchUsageRepo(db);
