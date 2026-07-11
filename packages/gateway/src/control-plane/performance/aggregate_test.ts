@@ -12,7 +12,7 @@ const aggregateSingle = (
   options: AggregateOptions,
   keyToUser: ReadonlyMap<string, number> = new Map(),
 ): PerformanceDisplayRecord[] =>
-  aggregatePerformanceForDisplay(records, { axis: options }, keyToUser).axis;
+  aggregatePerformanceForDisplay(records, { axis: options }, keyToUser, new Set(records.map(item => item.keyId))).axis;
 
 const record = (overrides: Partial<PerformanceTelemetryRecord> = {}): PerformanceTelemetryRecord => ({
   hour: '2026-04-30T10',
