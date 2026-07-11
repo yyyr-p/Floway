@@ -83,9 +83,9 @@ test('/api/performance/overview scopes to actor\'s keys in self-by-key mode', as
 
   assertEquals(response.status, 200);
   const body = await response.json();
-  // Only the actor's key surfaces in keyRows; the other user's row is filtered out.
-  assertEquals(body.axes.keyId.length, 1);
-  assertEquals(body.axes.keyId[0].group, apiKey.id);
+  assertEquals(body.axes.keyId.map((r: { group: string }) => r.group), [apiKey.id]);
+  assertEquals(body.dimensionValues.keyIds, [apiKey.id]);
+  assertEquals(body.keys.map((key: { id: string }) => key.id), [apiKey.id]);
 });
 
 test('/api/performance/overview always returns key metadata', async () => {
@@ -159,12 +159,10 @@ test('/api/performance/overview rejects all-by-user from a user without canViewG
   assertEquals(response.status, 403);
 });
 
-test('/api/performance/overview all-by-user keyRows spans every user\'s keys', async () => {
+test('/api/performance/overview keeps API-key data self-scoped in all-by-user view', async () => {
   const { repo, adminSession, apiKey } = await setupAppTest();
-  // Two keys owned by different users; admin overview should surface both
-  // rows in keyRows without leaking to a self-scoped user.
   await repo.apiKeys.save({
-    id: 'key_other',
+    id: 'key_admin',
     userId: 1,
     name: 'Admin owned',
     key: 'raw_admin_owned',
@@ -185,14 +183,42 @@ test('/api/performance/overview all-by-user keyRows spans every user\'s keys', a
     success: true,
   };
   await repo.performance.recordSample({ ...sample, keyId: apiKey.id });
-  await repo.performance.recordSample({ ...sample, keyId: 'key_other' });
+  await repo.performance.recordSample({ ...sample, keyId: 'key_admin' });
 
-  const response = await requestApp('/api/performance/overview?start=2026-04-30T00&end=2026-05-01T00&view=all-by-user', { headers: { 'x-floway-session': adminSession } });
+  const response = await requestApp('/api/performance/overview?start=2026-04-30T00&end=2026-05-01T00&view=all-by-user&group_by=keyId', { headers: { 'x-floway-session': adminSession } });
 
   assertEquals(response.status, 200);
   const body = await response.json();
-  const groups = body.axes.keyId.map((r: { group: string; requests: number }) => [r.group, r.requests]).sort();
-  assertEquals(groups, [[apiKey.id, 1], ['key_other', 1]].sort());
+  assertEquals(body.series.map((r: { group: string }) => r.group), ['key_admin']);
+  assertEquals(body.axes.keyId.map((r: { group: string }) => r.group), ['key_admin']);
+  assertEquals(body.dimensionValues.keyIds, ['key_admin']);
+  assertEquals(body.keys, [{
+    id: 'key_admin',
+    name: 'Admin owned',
+    createdAt: '2026-04-30T00:00:00.000Z',
+  }]);
+  assertEquals(body.axes.model[0].requests, 2);
+  assertEquals(body.axes.userId.map((r: { group: string; requests: number }) => [r.group, r.requests]).sort(), [['1', 1], ['2', 1]]);
+});
+
+test('/api/performance/overview rejects another user\'s API-key filter in all-by-user view', async () => {
+  const { adminSession, apiKey } = await setupAppTest();
+
+  const response = await requestApp(`/api/performance/overview?start=2026-04-30T00&end=2026-05-01T00&view=all-by-user&filter_key_id=${apiKey.id}`, { headers: { 'x-floway-session': adminSession } });
+
+  assertEquals(response.status, 404);
+  assertEquals(await response.json(), { error: 'Unknown filter_key_id' });
+});
+
+test('/api/performance/overview treats an unknown self-view API-key filter as an empty selection', async () => {
+  const { apiKey } = await setupAppTest();
+
+  const response = await requestApp('/api/performance/overview?start=2026-04-30T00&end=2026-05-01T00&filter_key_id=unknown', { headers: { 'x-api-key': apiKey.key } });
+
+  assertEquals(response.status, 200);
+  const body = await response.json();
+  assertEquals(body.series, []);
+  assertEquals(body.axes.none, []);
 });
 
 test('/api/performance/overview all-by-user userRows split rows per user', async () => {
