@@ -7,6 +7,18 @@ import { getEnv } from '@floway-dev/platform';
 
 const PUBLIC_PATHS = new Set(['/api/health', '/favicon.ico']);
 const AUTH_VALIDATE_PATHS = new Set(['/auth/login']);
+// OAuth login endpoints reach the handler unauthenticated: the "login"
+// intent has no session yet, and the browser-driven 302 callback cannot
+// carry the operator's session either. The authorize-url handler enforces
+// its own session check for `intent: "link"`.
+const OAUTH_PUBLIC_PATTERNS: ReadonlyArray<{ method: string; pattern: RegExp }> = [
+  { method: 'GET', pattern: /^\/auth\/oauth\/providers$/ },
+  { method: 'POST', pattern: /^\/auth\/oauth\/[^/]+\/authorize-url$/ },
+  { method: 'GET', pattern: /^\/auth\/oauth\/[^/]+\/callback$/ },
+];
+
+const isOauthPublicPath = (method: string, path: string): boolean =>
+  OAUTH_PUBLIC_PATTERNS.some(p => p.method === method && p.pattern.test(path));
 
 // The three slots auth middleware stamps on every authenticated request. All
 // optional because public / login routes carry none; handlers that require
@@ -28,6 +40,7 @@ export const authMiddleware = async (c: AuthedContext, next: Next) => {
   const path = c.req.path;
   if (PUBLIC_PATHS.has(path) && c.req.method === 'GET') return await next();
   if (AUTH_VALIDATE_PATHS.has(path) && c.req.method === 'POST') return await next();
+  if (isOauthPublicPath(c.req.method, path)) return await next();
 
   // Browsers cannot attach custom headers to EventSource, so the dump SSE
   // stream — the only browser-driven SSE endpoint — accepts the session

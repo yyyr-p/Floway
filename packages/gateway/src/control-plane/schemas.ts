@@ -664,3 +664,20 @@ export const performanceQuery = z.object({
   bucket: z.enum(['hour', '4h', '8h', 'day', 'all']).optional(),
   timezone_offset_minutes: z.string().optional(),
 });
+
+// OAuth user login. authorize-url is the request the dashboard makes to get
+// the IdP-facing URL to redirect to; the PKCE verifier lives inside the
+// server-signed state (see auth/oauth/state.ts), so the client never sees
+// or stores it. `intent` distinguishes first-time login from binding an
+// identity to the already-authenticated caller.
+export const oauthAuthorizeUrlBody = z.object({
+  intent: z.enum(['login', 'link']),
+  returnTo: z.string().optional(),
+});
+
+// Admin pre-link of an identity to a user. subject is the IdP-emitted `sub`.
+export const oauthAdminLinkBody = z.object({
+  providerId: z.string().min(1),
+  subject: z.string().min(1),
+  email: z.string().optional(),
+});
