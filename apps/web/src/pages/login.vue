@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-import { useRouter } from 'vue-router';
+import { onMounted, ref } from 'vue';
+import { useRoute, useRouter } from 'vue-router';
 
 import { callApi, useApi } from '../api/client.ts';
 import { useLoading } from '../composables/useLoading.ts';
@@ -10,12 +10,32 @@ import { Input } from '@floway-dev/ui';
 definePage({ meta: { public: true } });
 
 const api = useApi();
+const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
 
 const usernameInput = ref('');
 const passwordInput = ref('');
 const errorMessage = ref<string | null>(null);
+const oauthProviders = ref<Array<{ id: string; displayName: string }>>([]);
+
+const errorMessageFor = (code: string): string => {
+  if (code === 'not-enrolled') return 'This account is not enrolled for OAuth login. Ask an administrator to link your identity.';
+  if (code === 'oauth-exchange-failed') return 'The identity provider rejected the login. Try again.';
+  if (code === 'access_denied') return 'You cancelled the sign-in at the identity provider.';
+  if (code.startsWith('state-')) return 'The sign-in link expired or was tampered with. Please try again.';
+  if (code === 'handoff-failed') return 'Sign-in completed but the handoff to Floway failed. Please try again.';
+  return `Sign-in failed (${code}).`;
+};
+
+onMounted(async () => {
+  const err = route.query.error;
+  if (typeof err === 'string' && err) errorMessage.value = errorMessageFor(err);
+  const { data } = await callApi<{ providers: Array<{ id: string; displayName: string }> }>(
+    () => api.auth.oauth.providers.$get(),
+  );
+  if (data) oauthProviders.value = data.providers;
+});
 
 const [loading, submit] = useLoading(async () => {
   errorMessage.value = null;
@@ -35,6 +55,18 @@ const [loading, submit] = useLoading(async () => {
 
   auth.setAuth({ token: data.token, user: data.user });
   await router.replace('/dashboard/settings');
+});
+
+const [oauthLoading, startOAuth] = useLoading(async (providerId: string) => {
+  errorMessage.value = null;
+  const { data, error } = await callApi<{ url: string }>(
+    () => api.auth.oauth[':provider']['authorize-url'].$post({ param: { provider: providerId }, json: { intent: 'login' } }),
+  );
+  if (error) {
+    errorMessage.value = error.message;
+    return;
+  }
+  if (data) window.location.assign(data.url);
 });
 </script>
 
@@ -96,6 +128,24 @@ const [loading, submit] = useLoading(async () => {
             </span>
           </button>
         </form>
+
+        <div v-if="oauthProviders.length > 0" class="mt-6 space-y-2">
+          <div class="flex items-center gap-3 text-xs uppercase tracking-widest text-gray-500">
+            <div class="h-px flex-1 bg-white/[0.05]" />
+            <span>or</span>
+            <div class="h-px flex-1 bg-white/[0.05]" />
+          </div>
+          <button
+            v-for="provider in oauthProviders"
+            :key="provider.id"
+            type="button"
+            class="btn-ghost w-full"
+            :disabled="oauthLoading"
+            @click="startOAuth(provider.id)"
+          >
+            Continue with {{ provider.displayName }}
+          </button>
+        </div>
 
         <div v-if="errorMessage" class="mt-4 rounded-lg border border-accent-rose/20 bg-accent-rose/10 p-3 text-sm text-accent-rose">
           {{ errorMessage }}
