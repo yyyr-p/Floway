@@ -63,10 +63,10 @@ test('getProvidedModels surfaces chat models with all three OpenAI/Anthropic-com
     assertEquals(Object.keys(gptoss.endpoints).sort(), ['chatCompletions', 'completions', 'messages', 'responses']);
     assertEquals(gptoss.owned_by, 'ollama');
     assertEquals(gptoss.limits.max_context_window_tokens, 131072);
-    // OLLAMA_MODEL_PRICING covers gpt-oss:120b, so cost flows through into
+    // OLLAMA_MODEL_PRICING covers gpt-oss:120b, so pricing flows through into
     // the ProviderModel on the auto path.
-    assertEquals(gptoss.cost?.input, 0.15);
-    assertEquals(gptoss.cost?.output, 0.6);
+    assertEquals(gptoss.pricing?.entries[0]?.rates.input, 0.15);
+    assertEquals(gptoss.pricing?.entries[0]?.rates.output, 0.6);
   });
 });
 
@@ -90,6 +90,7 @@ test('getProvidedModels merges manual overrides in front of auto-fetched models 
         kind: 'chat',
         endpoints: { chatCompletions: {} },
         display_name: 'Pinned 120B',
+        pricing: { entries: [{ rates: { input: 99, output: 99 } }] },
       }],
     },
   }));
@@ -100,28 +101,27 @@ test('getProvidedModels merges manual overrides in front of auto-fetched models 
     assertEquals(models[0].id, 'gpt-oss:120b');
     assertEquals(models[0].display_name, 'Pinned 120B');
     assertEquals(Object.keys(models[0].endpoints), ['chatCompletions']);
-    assertEquals(models[0].cost, { input: 0.15, input_cache_read: 0.075, output: 0.6 });
+    assertEquals(models[0].pricing, { entries: [{ rates: { input: 99, output: 99 } }] });
     // No duplicate gpt-oss:120b further down.
     assertEquals(models.filter(m => m.id === 'gpt-oss:120b').length, 1);
   });
 });
 
-test('getProvidedModels preserves explicit manual cost over built-in cost', async () => {
+test('manual known models inherit built-in pricing when no override is configured', async () => {
   const instance = createOllamaProvider(buildRecord({
     config: {
       baseUrl: 'https://ollama.com',
       apiKey: 'ollama_test',
       models: [{
-        upstreamModelId: 'gpt-oss:120b',
+        upstreamModelId: 'deepseek-v4-flash',
         kind: 'chat',
         endpoints: { chatCompletions: {} },
-        cost: { input: 99, output: 99 },
       }],
     },
   }));
   await withMockedFetch(tagsAndShow, async () => {
     const models = await instance.instance.getProvidedModels(directFetcher);
-    assertEquals(models[0].cost, { input: 99, output: 99 });
+    assertEquals(models.find(model => model.id === 'deepseek-v4-flash')?.pricing?.entries[0]?.rates.input, 0.14);
   });
 });
 

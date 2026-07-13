@@ -59,8 +59,8 @@ const finalizeOllamaModels = (
       enabledFlags,
     };
     if (raw.modifiedAt !== undefined) model.created = raw.modifiedAt;
-    const cost = pricingForOllamaModelKey(raw.id);
-    if (cost) model.cost = cost;
+    const pricing = pricingForOllamaModelKey(raw.id);
+    if (pricing) model.pricing = pricing;
     const chat = chatFromOllamaRaw(raw);
     if (chat) model.chat = chat;
     models.push(model);
@@ -87,8 +87,8 @@ export const createOllamaProvider = (record: UpstreamRecord): Provider => {
       enabledFlags,
     };
     if (model.display_name !== undefined) internal.display_name = model.display_name;
-    const cost = model.cost ?? pricingForOllamaModelKey(model.upstreamModelId);
-    if (cost) internal.cost = cost;
+    const pricing = model.pricing ?? pricingForOllamaModelKey(model.upstreamModelId);
+    if (pricing) internal.pricing = pricing;
     if (model.chat) internal.chat = model.chat;
     return internal;
   });

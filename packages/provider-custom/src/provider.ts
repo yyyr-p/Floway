@@ -30,7 +30,7 @@ const customRawToProviderModel = (model: CustomRawModel): Omit<ProviderModel, 'k
   }
   const display = model.display_name ?? model.name;
   if (display !== undefined) partial.display_name = display;
-  if (model.cost) partial.cost = model.cost;
+  if (model.pricing) partial.pricing = model.pricing;
   return partial;
 };
 
@@ -89,7 +89,7 @@ export const createCustomProvider = (record: UpstreamRecord): Provider => {
       enabledFlags,
     };
     if (model.display_name !== undefined) internal.display_name = model.display_name;
-    if (model.cost) internal.cost = model.cost;
+    if (model.pricing) internal.pricing = model.pricing;
     if (model.chat) internal.chat = model.chat;
     return internal;
   });
@@ -135,13 +135,13 @@ export const createCustomProvider = (record: UpstreamRecord): Provider => {
     getProvidedModels: async fetcher => {
       if (!config.modelsFetch.enabled) return manualModels;
       const response = await fetchCustomModels(config, fetcher);
-      const fetchedCost = new Map(
-        response.data.flatMap(model => model.cost ? [[model.id, model.cost] as const] : []),
+      const fetchedPricing = new Map(
+        response.data.flatMap(model => model.pricing ? [[model.id, model.pricing] as const] : []),
       );
       const effectiveManualModels = manualModels.map(model => {
-        if (model.cost !== undefined) return model;
-        const cost = fetchedCost.get(rawModelIdOf(model));
-        return cost === undefined ? model : { ...model, cost };
+        if (model.pricing !== undefined) return model;
+        const pricing = fetchedPricing.get(rawModelIdOf(model));
+        return pricing === undefined ? model : { ...model, pricing };
       });
       // Drop any auto-fetched model whose id is pinned by a manual
       // override so the manual copy is the only one emitted for that id.
