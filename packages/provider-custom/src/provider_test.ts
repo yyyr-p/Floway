@@ -98,26 +98,26 @@ test('getProvidedModels rethrows when the upstream fetch fails — no fallback i
   );
 });
 
-test('getProvidedModels carries cost on auto models', async () => {
+test('getProvidedModels carries pricing on auto models', async () => {
   const record = buildCustomUpstream();
   const instance = createCustomProvider(record);
 
-  const upstreamCost: ModelPricing = { input: 3, output: 12 };
+  const upstreamPricing: ModelPricing = { entries: [{ rates: { input: 3, output: 12 } }] };
   const models = await withMockedFetch(
     () => jsonResponse({
       object: 'list',
-      data: [{ id: 'priced-model', cost: upstreamCost }],
+      data: [{ id: 'priced-model', pricing: upstreamPricing }],
     }),
     async () => {
       return await instance.instance.getProvidedModels(directFetcher);
     },
   );
 
-  assertEquals(models[0]?.cost, upstreamCost);
+  assertEquals(models[0]?.pricing, upstreamPricing);
 });
 
 test('A manual model whose upstreamModelId matches an auto-fetched id overrides the auto entry', async () => {
-  const manualCost: ModelPricing = { input: 1, output: 2 };
+  const manualPricing: ModelPricing = { entries: [{ rates: { input: 1, output: 2 } }] };
   const record = buildCustomUpstream({
     models: [
       {
@@ -125,7 +125,7 @@ test('A manual model whose upstreamModelId matches an auto-fetched id overrides 
         kind: 'chat',
         endpoints: { chatCompletions: {} },
         display_name: 'Manual Override',
-        cost: manualCost,
+        pricing: manualPricing,
       },
     ],
   });
@@ -135,7 +135,7 @@ test('A manual model whose upstreamModelId matches an auto-fetched id overrides 
     () => jsonResponse({
       object: 'list',
       data: [
-        { id: 'shared-id', display_name: 'Auto Version', cost: { input: 99, output: 99 } },
+        { id: 'shared-id', display_name: 'Auto Version', pricing: { entries: [{ rates: { input: 99, output: 99 } }] } },
         { id: 'auto-only' },
       ],
     }),
@@ -143,13 +143,13 @@ test('A manual model whose upstreamModelId matches an auto-fetched id overrides 
       const models = await instance.instance.getProvidedModels(directFetcher);
       assertEquals(models.map(m => m.id), ['shared-id', 'auto-only']);
       assertEquals(models[0].display_name, 'Manual Override');
-      assertEquals(models[0].cost, manualCost);
+      assertEquals(models[0].pricing, manualPricing);
     },
   );
 });
 
-test('a manual model without explicit cost inherits cost from its shadowed auto row', async () => {
-  const inheritedCost: ModelPricing = { input: 3, output: 12 };
+test('a manual model without explicit pricing inherits pricing from its shadowed auto row', async () => {
+  const inheritedPricing: ModelPricing = { entries: [{ rates: { input: 3, output: 12 } }] };
   const instance = createCustomProvider(buildCustomUpstream({
     models: [{ upstreamModelId: 'shared-id', kind: 'chat', endpoints: { chatCompletions: {} } }],
   }));
@@ -157,13 +157,13 @@ test('a manual model without explicit cost inherits cost from its shadowed auto 
   await withMockedFetch(
     () => jsonResponse({
       object: 'list',
-      data: [{ id: 'shared-id', cost: inheritedCost }],
+      data: [{ id: 'shared-id', pricing: inheritedPricing }],
     }),
     async () => {
       const models = await instance.instance.getProvidedModels(directFetcher);
       assertEquals(models.length, 1);
       assertEquals(models[0]?.id, 'shared-id');
-      assertEquals(models[0]?.cost, inheritedCost);
+      assertEquals(models[0]?.pricing, inheritedPricing);
     },
   );
 });

@@ -51,7 +51,7 @@ export const createAzureProvider = (record: UpstreamRecord): Provider => {
           id: publicModelId(model),
           limits: { ...(model.limits ?? {}) },
           ...(model.display_name !== undefined ? { display_name: model.display_name } : {}),
-          ...(model.cost ? { cost: model.cost } : {}),
+          ...(model.pricing ? { pricing: model.pricing } : {}),
           ...(model.chat ? { chat: model.chat } : {}),
           kind: kindForEndpoints(endpoints),
           endpoints,

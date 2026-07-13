@@ -63,7 +63,7 @@ export const telemetryModelIdentity = (candidate: ModelCandidate, modelKey: stri
   model: candidate.model.id,
   upstream: candidate.provider.upstream,
   modelKey,
-  cost: providerModelOf(candidate).cost ?? null,
+  pricing: providerModelOf(candidate).pricing ?? null,
 });
 
 // See UpstreamCallOptions in `@floway-dev/provider` for the contract on each

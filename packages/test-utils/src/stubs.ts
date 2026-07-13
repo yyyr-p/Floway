@@ -55,7 +55,7 @@ export const testTelemetryModelIdentity: TelemetryModelIdentity = {
   model: 'test-model',
   upstream: 'test-upstream',
   modelKey: 'test-model-key',
-  cost: null,
+  pricing: null,
 };
 
 export const mockPerfTelemetryContext = (overrides: Partial<PerformanceTelemetryContext> = {}): PerformanceTelemetryContext => ({
@@ -114,7 +114,7 @@ export const stubModelCandidate = (overrides: {
     kind: outerMeta.kind,
     endpoints: outerMeta.endpoints,
     enabledFlags: overrides.enabledFlags ?? new Set<FlagId>(),
-    ...(modelOverrides.cost !== undefined ? { cost: modelOverrides.cost } : {}),
+    ...(modelOverrides.pricing !== undefined ? { pricing: modelOverrides.pricing } : {}),
     ...(overrides.providerData !== undefined ? { providerData: overrides.providerData } : {}),
   });
   return {
