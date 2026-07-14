@@ -8,6 +8,7 @@ import type { InterceptorRun } from '@floway-dev/interceptor';
 import { eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
 import type {
   CanonicalResponsesPayload,
+  ResponsesFunctionTool,
   ResponsesHostedTool,
   ResponsesInputItem,
   ResponsesOutputItem,
@@ -97,17 +98,12 @@ export type ServerToolDispatcher = (args: {
   loopState: ServerToolLoopState;
 }) => ServerToolResultSlot[];
 
-// Grouped together so a partial declaration is a compile error rather
-// than a registration that silently never dispatches. `canonicalize` is
-// the sole raw→canonical boundary: every downstream caller
-// (`buildFunctionTool`, dispatcher input, echo restore) only ever sees
-// canonical form. `hostedTypes` exists only for the
-// `tool_choice: { type }` rewrite path, where no full tool object is
-// available to canonicalize.
+// Keep hosted matching, function injection, and dispatch atomic so a
+// registration cannot silently omit part of a server-tool family.
 export interface ServerToolHostedDispatch {
   hostedTypes: readonly string[];
   canonicalize: (raw: ResponsesTool) => ResponsesHostedTool | undefined;
-  buildFunctionTool: (canonical: ResponsesHostedTool, toolName: string) => ResponsesTool;
+  buildFunctionTool: (canonical: ResponsesHostedTool, toolName: string) => ResponsesFunctionTool;
   dispatcher: ServerToolDispatcher;
 }
 
@@ -125,8 +121,8 @@ export type ServerToolPrepareResult =
     // upstream-readable even on a request that no longer declares the
     // hosted tool.
     transformItems?: (items: ResponsesInputItem[], toolName: string) => ResponsesInputItem[];
-    // Present only when the request actually declares this tool's hosted
-    // form; absent for replay-only activation.
+    // Present only when the request declares this hosted tool; absent for
+    // replay-only activation.
     hosted?: ServerToolHostedDispatch;
   };
 
@@ -134,10 +130,10 @@ export type ServerToolRegistration = (invocation: ResponsesInvocation, gatewayCt
 
 type ActiveServerTool = Extract<ServerToolPrepareResult, { type: 'active' }> & {
   toolName: string;
-  hasHostedTool: boolean;
-  // Present iff `hasHostedTool` is true; drives echo restore on the
-  // synthesized envelope's `tools` and `tool_choice`.
+  // Absent only for replay activation; otherwise drives `tools` echo restore.
   canonicalHostedTool: ResponsesHostedTool | undefined;
+  // Captures the exact forced choice shape before request rewriting.
+  originalToolChoice: Exclude<ResponsesToolChoice, string> | undefined;
 };
 
 // How a single upstream turn ended, as observed while consuming its
@@ -234,27 +230,20 @@ const rewriteHostedToolChoice = (
 ): ResponsesToolChoice | null | undefined => {
   if (toolChoice == null || typeof toolChoice === 'string') return toolChoice;
   for (const entry of active) {
-    if (!entry.hasHostedTool || entry.hosted === undefined) continue;
+    if (entry.hosted === undefined) continue;
     if (entry.hosted.hostedTypes.includes(toolChoice.type)) return { type: 'function', name: entry.toolName };
   }
   return toolChoice;
 };
 
-// Reverse of `rewriteHostedToolChoice` for the upstream-echoed
-// `tool_choice` on the synthesized envelope: a function-typed choice
-// whose name matches an active shim's `toolName` was originally a
-// hosted-type choice. Restore it by stripping the function shape down
-// to `{ type: <hosted-type> }` using the canonical hosted entry's
-// discriminant.
+// The shim demotes forced choice to `auto` after the first turn, so synthesized
+// echoes restore the captured client shape rather than the final upstream echo.
 const restoreEchoedToolChoice = (
   toolChoice: ResponsesToolChoice | null | undefined,
   active: readonly ActiveServerTool[],
 ): ResponsesToolChoice | null | undefined => {
-  if (toolChoice == null || typeof toolChoice === 'string' || toolChoice.type !== 'function') return toolChoice;
   for (const entry of active) {
-    if (entry.canonicalHostedTool === undefined) continue;
-    if (toolChoice.name !== entry.toolName) continue;
-    return { type: entry.canonicalHostedTool.type };
+    if (entry.originalToolChoice !== undefined) return entry.originalToolChoice;
   }
   return toolChoice;
 };
@@ -290,29 +279,35 @@ export const resolveServerToolName = (baseName: string, tools: readonly Response
   throw new Error(`Unable to resolve a free server tool function name for ${baseName} within ${MAX_NAME_RESOLUTION_ATTEMPTS} attempts`);
 };
 
-// First canonicalized hit wins; subsequent same-type hosted entries
-// are silently deduped, matching upstream Copilot's observed behavior
-// (two `{type:'web_search'}` entries collapse into one expanded echo).
-// The returned canonical entry feeds echo-restore and the dispatcher's
-// hosted-tool view.
+// Azure and Copilot both deduplicate repeated hosted-tool declarations as one
+// family and retain the last complete declaration, including aliases and
+// configuration. The replacement occupies the first declaration's array slot
+// so unrelated tools retain their relative order.
+// https://github.com/Menci/Floway/pull/172#issuecomment-4971739422
 const rewriteToolsForHostedShim = (
   tools: readonly ResponsesTool[],
   hosted: ServerToolHostedDispatch,
   toolName: string,
-): { rewritten: ResponsesTool[]; canonicalHostedTool: ResponsesHostedTool | undefined } => {
+): { rewritten: ResponsesTool[]; canonicalHostedTool: ResponsesHostedTool } => {
   const rewritten: ResponsesTool[] = [];
   let canonicalHostedTool: ResponsesHostedTool | undefined = undefined;
+  let replacementIndex = -1;
   for (const raw of tools) {
     const canonical = hosted.canonicalize(raw);
-    if (canonical !== undefined) {
-      if (canonicalHostedTool === undefined) {
-        canonicalHostedTool = canonical;
-        rewritten.push(hosted.buildFunctionTool(canonical, toolName));
-      }
+    if (canonical === undefined) {
+      rewritten.push(raw);
       continue;
     }
-    rewritten.push(raw);
+    if (replacementIndex === -1) {
+      replacementIndex = rewritten.length;
+      rewritten.push(raw);
+    }
+    canonicalHostedTool = canonical;
   }
+  if (canonicalHostedTool === undefined) {
+    throw new Error('Hosted server-tool registration did not match any request tool');
+  }
+  rewritten[replacementIndex] = hosted.buildFunctionTool(canonicalHostedTool, toolName);
   return { rewritten, canonicalHostedTool };
 };
 
@@ -969,14 +964,19 @@ export const withResponsesServerToolShim = (
     const currentTools = Array.isArray(ctx.payload.tools) ? ctx.payload.tools : [];
     const toolName = resolveServerToolName(prepared.baseToolName, currentTools);
     const { hosted } = prepared;
-    const hasHostedTool = hosted !== undefined && currentTools.some(t => hosted.canonicalize(t) !== undefined);
     let canonicalHostedTool: ResponsesHostedTool | undefined = undefined;
-    if (hasHostedTool && hosted !== undefined) {
+    if (hosted !== undefined) {
       const rewrite = rewriteToolsForHostedShim(currentTools, hosted, toolName);
       canonicalHostedTool = rewrite.canonicalHostedTool;
       ctx.payload = { ...ctx.payload, tools: rewrite.rewritten };
     }
-    active.push({ ...prepared, toolName, hasHostedTool, canonicalHostedTool });
+    const originalToolChoice = hosted !== undefined
+      && typeof ctx.payload.tool_choice === 'object'
+      && ctx.payload.tool_choice !== null
+      && hosted.hostedTypes.includes(ctx.payload.tool_choice.type)
+      ? ctx.payload.tool_choice
+      : undefined;
+    active.push({ ...prepared, toolName, canonicalHostedTool, originalToolChoice });
   }
 
   if (active.length === 0) return await run();
@@ -992,7 +992,7 @@ export const withResponsesServerToolShim = (
 
   const hostedActive = active.filter(
     (entry): entry is ActiveServerTool & { hosted: ServerToolHostedDispatch } =>
-      entry.hasHostedTool && entry.hosted !== undefined,
+      entry.hosted !== undefined,
   );
   if (hostedActive.length === 0) return await run();
 

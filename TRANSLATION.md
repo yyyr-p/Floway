@@ -206,21 +206,26 @@ steps.
   missing durable payload returns `item_not_found`, and no provider receives an
   `item_reference` carrier.
 
-- executes hosted `image_generation` through the gateway server-tool shim for
-  translated targets and native Responses providers that opt into the shim.
-  Edit sources are flattened in declaration order from message content,
+- executes hosted `web_search` and `image_generation` through the server-tool
+  shim for translated targets and native Responses providers that opt in. Each
+  hosted family validates every declaration, selects the last complete alias
+  and configuration, injects one collision-resolved function, executes the
+  configured backend, and restores the selected hosted declaration plus a
+  matching hosted `tool_choice` in synthesized echoes. Azure and Copilot return
+  the same last-wins result for reversed web-search controls, matching Azure's
+  hosted image-generation behavior
+  ([probe evidence](https://github.com/Menci/Floway/pull/172#issuecomment-4971739422)).
+  Image edit sources are flattened in declaration order from message content,
   function/custom tool output, and replayed image-generation results. Remote
   HTTP(S) sources are downloaded once during request preparation through the
-  gateway's shared external-image loader, with manual redirect handling,
-  bounded streaming, public-address-only Node egress, and Azure-compatible
-  errors for download and image-format failures. The original URL remains
-  visible to the orchestrator while the cached bytes are reused by the edit
-  backend. Inline and remote masks are materialized by the same path.
-  Any mask `file_id`, including one supplied beside `image_url`, remains an
+  shared external-image loader, with manual redirect handling, bounded
+  streaming, public-address-only Node egress, and Azure-compatible errors for
+  download and image-format failures. The original URL remains visible to the
+  orchestrator while cached bytes are reused by the edit backend. Inline and
+  remote masks are materialized by the same path. A mask `file_id` remains an
   explicit `unsupported_image_source` because it requires the owning
-  upstream's authenticated Files namespace; the shim validates `image_url`
-  before applying that Floway guard. GIF sources are transcoded to WebP for
-  `/images/edits`, and a mask alone is sufficient edit context for `auto`/`edit`.
+  upstream's authenticated Files namespace. GIF sources are transcoded to WebP
+  for `/images/edits`, and a mask alone supplies edit context for `auto`/`edit`.
 - removes unsupported `image_generation` Responses tool entries and forced
   tool choices that targeted them before target request construction. Other
   hosted/deferred Responses tools, including `web_search`, `tool_search`, and
