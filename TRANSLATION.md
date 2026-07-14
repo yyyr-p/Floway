@@ -627,7 +627,14 @@ Request mapping:
   assistant message as `reasoning_items[]`; the first scalar-eligible group also
   projects to `reasoning_text`.
 - `function_call` items become assistant `tool_calls`.
-- `function_call_output` items become Chat `tool` messages.
+- `function_call_output` items become text-only Chat `tool` messages. Because
+  Chat tool messages do not admit image parts, tool-output images are grouped
+  after the contiguous tool-result run in one synthesized user image message;
+  each tool call's image group is preceded by its source `call_id` label.
+  The synthesized message's legal Chat `user` role is authoritative at provider
+  boundaries, so a final lifted-image turn is reported as user-initiated even
+  though its image originated in tool output; no out-of-band provenance
+  contradicts the wire role.
 - `max_output_tokens`, `stream`, `temperature`, `top_p`, `metadata`, `store`,
   `parallel_tool_calls`, `prompt_cache_key`, `safety_identifier`,
   `service_tier`, and explicit `reasoning.effort` pass through when present.
@@ -668,6 +675,8 @@ Known losses:
 - Freeform `custom` tool `format.definition` is preserved as a
   `Lark grammar: ${definition}` description on the wrapped `input` parameter;
   other `format` fields are not preserved.
+- Lifting tool-output images into a user message changes their speaker role but
+  keeps the visual bytes usable on Chat targets.
 - `input_file` message/tool-output content and assistant-side files or images
   have no Chat counterpart and are rejected.
 - File-id-only images cannot be materialized by the pure translator and are
