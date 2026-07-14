@@ -7,7 +7,7 @@ import type { ResponsesInvocation } from '../types.ts';
 import { createInMemoryImageProcessor, initExternalResourceFetcher, initImageProcessor } from '@floway-dev/platform';
 import { eventFrame } from '@floway-dev/protocols/common';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
-import type { ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
+import type { ResponsesResult, ResponsesStreamEvent, ResponsesTool, ResponsesToolChoice } from '@floway-dev/protocols/responses';
 import { type EventResult, type ExecuteResult, type FlagId } from '@floway-dev/provider';
 import { assert, assertEquals, assertStringIncludes, stubModelCandidate } from '@floway-dev/test-utils';
 
@@ -134,6 +134,22 @@ const messageTurn = (text: string): ProtocolFrame<ResponsesStreamEvent>[] => [
   eventFrame({ type: 'response.completed', response: emptyResult('completed') }),
 ] as ProtocolFrame<ResponsesStreamEvent>[];
 
+const withResponseEcho = (
+  frames: ProtocolFrame<ResponsesStreamEvent>[],
+  tools: ResponsesTool[],
+  toolChoice?: ResponsesToolChoice,
+): ProtocolFrame<ResponsesStreamEvent>[] => frames.map(frame => {
+  if (frame.type !== 'event' || (frame.event.type !== 'response.created' && frame.event.type !== 'response.completed')) return frame;
+  return eventFrame({
+    ...frame.event,
+    response: {
+      ...frame.event.response,
+      tools,
+      ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+    },
+  } as ResponsesStreamEvent);
+});
+
 const scriptedRun = (turns: ProtocolFrame<ResponsesStreamEvent>[][]) => {
   let i = 0;
   return async (): Promise<ExecuteResult<ProtocolFrame<ResponsesStreamEvent>>> => {
@@ -144,13 +160,23 @@ const scriptedRun = (turns: ProtocolFrame<ResponsesStreamEvent>[][]) => {
   };
 };
 
-const makeCtx = (input: unknown[], action: 'generate' | 'edit' | 'auto' = 'auto', extraTool: Record<string, unknown> = {}): ResponsesInvocation => ({
+const makeCtx = (
+  input: unknown[],
+  action: 'generate' | 'edit' | 'auto' = 'auto',
+  extraTool: Record<string, unknown> = {},
+  toolChoice?: ResponsesToolChoice,
+): ResponsesInvocation => ({
   candidate: stubModelCandidate({
     enabledFlags: new Set(['responses-image-generation-shim']),
     model: { id: 'm', endpoints: { responses: {} } },
   }),
   targetApi: 'responses',
-  payload: { model: 'orchestrator', input, tools: [{ type: 'image_generation', action, ...extraTool }] } as never,
+  payload: {
+    model: 'orchestrator',
+    input,
+    tools: [{ type: 'image_generation', action, ...extraTool }],
+    ...(toolChoice !== undefined ? { tool_choice: toolChoice } : {}),
+  } as never,
   headers: new Headers(),
   action: 'generate',
 });
@@ -217,6 +243,24 @@ test('generates an image end-to-end and emits the native lifecycle', async () =>
   assertEquals(item.status, 'completed');
   assertEquals(item.result, 'R0VO');
   assertEquals(item.action, 'generate');
+});
+
+test('restores a forced hosted choice when the terminal upstream echo omits it', async () => {
+  stub.nextGenerations = [jsonResponse('R0VO')];
+  const hostedChoice = { type: 'image_generation' } as const;
+  const invocation = makeCtx([], 'generate', { quality: 'high' }, hostedChoice);
+  const hostedTool = invocation.payload.tools![0];
+  const replacement = { type: 'function', name: 'image_generation', parameters: {}, strict: false } as ResponsesTool;
+  const result = await shim(invocation, gatewayCtx(), scriptedRun([
+    withResponseEcho(callTurn(0, 'call_1', 'a cat'), [replacement], { type: 'function', name: 'image_generation' }),
+    withResponseEcho(messageTurn('done'), [replacement]),
+  ]));
+  const events = await drain(result);
+
+  const completed = events.find(event => event.type === 'response.completed');
+  assert(completed?.type === 'response.completed');
+  assertEquals(completed.response.tools, [hostedTool]);
+  assertEquals(completed.response.tool_choice, hostedChoice);
 });
 
 test('relays real partial_image frames when partial_images > 0', async () => {
