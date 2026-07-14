@@ -8,8 +8,8 @@ import { InMemoryRepo } from '../../../repo/memory.ts';
 import type { ApiKey, StoredResponsesItem, User } from '../../../repo/types.ts';
 import { type AliasRules, doneFrame, eventFrame, type ModelEndpoints, type ProtocolFrame } from '@floway-dev/protocols/common';
 import type { CanonicalResponsesPayload, ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
-import { type ModelCandidate, directFetcher, type ProviderResponsesResult, type ResponsesAction, type UpstreamCallOptions } from '@floway-dev/provider';
-import { assert, assertEquals, stubProvider, stubInternalModel } from '@floway-dev/test-utils';
+import { type FlagId, type ModelCandidate, directFetcher, type ProviderResponsesResult, type ResponsesAction, type UpstreamCallOptions } from '@floway-dev/provider';
+import { assert, assertEquals, stubProvider, stubInternalModel, stubProviderModel } from '@floway-dev/test-utils';
 
 // Mock the resolver seam so each test hands the http entry exactly the
 // provider candidates it wants, optionally with an alias-rules overlay
@@ -119,9 +119,11 @@ const makeProviderEvents = async function* (events: readonly ResponsesStreamEven
 const makeCandidate = (overrides: {
   upstream?: string;
   endpoints?: ModelEndpoints;
+  enabledFlags?: ReadonlySet<FlagId>;
   callResponses?: (model: unknown, body: unknown, action: ResponsesAction, signal?: AbortSignal, opts?: UpstreamCallOptions) => Promise<ProviderResponsesResult>;
 } = {}): ModelCandidate => {
   const upstream = overrides.upstream ?? 'up_test';
+  const endpoints = overrides.endpoints ?? { chatCompletions: {}, responses: {}, messages: {} };
   const provider = stubProvider({
     callResponses: overrides.callResponses,
   });
@@ -134,7 +136,15 @@ const makeCandidate = (overrides: {
       modelPrefix: null,
       instance: provider,
     },
-    model: stubInternalModel(overrides.endpoints ? { endpoints: overrides.endpoints } : {}, upstream),
+    model: stubInternalModel({
+      endpoints,
+      providerModels: {
+        [upstream]: stubProviderModel({
+          endpoints,
+          enabledFlags: overrides.enabledFlags ?? new Set(),
+        }),
+      },
+    }, upstream),
     fetcher: directFetcher,
   };
 };
@@ -177,7 +187,7 @@ test('POST /v1/responses streams a successful SSE body', async () => {
   assertEquals(callResponses.mock.calls.length, 1);
 });
 
-test('POST /v1/responses canonicalizes implicit messages before provider dispatch', async () => {
+test('POST /v1/responses canonicalizes and promotes an implicit system message', async () => {
   installRepo();
   let observedBody: Omit<CanonicalResponsesPayload, 'model'> | undefined;
   const callResponses = vi.fn(async (_model, body): Promise<ProviderResponsesResult> => {
@@ -190,7 +200,10 @@ test('POST /v1/responses canonicalizes implicit messages before provider dispatc
       headers: new Headers(),
     };
   });
-  queueResolution([makeCandidate({ callResponses })]);
+  queueResolution([makeCandidate({
+    callResponses,
+    enabledFlags: new Set(['promote-system-to-developer']),
+  })]);
 
   const response = await makeApp().request('/v1/responses', {
     method: 'POST',
@@ -209,7 +222,7 @@ test('POST /v1/responses canonicalizes implicit messages before provider dispatc
   assertEquals(response.status, 200);
   await response.text();
   assertEquals(observedBody?.input, [
-    { type: 'message', role: 'system', content: 'rules' },
+    { type: 'message', role: 'developer', content: 'rules' },
     { type: 'message', role: 'user', content: 'hello' },
   ]);
 });

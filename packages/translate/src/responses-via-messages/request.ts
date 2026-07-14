@@ -204,7 +204,7 @@ const translateResponsesInput = async (input: ResponsesInputItem[], loadRemoteIm
       case 'system':
       case 'developer': {
         // The leading prefix was lifted above; keep later instruction messages
-        // inline to preserve chronology.
+        // inline so chronology reaches the target role-compatibility pass.
         const blocks = responsesSystemBlocks(item);
         messages.push({ role: 'system', content: blocks.length > 0 ? blocks : '' });
         break;
