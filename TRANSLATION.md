@@ -77,6 +77,12 @@ the gateway returns a Gemini-shaped unsupported-model error.
   sees a Messages request and Messages result/events whether Messages is the
   source the client sent or the target the upstream serves; Responses, Chat
   Completions, and Gemini follow the same rule.
+- Role compatibility is target-only within those lists, so translator bullets
+  describe the intermediate target shape rather than an unconditional final
+  wire role. Chat Completions and Responses apply enabled role rewrites in the
+  fixed order system-to-developer, developer-to-system, then interleaved
+  system-to-user. Messages can demote every inline system message to user
+  because its only first-position system slot is the top-level `system` field.
 - Each provider runs its own boundary interceptor chain inside its `call*`
   method, after the gateway-side chain and immediately before the wire. The
   boundary chain owns provider-specific quirks: image compression, header
@@ -251,12 +257,24 @@ The same boundary runs for both `/v1/responses` (streaming) and
 
 Codex (ChatGPT subscription) only serves Responses; Messages, Chat
 Completions, and Gemini reach Codex through translation. The same boundary
-runs for both `/v1/responses` and the synthesized `/v1/responses/compact`
-path (Codex has no native compact endpoint; the provider drives `compaction_trigger`
-inline and rebuilds the envelope client-side).
+runs for streaming `/v1/responses` and non-streaming `/v1/responses/compact`.
+The compact action is narrowed to the compact request shape and dispatched
+directly to the subscription backend's `/codex/responses/compact` endpoint.
 
-- hoists `role: "system"` items out of `input` into top-level `instructions`
-  (the upstream rejects system messages inside `input`)
+Codex enables `promote-system-to-developer` by default. While that effective
+flag remains enabled, the target Responses interceptor rewrites input messages
+from `role: "system"` to `role: "developer"`. It changes only the role; item
+order, content-part boundaries, ids, and status remain intact. This also covers
+a multi-block Messages `system` field after generic translation has preserved
+it as one multi-part input message. Native Responses instructions, Gemini
+`systemInstruction`, and a string or single-block Messages `system` stay in the
+top-level `instructions` field; input messages are never folded into it. The
+provider's default-instructions step below remains independent. The developer
+representation matches the official Codex Responses Lite wire:
+https://github.com/openai/codex/blob/1f17e7512f0e47625f2cad416f14870688a99814/codex-rs/core/src/client.rs#L829-L849
+
+The Codex boundary then runs these steps:
+
 - injects a neutral default only when `instructions` is absent, `null`, or an
   empty string. Other malformed external values pass through so the upstream
   owns validation. Current ChatGPT-subscription catalog models reject empty or
@@ -379,8 +397,10 @@ Known losses:
 
 Request mapping:
 
-- `system` becomes Responses `instructions`; multi-block system text is joined
-  with blank lines.
+- a string or single text-block `system` maps directly to Responses
+  `instructions`. A multi-block `system` becomes one leading `role: "system"`
+  input message with a separate `input_text` part for each source block, so the
+  generic translation preserves block boundaries.
 - user text and images become Responses `message` input content.
 - user `tool_result` blocks become `function_call_output` items, preserving
   source order relative to user text by splitting input items when necessary.
@@ -430,8 +450,10 @@ Known losses:
 
 Request mapping:
 
-- `instructions` and input `system` / `developer` messages become top-level
-  Messages `system`, joined with blank lines.
+- `instructions` and the leading contiguous input `system` / `developer`
+  prefix become top-level Messages `system`; each source and content part stays
+  a separate text block. Later system/developer messages remain inline to
+  preserve chronology.
 - string input becomes one user message.
 - user `input_text` becomes Messages text; `input_image` URLs are resolved via
   the gateway-injected platform external-resource loader and converted to
@@ -543,8 +565,9 @@ Known losses:
 
 Request mapping:
 
-- Chat `system` and `developer` messages become top-level Messages `system`,
-  joined with blank lines.
+- the leading contiguous Chat `system` / `developer` prefix becomes top-level
+  Messages `system`, preserving each source content part as a separate text
+  block. Later instruction messages remain inline in chronological order.
 - Chat user text and supported images become Messages user blocks. Remote images
   are resolved through the same gateway-injected external-resource loader.
 - Chat assistant `content` becomes assistant text.

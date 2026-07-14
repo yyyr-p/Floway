@@ -10,9 +10,10 @@ import type { StoredResponsesItem } from '../../../repo/types.ts';
 import { mockChatGatewayCtx } from '../../../test-helpers/gateway-ctx.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { initExternalResourceFetcher } from '@floway-dev/platform';
+import type { ChatCompletionsPayload, ChatCompletionsStreamEvent } from '@floway-dev/protocols/chat-completions';
 import { doneFrame, eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
 import type { MessagesPayload, MessagesStreamEvent } from '@floway-dev/protocols/messages';
-import type { CanonicalResponsesPayload, ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
+import type { CanonicalResponsesPayload, ResponsesPayload, ResponsesResult, ResponsesStreamEvent } from '@floway-dev/protocols/responses';
 import { type ModelCandidate, directFetcher, type ProviderModel, type ProviderResponsesResult, type ProviderStreamResult, type ResponsesAction, type UpstreamCallOptions, type FlagId } from '@floway-dev/provider';
 import { assert, assertEquals, stubProvider, stubInternalModel, stubProviderModel } from '@floway-dev/test-utils';
 
@@ -147,6 +148,139 @@ test('generate native success wraps the upstream event stream once', async () =>
   assertEquals(commitSpy.mock.calls[0][1], 'append');
 
   wrapSpy.mockRestore();
+});
+
+test('generate applies role compatibility flags in target-chain order', async () => {
+  installRepo();
+  let observedBody: Omit<ResponsesPayload, 'model'> | undefined;
+  const callResponses = vi.fn(async (
+    _model: ProviderModel,
+    body: Omit<ResponsesPayload, 'model'>,
+  ): Promise<ProviderResponsesResult> => {
+    observedBody = body;
+    return {
+      action: 'generate',
+      ok: true,
+      events: makeProviderEvents([{
+        type: 'response.completed',
+        sequence_number: 0,
+        response: makeResponsesResult(),
+      }]),
+      modelKey: 'test-model-key',
+      headers: new Headers(),
+    };
+  });
+  const candidate = makeCandidate(callResponses, new Set([
+    'demote-developer-to-system',
+    'demote-interleaved-system-to-user',
+    'promote-system-to-developer',
+  ]));
+
+  const result = await responsesAttempt.generate({
+    payload: makePayload({
+      input: [
+        { type: 'message', role: 'system', content: 'base instructions' },
+        { type: 'message', role: 'user', content: 'hello' },
+        { type: 'message', role: 'system', content: 'inline instructions' },
+      ],
+    }),
+    ctx: makeGatewayCtx(createResponsesHttpStore(API_KEY_ID, false)),
+    candidate,
+    headers: new Headers(),
+  });
+
+  assertEquals(result.type, 'events');
+  if (result.type !== 'events') throw new Error('unreachable');
+  await collectEvents(result.events);
+  assertEquals(observedBody?.input, [
+    { type: 'message', role: 'system', content: 'base instructions' },
+    { type: 'message', role: 'user', content: 'hello' },
+    { type: 'message', role: 'user', content: 'inline instructions' },
+  ]);
+});
+
+test('generate defers role promotion until after translation to Chat Completions', async () => {
+  installRepo();
+  let observedBody: Omit<ChatCompletionsPayload, 'model'> | undefined;
+  const callChatCompletions = vi.fn(async (
+    _model: ProviderModel,
+    body: Omit<ChatCompletionsPayload, 'model'>,
+  ): Promise<ProviderStreamResult<ChatCompletionsStreamEvent>> => {
+    observedBody = body;
+    return {
+      ok: true,
+      events: (async function* () {
+        yield eventFrame<ChatCompletionsStreamEvent>({
+          id: 'chatcmpl_test',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'test-model',
+          choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+        });
+        yield eventFrame<ChatCompletionsStreamEvent>({
+          id: 'chatcmpl_test',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'test-model',
+          choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
+        });
+        yield eventFrame<ChatCompletionsStreamEvent>({
+          id: 'chatcmpl_test',
+          object: 'chat.completion.chunk',
+          created: 0,
+          model: 'test-model',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        });
+        yield doneFrame();
+      })(),
+      modelKey: 'test-model-key',
+      headers: new Headers(),
+    };
+  });
+  const upstream = 'up_chat';
+  const endpoints = { chatCompletions: {} };
+  const candidate: ModelCandidate = {
+    provider: {
+      upstream,
+      kind: 'custom',
+      name: upstream,
+      disabledPublicModelIds: [],
+      modelPrefix: null,
+      instance: stubProvider({ callChatCompletions }),
+    },
+    model: stubInternalModel({
+      endpoints,
+      providerModels: {
+        [upstream]: stubProviderModel({
+          endpoints,
+          enabledFlags: new Set(['promote-system-to-developer']),
+        }),
+      },
+    }, upstream),
+    fetcher: directFetcher,
+  };
+
+  const result = await responsesAttempt.generate({
+    payload: makePayload({
+      input: [
+        { type: 'message', role: 'system', content: 'base instructions' },
+        { type: 'message', role: 'user', content: 'hello' },
+        { type: 'message', role: 'system', content: 'inline instructions' },
+      ],
+    }),
+    ctx: makeGatewayCtx(createResponsesHttpStore(API_KEY_ID, false)),
+    candidate,
+    headers: new Headers(),
+  });
+
+  assertEquals(result.type, 'events');
+  if (result.type !== 'events') throw new Error('unreachable');
+  await collectEvents(result.events);
+  assertEquals(observedBody?.messages, [
+    { role: 'developer', content: 'base instructions' },
+    { role: 'user', content: 'hello' },
+    { role: 'developer', content: 'inline instructions' },
+  ]);
 });
 
 test('generate derives snapshotMode=replace when the upstream emits a compaction output item', async () => {
