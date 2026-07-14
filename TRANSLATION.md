@@ -61,6 +61,12 @@ the gateway returns a Gemini-shaped unsupported-model error.
   boundaries normalize it to an explicit `type: "message"` before storage,
   interception, or translation. Malformed untyped items are rejected as caller
   input errors at the same boundary.
+- Responses create and compact request shapes model open-string
+  `prompt_cache_options` and `prompt_cache_retention`. Native compact projection
+  forwards both controls verbatim; provider-specific rejection remains a
+  boundary workaround (Codex strips `prompt_cache_retention`).
+- Explicit `prompt_cache_breakpoint` metadata on text, image, and file content
+  survives canonicalization and retained-message compaction.
 - Translators do not synthesize defaults merely to satisfy a target shape.
   Examples: no translated-only `temperature: 1`, `store: false`,
   `parallel_tool_calls: true`, or `reasoning.summary: "detailed"`.
