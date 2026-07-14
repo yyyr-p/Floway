@@ -3,15 +3,24 @@ import type { ResponsesBoundaryCtx } from './types.ts';
 import type { ResponsesInputImage } from '@floway-dev/protocols/responses';
 import { isBase64ImageDataUrl, memoizedDataUrlCompressor } from '@floway-dev/provider';
 
+// A cyber-policy retry re-enters this boundary with the same nested image
+// part. Remember the exact generated URL on that request-owned object so the
+// retry neither re-encodes a lossy WebP nor mistakes an unrelated client WebP
+// for our output. The non-enumerable property stays off the wire and does not
+// cross an object-spread/JSON ownership boundary.
+const compressedImageUrl = Symbol('compressedImageUrl');
+type CompressibleImagePart = ResponsesInputImage & { image_url: string; [compressedImageUrl]?: string };
+
 const compressInlineImages = async (ctx: ResponsesBoundaryCtx): Promise<void> => {
-  const targets: Array<{ part: ResponsesInputImage; imageUrl: string }> = [];
+  const targets: Array<{ part: CompressibleImagePart; imageUrl: string }> = [];
   for (const item of ctx.payload.input) {
     const parts = item.type === 'message' ? item.content : item.type === 'function_call_output' ? item.output : undefined;
     if (!Array.isArray(parts)) continue;
     for (const part of parts) {
-      if (part.type === 'input_image' && typeof part.image_url === 'string' && isBase64ImageDataUrl(part.image_url)) {
-        targets.push({ part, imageUrl: part.image_url });
-      }
+      if (part.type !== 'input_image' || typeof part.image_url !== 'string') continue;
+      const imagePart = part as CompressibleImagePart;
+      if (imagePart[compressedImageUrl] === imagePart.image_url || !isBase64ImageDataUrl(imagePart.image_url)) continue;
+      targets.push({ part: imagePart, imageUrl: imagePart.image_url });
     }
   }
 
@@ -21,6 +30,11 @@ const compressInlineImages = async (ctx: ResponsesBoundaryCtx): Promise<void> =>
   await Promise.all(
     targets.map(async target => {
       target.part.image_url = await compress(target.imageUrl);
+      Object.defineProperty(target.part, compressedImageUrl, {
+        configurable: true,
+        value: target.part.image_url,
+        writable: true,
+      });
     }),
   );
 };
