@@ -33,6 +33,14 @@ const sortByTierDistance = (target: number) => (a: string, b: string) => {
   return da !== db ? da - db : b.localeCompare(a);
 };
 const sortCodex = (a: string, b: string) => {
+  // Codex-family (gpt-5*) ids rank above the rest so the default lands on a
+  // Codex model even when the pool contains foreign ids the operator might
+  // route through Floway's translator. Claude side does not need an
+  // equivalent — `claudeTier` already returns 99 for non-Claude ids, which
+  // sinks them via distance in `sortByTierDistance`.
+  const ac = CODEX_RE.test(a) ? 0 : 1;
+  const bc = CODEX_RE.test(b) ? 0 : 1;
+  if (ac !== bc) return ac - bc;
   const am = a.includes('mini') ? 1 : 0;
   const bm = b.includes('mini') ? 1 : 0;
   return am !== bm ? am - bm : b.localeCompare(a);
