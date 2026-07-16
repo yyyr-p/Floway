@@ -576,8 +576,24 @@ const announcedMetadataSchema = z.object({
   chat: chatSchema.optional(),
 });
 
+// Mirrors MODEL_PREFIX_REGEX in packages/provider/src/model-prefix.ts:27,
+// but without the trailing '/', because alias.name is the full published
+// model id — not a prefix. '/'-separated segments are allowed so an
+// operator can name a virtual model `openrouter/claude-4-opus`, the same
+// shape real upstream ids already carry. The regex incidentally rejects
+// URL-reserved characters (':', '?', '#', '%'), whitespace, control
+// characters (including NUL, which is the token-usage bucket key
+// separator in control-plane/token-usage/aggregate.ts), and any
+// non-ASCII code point, so the value passes safely through REST path
+// segments and every internal key that stores it verbatim.
+const ALIAS_NAME_REGEX = /^[a-zA-Z0-9._-]+(\/[a-zA-Z0-9._-]+)*$/;
+const ALIAS_NAME_MAX_LENGTH = 128;
+const aliasNameSchema = z.string()
+  .max(ALIAS_NAME_MAX_LENGTH, `alias name must be at most ${ALIAS_NAME_MAX_LENGTH} characters`)
+  .regex(ALIAS_NAME_REGEX, "alias name must be letters, digits, '.', '_', '-', optionally in '/'-separated segments");
+
 const aliasBaseShape = {
-  name: z.string().min(1),
+  name: aliasNameSchema,
   kind: z.enum(['chat', 'embedding', 'image']),
   selection: z.enum(['random', 'first-available']),
   display_name: z.string().min(1).nullable(),
