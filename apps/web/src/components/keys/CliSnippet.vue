@@ -94,64 +94,49 @@ const claudeSnippet = computed(() => JSON.stringify({
   },
 }, null, 2));
 
-const codexBaseUrl = computed(() => `${baseUrl.value}/azure-api.codex`);
-
-// Static alg=none id_token codex parses for TUI display; not signed and not
-// verified server-side. host-derived email keeps multi-deployment dashboards
-// distinguishable in `codex login status`.
-const codexIdToken = computed(() => {
-  const host = (() => {
-    try { return new URL(baseUrl.value).host; } catch { return 'local'; }
-  })();
-  const b64url = (s: string) => btoa(s).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
-  const header = b64url('{"alg":"none","typ":"JWT"}');
-  const payload = b64url(JSON.stringify({
-    email: `floway@${host}`,
-    'https://api.openai.com/auth': {
-      chatgpt_plan_type: 'pro_plus',
-      chatgpt_user_id: 'user-floway',
-      chatgpt_account_id: 'acct-floway',
-    },
-  }));
-  return `${header}.${payload}.c2ln`;
-});
-
+// Codex treats an actor-authorized custom provider as eligible for its
+// client-owned search and image extensions. This non-secret marker selects
+// those tools locally; Floway removes it before provider dispatch.
+// https://github.com/openai/codex/blob/1bbdb32789e1f79932df44941236ea3658f6e965/codex-rs/model-provider-info/src/lib.rs#L396-L408
+// https://github.com/openai/codex/blob/1bbdb32789e1f79932df44941236ea3658f6e965/codex-rs/ext/web-search/src/extension.rs#L39-L49
+// https://github.com/openai/codex/blob/1bbdb32789e1f79932df44941236ea3658f6e965/codex-rs/core/src/tools/spec_plan.rs#L367-L394
 const codexSnippet = computed(() => [
   `model = "${codexModel.value}"`,
   'model_provider = "floway"',
-  `chatgpt_base_url = "${codexBaseUrl.value}"`,
   '',
   '[model_providers.floway]',
   'name = "Floway"',
-  `base_url = "${codexBaseUrl.value}"`,
+  `base_url = "${baseUrl.value}/azure-api.codex"`,
+  // Command auth is provider-scoped and also opts the provider into online
+  // model refresh; a static bearer or env key does not satisfy that gate.
+  // https://github.com/openai/codex/blob/1bbdb32789e1f79932df44941236ea3658f6e965/codex-rs/models-manager/src/manager.rs#L413-L415
+  'auth = { command = "sh", args = ["-c", "cat \\"${CODEX_HOME:-$HOME/.codex}/floway-token\\""] } # Linux & macOS',
+  `# auth = { command = "powershell", args = ["-NoProfile", "-Command", "$h = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }; [IO.File]::ReadAllText((Join-Path $h 'floway-token'))"] } # Windows: uncomment and remove the line above`,
   'wire_api = "responses"',
   'supports_websockets = true',
+  'http_headers = { "x-openai-actor-authorization" = "1" }',
   '',
   '[features]',
   'apps = false',
+  'standalone_web_search = true',
 ].join('\n'));
 
-// Unquoted heredoc so `$(date -u +...)` runs in the user's shell to stamp
-// last_refresh at paste time. base64url chars are shell-safe so the JSON
-// body needs no escaping beyond what JSON.stringify produces.
-const codexAuthCommand = computed(() => {
-  const auth = {
-    auth_mode: 'chatgpt',
-    openai_api_key: null,
-    tokens: {
-      id_token: codexIdToken.value,
-      access_token: props.apiKey,
-      refresh_token: 'noop',
-    },
-    last_refresh: '__LAST_REFRESH__',
-  };
-  const json = JSON.stringify(auth).replace('"__LAST_REFRESH__"', '"$(date -u +%Y-%m-%dT%H:%M:%SZ)"');
+const codexUnixCredentialCommand = computed(() => {
+  const quotedApiKey = `'${props.apiKey.replaceAll("'", `'"'"'`)}'`;
   return [
-    'mkdir -p ~/.codex && \\',
-    '  { [ -f ~/.codex/auth.json ] && cp ~/.codex/auth.json ~/.codex/auth.json.bak.$(date +%s); :; } && \\',
-    '  cat > ~/.codex/auth.json <<EOF',
-    json,
-    'EOF',
+    'codex_home="${CODEX_HOME:-$HOME/.codex}"',
+    'mkdir -p "$codex_home" && \\',
+    `  printf '%s' ${quotedApiKey} > "$codex_home/floway-token" && \\`,
+    '  chmod 600 "$codex_home/floway-token"',
+  ].join('\n');
+});
+
+const codexWindowsCredentialCommand = computed(() => {
+  const quotedApiKey = `'${props.apiKey.replaceAll("'", "''")}'`;
+  return [
+    '$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }',
+    'New-Item -ItemType Directory -Force -Path $codexHome | Out-Null',
+    `[IO.File]::WriteAllText((Join-Path $codexHome "floway-token"), ${quotedApiKey}, (New-Object Text.UTF8Encoding($false)))`,
   ].join('\n');
 });
 
@@ -193,8 +178,11 @@ const selectClass = 'max-w-full text-xs font-mono bg-surface-800 text-gray-300 b
       <p class="text-[11px] text-gray-600 mb-2">Merge into <code class="text-gray-500">~/.codex/config.toml</code></p>
       <Code :code="codexSnippet" language="toml" />
 
-      <p class="text-[11px] text-gray-600 mt-4 mb-2">Paste in a shell — writes <code class="text-gray-500">~/.codex/auth.json</code>, backing up any existing file first</p>
-      <Code :code="codexAuthCommand" language="bash" />
+      <p class="text-[11px] text-gray-600 mt-4 mb-2">Linux &amp; macOS — stores only the Floway provider token under the active <code class="text-gray-500">CODEX_HOME</code></p>
+      <Code :code="codexUnixCredentialCommand" language="bash" />
+
+      <p class="text-[11px] text-gray-600 mt-4 mb-2">Windows PowerShell — stores the same provider token without changing the official account login</p>
+      <Code :code="codexWindowsCredentialCommand" language="text" />
     </div>
   </div>
 </template>
