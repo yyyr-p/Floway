@@ -61,6 +61,21 @@ const codexIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id
 const claudeModelsByTier = computed<Record<ClaudeTierKey, string[]>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))])) as Record<ClaudeTierKey, string[]>);
 const codexModels = computed(() => [...codexIds.value].sort(sortCodex));
 
+// `<optgroup>` split: matched ids appear under the family label, everything
+// else under "Other". Even with the family-first sort putting matched ids at
+// the top, a native visual separator matters when the pool grows past a
+// dozen items — a plain unlabeled list makes it hard to tell where the
+// operator's untranslated foreign models begin. Zero-length groups collapse
+// via `v-if` in the template so single-family upstream sets render as
+// before.
+type GroupedIds = { matched: string[]; other: string[] };
+const partition = (list: string[], re: RegExp): GroupedIds => ({
+  matched: list.filter(id => re.test(id)),
+  other: list.filter(id => !re.test(id)),
+});
+const claudeGroupsByTier = computed<Record<ClaudeTierKey, GroupedIds>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, partition(claudeModelsByTier.value[k], CLAUDE_RE)])) as Record<ClaudeTierKey, GroupedIds>);
+const codexGroups = computed(() => partition(codexModels.value, CODEX_RE));
+
 const claudeSelection = reactive<Record<ClaudeTierKey, string>>({ fable: '', opus: '', sonnet: '', haiku: '' });
 const codexModel = ref('');
 
@@ -185,7 +200,12 @@ const selectClass = 'max-w-full text-xs font-mono bg-surface-800 text-gray-300 b
         <div v-for="k in CLAUDE_TIER_KEYS" :key="k" class="flex min-w-0 items-center gap-2">
           <label class="text-xs text-gray-500">{{ CLAUDE_TIER_LABELS[k] }}:</label>
           <select v-model="claudeSelection[k]" :class="selectClass">
-            <option v-for="m in claudeModelsByTier[k]" :key="m" :value="m">{{ m }}</option>
+            <optgroup v-if="claudeGroupsByTier[k].matched.length" label="Claude">
+              <option v-for="m in claudeGroupsByTier[k].matched" :key="m" :value="m">{{ m }}</option>
+            </optgroup>
+            <optgroup v-if="claudeGroupsByTier[k].other.length" label="Other">
+              <option v-for="m in claudeGroupsByTier[k].other" :key="m" :value="m">{{ m }}</option>
+            </optgroup>
           </select>
         </div>
       </div>
@@ -202,7 +222,12 @@ const selectClass = 'max-w-full text-xs font-mono bg-surface-800 text-gray-300 b
       <div class="flex min-w-0 items-center gap-2 mb-3">
         <label class="text-xs text-gray-500">Model:</label>
         <select v-model="codexModel" :class="selectClass">
-          <option v-for="m in codexModels" :key="m" :value="m">{{ m }}</option>
+          <optgroup v-if="codexGroups.matched.length" label="Codex">
+            <option v-for="m in codexGroups.matched" :key="m" :value="m">{{ m }}</option>
+          </optgroup>
+          <optgroup v-if="codexGroups.other.length" label="Other">
+            <option v-for="m in codexGroups.other" :key="m" :value="m">{{ m }}</option>
+          </optgroup>
         </select>
       </div>
 
