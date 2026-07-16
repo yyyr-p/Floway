@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watchEffect } from 'vue';
+import { computed, reactive, ref, watchEffect } from 'vue';
 
 import type { ControlPlaneModel } from '../../api/types.ts';
 import { Code } from '@floway-dev/ui';
@@ -15,7 +15,10 @@ const baseUrl = computed(() => window.location.origin);
 // Floway integration is the gpt-5 family only. Backend already collapses
 // dated / variant suffixes; dedupe by id and sort by family tier so each
 // slot's default lands on the canonical Fable / Opus / Sonnet / Haiku.
+const CLAUDE_TIER_KEYS = ['fable', 'opus', 'sonnet', 'haiku'] as const;
+type ClaudeTierKey = typeof CLAUDE_TIER_KEYS[number];
 const CLAUDE_TIER: Record<string, number> = { fable: 0, opus: 1, sonnet: 2, haiku: 3 };
+const CLAUDE_TIER_LABELS: Record<ClaudeTierKey, string> = { fable: 'Fable', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
 const claudeTier = (id: string) => {
   for (const t of Object.keys(CLAUDE_TIER)) if (id.includes(t)) return CLAUDE_TIER[t]!;
   return 99;
@@ -43,25 +46,18 @@ const CODEX_RE = /(^|\/)gpt-5/;
 const claudeIds = computed(() => dedupe(props.models.filter(m => CLAUDE_RE.test(m.id) && isChat(m)).map(m => m.id)));
 const codexIds = computed(() => dedupe(props.models.filter(m => CODEX_RE.test(m.id) && isChat(m)).map(m => m.id)));
 
-const claudeModelsFable = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.fable!)));
-const claudeModelsOpus = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.opus!)));
-const claudeModelsSonnet = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.sonnet!)));
-const claudeModelsHaiku = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.haiku!)));
+const claudeModelsByTier = computed<Record<ClaudeTierKey, string[]>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))])) as Record<ClaudeTierKey, string[]>);
 const codexModels = computed(() => [...codexIds.value].sort(sortCodex));
 
-const claudeFableModel = ref('');
-const claudeOpusModel = ref('');
-const claudeSonnetModel = ref('');
-const claudeHaikuModel = ref('');
+const claudeSelection = reactive<Record<ClaudeTierKey, string>>({ fable: '', opus: '', sonnet: '', haiku: '' });
 const codexModel = ref('');
 
 // Keep the selection valid as the model lists rehydrate: if the current pick
 // disappears (e.g. an upstream toggled off), fall back to the bucket head.
 watchEffect(() => {
-  if (!claudeModelsFable.value.includes(claudeFableModel.value)) claudeFableModel.value = claudeModelsFable.value[0] ?? '';
-  if (!claudeModelsOpus.value.includes(claudeOpusModel.value)) claudeOpusModel.value = claudeModelsOpus.value[0] ?? '';
-  if (!claudeModelsSonnet.value.includes(claudeSonnetModel.value)) claudeSonnetModel.value = claudeModelsSonnet.value[0] ?? '';
-  if (!claudeModelsHaiku.value.includes(claudeHaikuModel.value)) claudeHaikuModel.value = claudeModelsHaiku.value[0] ?? '';
+  for (const k of CLAUDE_TIER_KEYS) {
+    if (!claudeModelsByTier.value[k].includes(claudeSelection[k])) claudeSelection[k] = claudeModelsByTier.value[k][0] ?? '';
+  }
   if (!codexModels.value.includes(codexModel.value)) codexModel.value = codexModels.value[0] ?? '';
 });
 
@@ -91,10 +87,10 @@ const claudeSnippet = computed(() => JSON.stringify({
   env: {
     ANTHROPIC_BASE_URL: baseUrl.value,
     ANTHROPIC_AUTH_TOKEN: props.apiKey,
-    ANTHROPIC_DEFAULT_FABLE_MODEL: addCtx(claudeFableModel.value),
-    ANTHROPIC_DEFAULT_OPUS_MODEL: addCtx(claudeOpusModel.value),
-    ANTHROPIC_DEFAULT_SONNET_MODEL: addCtx(claudeSonnetModel.value),
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeHaikuModel.value,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: addCtx(claudeSelection.fable),
+    ANTHROPIC_DEFAULT_OPUS_MODEL: addCtx(claudeSelection.opus),
+    ANTHROPIC_DEFAULT_SONNET_MODEL: addCtx(claudeSelection.sonnet),
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeSelection.haiku,
   },
 }, null, 2));
 
@@ -170,28 +166,10 @@ const selectClass = 'max-w-full text-xs font-mono bg-surface-800 text-gray-300 b
       </div>
 
       <div class="flex flex-wrap items-center gap-x-4 gap-y-2 mb-3">
-        <div class="flex min-w-0 items-center gap-2">
-          <label class="text-xs text-gray-500">Fable:</label>
-          <select v-model="claudeFableModel" :class="selectClass">
-            <option v-for="m in claudeModelsFable" :key="m" :value="m">{{ m }}</option>
-          </select>
-        </div>
-        <div class="flex min-w-0 items-center gap-2">
-          <label class="text-xs text-gray-500">Opus:</label>
-          <select v-model="claudeOpusModel" :class="selectClass">
-            <option v-for="m in claudeModelsOpus" :key="m" :value="m">{{ m }}</option>
-          </select>
-        </div>
-        <div class="flex min-w-0 items-center gap-2">
-          <label class="text-xs text-gray-500">Sonnet:</label>
-          <select v-model="claudeSonnetModel" :class="selectClass">
-            <option v-for="m in claudeModelsSonnet" :key="m" :value="m">{{ m }}</option>
-          </select>
-        </div>
-        <div class="flex min-w-0 items-center gap-2">
-          <label class="text-xs text-gray-500">Haiku:</label>
-          <select v-model="claudeHaikuModel" :class="selectClass">
-            <option v-for="m in claudeModelsHaiku" :key="m" :value="m">{{ m }}</option>
+        <div v-for="k in CLAUDE_TIER_KEYS" :key="k" class="flex min-w-0 items-center gap-2">
+          <label class="text-xs text-gray-500">{{ CLAUDE_TIER_LABELS[k] }}:</label>
+          <select v-model="claudeSelection[k]" :class="selectClass">
+            <option v-for="m in claudeModelsByTier[k]" :key="m" :value="m">{{ m }}</option>
           </select>
         </div>
       </div>
