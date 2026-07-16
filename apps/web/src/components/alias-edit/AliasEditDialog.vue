@@ -197,7 +197,7 @@ const save = async () => {
     } else if (props.record) {
       const oldName = props.record.name;
       const { error } = await callApi(() => api.api.aliases[':name'].$put({
-        param: { name: oldName },
+        param: { name: encodeURIComponent(oldName) },
         json: body,
       }));
       if (error) { saveError.value = error.message; return; }

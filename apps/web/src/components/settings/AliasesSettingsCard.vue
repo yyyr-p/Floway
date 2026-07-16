@@ -22,7 +22,7 @@ const aliases = computed<ModelAlias[]>(() => aliasesStore.aliases.value ?? []);
 
 const deleteAlias = async (record: ModelAlias) => {
   if (!window.confirm(`Delete alias "${record.name}"?`)) return;
-  const { error } = await callApi(() => api.api.aliases[':name'].$delete({ param: { name: record.name } }));
+  const { error } = await callApi(() => api.api.aliases[':name'].$delete({ param: { name: encodeURIComponent(record.name) } }));
   if (error) {
     window.alert(`Delete failed: ${error.message}`);
     return;
