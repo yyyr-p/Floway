@@ -28,7 +28,7 @@ const sortByTierDistance = (target: number) => (a: string, b: string) => {
 const sortClaudeFable = sortByTierDistance(CLAUDE_TIER.fable!);
 const sortClaudeOpus = sortByTierDistance(CLAUDE_TIER.opus!);
 const sortClaudeSonnet = sortByTierDistance(CLAUDE_TIER.sonnet!);
-const sortClaudeSmall = sortByTierDistance(CLAUDE_TIER.haiku!);
+const sortClaudeHaiku = sortByTierDistance(CLAUDE_TIER.haiku!);
 const sortCodex = (a: string, b: string) => {
   const am = a.includes('mini') ? 1 : 0;
   const bm = b.includes('mini') ? 1 : 0;
@@ -50,13 +50,13 @@ const codexIds = computed(() => dedupe(props.models.filter(m => CODEX_RE.test(m.
 const claudeModelsFable = computed(() => [...claudeIds.value].sort(sortClaudeFable));
 const claudeModelsOpus = computed(() => [...claudeIds.value].sort(sortClaudeOpus));
 const claudeModelsSonnet = computed(() => [...claudeIds.value].sort(sortClaudeSonnet));
-const claudeModelsSmall = computed(() => [...claudeIds.value].sort(sortClaudeSmall));
+const claudeModelsHaiku = computed(() => [...claudeIds.value].sort(sortClaudeHaiku));
 const codexModelsList = computed(() => [...codexIds.value].sort(sortCodex));
 
 const claudeFableModel = ref('');
 const claudeOpusModel = ref('');
 const claudeSonnetModel = ref('');
-const claudeSmallModel = ref('');
+const claudeHaikuModel = ref('');
 const codexModel = ref('');
 
 // Keep the selection valid as the model lists rehydrate: if the current pick
@@ -65,7 +65,7 @@ watchEffect(() => {
   if (!claudeModelsFable.value.includes(claudeFableModel.value)) claudeFableModel.value = claudeModelsFable.value[0] ?? '';
   if (!claudeModelsOpus.value.includes(claudeOpusModel.value)) claudeOpusModel.value = claudeModelsOpus.value[0] ?? '';
   if (!claudeModelsSonnet.value.includes(claudeSonnetModel.value)) claudeSonnetModel.value = claudeModelsSonnet.value[0] ?? '';
-  if (!claudeModelsSmall.value.includes(claudeSmallModel.value)) claudeSmallModel.value = claudeModelsSmall.value[0] ?? '';
+  if (!claudeModelsHaiku.value.includes(claudeHaikuModel.value)) claudeHaikuModel.value = claudeModelsHaiku.value[0] ?? '';
   if (!codexModelsList.value.includes(codexModel.value)) codexModel.value = codexModelsList.value[0] ?? '';
 });
 
@@ -98,7 +98,7 @@ const claudeSnippet = computed(() => JSON.stringify({
     ANTHROPIC_DEFAULT_FABLE_MODEL: addCtx(claudeFableModel.value),
     ANTHROPIC_DEFAULT_OPUS_MODEL: addCtx(claudeOpusModel.value),
     ANTHROPIC_DEFAULT_SONNET_MODEL: addCtx(claudeSonnetModel.value),
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeSmallModel.value,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeHaikuModel.value,
   },
 }, null, 2));
 
@@ -194,8 +194,8 @@ const selectClass = 'max-w-full text-xs font-mono bg-surface-800 text-gray-300 b
         </div>
         <div class="flex min-w-0 items-center gap-2">
           <label class="text-xs text-gray-500">Haiku:</label>
-          <select v-model="claudeSmallModel" :class="selectClass">
-            <option v-for="m in claudeModelsSmall" :key="m" :value="m">{{ m }}</option>
+          <select v-model="claudeHaikuModel" :class="selectClass">
+            <option v-for="m in claudeModelsHaiku" :key="m" :value="m">{{ m }}</option>
           </select>
         </div>
       </div>
