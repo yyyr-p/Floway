@@ -47,7 +47,7 @@ const claudeModelsFable = computed(() => [...claudeIds.value].sort(sortByTierDis
 const claudeModelsOpus = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.opus!)));
 const claudeModelsSonnet = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.sonnet!)));
 const claudeModelsHaiku = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.haiku!)));
-const codexModelsList = computed(() => [...codexIds.value].sort(sortCodex));
+const codexModels = computed(() => [...codexIds.value].sort(sortCodex));
 
 const claudeFableModel = ref('');
 const claudeOpusModel = ref('');
@@ -62,7 +62,7 @@ watchEffect(() => {
   if (!claudeModelsOpus.value.includes(claudeOpusModel.value)) claudeOpusModel.value = claudeModelsOpus.value[0] ?? '';
   if (!claudeModelsSonnet.value.includes(claudeSonnetModel.value)) claudeSonnetModel.value = claudeModelsSonnet.value[0] ?? '';
   if (!claudeModelsHaiku.value.includes(claudeHaikuModel.value)) claudeHaikuModel.value = claudeModelsHaiku.value[0] ?? '';
-  if (!codexModelsList.value.includes(codexModel.value)) codexModel.value = codexModelsList.value[0] ?? '';
+  if (!codexModels.value.includes(codexModel.value)) codexModel.value = codexModels.value[0] ?? '';
 });
 
 // Per-id context-window lookup so the fable/opus/sonnet slots can append the
@@ -208,7 +208,7 @@ const selectClass = 'max-w-full text-xs font-mono bg-surface-800 text-gray-300 b
       <div class="flex min-w-0 items-center gap-2 mb-3">
         <label class="text-xs text-gray-500">Model:</label>
         <select v-model="codexModel" :class="selectClass">
-          <option v-for="m in codexModelsList" :key="m" :value="m">{{ m }}</option>
+          <option v-for="m in codexModels" :key="m" :value="m">{{ m }}</option>
         </select>
       </div>
 
