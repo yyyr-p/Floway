@@ -1,6 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watchEffect } from 'vue';
 
+import {
+  addCtxSuffix, CLAUDE_RE, CLAUDE_TIER, CLAUDE_TIER_KEYS, CLAUDE_TIER_LABELS, type ClaudeTierKey, CODEX_RE,
+  computeContextById, dedupe, type GroupedIds, isChat, partition, sortByTierDistance, sortCodex,
+} from './cli-snippet-helpers.ts';
 import type { ControlPlaneModel } from '../../api/types.ts';
 import { Code } from '@floway-dev/ui';
 
@@ -19,51 +23,10 @@ const baseUrl = computed(() => window.location.origin);
 // `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-4.1` reaches the /v1/messages
 // endpoint and gets translated onto the OpenAI-shaped upstream). Backend
 // already collapses dated / variant suffixes; dedupe by id.
-const CLAUDE_TIER_KEYS = ['fable', 'opus', 'sonnet', 'haiku'] as const;
-type ClaudeTierKey = typeof CLAUDE_TIER_KEYS[number];
-const CLAUDE_TIER: Record<string, number> = { fable: 0, opus: 1, sonnet: 2, haiku: 3 };
-const CLAUDE_TIER_LABELS: Record<ClaudeTierKey, string> = { fable: 'Fable', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
-const claudeTier = (id: string) => {
-  // Gate on CLAUDE_RE first so a non-Claude id whose name happens to contain
-  // one of the tier tokens (e.g. `vendor/gpt-4-opus-finetune`) cannot land
-  // in a tier and win a default slot via the reversed-localeCompare tiebreak
-  // in `sortByTierDistance`. Mirrors the CODEX_RE gate in `sortCodex`.
-  if (!CLAUDE_RE.test(id)) return 99;
-  for (const t of Object.keys(CLAUDE_TIER)) if (id.includes(t)) return CLAUDE_TIER[t]!;
-  return 99;
-};
-const sortByTierDistance = (target: number) => (a: string, b: string) => {
-  const da = Math.abs(claudeTier(a) - target);
-  const db = Math.abs(claudeTier(b) - target);
-  return da !== db ? da - db : b.localeCompare(a);
-};
-const sortCodex = (a: string, b: string) => {
-  // Codex-family (gpt-5*) ids rank above the rest so the default lands on a
-  // Codex model even when the pool contains foreign ids the operator might
-  // route through Floway's translator. Symmetric to the CLAUDE_RE gate at
-  // the top of `claudeTier`; kept as an explicit tier here because Codex's
-  // ranking has a second axis (mini vs non-mini) below the family gate.
-  const ac = CODEX_RE.test(a) ? 0 : 1;
-  const bc = CODEX_RE.test(b) ? 0 : 1;
-  if (ac !== bc) return ac - bc;
-  const am = a.includes('mini') ? 1 : 0;
-  const bm = b.includes('mini') ? 1 : 0;
-  return am !== bm ? am - bm : b.localeCompare(a);
-};
-
-const isChat = (m: ControlPlaneModel) => m.kind === 'chat';
-const dedupe = (arr: string[]) => [...new Set(arr)];
-
-// Regex (rather than startsWith) so prefixed surfaces — e.g. `vendor/claude-…`
-// or `vendor/gpt-5-…` from upstreams configured with a model-name prefix —
-// sort and group with their unprefixed peers.
-const CLAUDE_RE = /(^|\/)claude-/;
-const CODEX_RE = /(^|\/)gpt-5/;
-
 const chatModelIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
 
 const claudeModelsByTier = computed(() => Object.fromEntries(
-  CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))]),
+  CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]))]),
 ) as Record<ClaudeTierKey, string[]>);
 const codexModels = computed(() => [...chatModelIds.value].sort(sortCodex));
 
@@ -74,11 +37,6 @@ const codexModels = computed(() => [...chatModelIds.value].sort(sortCodex));
 // operator's untranslated foreign models begin. Zero-length groups collapse
 // via `v-if` so a single-family pool renders as one labeled group with no
 // empty "Other" section beneath.
-type GroupedIds = { matched: string[]; other: string[] };
-const partition = (list: string[], re: RegExp): GroupedIds => ({
-  matched: list.filter(id => re.test(id)),
-  other: list.filter(id => !re.test(id)),
-});
 const claudeGroupsByTier = computed(() => Object.fromEntries(
   CLAUDE_TIER_KEYS.map(k => [k, partition(claudeModelsByTier.value[k], CLAUDE_RE)]),
 ) as Record<ClaudeTierKey, GroupedIds>);
@@ -96,25 +54,8 @@ watchEffect(() => {
   if (!codexModels.value.includes(codexModel.value)) codexModel.value = codexModels.value[0] ?? '';
 });
 
-// Per-id context-window lookup so the fable/opus/sonnet slots can append the
-// `[1m]` suffix when the upstream advertises a 1M context window. Family-
-// agnostic to mirror the /v1/models handler's own `[1m]` emission at
-// `packages/gateway/src/data-plane/models/serve.ts` — the CLI strips the
-// suffix and translates it into `anthropic-beta: context-1m-2025-08-07`,
-// which providers already handle per-family. Haiku stays plain — background-
-// task slot, 1M cost isn't warranted.
-const contextById = computed(() => {
-  const map = new Map<string, number>();
-  for (const m of props.models) {
-    if (!isChat(m)) continue;
-    const lim = m.limits;
-    const ctx = lim?.max_context_window_tokens ?? ((lim?.max_prompt_tokens ?? 0) + (lim?.max_output_tokens ?? 0));
-    map.set(m.id, ctx);
-  }
-  return map;
-});
-
-const addCtx = (id: string) => (contextById.value.get(id) ?? 0) >= 1_000_000 ? `${id}[1m]` : id;
+const contextById = computed(() => computeContextById(props.models));
+const addCtx = (id: string) => addCtxSuffix(id, contextById.value);
 
 // JSON fragment for `settings.json`'s `env` block, not shell exports: Claude
 // Code's background-agent supervisor doesn't reliably inherit shell env
