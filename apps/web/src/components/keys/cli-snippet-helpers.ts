@@ -2,7 +2,7 @@ import type { ControlPlaneModel } from '../../api/types.ts';
 
 export const CLAUDE_TIER_KEYS = ['fable', 'opus', 'sonnet', 'haiku'] as const;
 export type ClaudeTierKey = typeof CLAUDE_TIER_KEYS[number];
-export const CLAUDE_TIER: Record<ClaudeTierKey, number> = { fable: 0, opus: 1, sonnet: 2, haiku: 3 };
+const CLAUDE_TIER: Record<ClaudeTierKey, number> = { fable: 0, opus: 1, sonnet: 2, haiku: 3 };
 export const CLAUDE_TIER_LABELS: Record<ClaudeTierKey, string> = { fable: 'Fable', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
 
 // Regex (rather than startsWith) so prefixed surfaces — e.g. `vendor/claude-…`
