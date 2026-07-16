@@ -21,9 +21,10 @@ export const claudeTier = (id: string): number => {
   return 99;
 };
 
-export const sortByTierDistance = (target: number) => (a: string, b: string): number => {
-  const da = Math.abs(claudeTier(a) - target);
-  const db = Math.abs(claudeTier(b) - target);
+export const sortByTierDistance = (target: ClaudeTierKey) => (a: string, b: string): number => {
+  const t = CLAUDE_TIER[target];
+  const da = Math.abs(claudeTier(a) - t);
+  const db = Math.abs(claudeTier(b) - t);
   return da !== db ? da - db : b.localeCompare(a);
 };
 

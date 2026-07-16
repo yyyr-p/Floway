@@ -2,7 +2,7 @@
 import { computed, ref, watchEffect } from 'vue';
 
 import {
-  addCtxSuffix, CLAUDE_RE, CLAUDE_TIER, CLAUDE_TIER_KEYS, CLAUDE_TIER_LABELS, type ClaudeTierKey, CODEX_RE,
+  addCtxSuffix, CLAUDE_RE, CLAUDE_TIER_KEYS, CLAUDE_TIER_LABELS, type ClaudeTierKey, CODEX_RE,
   computeContextById, dedupe, type GroupedIds, isChat, partition, sortByTierDistance, sortCodex,
 } from './cli-snippet-helpers.ts';
 import type { ControlPlaneModel } from '../../api/types.ts';
@@ -26,7 +26,7 @@ const baseUrl = computed(() => window.location.origin);
 const chatModelIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
 
 const claudeModelsByTier = computed(() => Object.fromEntries(
-  CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]))]),
+  CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(k))]),
 ) as Record<ClaudeTierKey, string[]>);
 const codexModels = computed(() => [...chatModelIds.value].sort(sortCodex));
 

@@ -33,7 +33,7 @@ describe('claudeTier', () => {
 describe('sortByTierDistance', () => {
   it('puts the exact-tier claude id first and sinks non-claude tokenized ids', () => {
     const pool = ['claude-sonnet-4-5', 'vendor/gpt-4-opus-finetune', 'claude-opus-4-8'];
-    expect([...pool].sort(sortByTierDistance(1 /* opus */))).toEqual([
+    expect([...pool].sort(sortByTierDistance('opus'))).toEqual([
       'claude-opus-4-8',
       'claude-sonnet-4-5',
       'vendor/gpt-4-opus-finetune',
@@ -42,7 +42,7 @@ describe('sortByTierDistance', () => {
 
   it('breaks distance ties by reverse localeCompare (newer-looking ids win)', () => {
     const pool = ['claude-opus-4-8', 'claude-opus-4-1'];
-    expect([...pool].sort(sortByTierDistance(1))).toEqual(['claude-opus-4-8', 'claude-opus-4-1']);
+    expect([...pool].sort(sortByTierDistance('opus'))).toEqual(['claude-opus-4-8', 'claude-opus-4-1']);
   });
 });
 
