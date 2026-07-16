@@ -42,9 +42,6 @@ export const sortCodex = (a: string, b: string): number => {
   return am !== bm ? am - bm : b.localeCompare(a);
 };
 
-export const isChat = (m: ControlPlaneModel): boolean => m.kind === 'chat';
-export const dedupe = (arr: string[]): string[] => [...new Set(arr)];
-
 export type GroupedIds = { matched: string[]; other: string[] };
 export const partition = (list: string[], re: RegExp): GroupedIds => ({
   matched: list.filter(id => re.test(id)),
@@ -61,7 +58,7 @@ export const partition = (list: string[], re: RegExp): GroupedIds => ({
 export const computeContextById = (models: readonly ControlPlaneModel[]): Map<string, number> => {
   const map = new Map<string, number>();
   for (const m of models) {
-    if (!isChat(m)) continue;
+    if (m.kind !== 'chat') continue;
     const lim = m.limits;
     const ctx = lim?.max_context_window_tokens ?? ((lim?.max_prompt_tokens ?? 0) + (lim?.max_output_tokens ?? 0));
     map.set(m.id, ctx);

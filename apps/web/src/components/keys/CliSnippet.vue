@@ -3,7 +3,7 @@ import { computed, ref, watchEffect } from 'vue';
 
 import {
   addCtxSuffix, CLAUDE_RE, CLAUDE_TIER_KEYS, CLAUDE_TIER_LABELS, type ClaudeTierKey, CODEX_RE,
-  computeContextById, dedupe, type GroupedIds, isChat, partition, sortByTierDistance, sortCodex,
+  computeContextById, type GroupedIds, partition, sortByTierDistance, sortCodex,
 } from './cli-snippet-helpers.ts';
 import type { ControlPlaneModel } from '../../api/types.ts';
 import { Code } from '@floway-dev/ui';
@@ -23,7 +23,7 @@ const baseUrl = computed(() => window.location.origin);
 // `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-4.1` reaches the /v1/messages
 // endpoint and gets translated onto the OpenAI-shaped upstream). Backend
 // already collapses dated / variant suffixes; dedupe by id.
-const chatModelIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
+const chatModelIds = computed(() => [...new Set(props.models.filter(m => m.kind === 'chat').map(m => m.id))]);
 
 const claudeModelsByTier = computed(() => Object.fromEntries(
   CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(k))]),

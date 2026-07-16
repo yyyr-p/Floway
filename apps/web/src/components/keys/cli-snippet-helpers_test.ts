@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  addCtxSuffix, claudeTier, computeContextById, dedupe, isChat, partition, sortByTierDistance, sortCodex,
+  addCtxSuffix, claudeTier, computeContextById, partition, sortByTierDistance, sortCodex,
 } from './cli-snippet-helpers.ts';
 import { buildAliasModel, buildRealModel } from '../../api/test-fixtures.ts';
 
@@ -55,19 +55,6 @@ describe('sortCodex', () => {
   it('accepts a vendor prefix on gpt-5', () => {
     const pool = ['vendor/gpt-5', 'claude-opus-4-8'];
     expect([...pool].sort(sortCodex)).toEqual(['vendor/gpt-5', 'claude-opus-4-8']);
-  });
-});
-
-describe('isChat', () => {
-  it('is true for chat-kind models and false for embedding-kind', () => {
-    expect(isChat(buildRealModel({ id: 'claude-opus-4-8' }))).toBe(true);
-    expect(isChat(buildRealModel({ id: 'text-embedding-3', kind: 'embedding', endpoints: { embeddings: {} } }))).toBe(false);
-  });
-});
-
-describe('dedupe', () => {
-  it('preserves first-seen order and drops later duplicates', () => {
-    expect(dedupe(['a', 'b', 'a', 'c', 'b'])).toEqual(['a', 'b', 'c']);
   });
 });
 
