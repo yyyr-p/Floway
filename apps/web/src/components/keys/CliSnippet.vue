@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watchEffect } from 'vue';
+import { computed, ref, watchEffect } from 'vue';
 
 import type { ControlPlaneModel } from '../../api/types.ts';
 import { Code } from '@floway-dev/ui';
@@ -57,7 +57,9 @@ const CODEX_RE = /(^|\/)gpt-5/;
 
 const chatModelIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
 
-const claudeModelsByTier = computed<Record<ClaudeTierKey, string[]>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))])) as Record<ClaudeTierKey, string[]>);
+const claudeModelsByTier = computed(() => Object.fromEntries(
+  CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))]),
+) as Record<ClaudeTierKey, string[]>);
 const codexModels = computed(() => [...chatModelIds.value].sort(sortCodex));
 
 // `<optgroup>` split: matched ids appear under the family label, everything
@@ -72,17 +74,19 @@ const partition = (list: string[], re: RegExp): GroupedIds => ({
   matched: list.filter(id => re.test(id)),
   other: list.filter(id => !re.test(id)),
 });
-const claudeGroupsByTier = computed<Record<ClaudeTierKey, GroupedIds>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, partition(claudeModelsByTier.value[k], CLAUDE_RE)])) as Record<ClaudeTierKey, GroupedIds>);
+const claudeGroupsByTier = computed(() => Object.fromEntries(
+  CLAUDE_TIER_KEYS.map(k => [k, partition(claudeModelsByTier.value[k], CLAUDE_RE)]),
+) as Record<ClaudeTierKey, GroupedIds>);
 const codexGroups = computed(() => partition(codexModels.value, CODEX_RE));
 
-const claudeSelection = reactive<Record<ClaudeTierKey, string>>({ fable: '', opus: '', sonnet: '', haiku: '' });
+const claudeSelection = ref<Record<ClaudeTierKey, string>>({ fable: '', opus: '', sonnet: '', haiku: '' });
 const codexModel = ref('');
 
 // Keep the selection valid as the model lists rehydrate: if the current pick
 // disappears (e.g. an upstream toggled off), fall back to the bucket head.
 watchEffect(() => {
   for (const k of CLAUDE_TIER_KEYS) {
-    if (!claudeModelsByTier.value[k].includes(claudeSelection[k])) claudeSelection[k] = claudeModelsByTier.value[k][0] ?? '';
+    if (!claudeModelsByTier.value[k].includes(claudeSelection.value[k])) claudeSelection.value[k] = claudeModelsByTier.value[k][0] ?? '';
   }
   if (!codexModels.value.includes(codexModel.value)) codexModel.value = codexModels.value[0] ?? '';
 });
@@ -117,10 +121,10 @@ const claudeSnippet = computed(() => JSON.stringify({
   env: {
     ANTHROPIC_BASE_URL: baseUrl.value,
     ANTHROPIC_AUTH_TOKEN: props.apiKey,
-    ANTHROPIC_DEFAULT_FABLE_MODEL: addCtx(claudeSelection.fable),
-    ANTHROPIC_DEFAULT_OPUS_MODEL: addCtx(claudeSelection.opus),
-    ANTHROPIC_DEFAULT_SONNET_MODEL: addCtx(claudeSelection.sonnet),
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeSelection.haiku,
+    ANTHROPIC_DEFAULT_FABLE_MODEL: addCtx(claudeSelection.value.fable),
+    ANTHROPIC_DEFAULT_OPUS_MODEL: addCtx(claudeSelection.value.opus),
+    ANTHROPIC_DEFAULT_SONNET_MODEL: addCtx(claudeSelection.value.sonnet),
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: claudeSelection.value.haiku,
   },
 }, null, 2));
 
