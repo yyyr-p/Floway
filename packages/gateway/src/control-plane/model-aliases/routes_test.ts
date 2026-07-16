@@ -294,3 +294,74 @@ test('POST /api/aliases accepts adaptive=false alongside budget_tokens (force no
   );
   assertEquals(resp.status, 201);
 });
+
+test('POST /api/aliases enforces alias.name character set and length', async () => {
+  const { repo, adminSession } = await setupAppTest();
+
+  const accepted = [
+    'gpt-fast',
+    'openrouter/claude-4',
+    'a/b/c',
+    'gpt-4.1',
+    'x_1',
+    'models/foo',
+    'a'.repeat(128),
+  ];
+  const rejected = [
+    'has:colon',
+    'has?query',
+    'has#hash',
+    'has space',
+    'has\nnewline',
+    'has\0nul',
+    '/leading-slash',
+    'trailing-slash/',
+    'double//slash',
+    'a'.repeat(129),
+    '',
+    '   ',
+  ];
+
+  for (const name of accepted) {
+    await repo.modelAliases.deleteAll();
+    const resp = await requestApp('/api/aliases', authed(adminSession, baseBody({ name })));
+    if (resp.status !== 201) {
+      throw new Error(`expected 201 for name=${JSON.stringify(name)}, got ${resp.status}`);
+    }
+  }
+  for (const name of rejected) {
+    await repo.modelAliases.deleteAll();
+    const resp = await requestApp('/api/aliases', authed(adminSession, baseBody({ name })));
+    if (resp.status !== 400) {
+      throw new Error(`expected 400 for name=${JSON.stringify(name)}, got ${resp.status}`);
+    }
+  }
+});
+
+test('PUT /api/aliases/:name applies the same character set to a rename body', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+  await requestApp('/api/aliases', authed(adminSession, baseBody()));
+
+  const resp = await requestApp(
+    '/api/aliases/gpt-fast',
+    putAuthed(adminSession, baseBody({ name: 'has:colon' })),
+  );
+  assertEquals(resp.status, 400);
+});
+
+test('DELETE /api/aliases/:name decodes %2F back to the row name', async () => {
+  // A '/'-carrying alias name reaches the DELETE handler as a
+  // percent-encoded single path segment (`openrouter%2Fclaude-4-opus`).
+  // Hono's route matcher is `[^/]+`, and `HonoRequest.param()` then
+  // decodes the segment back so `repo.modelAliases.delete('openrouter/claude-4-opus')`
+  // hits the row. Without this decoding pass the row would be a
+  // create-only zombie.
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+  await requestApp('/api/aliases', authed(adminSession, baseBody({ name: 'openrouter/claude-4-opus' })));
+
+  const resp = await requestApp('/api/aliases/openrouter%2Fclaude-4-opus', deleteAuthed(adminSession));
+  assertEquals(resp.status, 204);
+  assertEquals(await repo.modelAliases.getByName('openrouter/claude-4-opus'), null);
+});
