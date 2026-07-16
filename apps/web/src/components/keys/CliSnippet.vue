@@ -11,12 +11,12 @@ const props = defineProps<{
 
 const baseUrl = computed(() => window.location.origin);
 
-// Picker buckets — each `<select>` lists every chat model, sort-ordered so
-// the family the target CLI natively expects (claude-* for Claude Code,
-// gpt-5* for Codex) lands at the top and defaults each tier slot to the
-// canonical Fable / Opus / Sonnet / Haiku pick. Non-matching ids stay
-// selectable so operators can route through Floway's translation layer
-// (e.g. `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-4.1` reaches the /v1/messages
+// Each `<select>` lists every chat model, sort-ordered so the family the
+// target CLI natively expects (claude-* for Claude Code, gpt-5* for Codex)
+// lands at the top and defaults each tier slot to the canonical Fable /
+// Opus / Sonnet / Haiku pick. Non-matching ids stay selectable so operators
+// can route through Floway's translation layer (e.g.
+// `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-4.1` reaches the /v1/messages
 // endpoint and gets translated onto the OpenAI-shaped upstream). Backend
 // already collapses dated / variant suffixes; dedupe by id.
 const CLAUDE_TIER_KEYS = ['fable', 'opus', 'sonnet', 'haiku'] as const;
@@ -26,9 +26,8 @@ const CLAUDE_TIER_LABELS: Record<ClaudeTierKey, string> = { fable: 'Fable', opus
 const claudeTier = (id: string) => {
   // Gate on CLAUDE_RE first so a non-Claude id whose name happens to contain
   // one of the tier tokens (e.g. `vendor/gpt-4-opus-finetune`) cannot land
-  // in a tier bucket and win a default slot via the reversed-localeCompare
-  // tiebreak in `sortByTierDistance`. Mirrors the CODEX_RE gate in
-  // `sortCodex`.
+  // in a tier and win a default slot via the reversed-localeCompare tiebreak
+  // in `sortByTierDistance`. Mirrors the CODEX_RE gate in `sortCodex`.
   if (!CLAUDE_RE.test(id)) return 99;
   for (const t of Object.keys(CLAUDE_TIER)) if (id.includes(t)) return CLAUDE_TIER[t]!;
   return 99;
@@ -73,8 +72,8 @@ const codexModels = computed(() => [...chatModelIds.value].sort(sortCodex));
 // the top, a native visual separator matters when the pool grows past a
 // dozen items — a plain unlabeled list makes it hard to tell where the
 // operator's untranslated foreign models begin. Zero-length groups collapse
-// via `v-if` in the template so single-family upstream sets render as
-// before.
+// via `v-if` so a single-family pool renders as one labeled group with no
+// empty "Other" section beneath.
 type GroupedIds = { matched: string[]; other: string[] };
 const partition = (list: string[], re: RegExp): GroupedIds => ({
   matched: list.filter(id => re.test(id)),
@@ -89,7 +88,7 @@ const claudeSelection = ref<Record<ClaudeTierKey, string>>({ fable: '', opus: ''
 const codexModel = ref('');
 
 // Keep the selection valid as the model lists rehydrate: if the current pick
-// disappears (e.g. an upstream toggled off), fall back to the bucket head.
+// disappears (e.g. an upstream toggled off), fall back to the first entry.
 watchEffect(() => {
   for (const k of CLAUDE_TIER_KEYS) {
     if (!claudeModelsByTier.value[k].includes(claudeSelection.value[k])) claudeSelection.value[k] = claudeModelsByTier.value[k][0] ?? '';
