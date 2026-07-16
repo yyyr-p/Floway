@@ -55,11 +55,10 @@ const dedupe = (arr: string[]) => [...new Set(arr)];
 const CLAUDE_RE = /(^|\/)claude-/;
 const CODEX_RE = /(^|\/)gpt-5/;
 
-const claudeIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
-const codexIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
+const chatModelIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
 
-const claudeModelsByTier = computed<Record<ClaudeTierKey, string[]>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))])) as Record<ClaudeTierKey, string[]>);
-const codexModels = computed(() => [...codexIds.value].sort(sortCodex));
+const claudeModelsByTier = computed<Record<ClaudeTierKey, string[]>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, [...chatModelIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))])) as Record<ClaudeTierKey, string[]>);
+const codexModels = computed(() => [...chatModelIds.value].sort(sortCodex));
 
 // `<optgroup>` split: matched ids appear under the family label, everything
 // else under "Other". Even with the family-first sort putting matched ids at
