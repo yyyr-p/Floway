@@ -24,6 +24,12 @@ type ClaudeTierKey = typeof CLAUDE_TIER_KEYS[number];
 const CLAUDE_TIER: Record<string, number> = { fable: 0, opus: 1, sonnet: 2, haiku: 3 };
 const CLAUDE_TIER_LABELS: Record<ClaudeTierKey, string> = { fable: 'Fable', opus: 'Opus', sonnet: 'Sonnet', haiku: 'Haiku' };
 const claudeTier = (id: string) => {
+  // Gate on CLAUDE_RE first so a non-Claude id whose name happens to contain
+  // one of the tier tokens (e.g. `vendor/gpt-4-opus-finetune`) cannot land
+  // in a tier bucket and win a default slot via the reversed-localeCompare
+  // tiebreak in `sortByTierDistance`. Mirrors the CODEX_RE gate in
+  // `sortCodex`.
+  if (!CLAUDE_RE.test(id)) return 99;
   for (const t of Object.keys(CLAUDE_TIER)) if (id.includes(t)) return CLAUDE_TIER[t]!;
   return 99;
 };
@@ -35,9 +41,9 @@ const sortByTierDistance = (target: number) => (a: string, b: string) => {
 const sortCodex = (a: string, b: string) => {
   // Codex-family (gpt-5*) ids rank above the rest so the default lands on a
   // Codex model even when the pool contains foreign ids the operator might
-  // route through Floway's translator. Claude side does not need an
-  // equivalent — `claudeTier` already returns 99 for non-Claude ids, which
-  // sinks them via distance in `sortByTierDistance`.
+  // route through Floway's translator. Symmetric to the CLAUDE_RE gate at
+  // the top of `claudeTier`; kept as an explicit tier here because Codex's
+  // ranking has a second axis (mini vs non-mini) below the family gate.
   const ac = CODEX_RE.test(a) ? 0 : 1;
   const bc = CODEX_RE.test(b) ? 0 : 1;
   if (ac !== bc) return ac - bc;
