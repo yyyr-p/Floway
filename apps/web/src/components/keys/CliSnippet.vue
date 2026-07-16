@@ -25,10 +25,6 @@ const sortByTierDistance = (target: number) => (a: string, b: string) => {
   const db = Math.abs(claudeTier(b) - target);
   return da !== db ? da - db : b.localeCompare(a);
 };
-const sortClaudeFable = sortByTierDistance(CLAUDE_TIER.fable!);
-const sortClaudeOpus = sortByTierDistance(CLAUDE_TIER.opus!);
-const sortClaudeSonnet = sortByTierDistance(CLAUDE_TIER.sonnet!);
-const sortClaudeHaiku = sortByTierDistance(CLAUDE_TIER.haiku!);
 const sortCodex = (a: string, b: string) => {
   const am = a.includes('mini') ? 1 : 0;
   const bm = b.includes('mini') ? 1 : 0;
@@ -47,10 +43,10 @@ const CODEX_RE = /(^|\/)gpt-5/;
 const claudeIds = computed(() => dedupe(props.models.filter(m => CLAUDE_RE.test(m.id) && isChat(m)).map(m => m.id)));
 const codexIds = computed(() => dedupe(props.models.filter(m => CODEX_RE.test(m.id) && isChat(m)).map(m => m.id)));
 
-const claudeModelsFable = computed(() => [...claudeIds.value].sort(sortClaudeFable));
-const claudeModelsOpus = computed(() => [...claudeIds.value].sort(sortClaudeOpus));
-const claudeModelsSonnet = computed(() => [...claudeIds.value].sort(sortClaudeSonnet));
-const claudeModelsHaiku = computed(() => [...claudeIds.value].sort(sortClaudeHaiku));
+const claudeModelsFable = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.fable!)));
+const claudeModelsOpus = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.opus!)));
+const claudeModelsSonnet = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.sonnet!)));
+const claudeModelsHaiku = computed(() => [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER.haiku!)));
 const codexModelsList = computed(() => [...codexIds.value].sort(sortCodex));
 
 const claudeFableModel = ref('');
