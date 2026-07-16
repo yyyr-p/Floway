@@ -51,12 +51,12 @@ const dedupe = (arr: string[]) => [...new Set(arr)];
 
 // Regex (rather than startsWith) so prefixed surfaces — e.g. `vendor/claude-…`
 // or `vendor/gpt-5-…` from upstreams configured with a model-name prefix —
-// land in the right bucket too.
+// sort and group with their unprefixed peers.
 const CLAUDE_RE = /(^|\/)claude-/;
 const CODEX_RE = /(^|\/)gpt-5/;
 
-const claudeIds = computed(() => dedupe(props.models.filter(m => CLAUDE_RE.test(m.id) && isChat(m)).map(m => m.id)));
-const codexIds = computed(() => dedupe(props.models.filter(m => CODEX_RE.test(m.id) && isChat(m)).map(m => m.id)));
+const claudeIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
+const codexIds = computed(() => dedupe(props.models.filter(isChat).map(m => m.id)));
 
 const claudeModelsByTier = computed<Record<ClaudeTierKey, string[]>>(() => Object.fromEntries(CLAUDE_TIER_KEYS.map(k => [k, [...claudeIds.value].sort(sortByTierDistance(CLAUDE_TIER[k]!))])) as Record<ClaudeTierKey, string[]>);
 const codexModels = computed(() => [...codexIds.value].sort(sortCodex));
@@ -74,12 +74,16 @@ watchEffect(() => {
 });
 
 // Per-id context-window lookup so the fable/opus/sonnet slots can append the
-// `[1m]` suffix when the upstream advertises a 1M context window. Haiku stays
-// plain — background-task slot, 1M cost isn't warranted.
+// `[1m]` suffix when the upstream advertises a 1M context window. Family-
+// agnostic to mirror the /v1/models handler's own `[1m]` emission at
+// `packages/gateway/src/data-plane/models/serve.ts` — the CLI strips the
+// suffix and translates it into `anthropic-beta: context-1m-2025-08-07`,
+// which providers already handle per-family. Haiku stays plain — background-
+// task slot, 1M cost isn't warranted.
 const contextById = computed(() => {
   const map = new Map<string, number>();
   for (const m of props.models) {
-    if (!CLAUDE_RE.test(m.id) || !isChat(m)) continue;
+    if (!isChat(m)) continue;
     const lim = m.limits;
     const ctx = lim?.max_context_window_tokens ?? ((lim?.max_prompt_tokens ?? 0) + (lim?.max_output_tokens ?? 0));
     map.set(m.id, ctx);
