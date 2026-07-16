@@ -11,10 +11,14 @@ const props = defineProps<{
 
 const baseUrl = computed(() => window.location.origin);
 
-// Picker buckets — Claude Code only accepts claude-* generation ids, Codex's
-// Floway integration is the gpt-5 family only. Backend already collapses
-// dated / variant suffixes; dedupe by id and sort by family tier so each
-// slot's default lands on the canonical Fable / Opus / Sonnet / Haiku.
+// Picker buckets — each `<select>` lists every chat model, sort-ordered so
+// the family the target CLI natively expects (claude-* for Claude Code,
+// gpt-5* for Codex) lands at the top and defaults each tier slot to the
+// canonical Fable / Opus / Sonnet / Haiku pick. Non-matching ids stay
+// selectable so operators can route through Floway's translation layer
+// (e.g. `ANTHROPIC_DEFAULT_SONNET_MODEL=gpt-4.1` reaches the /v1/messages
+// endpoint and gets translated onto the OpenAI-shaped upstream). Backend
+// already collapses dated / variant suffixes; dedupe by id.
 const CLAUDE_TIER_KEYS = ['fable', 'opus', 'sonnet', 'haiku'] as const;
 type ClaudeTierKey = typeof CLAUDE_TIER_KEYS[number];
 const CLAUDE_TIER: Record<string, number> = { fable: 0, opus: 1, sonnet: 2, haiku: 3 };
