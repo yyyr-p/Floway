@@ -1,26 +1,12 @@
 import type { StoredResponsesItemPayload } from './types.ts';
 import { getFileProvider, sha256Hex } from '@floway-dev/platform';
 
-// Encoding-less variants remain readable because migration 0058 preserves
-// existing payload descriptors and files instead of rewriting their bodies.
 type StoredResponsesPayloadJson =
-  | {
-    version: 1;
-    storage: 'inline';
-    payload: StoredResponsesItemPayload;
-  }
   | {
     version: 1;
     storage: 'inline';
     encoding: 'gzip';
     payload: string;
-  }
-  | {
-    version: 1;
-    storage: 'file';
-    key: string;
-    sha256: string;
-    byteLength: number;
   }
   | {
     version: 1;
@@ -96,9 +82,7 @@ export const parseStoredResponsesPayload = async (
 ): Promise<StoredResponsesItemPayload> => {
   const descriptor = parseDescriptor(id, raw);
   if (descriptor.storage === 'inline') {
-    return 'encoding' in descriptor
-      ? parseInlinePayloadJson(id, await ungzipToString(base64ToBytes(descriptor.payload)))
-      : descriptor.payload;
+    return parseInlinePayloadJson(id, await ungzipToString(base64ToBytes(descriptor.payload)));
   }
 
   const body = await getFileProvider().get(descriptor.key);
@@ -111,7 +95,7 @@ export const parseStoredResponsesPayload = async (
     throw new Error(`Stored Responses payload file hash mismatch for id=${id}`);
   }
 
-  return parseInlinePayloadJson(id, 'encoding' in descriptor ? await ungzipToString(body) : decoder.decode(body));
+  return parseInlinePayloadJson(id, await ungzipToString(body));
 };
 
 export const storedResponsesPayloadFileKey = (id: string, raw: string): string | null => {
@@ -142,9 +126,6 @@ const parseDescriptor = (id: string, raw: string): StoredResponsesPayloadJson =>
     if (parsed.encoding === 'gzip' && typeof parsed.payload === 'string') {
       return { version: 1, storage: 'inline', encoding: 'gzip', payload: parsed.payload };
     }
-    if (parsed.encoding === undefined) {
-      return { version: 1, storage: 'inline', payload: assertPayloadObject(id, parsed.payload) };
-    }
   }
   if (parsed.storage === 'file'
     && typeof parsed.key === 'string'
@@ -154,7 +135,6 @@ const parseDescriptor = (id: string, raw: string): StoredResponsesPayloadJson =>
     && parsed.byteLength >= 0
   ) {
     if (parsed.encoding === 'gzip') return { version: 1, storage: 'file', encoding: 'gzip', key: parsed.key, sha256: parsed.sha256, byteLength: parsed.byteLength };
-    if (parsed.encoding === undefined) return { version: 1, storage: 'file', key: parsed.key, sha256: parsed.sha256, byteLength: parsed.byteLength };
   }
   throw new Error(`Invalid responses_items.payload_json for id=${id} (storage=${typeof parsed.storage === 'string' ? parsed.storage : 'unknown'}, encoding=${typeof parsed.encoding === 'string' ? parsed.encoding : 'absent'})`);
 };
