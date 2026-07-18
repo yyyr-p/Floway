@@ -113,6 +113,9 @@ test('/v1/completions streaming forces stream_options.include_usage upstream', a
         body: JSON.stringify({ model: 'davinci-002', prompt: 'hello', stream: true }),
       });
       assertEquals(response.status, 200);
+      // Locks the nginx `proxy_buffering` opt-out on the passthrough SSE
+      // path; see chat/shared/respond.ts for the WHY.
+      assertEquals(response.headers.get('x-accel-buffering'), 'no');
       await response.text();
     },
   );
@@ -337,6 +340,9 @@ test('/v1/completions streaming records usage row, performance neutral row (text
         body: JSON.stringify({ model: 'davinci-002', prompt: 'hello', stream: true }),
       });
       assertEquals(response.status, 200);
+      // Locks the nginx `proxy_buffering` opt-out on the passthrough SSE
+      // path; see chat/shared/respond.ts for the WHY.
+      assertEquals(response.headers.get('x-accel-buffering'), 'no');
       await response.text();
     },
   );

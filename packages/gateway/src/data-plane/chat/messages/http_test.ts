@@ -227,6 +227,9 @@ test('POST /v1/messages forwards upstream response headers end-to-end (streaming
   assertEquals(response.headers.get('anthropic-ratelimit-unified-remaining'), '99');
   assertEquals(response.headers.get('request-id'), 'req_e2e_stream');
   assertEquals(response.headers.get('openai-version'), '2024-10-21');
+  // Locks the shared `respondSseStream` scaffold's nginx `proxy_buffering`
+  // opt-out; covers all four chat protocols by virtue of the shared helper.
+  assertEquals(response.headers.get('x-accel-buffering'), 'no');
   // hop-by-hop and cookies are stripped. `connection` is special-cased
   // because Hono's streamSSE writer sets its own `keep-alive`; assert
   // upstream's distinctive `close` did not survive instead of asserting

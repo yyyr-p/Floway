@@ -136,6 +136,9 @@ test('GET /api/dump/keys/:keyId/stream sends snapshot then appended frames', asy
     headers: { 'x-api-key': apiKey.key },
   });
   assertEquals(response.status, 200);
+  // Locks the nginx `proxy_buffering` opt-out on the control-plane SSE
+  // path; see chat/shared/respond.ts for the WHY.
+  assertEquals(response.headers.get('x-accel-buffering'), 'no');
   await stubs.broker.publish(apiKey.id, fakeMeta('01HZZ0000000000000000000A2', 2000));
 
   const frames = await readFrames(response, 2);

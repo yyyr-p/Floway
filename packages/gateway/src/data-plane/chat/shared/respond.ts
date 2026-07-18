@@ -128,8 +128,17 @@ export const mergeForwardedUpstreamHeaders = (base: HeadersInit | undefined, ups
 export type ChatProtocolName = 'chat-completions' | 'gemini' | 'messages' | 'responses';
 
 // Shared streaming scaffold for every chat protocol's SSE response. Forwards
-// upstream headers, drives `writeSSEFrames` under Hono's `streamSSE`, and
-// settles telemetry in `finally` — so the settle contract (metadata timing,
+// upstream headers, sets `X-Accel-Buffering: no` so nginx-style reverse
+// proxies (on by default per
+// https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_buffering)
+// don't hold long-thinking Anthropic Messages / OpenAI Responses chunks
+// behind their edge buffer — a no-op on Cloudflare's edge, which streams
+// response bodies via the Streams API
+// (https://developers.cloudflare.com/workers/runtime-apis/streams/). The
+// header is set AFTER `forwardUpstreamHeaders` so a stray upstream
+// `X-Accel-Buffering: yes` can't reverse the intent. Then drives
+// `writeSSEFrames` under Hono's `streamSSE` and settles telemetry in
+// `finally` — so the settle contract (metadata timing,
 // `state.failedAfter(completion)` classification, `ctx.dump` ordering) lives
 // in one place rather than being copy-pasted into each per-protocol respond.
 // Callers supply the protocol-shaped SSE frames, the per-protocol keep-alive
@@ -147,6 +156,7 @@ export const respondSseStream = <TEvent>(
   },
 ): Response => {
   forwardUpstreamHeaders(c, eventsResult.headers);
+  c.header('X-Accel-Buffering', 'no');
   return streamSSE(c, async stream => {
     let completion: StreamCompletion = 'error';
     try {

@@ -208,6 +208,11 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
       return passthroughApiError(c, 'Upstream returned a streaming response with no body.', 502);
     }
     stageForwardedResponseHeaders(c, response);
+    // Same nginx `proxy_buffering` avoidance as the chat SSE endpoints —
+    // see chat/shared/respond.ts for the WHY. Set AFTER
+    // `stageForwardedResponseHeaders` so a stray upstream
+    // `X-Accel-Buffering: yes` can't reverse the intent.
+    c.header('X-Accel-Buffering', 'no');
     return streamSSE(c, async stream => {
       let completion: StreamCompletion = 'error';
       let streamError: unknown;

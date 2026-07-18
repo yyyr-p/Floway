@@ -63,6 +63,9 @@ export const dumpRoutes = new Hono()
       throw err;
     }
 
+    // Same nginx `proxy_buffering` avoidance as the data-plane SSE
+    // endpoints — see chat/shared/respond.ts for the WHY.
+    c.header('X-Accel-Buffering', 'no');
     return streamSSE(c, async stream => {
       const onAbort = () => controller.abort();
       c.req.raw.signal.addEventListener('abort', onAbort, { once: true });
