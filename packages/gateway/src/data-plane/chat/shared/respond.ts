@@ -1,9 +1,12 @@
 import type { Context } from 'hono';
+import { streamSSE } from 'hono/streaming';
 
-import type { StreamCompletion } from './stream/sse.ts';
+import type { GatewayCtx } from './gateway-ctx.ts';
 import type { TokenUsage } from '../../../repo/types.ts';
+import { type StreamCompletion, writeSSEFrames } from '../../shared/sse.ts';
+import { settle } from '../../shared/telemetry/settle.ts';
 import { hasTokenUsage } from '../../shared/telemetry/usage.ts';
-import type { ProtocolFrame } from '@floway-dev/protocols/common';
+import type { ProtocolFrame, SseFrame, SseWritableFrame } from '@floway-dev/protocols/common';
 import { plainResult } from '@floway-dev/provider';
 import type { EventResultMetadata, ExecuteResult, PlainResult } from '@floway-dev/provider';
 
@@ -42,7 +45,12 @@ export class SourceStreamState {
   }
 }
 
-export const eventResultMetadata = async <TEvent>(result: Extract<ExecuteResult<ProtocolFrame<TEvent>>, { type: 'events' }>): Promise<EventResultMetadata> =>
+// Narrows `ExecuteResult` to its `events` variant, so downstream call sites
+// pull `.headers`, `.finalMetadata`, and event-branch fields without
+// discriminating on `result.type` again at every use.
+type EventsResult<TEvent> = Extract<ExecuteResult<ProtocolFrame<TEvent>>, { type: 'events' }>;
+
+export const eventResultMetadata = async <TEvent>(result: EventsResult<TEvent>): Promise<EventResultMetadata> =>
   await (result.finalMetadata ?? {
     modelIdentity: result.modelIdentity,
     ...(result.performance ? { performance: result.performance } : {}),
@@ -91,7 +99,7 @@ export const isForwardableUpstreamHeader = (name: string): boolean =>
 // the response. Hono's `c.header()` is the only knob that survives a later
 // `c.json` or `streamSSE` call without being overwritten. Safe to call with
 // `undefined` so callers can pass `result.headers` directly.
-export const forwardUpstreamHeaders = (c: Context, headers: Headers | undefined): void => {
+const forwardUpstreamHeaders = (c: Context, headers: Headers | undefined): void => {
   if (!headers) return;
   for (const [name, value] of headers) {
     if (isForwardableUpstreamHeader(name)) c.header(name, value);
@@ -108,4 +116,53 @@ export const mergeForwardedUpstreamHeaders = (base: HeadersInit | undefined, ups
     }
   }
   return merged;
+};
+
+// The four chat protocols Floway serves — each has its own subdirectory
+// under packages/gateway/src/data-plane/chat/ and its own respond.ts. Not
+// interchangeable with `ChatTargetApi` from @floway-dev/provider, which
+// enumerates the OpenAI-family upstream target APIs and deliberately
+// excludes `gemini` (Google is a distinct upstream family). This union is a
+// gateway-internal telemetry label; `respondSseStream` interpolates it into
+// the failure log line.
+export type ChatProtocolName = 'chat-completions' | 'gemini' | 'messages' | 'responses';
+
+// Shared streaming scaffold for every chat protocol's SSE response. Forwards
+// upstream headers, drives `writeSSEFrames` under Hono's `streamSSE`, and
+// settles telemetry in `finally` — so the settle contract (metadata timing,
+// `state.failedAfter(completion)` classification, `ctx.dump` ordering) lives
+// in one place rather than being copy-pasted into each per-protocol respond.
+// Callers supply the protocol-shaped SSE frames, the per-protocol keep-alive
+// frame (Anthropic Messages expects a `ping` event; the rest use SSE
+// comments), and a tag used in the failure log line.
+export const respondSseStream = <TEvent>(
+  c: Context,
+  eventsResult: EventsResult<TEvent>,
+  state: SourceStreamState,
+  ctx: GatewayCtx,
+  opts: {
+    sseFrames: AsyncIterable<SseFrame>;
+    keepAliveFrame: SseWritableFrame;
+    protocolTag: ChatProtocolName;
+  },
+): Response => {
+  forwardUpstreamHeaders(c, eventsResult.headers);
+  return streamSSE(c, async stream => {
+    let completion: StreamCompletion = 'error';
+    try {
+      completion = await writeSSEFrames(stream, opts.sseFrames, {
+        keepAlive: { frame: opts.keepAliveFrame },
+        ...(ctx.downstreamAbortController !== undefined ? { downstreamAbortController: ctx.downstreamAbortController } : {}),
+      });
+    } finally {
+      const metadata = await eventResultMetadata(eventsResult);
+      const failed = state.failedAfter(completion);
+      if (failed) {
+        ctx.dump?.failed(`${opts.protocolTag} stream failed (completion=${completion}, source-failed=${state.failed})`);
+      } else {
+        ctx.dump?.success(metadata.modelIdentity, state.usage);
+      }
+      settle(ctx, metadata.performance, metadata.modelIdentity, state.usage, failed);
+    }
+  });
 };
