@@ -143,8 +143,11 @@ Open the deployed URL (or `http://localhost:8788` for Node), log in with
 
    Claude Code exposes Default, Opus, Sonnet, and Haiku model overrides plus
    reasoning effort and gateway discovery. Codex exposes its model and reasoning
-   effort. Both configurations live in one lease record and renew through one
-   keepalive. The agent-specific script paths share the same token —
+   effort. Both pickers retain opaque addressable chat model ids after projecting
+   the catalog through the selected API key's effective user/key upstream cap;
+   client-tool family matching only changes their order. Both configurations
+   live in one lease record and renew through one keepalive. The agent-specific
+   script paths share the same token —
    `<token>/claude.sh` and `<token>/codex.sh` (plus their PowerShell variants) —
    and each script installs and configures only its named agent. The command
    picker defaults to Windows on Windows clients and to macOS/Linux elsewhere.

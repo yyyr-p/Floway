@@ -21,6 +21,13 @@ const modelsError = ref<string | null>(null);
 const addressableLoad = vi.fn(async () => {});
 const limitedLoad = vi.fn(async () => {});
 const loadedKeys = ref<ApiKey[]>([]);
+const currentUser = {
+  id: 1,
+  username: 'admin',
+  isAdmin: true,
+  canViewGlobalTelemetry: true,
+  upstreamIds: null as string[] | null,
+};
 
 vi.mock('../../../composables/useModels.ts', () => ({
   useAddressableModelsStore: () => ({ models: modelsRef, loading: modelsLoading, error: modelsError, load: addressableLoad }),
@@ -28,6 +35,9 @@ vi.mock('../../../composables/useModels.ts', () => ({
 }));
 vi.mock('../../../composables/useUpstreamOptions.ts', () => ({
   useUpstreamOptionsStore: () => ({ options: ref([]), error: ref<string | null>(null), load: async () => {} }),
+}));
+vi.mock('../../../stores/auth.ts', () => ({
+  useAuthStore: () => ({ currentUser }),
 }));
 vi.mock('../../../api/client.ts', () => ({
   useApi: () => ({ api: { keys: {} } }),
@@ -81,6 +91,7 @@ beforeEach(() => {
   modelsRef.value = [buildRealModel({ id: 'claude-sonnet-4-5' }), buildRealModel({ id: 'gpt-5' })];
   loadedKeys.value = [];
   persistedSelectedKeyId.value = '';
+  currentUser.upstreamIds = null;
   cardProps = null;
   cardMounts = 0;
 });
@@ -118,6 +129,31 @@ describe('KeysPage', () => {
     expect(table.props('selectedId')).toBe('k2');
     expect((cardProps!.selectedKey as ApiKey).id).toBe('k2');
     expect(cardMounts).toBe(1);
+  });
+
+  it('projects the addressable catalog through the selected key and user upstream caps', async () => {
+    const binding = (id: string) => [{ id, name: id, kind: 'custom' as const, color: null }];
+    modelsRef.value = [
+      buildRealModel({ id: 'claude-allowed', upstreams: binding('u1') }),
+      buildRealModel({ id: 'gpt-key-denied', upstreams: binding('u2') }),
+      buildRealModel({ id: 'gpt-user-denied', upstreams: binding('u3') }),
+    ];
+    currentUser.upstreamIds = ['u1', 'u2'];
+    pageData.value = {
+      keys: [
+        apiKey({ id: 'k1', name: 'Restricted', upstream_ids: ['u1'] }),
+        apiKey({ id: 'k2', name: 'Broader', upstream_ids: ['u1', 'u2', 'u3'] }),
+      ],
+      error: null,
+    };
+    persistedSelectedKeyId.value = 'k1';
+    const w = mountPage();
+
+    expect((cardProps!.models as ControlPlaneModel[]).map(model => model.id)).toEqual(['claude-allowed']);
+
+    w.getComponent(KeysTable).vm.$emit('select', 'k2');
+    await nextTick();
+    expect((cardProps!.models as ControlPlaneModel[]).map(model => model.id)).toEqual(['claude-allowed', 'gpt-key-denied']);
   });
 
   it('restores the previous table selection when that key still exists', () => {
