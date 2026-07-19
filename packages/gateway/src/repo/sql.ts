@@ -6,6 +6,10 @@ import { deleteAllResponsesItemPayloadFiles, parseStoredResponsesPayload, RESPON
 import type {
   ApiKey,
   ApiKeyRepo,
+  AgentSetupMutation,
+  AgentSetupRecord,
+  AgentSetupRenewal,
+  AgentSetupRepository,
   BackoffRow,
   CachedModelsRow,
   ModelAliasesRepo,
@@ -44,6 +48,7 @@ import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogra
 import { parseServerSecret } from '../shared/server-secret.ts';
 import { generateSessionToken } from '../shared/session-tokens.ts';
 import { assertWebSearchProviderName } from '../shared/web-search-providers.ts';
+import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
 import { getFileProvider, type SqlDatabase, type SqlPreparedStatement, type SqlResult } from '@floway-dev/platform';
 import { canonicalPricingSelectorKey, parsePricingSelectorKey, type AliasSelection, type AliasTarget, type AnnouncedMetadata, type BillingDimension, type ModelKind, type PriceVector } from '@floway-dev/protocols/common';
 import type { ProviderModel, ProxyFallbackEntry, ModelPrefixConfig, PerformanceOperation, UpstreamRecord } from '@floway-dev/provider';
@@ -1869,6 +1874,126 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
   }
 }
 
+interface AgentSetupRow {
+  token: string;
+  user_id: number;
+  configuration_json: string;
+  configuration_revision: number;
+  expires_at: number;
+  created_at: number;
+  updated_at: number;
+}
+
+const AGENT_SETUP_COLUMNS = 'token, user_id, configuration_json, configuration_revision, expires_at, created_at, updated_at';
+const AGENT_SETUP_LATEST_ORDER = 'updated_at DESC, created_at DESC, token DESC';
+
+const toAgentSetupRecord = (row: AgentSetupRow): AgentSetupRecord => ({
+  token: row.token,
+  userId: row.user_id,
+  configurationJson: row.configuration_json,
+  configurationRevision: row.configuration_revision,
+  expiresAt: row.expires_at,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at,
+});
+
+// The token PK's SQLite/D1 uniqueness message. Matching it lets the route retry
+// with a fresh token; any unrelated failure propagates untouched.
+const TOKEN_COLLISION_MESSAGE = /UNIQUE constraint failed: agent_setup\.token/i;
+
+class SqlAgentSetupRepo implements AgentSetupRepository {
+  constructor(private db: SqlDatabase) {}
+
+  async findByToken(token: string): Promise<AgentSetupRecord | null> {
+    const row = await this.db
+      .prepare(`SELECT ${AGENT_SETUP_COLUMNS} FROM agent_setup WHERE token = ?`)
+      .bind(token)
+      .first<AgentSetupRow>();
+    return row ? toAgentSetupRecord(row) : null;
+  }
+
+  async latestByUserId(userId: number): Promise<AgentSetupRecord | null> {
+    const row = await this.db
+      .prepare(`SELECT ${AGENT_SETUP_COLUMNS} FROM agent_setup WHERE user_id = ? ORDER BY ${AGENT_SETUP_LATEST_ORDER} LIMIT 1`)
+      .bind(userId)
+      .first<AgentSetupRow>();
+    return row ? toAgentSetupRecord(row) : null;
+  }
+
+  async insertForUser(input: {
+    userId: number;
+    token: string;
+    configurationJson: string;
+    now: number;
+    expiresAt: number;
+  }): Promise<AgentSetupRecord> {
+    // A token PK collision is surfaced as a typed error so acquisition can retry.
+    try {
+      const row = await this.db
+        .prepare(
+          `INSERT INTO agent_setup (${AGENT_SETUP_COLUMNS})
+           VALUES (?, ?, ?, 1, ?, ?, ?)
+           RETURNING ${AGENT_SETUP_COLUMNS}`,
+        )
+        .bind(input.token, input.userId, input.configurationJson, input.expiresAt, input.now, input.now)
+        .first<AgentSetupRow>();
+      if (!row) throw new Error('insertForUser: insert returned no rows');
+      return toAgentSetupRecord(row);
+    } catch (error) {
+      if (error instanceof Error && TOKEN_COLLISION_MESSAGE.test(error.message)) throw new AgentSetupTokenCollisionError();
+      throw error;
+    }
+  }
+
+  async updateConfiguration(input: {
+    userId: number;
+    token: string;
+    expectedRevision: number;
+    configurationJson: string;
+    now: number;
+    expiresAt: number;
+  }): Promise<AgentSetupMutation> {
+    // Single-statement CAS on (user_id, token, revision). The token never
+    // changes; a stale revision fails the WHERE so nothing is written.
+    const row = await this.db
+      .prepare(
+        `UPDATE agent_setup SET
+           configuration_json = ?,
+           configuration_revision = configuration_revision + 1,
+           expires_at = ?,
+           updated_at = ?
+         WHERE user_id = ? AND token = ? AND configuration_revision = ?
+         RETURNING ${AGENT_SETUP_COLUMNS}`,
+      )
+      .bind(input.configurationJson, input.expiresAt, input.now, input.userId, input.token, input.expectedRevision)
+      .first<AgentSetupRow>();
+    if (row) return { status: 'ok', record: toAgentSetupRecord(row) };
+    // The CAS matched nothing; read the live row to classify the rejection: a
+    // missing (or foreign) token is terminal, otherwise the revision was stale.
+    const current = await this.findByToken(input.token);
+    if (!current || current.userId !== input.userId) return { status: 'missing' };
+    return { status: 'revision-conflict', record: current };
+  }
+
+  async renewLease(input: {
+    userId: number;
+    token: string;
+    expiresAt: number;
+  }): Promise<AgentSetupRenewal> {
+    // Expiry-only: updated_at and the revision are left untouched so a heartbeat
+    // neither reorders the restore selection nor collides with an edit.
+    const row = await this.db
+      .prepare(
+        `UPDATE agent_setup SET expires_at = ?
+         WHERE user_id = ? AND token = ?
+         RETURNING ${AGENT_SETUP_COLUMNS}`,
+      )
+      .bind(input.expiresAt, input.userId, input.token)
+      .first<AgentSetupRow>();
+    return row ? { status: 'ok', record: toAgentSetupRecord(row) } : { status: 'missing' };
+  }
+}
+
 export class SqlRepo implements Repo {
   users: UsersRepo;
   sessions: SessionsRepo;
@@ -1884,6 +2009,7 @@ export class SqlRepo implements Repo {
   modelAliases: ModelAliasesRepo;
   responsesItems: ResponsesItemsRepo;
   responsesSnapshots: ResponsesSnapshotsRepo;
+  agentSetup: AgentSetupRepository;
 
   constructor(db: SqlDatabase) {
     this.users = new SqlUsersRepo(db);
@@ -1900,5 +2026,6 @@ export class SqlRepo implements Repo {
     this.modelAliases = new SqlModelAliasesRepo(db);
     this.responsesItems = new SqlResponsesItemsRepo(db);
     this.responsesSnapshots = new SqlResponsesSnapshotsRepo(db);
+    this.agentSetup = new SqlAgentSetupRepo(db);
   }
 }

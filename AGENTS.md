@@ -126,6 +126,7 @@ ESLint-prohibited from reaching into any `apps/platform-*`.
 ```text
 Floway/
 ├── packages/
+│   ├── agent-setup/          # @floway-dev/agent-setup — Agent Setup domain: config schema, installers, route factories, lease repository contract
 │   ├── gateway/              # @floway-dev/gateway — Hono app, control/data planes, repo, migrations
 │   ├── http/                 # @floway-dev/http — HTTP/1.1 + userspace TLS + WebSocket upgrade over a duplex byte stream
 │   ├── interceptor/          # @floway-dev/interceptor — generic interceptor framework
@@ -151,20 +152,32 @@ Floway/
 Dependency direction is strict. The leaf-most packages are `protocols`,
 `interceptor`, and `http` (HTTP/1.1 over a duplex byte stream + userspace
 TLS + WebSocket upgrade, no runtime dependencies). `translate` depends on
-`protocols`. `proxy` depends on `http`; it parses subscription-style
-proxy URIs, dispatches to per-protocol byte-stream dialers, and exposes
-request runners for both proxy-backed and direct TCP streams. Both compose
-dial → optional userspace TLS → fetch-on-stream. All dialers — including
-`vless-ws`, which layers
+`protocols`. `agent-setup` is the self-contained Agent Setup domain —
+configuration schema, language-native installer prefix rendering, canonical
+Bash/PowerShell common fragments plus per-agent fragments, dependency-injected
+Hono public and control route factories, and the lease
+`AgentSetupRepository` contract — and depends only on `hono` / `zod` /
+`@hono/zod-validator`; it never imports the gateway or any app, and knows
+nothing of databases, HTTP auth/CORS/logging, host mount paths, or runtimes.
+`proxy` depends on `http`; it parses subscription-style proxy URIs,
+dispatches to per-protocol byte-stream dialers, and exposes request runners
+for both proxy-backed and direct TCP streams. Both compose dial → optional
+userspace TLS → fetch-on-stream. All dialers — including `vless-ws`, which layers
 `wsUpgradeAndFrame` over the runtime's TLS-wrapped duplex — stay
 runtime-agnostic by taking the raw TCP `socketDial` primitive through
 `DialOptions`, so they never import `@floway-dev/platform`. `provider`
 depends on `platform` + `protocols` + `interceptor`; the per-vendor
 `provider-*` packages depend on `provider`.
 `gateway` depends on `platform` + `protocols` + `translate` + `http` +
-`proxy` + all `provider-*`, and is the runtime-agnostic gateway core; it
-threads `getSocketDial()` from `@floway-dev/platform` into the proxy
-library at the dial-layer composition root. `apps/platform-*` depend on
+`proxy` + `agent-setup` + all `provider-*`, and is the runtime-agnostic
+gateway core; it threads `getSocketDial()` from `@floway-dev/platform` into
+the proxy library at the dial-layer composition root, and supplies the SQL /
+in-memory `AgentSetupRepository` implementations. A successful Agent Setup
+insert stores the replacement lease before pruning only that user's
+already-expired siblings. The gateway also supplies the auth-derived user id
+and the single host-owned route path used to mount both setup surfaces and
+project public script URLs. The public routes sit ahead of logger / CORS / auth
+middleware. `apps/platform-*` depend on
 `platform` + `gateway` plus their target's runtime libraries
 (`@cloudflare/workers-types`; `sharp` + `@hono/node-server`); they are the
 only places runtime-specific symbols (D1, R2, Images, KV, ExecutionContext,
@@ -173,7 +186,10 @@ latter only via its `/url`, `/url-kind`, `/proxy-config`, and `/constants`
 subpath exports — chosen so the dashboard's proxy editor reuses URI
 parse/format and config types without pulling dialers, userspace TLS, or
 Node `crypto` into the SPA bundle), and type-imports
-`@floway-dev/gateway/app-type` for Hono RPC client typing.
+`@floway-dev/gateway/app-type` for Hono RPC client typing. It does not depend
+on `@floway-dev/agent-setup` — the dashboard derives the Agent Setup
+configuration type from the RPC client — and ESLint blocks a runtime import of
+that package from `apps/web`.
 
 ESLint forbids any workspace file from importing `@floway-dev/platform-*`
 by package name, plus a `no-restricted-paths` zone forbidding the
@@ -210,6 +226,7 @@ Run from the repo root:
 pnpm run test                # vitest across all packages
 pnpm run lint                # eslint across the workspace
 pnpm run typecheck           # tsc --noEmit per package
+pnpm run test:agent-setup-installers  # assembled Agent Setup scripts vs. fake CLIs/installers (not in `test`)
 pnpm run dev                 # parallel wrangler dev (8788) + Vite dev (5174)
 pnpm run dev:node            # Node.js entry (tsx apps/platform-node/entry.ts)
 pnpm run deploy              # builds apps/web, then wrangler deploys apps/platform-cloudflare
@@ -242,6 +259,13 @@ The Node entry runs `applyMigrations` against
 `packages/gateway/migrations/*.sql` at boot, then serves the same Hono app
 through `@hono/node-server`. Static-asset serving is Workers-only; the Node
 target serves no SPA.
+
+The public Agent Setup installers are composed from the checked-in
+`packages/agent-setup/installers/{bash,powershell}/common/` fragments and the
+adjacent `{claude,codex}.{sh,ps1}` agent fragments. Each source fragment is
+embedded verbatim into `packages/agent-setup/src/script-assets.generated.ts`;
+regenerate with `pnpm --filter @floway-dev/agent-setup run generate-assets`
+(pass `--check` to fail on drift) after editing any fragment.
 
 Wrangler commands go through the local dependency with `pnpm wrangler` or
 package scripts. When deploying, do not pass `--dry-run`.
