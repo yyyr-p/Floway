@@ -11,6 +11,8 @@ import { type KeySource, KEY_SOURCE_OPTIONS } from '../../../components/keys/key
 import KeysTable from '../../../components/keys/KeysTable.vue';
 import { useAddressableModelsStore } from '../../../composables/useModels.ts';
 import { useUpstreamOptionsStore } from '../../../composables/useUpstreamOptions.ts';
+import { useAuthStore } from '../../../stores/auth.ts';
+import { effectiveUpstreamCap, isReachableUnderCap } from '../../../utils/reachability.ts';
 import { Button, Dialog, Input, Select } from '@floway-dev/ui';
 
 export const useKeysPageData = defineBasicLoader(async () => {
@@ -30,6 +32,7 @@ export const useKeysPageData = defineBasicLoader(async () => {
 
 <script setup lang="ts">
 const api = useApi();
+const auth = useAuthStore();
 const upstreamOptionsStore = useUpstreamOptionsStore();
 const modelsStore = useAddressableModelsStore();
 const initialData = useKeysPageData();
@@ -142,8 +145,15 @@ const copyToClipboard = async (text: string, tag: string) => {
 };
 
 const upstreamOptions = computed(() => upstreamOptionsStore.options.value);
-const models = computed(() => modelsStore.models.value ?? []);
 const selectedKey = computed(() => keys.value.find(key => key.id === selectedKeyId.value) ?? null);
+const effectiveCap = computed(() => effectiveUpstreamCap(
+  selectedKey.value?.upstream_ids ?? null,
+  auth.currentUser?.upstreamIds ?? null,
+));
+const models = computed(() => {
+  const catalog = modelsStore.models.value ?? [];
+  return catalog.filter(model => isReachableUnderCap(model, catalog, effectiveCap.value));
+});
 </script>
 
 <template>
