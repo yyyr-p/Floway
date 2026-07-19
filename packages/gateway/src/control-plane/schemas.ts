@@ -462,6 +462,12 @@ export const claudeCodeProbeBody = recordOnlyBody;
 // projected UpstreamModelConfig catalog.
 export const listModelsBody = recordOnlyBody;
 
+// --- agent setup ---
+//
+// The lease update/heartbeat wire schemas live in @floway-dev/agent-setup
+// alongside the route factory that consumes them; the gateway mounts those
+// routes rather than re-declaring their bodies here.
+
 // --- proxies ---
 //
 // Proxy URLs accept the URI schemes parsed by `parseProxyUri` in

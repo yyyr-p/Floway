@@ -10,6 +10,10 @@ import {
 import type {
   ApiKey,
   ApiKeyRepo,
+  AgentSetupMutation,
+  AgentSetupRecord,
+  AgentSetupRenewal,
+  AgentSetupRepository,
   BackoffRow,
   CachedModelsRow,
   ModelAliasesRepo,
@@ -46,6 +50,7 @@ import { usageDimensionRows } from './usage-dimensions.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogram.ts';
 import { generateSessionToken } from '../shared/session-tokens.ts';
 import { assertWebSearchProviderName } from '../shared/web-search-providers.ts';
+import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
 import { BILLING_DIMENSIONS, canonicalPricingSelectorKey, canonicalizePricingSelector, type BillingDimension, type PriceVector, type PricingSelector } from '@floway-dev/protocols/common';
 import type { ProviderModel, UpstreamRecord } from '@floway-dev/provider';
 
@@ -894,6 +899,91 @@ class MemoryModelAliasesRepo implements ModelAliasesRepo {
   }
 }
 
+const compareLatestAgentSetupRecord = (a: AgentSetupRecord, b: AgentSetupRecord): number =>
+  b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || (a.token < b.token ? 1 : -1);
+
+class MemoryAgentSetupRepo implements AgentSetupRepository {
+  // Keyed by token: a user may own many concurrent leases at once.
+  private byToken = new Map<string, AgentSetupRecord>();
+
+  findByToken(token: string): Promise<AgentSetupRecord | null> {
+    const found = this.byToken.get(token);
+    return Promise.resolve(found ? { ...found } : null);
+  }
+
+  latestByUserId(userId: number): Promise<AgentSetupRecord | null> {
+    let latest: AgentSetupRecord | undefined;
+    for (const record of this.byToken.values()) {
+      if (record.userId !== userId) continue;
+      if (latest === undefined || compareLatestAgentSetupRecord(record, latest) < 0) latest = record;
+    }
+    return Promise.resolve(latest ? { ...latest } : null);
+  }
+
+  insertForUser(input: {
+    userId: number;
+    token: string;
+    configurationJson: string;
+    now: number;
+    expiresAt: number;
+  }): Promise<AgentSetupRecord> {
+    if (this.byToken.has(input.token)) throw new AgentSetupTokenCollisionError();
+    const record: AgentSetupRecord = {
+      userId: input.userId,
+      token: input.token,
+      configurationJson: input.configurationJson,
+      configurationRevision: 1,
+      expiresAt: input.expiresAt,
+      createdAt: input.now,
+      updatedAt: input.now,
+    };
+    this.byToken.set(record.token, record);
+    // Mirror the AFTER INSERT trigger: sweep only this user's already-expired
+    // rows, measured against the new row's created_at, never the new row.
+    for (const [token, existing] of this.byToken) {
+      if (existing.userId === input.userId && token !== record.token && existing.expiresAt <= input.now) this.byToken.delete(token);
+    }
+    return Promise.resolve({ ...record });
+  }
+
+  updateConfiguration(input: {
+    userId: number;
+    token: string;
+    expectedRevision: number;
+    configurationJson: string;
+    now: number;
+    expiresAt: number;
+  }): Promise<AgentSetupMutation> {
+    const existing = this.byToken.get(input.token);
+    if (!existing || existing.userId !== input.userId) return Promise.resolve({ status: 'missing' });
+    if (existing.configurationRevision !== input.expectedRevision) {
+      return Promise.resolve({ status: 'revision-conflict', record: { ...existing } });
+    }
+    const record: AgentSetupRecord = {
+      ...existing,
+      configurationJson: input.configurationJson,
+      configurationRevision: existing.configurationRevision + 1,
+      expiresAt: input.expiresAt,
+      updatedAt: input.now,
+    };
+    this.byToken.set(record.token, record);
+    return Promise.resolve({ status: 'ok', record: { ...record } });
+  }
+
+  renewLease(input: {
+    userId: number;
+    token: string;
+    expiresAt: number;
+  }): Promise<AgentSetupRenewal> {
+    const existing = this.byToken.get(input.token);
+    if (!existing || existing.userId !== input.userId) return Promise.resolve({ status: 'missing' });
+    // Expiry-only: updated_at and the revision stay put.
+    const record: AgentSetupRecord = { ...existing, expiresAt: input.expiresAt };
+    this.byToken.set(record.token, record);
+    return Promise.resolve({ status: 'ok', record: { ...record } });
+  }
+}
+
 export class InMemoryRepo implements Repo {
   apiKeys: ApiKeyRepo;
   users: UsersRepo;
@@ -909,6 +999,7 @@ export class InMemoryRepo implements Repo {
   modelAliases: ModelAliasesRepo;
   responsesItems: ResponsesItemsRepo;
   responsesSnapshots: ResponsesSnapshotsRepo;
+  agentSetup: AgentSetupRepository;
 
   constructor() {
     this.users = new MemoryUsersRepo();
@@ -925,5 +1016,6 @@ export class InMemoryRepo implements Repo {
     this.modelAliases = new MemoryModelAliasesRepo();
     this.responsesItems = new MemoryResponsesItemsRepo();
     this.responsesSnapshots = new MemoryResponsesSnapshotsRepo();
+    this.agentSetup = new MemoryAgentSetupRepo();
   }
 }

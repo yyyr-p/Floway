@@ -129,12 +129,69 @@ Open the deployed URL (or `http://localhost:8788` for Node), log in with
    Token flow, or paste `~/.claude/.credentials.json`), or *Ollama* (base
    URL + optional API key — ollama.com or a self-hosted daemon). List
    order is routing order; earlier providers win for a shared public model id.
-2. **API Keys -> New Key**. Give the generated key to your client.
-3. Copy the Claude Code or Codex CLI snippet from the API Keys panel into the
-   agent config. The Codex setup enables client-owned search and image tools,
-   Responses WebSocket, remote compaction, and Floway's live model catalog. Its
-   provider token is stored separately under the active `CODEX_HOME`, so an
-   official Codex account login remains available for account-backed services.
+2. **API Keys -> New Key**. Generate a long-lived key and use it directly as
+   the `x-api-key` / bearer token in any client.
+3. **API Keys -> Agent Setup** offers two output modes. **Agent Setup** and
+   **Config snippets** form one selector in the left column; Claude Code and
+   Codex form a second selector below it. The right column keeps one shared
+   configuration form mounted while only the output below it switches between
+   the one-command installer and manual snippets. Select a row in the API Keys
+   table, then configure or copy the chosen agent. The browser remembers the
+   last selected key while it still exists, and a newly created key becomes the
+   selection automatically. With no selected key, form edits remain local and
+   the output asks for a key instead of creating a setup URL.
+
+   Claude Code exposes Default, Opus, Sonnet, and Haiku model overrides plus
+   reasoning effort and gateway discovery. Codex exposes its model and reasoning
+   effort. Both configurations live in one lease record and renew through one
+   keepalive. The agent-specific script paths share the same token —
+   `<token>/claude.sh` and `<token>/codex.sh` (plus their PowerShell variants) —
+   and each script installs and configures only its named agent. The command
+   picker defaults to Windows on Windows clients and to macOS/Linux elsewhere.
+
+   Bash and PowerShell sources each have a `common/` directory containing
+   ordered output, helper, and main fragments, plus one file per agent.
+   TypeScript composes those common fragments with only the selected agent.
+   The final `main`/`Main` invocation lives at the end of that agent file, so a
+   truncated download cannot begin installation or configuration.
+
+   The command's setup URL stays stable while the panel is open. The visible
+   panel renews its five-minute lease once a minute, the URL expires about five
+   minutes after you leave, and reopening the panel restores the latest
+   preferences. Only after the replacement lease is stored does that insert
+   prune the account's expired siblings. A missing CLI uses the first available
+   install mechanism: Homebrew, npm, then the official script on macOS; npm,
+   then the official script on Linux and Windows. A selected package manager
+   failure is surfaced directly instead of silently falling through. The setup
+   never uses `sudo` and never upgrades an existing installation.
+
+   Native child-process output stays attached to the terminal so progress,
+   colors, and carriage-return updates render in real time. Each script names
+   its agent in four Homebrew-style notices: `Agent Setup`, `Installing`,
+   `Configuring`, and `Completed Agent Setup`, with the agent name after a colon.
+   Metadata and normal status text stay plain, while warning and error labels
+   are colored. Bash exits with the selected agent's result; PowerShell stores
+   it in `$LASTEXITCODE` without terminating the caller's `irm | iex` runspace.
+   Neither script prints a redundant summary.
+
+   Each managed file is backed up before Floway's settings are merged. Successful
+   re-runs retain only the latest `settings.json` / `config.toml` backup; the
+   provider-token rollback copy is deleted once the transaction commits, while
+   a failed restore preserves it for manual recovery. The Codex provider token
+   is stored separately under the active `CODEX_HOME`, so an official account
+   login in `auth.json` remains available. Installation checks the local CLI version before
+   configuration begins; setup performs no gateway request. Claude Code reports
+   its settings path after the write succeeds; Codex reports the config and
+   provider-token paths after both writes succeed. Both automatic and manual
+   Codex configuration enable standalone web search and suppress its paired
+   under-development warning.
+
+   **Config snippets** keeps the manual setup path available for the same
+   table-selected key, agent, and configuration form. Its `settings.json` or
+   TOML output updates from those exact model, effort, and discovery choices;
+   it does not mount a second set of controls. Claude Code is presented as a
+   JSON edit rather than shell exports, while Codex also shows provider-token
+   commands.
 
 Import/export of upstreams, keys, and search config is in Settings. The
 current payload format is version 11 and is tied to the running deployment, so

@@ -1,14 +1,15 @@
 <script lang="ts">
+import { useLocalStorage } from '@vueuse/core';
 import { defineBasicLoader } from 'unplugin-vue-router/data-loaders/basic';
 import { computed, ref, watch } from 'vue';
 
 import { callApi, useApi } from '../../../api/client.ts';
 import type { ApiKey } from '../../../api/types.ts';
-import CliSnippet from '../../../components/keys/CliSnippet.vue';
+import AgentSetupCard from '../../../components/keys/AgentSetupCard.vue';
 import EditKeyDialog from '../../../components/keys/EditKeyDialog.vue';
 import { type KeySource, KEY_SOURCE_OPTIONS } from '../../../components/keys/keySource.ts';
 import KeysTable from '../../../components/keys/KeysTable.vue';
-import { useModelsStore } from '../../../composables/useModels.ts';
+import { useAddressableModelsStore } from '../../../composables/useModels.ts';
 import { useUpstreamOptionsStore } from '../../../composables/useUpstreamOptions.ts';
 import { Button, Dialog, Input, Select } from '@floway-dev/ui';
 
@@ -18,7 +19,7 @@ export const useKeysPageData = defineBasicLoader(async () => {
   const [keysRes] = await Promise.all([
     callApi<ApiKey[]>(() => api.api.keys.$get()),
     upstreamOptions.load(),
-    useModelsStore().load(),
+    useAddressableModelsStore().load(),
   ]);
   return {
     keys: keysRes.error ? [] : keysRes.data,
@@ -30,7 +31,7 @@ export const useKeysPageData = defineBasicLoader(async () => {
 <script setup lang="ts">
 const api = useApi();
 const upstreamOptionsStore = useUpstreamOptionsStore();
-const modelsStore = useModelsStore();
+const modelsStore = useAddressableModelsStore();
 const initialData = useKeysPageData();
 
 const keys = ref<ApiKey[]>(initialData.data.value.keys);
@@ -43,11 +44,15 @@ const rotateSource = ref<KeySource>('generate');
 const rotateCustomKey = ref('');
 const rotating = ref(false);
 const rotateError = ref<string | null>(null);
-const selectedKeyId = ref<string>('');
 const copied = ref<string | null>(null);
 const copyFailed = ref<string | null>(null);
+const selectedKeyId = useLocalStorage('floway-agent-setup-selected-key', '');
+const dropSelectionIfMissing = () => {
+  if (selectedKeyId.value && !keys.value.some(key => key.id === selectedKeyId.value)) selectedKeyId.value = '';
+};
+dropSelectionIfMissing();
 
-const loadAll = async () => {
+const loadAll = async (): Promise<boolean> => {
   error.value = null;
   const [keysRes] = await Promise.all([
     callApi<ApiKey[]>(() => api.api.keys.$get()),
@@ -56,9 +61,15 @@ const loadAll = async () => {
   ]);
   if (keysRes.error) {
     error.value = keysRes.error.message;
-    return;
+    return false;
   }
   keys.value = keysRes.data;
+  dropSelectionIfMissing();
+  return true;
+};
+
+const selectCreatedKey = async (key: ApiKey) => {
+  if (await loadAll()) selectedKeyId.value = key.id;
 };
 
 const rotateOpen = computed({
@@ -130,10 +141,9 @@ const copyToClipboard = async (text: string, tag: string) => {
   }
 };
 
-const selectedKey = computed(() => keys.value.find(k => k.id === selectedKeyId.value));
-const configurationKey = computed(() => selectedKey.value?.key ?? keys.value[0]?.key ?? '<your-api-key>');
-const modelsForSnippets = computed(() => modelsStore.models.value ?? []);
 const upstreamOptions = computed(() => upstreamOptionsStore.options.value);
+const models = computed(() => modelsStore.models.value ?? []);
+const selectedKey = computed(() => keys.value.find(key => key.id === selectedKeyId.value) ?? null);
 </script>
 
 <template>
@@ -162,28 +172,18 @@ const upstreamOptions = computed(() => upstreamOptionsStore.options.value);
       />
     </div>
 
-    <div class="glass-card p-5 sm:p-6 animate-in delay-1">
-      <span class="text-xs font-medium text-gray-500 uppercase tracking-widest">Configuration</span>
-
-      <p v-if="selectedKey" class="text-xs text-accent-cyan mt-2 flex items-center gap-1.5">
-        <svg class="w-3.5 h-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M12 16v-4" />
-          <path d="M12 8h.01" />
-        </svg>
-        Configs below use the selected key.
-      </p>
-
-      <div class="mt-5">
-        <CliSnippet :api-key="configurationKey" :models="modelsForSnippets" />
-      </div>
-    </div>
+    <AgentSetupCard
+      :selected-key="selectedKey"
+      :models="models"
+      :loading="modelsStore.loading.value"
+      :error="modelsStore.error.value"
+    />
 
     <EditKeyDialog
       v-model:open="createOpen"
       mode="create"
       :upstreams="upstreamOptions"
-      @saved="loadAll"
+      @saved="selectCreatedKey"
     />
 
     <EditKeyDialog

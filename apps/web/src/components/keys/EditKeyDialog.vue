@@ -15,11 +15,10 @@ const open = defineModel<boolean>('open');
 
 const props = defineProps<{ upstreams: UpstreamOption[] } & ({ mode: 'create' } | { mode: 'edit'; apiKey: ApiKey })>();
 
-const emit = defineEmits<{ saved: [] }>();
+const emit = defineEmits<{ saved: [apiKey: ApiKey] }>();
 
 const api = useApi();
 const auth = useAuthStore();
-const isCreate = computed(() => props.mode === 'create');
 
 const visibleUpstreams = computed<UpstreamOption[]>(() => {
   if (!auth.currentUser) throw new Error('EditKeyDialog rendered without an authenticated user');
@@ -144,15 +143,15 @@ const save = async () => {
     upstream_ids: upstreamSelection.value.override ? upstreamSelection.value.ids : null,
     dump_retention_seconds: proposedRetention,
   };
-  const { error: err } = props.mode === 'create'
-    ? await callApi(() => api.api.keys.$post({
+  const { data, error: err } = props.mode === 'create'
+    ? await callApi<ApiKey>(() => api.api.keys.$post({
         json: {
           ...commonBody,
           key_source: keySource.value,
           ...(keySource.value === 'custom' ? { custom_key: custom } : {}),
         },
       }))
-    : await callApi(
+    : await callApi<ApiKey>(
         () => api.api.keys[':id'].$patch({ param: { id: props.apiKey.id }, json: commonBody }),
       );
   saving.value = false;
@@ -160,13 +159,14 @@ const save = async () => {
     error.value = err.message;
     return;
   }
+  if (!data) throw new Error('API key save succeeded without returning the saved key');
   open.value = false;
-  emit('saved');
+  emit('saved', data);
 };
 </script>
 
 <template>
-  <Dialog v-model:open="open" :title="isCreate ? 'Create API Key' : 'Edit API Key'" size="lg" :auto-focus-on-open="false">
+  <Dialog v-model:open="open" :title="mode === 'create' ? 'Create API Key' : 'Edit API Key'" size="lg" :auto-focus-on-open="false">
     <div class="space-y-5">
       <div class="space-y-2">
         <label class="block text-xs font-medium text-gray-500">Name</label>
@@ -180,7 +180,7 @@ const save = async () => {
         inherit-description="When off, this key inherits the global upstream order."
       />
 
-      <div v-if="isCreate" class="space-y-2">
+      <div v-if="mode === 'create'" class="space-y-2">
         <label class="block text-xs font-medium text-gray-500">New key</label>
         <Select v-model="keySource" :options="KEY_SOURCE_OPTIONS">
           <template #description="{ option }">
@@ -221,7 +221,7 @@ const save = async () => {
       <footer class="flex items-center justify-end gap-2">
         <Button variant="secondary" :disabled="saving" @click="open = false">Cancel</Button>
         <Button :loading="saving" @click="save">
-          {{ isCreate ? 'Create key' : 'Save changes' }}
+          {{ mode === 'create' ? 'Create key' : 'Save changes' }}
         </Button>
       </footer>
     </div>

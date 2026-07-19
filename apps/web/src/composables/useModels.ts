@@ -8,14 +8,14 @@ interface ModelsResponse {
   data: ControlPlaneModel[];
 }
 
-// Two stores share this core. The server returns gateway-wide rows for
-// admin sessions and scoped rows for non-admin sessions, so every surface
-// that mounts under `requiresAdmin` (alias edit dialog, settings card,
-// Models playground) gets the full catalog and filters client-side as
-// needed. `useModelsStore` includes synthesised alias entries (the
-// default `/v1/models` view); `useRawModelsStore` drops alias merging
-// and adds `include_unlisted=true` so the alias editor's combobox sees
-// every id the data-plane resolver would accept.
+// Three stores share this core. The server returns gateway-wide rows for admin
+// sessions and scoped rows otherwise, so every `requiresAdmin` surface gets the
+// full catalog and filters client-side. The stores differ only in query flags:
+// `useModelsStore` synthesises alias entries (the default `/v1/models` view);
+// `useRawModelsStore` drops alias merging and adds `include_unlisted=true` so
+// the alias editor sees every id the resolver accepts; `useAddressableModelsStore`
+// keeps alias merging AND `include_unlisted=true` so the Agent Setup page offers
+// every chat id an agent could address.
 const makeStore = (params: { includeAliases: boolean; includeUnlisted?: boolean }) => {
   const models = ref<ControlPlaneModel[] | null>(null);
   const loading = ref(false);
@@ -25,9 +25,8 @@ const makeStore = (params: { includeAliases: boolean; includeUnlisted?: boolean 
   return () => {
     const api = useApi();
 
-    const load = async (): Promise<void> => {
-      if (inflight !== null) return await inflight;
-      const current = (async () => {
+    const load = (): Promise<void> => {
+      inflight ??= (async () => {
         loading.value = true;
         error.value = null;
         try {
@@ -35,21 +34,14 @@ const makeStore = (params: { includeAliases: boolean; includeUnlisted?: boolean 
           if (!params.includeAliases) query.aliases = 'false';
           if (params.includeUnlisted) query.include_unlisted = 'true';
           const { data, error: err } = await callApi<ModelsResponse>(() => api.api.models.$get({ query }));
-          if (err) {
-            error.value = err.message;
-            return;
-          }
-          models.value = data.data;
+          if (err) error.value = err.message;
+          else models.value = data.data;
         } finally {
           loading.value = false;
+          inflight = null;
         }
       })();
-      inflight = current;
-      try {
-        await current;
-      } finally {
-        if (inflight === current) inflight = null;
-      }
+      return inflight;
     };
 
     return { models, loading, error, load };
@@ -58,3 +50,4 @@ const makeStore = (params: { includeAliases: boolean; includeUnlisted?: boolean 
 
 export const useModelsStore = makeStore({ includeAliases: true });
 export const useRawModelsStore = makeStore({ includeAliases: false, includeUnlisted: true });
+export const useAddressableModelsStore = makeStore({ includeAliases: true, includeUnlisted: true });
