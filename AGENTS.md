@@ -216,7 +216,7 @@ through `test.projects`.
 Client-carried affinity is a source-protocol membrane. Shared codec, routing,
 and request context live under `data-plane/chat/shared/affinity`; each source
 protocol owns its `affinity/ingress.ts` and `affinity/egress.ts`. Wire behavior
-lives in `AFFINITY.md`, and candidate ordering lives in `RESOLUTION.md`.
+lives in `docs/AFFINITY.md`, and candidate ordering lives in `docs/RESOLUTION.md`.
 
 Native Responses persistence is independent from affinity. It stores complete
 API-key-scoped items and snapshots for 30 days. A completed output item becomes

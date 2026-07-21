@@ -118,14 +118,8 @@ pnpm run lint
 pnpm run typecheck
 ```
 
-More detail lives in focused documents:
-
-- [AGENTS.md](./AGENTS.md) — architecture, workspace layout, verification, and
-  contributor rules.
-- [RESOLUTION.md](./RESOLUTION.md) — model selection, aliases, and routing
-  resolution.
-- [TRANSLATION.md](./TRANSLATION.md) — cross-protocol translation behavior.
-- [AFFINITY.md](./AFFINITY.md) — client-carried routing affinity.
+More detail lives in [AGENTS.md](./AGENTS.md) — architecture, workspace
+layout, verification, and contributor rules.
 
 ## License
 
