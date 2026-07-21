@@ -318,17 +318,19 @@ announce that the deploy is starting. That announcement is the only place
 during a deploy where the agent talks *to* the user instead of running the
 next tool.
 
-After that announcement the deploy is fully autonomous and must not stop.
-Never end a turn waiting for the user to reply or to take any action — no
-"shall I continue?", no "ready for Step 3?", no implicit pause after
-printing rollback commands, no waiting for the user to acknowledge the
-backup path. As soon as a step's tool output is in hand, the very next
-agent turn must call the next step's tool. The only legitimate reasons to
-stop are: the Worker is live and Step 3 succeeded, or a tool exited
-non-zero and the failure genuinely requires human judgement. Reporting
-findings, printing commands, and announcing the next step are inlined
-*alongside* the next tool call in the same turn — never as a standalone
-turn that ends and waits.
+After that announcement the deploy is autonomous and must not stop —
+except at Step 2 when breaking changes require user confirmation. Never
+end a turn waiting for the user to reply or to take any action outside of
+that single checkpoint — no "shall I continue?", no "ready for Step 4?",
+no implicit pause after printing rollback commands, no waiting for the
+user to acknowledge the backup path. As soon as a step's tool output is
+in hand, the very next agent turn must call the next step's tool. The
+only legitimate reasons to stop are: the Worker is live and Step 4
+succeeded, Step 2 is awaiting user confirmation of breaking changes, or a
+tool exited non-zero and the failure genuinely requires human judgement.
+Reporting findings, printing commands, and announcing the next step are
+inlined *alongside* the next tool call in the same turn — never as a
+standalone turn that ends and waits.
 
 When the user's request is the deploy itself — the human asked to deploy
 and not to deploy as the tail of a wider piece of work — git is read-only
@@ -336,7 +338,7 @@ for the duration of the deploy flow. This constraint covers git only;
 code and config edits are not bound by it and remain a per-situation
 judgement call. Inspection commands such as `git branch`, `git status`,
 `git log`, `git diff`, and `git show` are fine and are often needed to
-gather state for Step 1 and Step 2. Anything that mutates repository
+gather state for Steps 1 and 2. Anything that mutates repository
 state is forbidden: `git stash`, `git reset`, `git checkout` of files or
 branches, `git commit`, `git rebase`, `git merge`, `git pull`,
 `git push`, and any branch or tag creation/deletion.
@@ -355,11 +357,40 @@ pnpm wrangler deployments list \
 
 `deployments list` shows recent deployments with their version ids and
 marks the currently active one — that gives both the active deployment
-timestamp and the version id you would later roll back to.
+timestamp, the version id you would later roll back to, and the deploy
+message (which records the commit revision of that deployment).
 `d1 migrations list --remote` prints applied migrations and the pending
 diff this deploy would apply.
 
-**Step 2 — report findings and stage the rollback.** Tell the user the
+**Step 2 — declare breaking changes.** Extract the deploy message of the
+currently active deployment from Step 1's output. The message is a short
+commit revision (recorded by the previous deploy's `--message` flag). Use
+it to diff `CHANGELOG.md` between that revision and the current working
+tree:
+
+```bash
+git diff <PREVIOUS_COMMIT_REV> -- CHANGELOG.md
+```
+
+If the active deployment has no message, or its message is not a
+recognizable commit revision (i.e. it predates the introduction of this
+workflow), and the database shows applied migrations (confirming Floway
+is already running in production), treat the entire content of
+`CHANGELOG.md` as potentially new to the user.
+
+When the diff (or full content) contains new breaking-change entries,
+summarize their combined user-facing impact to the user. When the same
+area was broken by consecutive entries, do not enumerate each
+intermediate state — synthesize the net effect. Tell the user that all
+listed breaking changes are intentional, describe their impact, and ask
+the user to confirm before proceeding. This is the **only** point in the
+deploy flow where the agent pauses and waits for user input.
+
+When there are no new breaking-change entries, or when `CHANGELOG.md`
+does not exist at the previous revision and is empty now, skip
+confirmation and proceed to Step 3 immediately.
+
+**Step 3 — report findings and stage the rollback.** Tell the user the
 active version id, the active deployment timestamp, the latest applied
 migration, and the migrations this deploy will apply (or that there are
 none).
@@ -392,21 +423,23 @@ honored by the rollback handler.
 
 If no migrations are pending, skip the bookmark capture and the
 database-rollback command; give only the code-rollback command and
-proceed straight to Step 3.
+proceed straight to Step 4.
 
-**Step 3 — deploy with one chained command.** Migrate (when needed) and
+**Step 4 — deploy with one chained command.** Migrate (when needed) and
 publish in the same command so the system spends as little time as
-possible in an inconsistent state:
+possible in an inconsistent state. The deploy message is the short commit
+revision of HEAD at deploy time (`git rev-parse --short HEAD`):
 
 ```bash
-pnpm run db:migrate:remote && pnpm run deploy
+pnpm run db:migrate:remote && pnpm run deploy -- --message "$(git rev-parse --short HEAD)"
 ```
 
 Print this exact command before running it, and tell the user that if the
 deploy stops halfway they can rerun the same command to recover —
 `wrangler d1 migrations apply --remote` is idempotent on already-applied
 migrations and `wrangler deploy` always publishes the current code. When
-there are no pending migrations, the command reduces to `pnpm run deploy`.
+there are no pending migrations, the command reduces to
+`pnpm run deploy -- --message "$(git rev-parse --short HEAD)"`.
 
 Worker rollback by version id (`pnpm wrangler rollback <VERSION_ID>`)
 works across the 100 most recent versions, but Cloudflare blocks rollback
@@ -423,15 +456,53 @@ from `account_id`, the one personal-only key the gate allowlists). So
 plain code rollback stays safe; D1 state is rolled back separately as
 above.
 
-A complete deploy fits in a strict turn budget: **three agent turns when
-migrations are pending** (Step 1 = gather, Step 2 = bookmark + report +
-two rollback commands, Step 3 = deploy) and **two agent turns when no
-migrations are pending** (Step 2 collapses into Turn 1: gather + report +
-single code-rollback command; Turn 2 = deploy). A turn boundary in this
-flow exists only because a tool result has to arrive before the next tool
-call can be issued — it is never a checkpoint where the agent stops and
-waits for the user. Every turn in this budget ends on its step's tool
-call, and the agent re-enters the loop the instant that tool result
-returns. Do not insert extra turns to ask for confirmation along the way,
-and do not let any turn end on a text-only message that has no tool call
-attached.
+A complete deploy without breaking changes fits in a strict turn budget:
+**three agent turns when migrations are pending** (Step 1 = gather,
+Step 3 = bookmark + report + two rollback commands, Step 4 = deploy)
+and **two agent turns when no migrations are pending** (Step 3 collapses
+into Turn 1: gather + report + single code-rollback command; Turn 2 =
+deploy). Step 2 adds one turn only when new breaking-change entries
+exist — the agent presents them and pauses for user confirmation. A turn
+boundary in this flow exists only because a tool result has to arrive
+before the next tool call can be issued, or because user confirmation is
+required — it is never an arbitrary checkpoint. Every turn in this budget
+ends on its step's tool call (or on the breaking-change confirmation
+prompt), and the agent re-enters the loop the instant that tool result
+or user reply returns.
+
+## Breaking Changes (CHANGELOG.md)
+
+`CHANGELOG.md` records user-facing breaking changes. It is prepend-only:
+new entries go at the top, below the file header. Each entry has a date
+heading and a description of what broke and what users need to know.
+
+Each entry carries a severity: **hard** (all users are affected;
+previously working functionality fails or behaves differently) or
+**minor** (specific behaviors, fields, or integration patterns change;
+users who depend on them need to adapt, but the primary functionality
+continues to work). The date heading format is `## YYYY-MM-DD · hard`
+or `## YYYY-MM-DD · minor`.
+
+A change qualifies as a breaking change when it causes previously working
+user-facing behavior to stop working or behave differently in a way
+users must be aware of. Examples:
+
+- Affinity or routing redesigns that invalidate existing conversation
+  context, causing requests to route to unexpected upstreams.
+- Dropping stored state (Responses items, snapshots) that clients may
+  reference by id.
+- Removing or renaming fields from public API responses (`/models`,
+  data-plane output) that downstream consumers or cascaded Floway
+  instances read.
+
+The following are NOT breaking changes and must not appear:
+
+- Database schema migrations (internal storage detail).
+- Control-plane API changes (admin-only surface).
+- Export version bumps, internal refactors, new features that do not
+  alter existing behavior.
+
+When working on a change and it is unclear whether it constitutes a
+breaking change, do not unilaterally add a CHANGELOG entry — ask the
+user to make the call. The user declares what is breaking; the agent
+records it.
