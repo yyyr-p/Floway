@@ -5,7 +5,7 @@ import { nextTick, ref, type Ref } from 'vue';
 import { buildRealModel } from '../../api/test-fixtures.ts';
 import type { ApiKey, ControlPlaneModel } from '../../api/types.ts';
 import type { AgentSetupConfiguration } from '../../composables/useAgentSetup.ts';
-import { Combobox, Select } from '@floway-dev/ui';
+import { Combobox, Select, Switch } from '@floway-dev/ui';
 
 // The card owns one useAgentSetup instance; the tests drive the card through a
 // hand-built stand-in whose refs they mutate per case. useApi is mocked so the
@@ -31,7 +31,7 @@ let activeArg: boolean | null;
 const defaultConfig = (): AgentSetupConfiguration => ({
   apiKeyId: 'key-1',
   claudeCode: {
-    model: null, defaultOpusModel: null, defaultSonnetModel: null, defaultHaikuModel: null, effortLevel: null, modelDiscovery: true,
+    model: null, defaultOpusModel: null, defaultSonnetModel: null, defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, modelDiscovery: true,
   },
   codex: { model: null, reasoningEffort: null },
 });
@@ -163,9 +163,21 @@ describe('AgentSetupCard', () => {
     expect(codexEffortField.get('label').attributes('for')).toBe(codexEffortField.get('input').attributes('id'));
   });
 
-  it('uses the same responsive field width for both agents and renders discovery as a standard field', async () => {
+  it('starts the two new Claude preferences on a new row in the unchanged field grid', async () => {
     const w = mountCard();
-    const claudeClasses = w.get('[data-testid="claude-fields"]').classes();
+    const fields = w.get('[data-testid="claude-fields"]');
+    expect(fields.classes()).toContain('xl:grid-cols-5');
+    expect([...fields.element.children].map(element => element.getAttribute('data-testid'))).toEqual([
+      'claude-model',
+      'claude-opus',
+      'claude-sonnet',
+      'claude-haiku',
+      'claude-effort',
+      'claude-model-discovery',
+      'claude-cleanup-period',
+      'claude-attribution-opt-out',
+    ]);
+    expect(w.get('[data-testid="claude-cleanup-period"]').classes()).toContain('sm:col-start-1');
 
     const discovery = w.get('[data-testid="claude-model-discovery"]');
     expect(discovery.text()).toContain('Gateway model discovery');
@@ -173,7 +185,7 @@ describe('AgentSetupCard', () => {
     expect(discovery.get('div').classes()).toContain('h-9');
     expect(discovery.get('div').classes()).not.toContain('border');
     await selectAgent(w, 'Codex');
-    expect(w.get('[data-testid="codex-fields"]').classes()).toEqual(claudeClasses);
+    expect(w.get('[data-testid="codex-fields"]').classes()).toEqual(fields.classes());
   });
 
   it('moves a restored lease onto the API key selected by the table', async () => {
@@ -224,6 +236,31 @@ describe('AgentSetupCard', () => {
     const effort = selectIn(w, 'claude-effort').props().options;
     expect(effort[0]!.label).toBe('Default');
     expect(effort.slice(1).map(o => o.value)).toEqual(['low', 'medium', 'high', 'xhigh']);
+  });
+
+  it('offers the supported Claude cleanup periods with Default omitting the setting', async () => {
+    const w = mountCard();
+    const cleanup = selectIn(w, 'claude-cleanup-period');
+    expect(cleanup.props().options.map(option => option.label)).toEqual(['Default', '180 days', '365 days', '99999 days']);
+
+    cleanup.vm.$emit('update:modelValue', '365');
+    await nextTick();
+    expect(setupStub.draft.value!.claudeCode.cleanupPeriodDays).toBe(365);
+
+    cleanup.vm.$emit('update:modelValue', cleanup.props().options[0]!.value);
+    await nextTick();
+    expect(setupStub.draft.value!.claudeCode.cleanupPeriodDays).toBeNull();
+  });
+
+  it('toggles the Claude AI attribution opt-out from the shared configuration', async () => {
+    const w = mountCard();
+    const attribution = w.get('[data-testid="claude-attribution-opt-out"]');
+    expect(attribution.text()).toContain('Disabled');
+
+    attribution.findComponent(Switch).vm.$emit('update:modelValue', true);
+    await nextTick();
+    expect(setupStub.draft.value!.claudeCode.optOutAiAttribution).toBe(true);
+    expect(attribution.text()).toContain('Enabled');
   });
 
   it('offers a free-form Codex effort combobox seeded with upstream-advertised suggestions', async () => {
