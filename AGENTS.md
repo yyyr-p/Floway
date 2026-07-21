@@ -112,25 +112,16 @@ kind (`kind: 'claude-code'`); and vendor-locked provider packages
 request/header mimicry captured verbatim from a live wire probe with a
 reference URL.
 
+## Architecture
+
 Stack: Hono on Web APIs, TypeScript, pnpm, Vitest. The dashboard is a
 Vue + Vite SPA. Cloudflare Workers is the production deployment target;
 Node.js (`node:sqlite` + `sharp` + filesystem) is a parallel deployment
-target with the same Hono app and the same `packages/gateway/migrations` SQL.
-The `@floway-dev/platform` package owns the abstract runtime contracts
-(`FileProvider`, `ImageProcessor`, `ExternalResourceFetcher`, `SqlDatabase`,
-`BackgroundScheduler`, `EnvGetter`, `SocketDial`); each `apps/platform-*`
-app supplies the concrete impls (including the runtime's root-CA list as a
-plain `readonly string[]`) and its own entry. External-resource fetchers make
-one credential-free GET with redirects exposed to the caller; the Node
-implementation additionally pins DNS resolution to public addresses so
-untrusted URLs cannot reach local or special-purpose networks. The gateway's
-external-image loader owns redirect traversal, timeout and byte limits, then
-returns structured fetch failures for native-facing callers; its translation
-adapter maps those failures onto each pair's existing image-drop semantics.
-`packages/gateway` (the gateway core) imports only platform contracts and is
-ESLint-prohibited from reaching into any `apps/platform-*`.
-
-## Workspace Layout
+target with the same Hono app and the same `packages/gateway/migrations`
+SQL. The `@floway-dev/platform` package owns the abstract runtime
+contracts (`FileProvider`, `ImageProcessor`, `ExternalResourceFetcher`,
+`SqlDatabase`, `BackgroundScheduler`, `EnvGetter`, `SocketDial`); each
+`apps/platform-*` app supplies the concrete impls and its own entry.
 
 ```text
 Floway/
@@ -226,19 +217,27 @@ HTTP `store: false` writes no state, while WebSocket `store: false` is
 session-local.
 
 Everything else — provider interfaces, request execution flow, interceptor
-shapes, translation pair layout, control-plane route surface, flag
-resolution, pricing — lives in the code and its comments. Read the relevant
-directory.
+shapes, control-plane route surface, flag resolution, pricing — lives in
+the code and its comments. Translation pair layout, model resolution, and
+affinity wire behavior have dedicated specs under `docs/`.
 
 ## Verification
-
-Run from the repo root:
 
 ```bash
 pnpm run test                # vitest across all packages
 pnpm run lint                # eslint across the workspace
 pnpm run typecheck           # tsc --noEmit per package
 pnpm run test:agent-setup-installers  # assembled Agent Setup scripts vs. fake CLIs/installers (not in `test`)
+```
+
+To work on a single package, use pnpm filters (e.g.
+`pnpm --filter @floway-dev/translate run typecheck`). Wrangler commands
+go through the local dependency with `pnpm wrangler` or package scripts.
+When deploying, do not pass `--dry-run`.
+
+## Development
+
+```bash
 pnpm run dev                 # parallel wrangler dev (8788) + Vite dev (5174)
 pnpm run dev:node            # Node.js entry (tsx apps/platform-node/entry.ts)
 pnpm run deploy              # builds apps/web, then wrangler deploys apps/platform-cloudflare
@@ -247,40 +246,34 @@ pnpm run db:migrate:remote   # production D1
 ```
 
 `dev` runs the Worker on `http://127.0.0.1:8788` and the SPA on
-`http://localhost:5174`. For frontend development open the Vite SPA (5174):
-Vite proxies the gateway's HTTP paths to the Worker (see the canonical
-list in `apps/web/vite.config.ts`'s `wranglerProxiedPaths`), so relative-URL
-fetches in `apps/web` work identically in dev and prod. The Worker port
-serves the last built
-`apps/web/dist` via Workers Static Assets; direct SPA routes (e.g.
-`/login`, `/dashboard/...`) require
+`http://localhost:5174`. For frontend development open the Vite SPA
+(5174): Vite proxies the gateway's HTTP paths to the Worker (see the
+canonical list in `apps/web/vite.config.ts`'s `wranglerProxiedPaths`),
+so relative-URL fetches in `apps/web` work identically in dev and prod.
+The Worker port serves the last built `apps/web/dist` via Workers Static
+Assets; direct SPA routes (e.g. `/login`, `/dashboard/...`) require
 `assets.not_found_handling: "single-page-application"` plus the
 backend-only `assets.run_worker_first` route list in the gitignored
-`wrangler.jsonc` (see `wrangler.example.jsonc`). To work on a single
-package, use pnpm filters (e.g.
-`pnpm --filter @floway-dev/translate run typecheck`).
+`wrangler.jsonc` (see `wrangler.example.jsonc`).
 
 `dev:node` boots the Node deployment target. Configure via
-`FLOWAY_DB_PATH` (sqlite file path), `FLOWAY_FILES_DIR` (filesystem store
-root), `ADMIN_KEY` (admin secret; optional on dev, mandatory when
+`FLOWAY_DB_PATH` (sqlite file path), `FLOWAY_FILES_DIR` (filesystem
+store root), `ADMIN_KEY` (admin secret; optional on dev, mandatory when
 `NODE_ENV=production`), `PORT`, and optionally `RUNTIME_LOCATION`
 (instance tag used as the perf-telemetry `runtimeLocation` dimension and
 the dial-time colo-whitelist key — uppercased on read, defaults to
-`LOCAL` when unset). Default ports/paths in `apps/platform-node/entry.ts`.
-The Node entry runs `applyMigrations` against
-`packages/gateway/migrations/*.sql` at boot, then serves the same Hono app
-through `@hono/node-server`. Static-asset serving is Workers-only; the Node
-target serves no SPA.
+`LOCAL` when unset). The Node entry runs `applyMigrations` against
+`packages/gateway/migrations/*.sql` at boot, then serves the same Hono
+app through `@hono/node-server`. Static-asset serving is Workers-only;
+the Node target serves no SPA.
 
 The public Agent Setup installers are composed from the checked-in
-`packages/agent-setup/installers/{bash,powershell}/common/` fragments and the
-adjacent `{claude,codex}.{sh,ps1}` agent fragments. Each source fragment is
-embedded verbatim into `packages/agent-setup/src/script-assets.generated.ts`;
-regenerate with `pnpm --filter @floway-dev/agent-setup run generate-assets`
-(pass `--check` to fail on drift) after editing any fragment.
-
-Wrangler commands go through the local dependency with `pnpm wrangler` or
-package scripts. When deploying, do not pass `--dry-run`.
+`packages/agent-setup/installers/{bash,powershell}/common/` fragments
+and the adjacent `{claude,codex}.{sh,ps1}` agent fragments. Each source
+fragment is embedded verbatim into
+`packages/agent-setup/src/script-assets.generated.ts`; regenerate with
+`pnpm --filter @floway-dev/agent-setup run generate-assets` (pass
+`--check` to fail on drift) after editing any fragment.
 
 `ADMIN_KEY` is optional on dev instances so a fresh checkout is usable
 without any secret setup: with the env var unset (which is the default
@@ -301,8 +294,8 @@ in via `POST /auth/login`.
 
 When investigating Copilot upstream quirks, compare at least one other
 Copilot gateway implementation before inventing a policy. For generic
-adapter behavior, compare at least one Copilot gateway and one general LLM
-gateway. Do not cargo-cult from a single project.
+adapter behavior, compare at least one Copilot gateway and one general
+LLM gateway. Do not cargo-cult from a single project.
 
 ## Deployment
 
@@ -319,18 +312,11 @@ during a deploy where the agent talks *to* the user instead of running the
 next tool.
 
 After that announcement the deploy is autonomous and must not stop —
-except at Step 2 when breaking changes require user confirmation. Never
-end a turn waiting for the user to reply or to take any action outside of
-that single checkpoint — no "shall I continue?", no "ready for Step 4?",
-no implicit pause after printing rollback commands, no waiting for the
-user to acknowledge the backup path. As soon as a step's tool output is
-in hand, the very next agent turn must call the next step's tool. The
-only legitimate reasons to stop are: the Worker is live and Step 4
-succeeded, Step 2 is awaiting user confirmation of breaking changes, or a
-tool exited non-zero and the failure genuinely requires human judgement.
-Reporting findings, printing commands, and announcing the next step are
-inlined *alongside* the next tool call in the same turn — never as a
-standalone turn that ends and waits.
+except at Step 2 when breaking changes require user confirmation. Each
+turn ends on a tool call; the only legitimate reasons to stop are: the
+Worker is live and Step 4 succeeded, Step 2 is awaiting user
+confirmation of breaking changes, or a tool exited non-zero and the
+failure genuinely requires human judgement.
 
 When the user's request is the deploy itself — the human asked to deploy
 and not to deploy as the tail of a wider piece of work — git is read-only
@@ -462,13 +448,7 @@ Step 3 = bookmark + report + two rollback commands, Step 4 = deploy)
 and **two agent turns when no migrations are pending** (Step 3 collapses
 into Turn 1: gather + report + single code-rollback command; Turn 2 =
 deploy). Step 2 adds one turn only when new breaking-change entries
-exist — the agent presents them and pauses for user confirmation. A turn
-boundary in this flow exists only because a tool result has to arrive
-before the next tool call can be issued, or because user confirmation is
-required — it is never an arbitrary checkpoint. Every turn in this budget
-ends on its step's tool call (or on the breaking-change confirmation
-prompt), and the agent re-enters the loop the instant that tool result
-or user reply returns.
+exist.
 
 ## Breaking Changes (CHANGELOG.md)
 
