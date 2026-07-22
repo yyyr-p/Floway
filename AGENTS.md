@@ -35,7 +35,7 @@ dependencies remain targeted at their predecessor branches and remain drafts.
 
 Floway is an LLM API gateway. It exposes OpenAI Completions, Anthropic
 Messages, OpenAI Responses, OpenAI Chat Completions, Embeddings, OpenAI
-Images, and Google Gemini-compatible APIs over a unified upstream
+Images, Cohere/Jina/Voyage-compatible Rerank, and Google Gemini-compatible APIs over a unified upstream
 model. Provider kinds are
 `copilot`, `custom`, `azure`, `codex` (ChatGPT subscription via the
 Codex CLI's OAuth client), `claude-code` (Claude.ai Pro/Max subscription
@@ -137,7 +137,7 @@ Floway/
 │   ├── provider-claude-code/ # @floway-dev/provider-claude-code — Claude Code (Claude.ai subscription) provider
 │   ├── provider-codex/       # @floway-dev/provider-codex — ChatGPT Codex (subscription) provider
 │   ├── provider-copilot/     # @floway-dev/provider-copilot — GitHub Copilot provider
-│   ├── provider-custom/      # @floway-dev/provider-custom — generic OpenAI-compatible
+│   ├── provider-custom/      # @floway-dev/provider-custom — configurable multi-protocol HTTP provider
 │   ├── provider-ollama/      # @floway-dev/provider-ollama — Ollama (ollama.com or self-hosted)
 │   ├── proxy/                # @floway-dev/proxy — proxy URI parsing + per-protocol byte-stream dialers
 │   ├── test-utils/           # @floway-dev/test-utils — shared Vitest fixtures and stubs (test-only)
@@ -312,18 +312,11 @@ during a deploy where the agent talks *to* the user instead of running the
 next tool.
 
 After that announcement the deploy is autonomous and must not stop —
-except at Step 2 when breaking changes require user confirmation. Never
-end a turn waiting for the user to reply or to take any action outside of
-that single checkpoint — no "shall I continue?", no "ready for Step 4?",
-no implicit pause after printing rollback commands, no waiting for the
-user to acknowledge the backup path. As soon as a step's tool output is
-in hand, the very next agent turn must call the next step's tool. The
-only legitimate reasons to stop are: the Worker is live and Step 4
-succeeded, Step 2 is awaiting user confirmation of breaking changes, or a
-tool exited non-zero and the failure genuinely requires human judgement.
-Reporting findings, printing commands, and announcing the next step are
-inlined *alongside* the next tool call in the same turn — never as a
-standalone turn that ends and waits.
+except at Step 2 when breaking changes require user confirmation. Each
+turn ends on a tool call; the only legitimate reasons to stop are: the
+Worker is live and Step 4 succeeded, Step 2 is awaiting user
+confirmation of breaking changes, or a tool exited non-zero and the
+failure genuinely requires human judgement.
 
 When the user's request is the deploy itself — the human asked to deploy
 and not to deploy as the tail of a wider piece of work — git is read-only
@@ -455,13 +448,7 @@ Step 3 = bookmark + report + two rollback commands, Step 4 = deploy)
 and **two agent turns when no migrations are pending** (Step 3 collapses
 into Turn 1: gather + report + single code-rollback command; Turn 2 =
 deploy). Step 2 adds one turn only when new breaking-change entries
-exist — the agent presents them and pauses for user confirmation. A turn
-boundary in this flow exists only because a tool result has to arrive
-before the next tool call can be issued, or because user confirmation is
-required — it is never an arbitrary checkpoint. Every turn in this budget
-ends on its step's tool call (or on the breaking-change confirmation
-prompt), and the agent re-enters the loop the instant that tool result
-or user reply returns.
+exist.
 
 ## Breaking Changes (CHANGELOG.md)
 

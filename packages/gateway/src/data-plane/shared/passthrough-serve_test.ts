@@ -75,13 +75,13 @@ test('passthrough-serve: usage-record failure does not turn upstream 2xx into 50
       },
     );
 
-    assertEquals(errorSpy.mock.calls.some(call => call[0] === 'Failed to record token usage:'), true);
+    assertEquals(errorSpy.mock.calls.some(call => call[0] === 'Failed to record usage:'), true);
   } finally {
     errorSpy.mockRestore();
   }
 });
 
-test('passthrough-serve: non-JSON 2xx upstream body is forwarded verbatim with no usage record', async () => {
+test('passthrough-serve: non-JSON 2xx upstream body is forwarded verbatim with a request-only usage record', async () => {
   const { apiKey, repo } = await setupAppTest();
   await registerEmbeddingsUpstream(repo);
 
@@ -119,7 +119,9 @@ test('passthrough-serve: non-JSON 2xx upstream body is forwarded verbatim with n
     );
 
     const usage = await repo.usage.listAll();
-    assertEquals(usage.length, 0);
+    assertEquals(usage.length, 1);
+    assertEquals(usage[0].requests, 1);
+    assertEquals(usage[0].metrics, []);
     // The parse failure is observable through console.warn so operators can
     // correlate missing usage rows against upstream body shape regressions.
     assertEquals(warnSpy.mock.calls.some(call => typeof call[0] === 'string' && call[0].includes('passthrough-serve: failed to parse 2xx upstream body for /embeddings')), true);
@@ -128,7 +130,7 @@ test('passthrough-serve: non-JSON 2xx upstream body is forwarded verbatim with n
   }
 });
 
-test('passthrough-serve: response header allow-list forwards expected headers and drops the rest', async () => {
+test('passthrough-serve: response header blocklist preserves vendor metadata and drops unsafe headers', async () => {
   const { apiKey, repo } = await setupAppTest();
   await registerEmbeddingsUpstream(repo);
 
@@ -174,7 +176,7 @@ test('passthrough-serve: response header allow-list forwards expected headers an
       assertEquals(response.headers.get('x-ratelimit-remaining'), '100');
       assertEquals(response.headers.get('retry-after'), '30');
       assertEquals(response.headers.get('cf-ray'), 'abc');
-      assertEquals(response.headers.get('x-internal-secret'), null);
+      assertEquals(response.headers.get('x-internal-secret'), 'leak');
       assertEquals(response.headers.get('set-cookie'), null);
       await response.json();
     },

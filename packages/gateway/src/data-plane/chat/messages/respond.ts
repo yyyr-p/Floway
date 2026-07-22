@@ -5,9 +5,10 @@ import { wrapMessagesAffinityEgress } from './affinity/egress.ts';
 import { recordFailedRequest } from '../../shared/telemetry/performance.ts';
 import { settle } from '../../shared/telemetry/settle.ts';
 import { tokenUsage } from '../../shared/telemetry/usage.ts';
+import { forwardUpstreamHeaders, mergeForwardedUpstreamHeaders } from '../../shared/upstream-response.ts';
 import { affinityEgressOptions } from '../shared/affinity/index.ts';
 import type { GatewayCtx } from '../shared/gateway-ctx.ts';
-import { SourceStreamState, eventResultMetadata, forwardUpstreamHeaders, mergeForwardedUpstreamHeaders, plainResultToResponse } from '../shared/respond.ts';
+import { SourceStreamState, eventResultMetadata, plainResultToResponse } from '../shared/respond.ts';
 import { type StreamCompletion, writeSSEFrames } from '../shared/stream/sse.ts';
 import { billableServiceTier, type ProtocolFrame, sseFrame } from '@floway-dev/protocols/common';
 import { messagesProtocolFrameToSSEFrame, MESSAGES_MISSING_TERMINAL_MESSAGE, collectMessagesProtocolEventsToResult, mergeMessagesUsageSnapshot, messagesUsageSnapshot, splitMessagesCacheCreationTokens } from '@floway-dev/protocols/messages';
@@ -91,10 +92,10 @@ export const respondMessages = async (
 };
 
 // Anthropic already reports disjoint token counts: input_tokens excludes the
-// cache figures. Map them straight onto the billing dimensions without
+// cache figures. Map them straight onto the billing metrics without
 // summing. When the upstream emits the `cache_creation` sub-object
 // (extended-cache-ttl-2025-04-11), split the per-TTL counts onto the 5m and
-// 1h dimensions; the flat `cache_creation_input_tokens` is the sum and is
+// 1h metrics; the flat `cache_creation_input_tokens` is the sum and is
 // only consulted when the sub-object is absent.
 //
 // Response usage carries two server-stamped tier fields: `speed` (fast mode)

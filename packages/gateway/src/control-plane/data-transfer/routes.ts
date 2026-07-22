@@ -20,7 +20,7 @@ import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-valida
 import { parseDisabledPublicModelIdsWire } from '../../repo/disabled-public-models.ts';
 import { getRepo } from '../../repo/index.ts';
 import { DIRECT_FALLBACK_IDS, isDirectFallbackId, normalizeProxyFallbackList } from '../../repo/proxy-fallback-list.ts';
-import type { ApiKey, PerformanceBucketRow, PerformanceMetric, PerformanceTelemetryRecord, SearchUsageRecord, TokenUsage, UsageRecord, User } from '../../repo/types.ts';
+import type { ApiKey, PerformanceBucketRow, PerformanceMetric, PerformanceTelemetryRecord, SearchUsageRecord, UsageMetricRecord, UsageRecord, User } from '../../repo/types.ts';
 import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
 import { getRuntimeLocation } from '../../runtime/runtime-info.ts';
 import { PASSWORD_HASH_SCHEME } from '../../shared/passwords.ts';
@@ -30,9 +30,8 @@ import { parseUpstreamIdsValue } from '../api-keys/upstream-ids.ts';
 import { USERNAME_PATTERN, type exportQuery, type importBody, DUMP_RETENTION_MAX_SECONDS } from '../schemas.ts';
 import { copilotConfigField, isRecord, nonEmptyStringField } from '../shared/field-validators.ts';
 import { type SerializedUpstreamRecord, upstreamRecordToFullJson } from '../upstreams/serialize.ts';
-import { BILLING_DIMENSIONS, canonicalizePricingSelector, type BillingDimension, type PriceVector, type PricingSelector, validatePriceVector } from '@floway-dev/protocols/common';
-import { ALL_PROVIDER_KINDS, normalizeModelPrefix, normalizeUpstreamColor, parseFlagOverridesWire } from '@floway-dev/provider';
-import type { PerformanceOperation, ProxyFallbackEntry, UpstreamProviderKind, UpstreamRecord } from '@floway-dev/provider';
+import { BILLING_METRICS, canonicalizePricingSelector, type BillingMetric, parseNonNegativeDecimalString, type PricingSelector } from '@floway-dev/protocols/common';
+import { ALL_PROVIDER_KINDS, normalizeModelPrefix, normalizeUpstreamColor, parseFlagOverridesWire, parsePerformanceOperation, type ProxyFallbackEntry, type UpstreamProviderKind, type UpstreamRecord } from '@floway-dev/provider';
 import { assertAzureUpstreamRecord } from '@floway-dev/provider-azure';
 import { assertClaudeCodeUpstreamRecord, assertClaudeCodeUpstreamState } from '@floway-dev/provider-claude-code';
 import { assertCodexUpstreamRecord, assertCodexUpstreamState } from '@floway-dev/provider-codex';
@@ -50,7 +49,7 @@ interface SerializedProxy {
 }
 
 interface ExportPayload {
-  version: 11;
+  version: 14;
   exportedAt: string;
   data: {
     users: User[];
@@ -65,7 +64,7 @@ interface ExportPayload {
   };
 }
 
-const EXPORT_VERSION = 11;
+const EXPORT_VERSION = 14;
 const SEARCH_USAGE_HOUR_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}$/;
 const PERFORMANCE_METRICS = new Set<PerformanceMetric>(['ttft_ms', 'tpot_us']);
 const UPSTREAM_PROVIDERS = new Set<UpstreamProviderKind>(ALL_PROVIDER_KINDS);
@@ -78,9 +77,6 @@ const isLegacyUpstreamIdentity = (value: string): boolean => LEGACY_UPSTREAM_PRE
 const isNonNegativeSafeInteger = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;
 
 const isPerformanceMetric = (value: unknown): value is PerformanceMetric => typeof value === 'string' && PERFORMANCE_METRICS.has(value as PerformanceMetric);
-
-const PERFORMANCE_OPERATIONS = new Set<PerformanceOperation>(['chat', 'text_completion', 'embeddings', 'image_generation', 'image_edit']);
-const isPerformanceOperation = (value: unknown): value is PerformanceOperation => typeof value === 'string' && PERFORMANCE_OPERATIONS.has(value as PerformanceOperation);
 
 const importErrorBuilder = (field: string, expected: string) => new Error(`${field} must be ${expected}`);
 
@@ -387,42 +383,29 @@ const validateApiKeyIdentities = (records: readonly ApiKey[], existing: readonly
   return null;
 };
 
-const parseImportedRates = (value: unknown): { type: 'ok'; rates: UsageRecord['rates'] } | { type: 'invalid'; error: string } => {
-  if (value === undefined) return { type: 'invalid', error: 'rates is required' };
-  if (value === null) return { type: 'ok', rates: null };
-  if (typeof value !== 'object' || Array.isArray(value)) return { type: 'invalid', error: 'rates must be an object or null' };
-  const obj = value as Record<string, unknown>;
-  const unknownDimensions = Object.keys(obj).filter(key => !BILLING_DIMENSIONS.includes(key as BillingDimension));
-  if (unknownDimensions.length > 0) return { type: 'invalid', error: `rates has unknown dimensions: ${unknownDimensions.join(', ')}` };
-  const rates: PriceVector = {};
-  for (const dimension of BILLING_DIMENSIONS) {
-    const rate = obj[dimension];
-    if (rate === undefined) continue;
-    rates[dimension] = rate as number;
+const parseImportedMetrics = (value: unknown): { type: 'ok'; metrics: UsageMetricRecord[] } | { type: 'invalid'; error: string } => {
+  if (!Array.isArray(value)) return { type: 'invalid', error: 'metrics must be an array' };
+  const metrics: UsageMetricRecord[] = [];
+  const seen = new Set<BillingMetric>();
+  for (const row of value) {
+    if (!isRecord(row)) return { type: 'invalid', error: 'metrics must contain objects' };
+    if (typeof row.metric !== 'string' || !BILLING_METRICS.includes(row.metric as BillingMetric)) {
+      return { type: 'invalid', error: `unknown usage metric: ${JSON.stringify(row.metric)}` };
+    }
+    let quantity: string;
+    let unitPrice: string | null;
+    try {
+      quantity = parseNonNegativeDecimalString(row.quantity, 'metric quantity');
+      unitPrice = row.unitPrice === null ? null : parseNonNegativeDecimalString(row.unitPrice, 'metric unitPrice');
+    } catch (cause) {
+      return { type: 'invalid', error: cause instanceof Error ? cause.message : String(cause) };
+    }
+    const metric = row.metric as BillingMetric;
+    if (seen.has(metric)) return { type: 'invalid', error: `duplicate usage metric: ${metric}` };
+    seen.add(metric);
+    metrics.push({ metric, quantity, unitPrice });
   }
-  if (Object.keys(rates).length === 0) return { type: 'ok', rates: null };
-  try {
-    validatePriceVector(rates, 'rates');
-    return { type: 'ok', rates };
-  } catch (error) {
-    return { type: 'invalid', error: error instanceof Error ? error.message : String(error) };
-  }
-};
-
-const parseImportedTokens = (value: unknown): { type: 'ok'; tokens: TokenUsage } | { type: 'invalid'; error: string } => {
-  if (value === undefined) return { type: 'invalid', error: 'tokens is required' };
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return { type: 'invalid', error: 'tokens must be an object' };
-  const obj = value as Record<string, unknown>;
-  const unknownDimensions = Object.keys(obj).filter(key => !BILLING_DIMENSIONS.includes(key as BillingDimension));
-  if (unknownDimensions.length > 0) return { type: 'invalid', error: `tokens has unknown dimensions: ${unknownDimensions.join(', ')}` };
-  const tokens: TokenUsage = {};
-  for (const dimension of BILLING_DIMENSIONS) {
-    const count = obj[dimension];
-    if (count === undefined) continue;
-    if (!isNonNegativeSafeInteger(count)) return { type: 'invalid', error: 'tokens must contain non-negative safe integers' };
-    if (count > 0) tokens[dimension] = count;
-  }
-  return { type: 'ok', tokens };
+  return { type: 'ok', metrics };
 };
 
 const parseUsageRecords = (value: unknown): { type: 'ok'; records: UsageRecord[] } | { type: 'invalid'; index: number; error: string } => {
@@ -456,10 +439,8 @@ const parseUsageRecords = (value: unknown): { type: 'ok'; records: UsageRecord[]
     } catch (cause) {
       return { type: 'invalid', index: i, error: `invalid pricingSelector: ${cause instanceof Error ? cause.message : String(cause)}` };
     }
-    const tokensResult = parseImportedTokens(record.tokens);
-    if (tokensResult.type === 'invalid') return { type: 'invalid', index: i, error: tokensResult.error };
-    const ratesResult = parseImportedRates(record.rates);
-    if (ratesResult.type === 'invalid') return { type: 'invalid', index: i, error: ratesResult.error };
+    const metricsResult = parseImportedMetrics(record.metrics);
+    if (metricsResult.type === 'invalid') return { type: 'invalid', index: i, error: metricsResult.error };
     records.push({
       keyId: record.keyId,
       model: record.model,
@@ -468,8 +449,7 @@ const parseUsageRecords = (value: unknown): { type: 'ok'; records: UsageRecord[]
       hour: record.hour,
       pricingSelector,
       requests: record.requests,
-      tokens: tokensResult.tokens,
-      rates: ratesResult.rates,
+      metrics: metricsResult.metrics,
     });
   }
 
@@ -532,6 +512,12 @@ const parsePerformanceRecords = (value: unknown): { type: 'ok'; records: Perform
     if (!record || typeof record !== 'object') return { type: 'invalid', index: i, error: 'record is not an object' };
 
     const item = record as Record<string, unknown>;
+    let operation: ReturnType<typeof parsePerformanceOperation>;
+    try {
+      operation = parsePerformanceOperation(item.operation);
+    } catch {
+      return { type: 'invalid', index: i, error: 'record fields are missing or malformed' };
+    }
     if (
       typeof item.hour !== 'string' ||
       !SEARCH_USAGE_HOUR_PATTERN.test(item.hour) ||
@@ -542,7 +528,6 @@ const parsePerformanceRecords = (value: unknown): { type: 'ok'; records: Perform
       typeof item.upstream !== 'string' ||
       item.upstream.length === 0 ||
       isLegacyUpstreamIdentity(item.upstream) ||
-      !isPerformanceOperation(item.operation) ||
       typeof item.runtimeLocation !== 'string' ||
       item.runtimeLocation.length === 0 ||
       !isNonNegativeSafeInteger(item.requests) ||
@@ -631,7 +616,7 @@ const parsePerformanceRecords = (value: unknown): { type: 'ok'; records: Perform
       keyId: item.keyId,
       model: item.model,
       upstream: item.upstream,
-      operation: item.operation as PerformanceOperation,
+      operation,
       runtimeLocation: item.runtimeLocation,
       requests,
       ttftSamplesOk,

@@ -14,7 +14,7 @@ const model = (upstreamModelId: string, pricing: UpstreamModelConfig['pricing'])
 });
 
 test('ModelsPanel validates every manual row before it is selected', async () => {
-  const valid = model('valid', { entries: [{ rates: { input: 1 } }] });
+  const valid = model('valid', { entries: [{ rates: { input_tokens: '1' } }] });
   const invalid = model('invalid', { entries: [] });
   const wrapper = mount(ModelsPanel, {
     props: {
@@ -37,7 +37,7 @@ test('ModelsPanel validates every manual row before it is selected', async () =>
   await nextTick();
   expect(wrapper.emitted('update:invalid')?.at(-1)).toEqual([true]);
 
-  await wrapper.setProps({ modelValue: [valid, model('fixed', { entries: [{ rates: { input: 2 } }] })] });
+  await wrapper.setProps({ modelValue: [valid, model('fixed', { entries: [{ rates: { input_tokens: '2' } }] })] });
   await nextTick();
   expect(wrapper.emitted('update:invalid')?.at(-1)).toEqual([false]);
 });
@@ -67,4 +67,29 @@ test('ModelsPanel refuses malformed pricing from JSON mode', async () => {
 
   expect(wrapper.text()).toContain('Cannot leave JSON mode:');
   expect(wrapper.find('textarea[aria-label="Models JSON"]').exists()).toBe(true);
+});
+
+test('ModelsPanel marks rerank invalid when the host is not a custom upstream', async () => {
+  const rerank: UpstreamModelConfig = {
+    upstreamModelId: 'reranker',
+    kind: 'rerank',
+    endpoints: { rerank: {} },
+    rerankTarget: { protocol: 'cohere-v2' },
+  };
+  const wrapper = mount(ModelsPanel, {
+    props: {
+      modelValue: [rerank],
+      disabledIds: [],
+      flags: [],
+      upstreamFlagOverrides: {},
+      providerFlagDefaults: {} as FlagDefaults,
+      upstreamIdLabel: 'Deployment',
+      allowRerank: false,
+      'onUpdate:modelValue': () => {},
+      'onUpdate:disabledIds': () => {},
+    },
+    global: { stubs: { ModelsGrid: true, ModelEditor: true } },
+  });
+  await nextTick();
+  expect(wrapper.emitted('update:invalid')?.at(-1)).toEqual([true]);
 });
