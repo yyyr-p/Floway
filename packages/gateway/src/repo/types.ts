@@ -19,6 +19,9 @@ export interface ApiKey {
   deletedAt: string | null;
   // null = dump capture disabled; positive integer = seconds of retention.
   dumpRetentionSeconds: number | null;
+  // 0 = durable Stateful Responses disabled; a positive value is seconds in
+  // whole-day increments. Reuse lifetime is quantized to UTC days.
+  responsesRetentionSeconds: number;
 }
 
 export interface User {
@@ -155,10 +158,16 @@ export interface ApiKeyRepo {
   findByRawKey(rawKey: string): Promise<ApiKey | null>;
   getById(id: string): Promise<ApiKey | null>;
   save(key: ApiKey): Promise<void>;
+  update(id: string, patch: ApiKeyUpdate): Promise<ApiKey | null>;
   softDelete(id: string): Promise<boolean>;
   softDeleteByUserId(userId: number): Promise<number>;
   deleteAll(): Promise<void>;
 }
+
+export type ApiKeyUpdate = Partial<Pick<
+  ApiKey,
+  'name' | 'key' | 'lastUsedAt' | 'upstreamIds' | 'dumpRetentionSeconds' | 'responsesRetentionSeconds'
+>>;
 
 export interface UsersRepo {
   list(): Promise<User[]>;
@@ -361,12 +370,9 @@ export interface ModelAliasesRepo {
 export interface StoredResponsesItem {
   id: string;
   apiKeyId: string;
-  upstreamId: string | null;
-  upstreamItemId: string | null;
-  itemType: string;
   payload: StoredResponsesItemPayload;
-  contentHash: string | null;
-  createdAt: number;
+  itemHash: string;
+  refreshedAt: number;
 }
 
 export interface StoredResponsesItemPayload {
@@ -379,11 +385,11 @@ export interface StoredResponsesItemPayload {
 }
 
 export interface ResponsesItemsRepo {
-  lookupMany(apiKeyId: string, ids: readonly string[]): Promise<StoredResponsesItem[]>;
-  lookupManyByContentHash(apiKeyId: string, hashes: readonly string[]): Promise<StoredResponsesItem[]>;
-  insertMany(items: readonly StoredResponsesItem[]): Promise<void>;
-  refreshMany(items: readonly StoredResponsesItem[], createdAt: number): Promise<void>;
-  deleteOlderThan(createdBefore: number): Promise<number>;
+  lookupMany(apiKeyId: string, ids: readonly string[], activeAfter: number): Promise<StoredResponsesItem[]>;
+  lookupManyByItemHash(apiKeyId: string, hashes: readonly string[], activeAfter: number): Promise<StoredResponsesItem[]>;
+  insertMany(items: readonly StoredResponsesItem[], activeAfter: number): Promise<void>;
+  refreshMany(items: readonly StoredResponsesItem[], refreshedAt: number, activeAfter: number): Promise<void>;
+  deleteExpired(now: number): Promise<number>;
   deleteAll(): Promise<void>;
 }
 
@@ -391,14 +397,19 @@ export interface StoredResponsesSnapshot {
   id: string;
   apiKeyId: string;
   itemIds: string[];
-  createdAt: number;
+  refreshedAt: number;
 }
 
 export interface ResponsesSnapshotsRepo {
-  lookup(apiKeyId: string, id: string): Promise<StoredResponsesSnapshot | null>;
+  lookup(apiKeyId: string, id: string, activeAfter: number): Promise<StoredResponsesSnapshot | null>;
   insert(snapshot: StoredResponsesSnapshot): Promise<void>;
-  deleteOlderThan(createdBefore: number): Promise<number>;
+  deleteExpired(now: number): Promise<number>;
   deleteAll(): Promise<void>;
+}
+
+export interface SpilledFilesRepo {
+  claimCollectible(token: string, now: number, staleClaimedBefore: number, limit: number): Promise<string[]>;
+  acknowledge(token: string): Promise<number>;
 }
 
 // The Agent Setup lease store. Its shape, record, and mutation discriminants
@@ -421,5 +432,6 @@ export interface Repo {
   modelAliases: ModelAliasesRepo;
   responsesItems: ResponsesItemsRepo;
   responsesSnapshots: ResponsesSnapshotsRepo;
+  spilledFiles: SpilledFilesRepo;
   agentSetup: AgentSetupRepository;
 }

@@ -2,14 +2,17 @@ import { normalizeDisabledPublicModelIds } from './disabled-public-models.ts';
 import { normalizeFlagOverrides } from './flag-overrides.ts';
 import { normalizeProxyFallbackList } from './proxy-fallback-list.ts';
 import {
+  assertSameStoredResponsesItem,
   cloneStoredResponsesItem,
   cloneStoredResponsesSnapshot,
   compareResponsesItemsByFreshness,
   scopedResponsesKey,
 } from './responses-clone.ts';
+import { quantizeResponsesRefreshedAt, responsesStateCutoff } from './responses-retention.ts';
 import type {
   ApiKey,
   ApiKeyRepo,
+  ApiKeyUpdate,
   AgentSetupMutation,
   AgentSetupRecord,
   AgentSetupRenewal,
@@ -31,6 +34,7 @@ import type {
   Repo,
   ResponsesItemsRepo,
   ResponsesSnapshotsRepo,
+  SpilledFilesRepo,
   SearchConfig,
   SearchConfigRepo,
   SearchUsageRecord,
@@ -202,10 +206,17 @@ class MemoryApiKeyRepo implements ApiKeyRepo {
     else this.keys.push({ ...key });
   }
 
+  async update(id: string, patch: ApiKeyUpdate): Promise<ApiKey | null> {
+    const i = this.keys.findIndex(key => key.id === id && key.deletedAt === null);
+    if (i < 0) return null;
+    this.keys[i] = { ...this.keys[i], ...patch };
+    return { ...this.keys[i] };
+  }
+
   async softDelete(id: string): Promise<boolean> {
     const i = this.keys.findIndex(k => k.id === id && k.deletedAt === null);
     if (i < 0) return false;
-    this.keys[i] = { ...this.keys[i], deletedAt: new Date().toISOString() };
+    this.keys[i] = { ...this.keys[i], deletedAt: new Date().toISOString(), responsesRetentionSeconds: 0 };
     return true;
   }
 
@@ -215,7 +226,7 @@ class MemoryApiKeyRepo implements ApiKeyRepo {
     for (let i = 0; i < this.keys.length; i++) {
       const k = this.keys[i];
       if (k.userId === userId && k.deletedAt === null) {
-        this.keys[i] = { ...k, deletedAt: now };
+        this.keys[i] = { ...k, deletedAt: now, responsesRetentionSeconds: 0 };
         count += 1;
       }
     }
@@ -569,58 +580,95 @@ const cloneUpstreamRecord = (upstream: UpstreamRecord): UpstreamRecord => ({
 class MemoryResponsesItemsRepo implements ResponsesItemsRepo {
   private store = new Map<string, StoredResponsesItem>();
 
-  lookupMany(apiKeyId: string, ids: readonly string[]): Promise<StoredResponsesItem[]> {
+  constructor(private readonly apiKeys: ApiKeyRepo) {}
+
+  lookupMany(apiKeyId: string, ids: readonly string[], activeAfter: number): Promise<StoredResponsesItem[]> {
     const rows: StoredResponsesItem[] = [];
     const seen = new Set<string>();
     for (const id of ids) {
       if (seen.has(id)) continue;
       seen.add(id);
       const row = this.store.get(scopedResponsesKey(apiKeyId, id));
-      if (row !== undefined) rows.push(cloneStoredResponsesItem(row));
+      if (row !== undefined && row.refreshedAt >= activeAfter) rows.push(cloneStoredResponsesItem(row));
     }
     return Promise.resolve(rows);
   }
 
-  lookupManyByContentHash(apiKeyId: string, hashes: readonly string[]): Promise<StoredResponsesItem[]> {
+  lookupManyByItemHash(apiKeyId: string, hashes: readonly string[], activeAfter: number): Promise<StoredResponsesItem[]> {
     const wanted = new Set(hashes);
     if (wanted.size === 0) return Promise.resolve([]);
     const rows: StoredResponsesItem[] = [];
     for (const row of this.store.values()) {
-      if (row.apiKeyId === apiKeyId && row.contentHash !== null && wanted.has(row.contentHash)) {
+      if (row.apiKeyId === apiKeyId && row.refreshedAt >= activeAfter && wanted.has(row.itemHash)) {
         rows.push(cloneStoredResponsesItem(row));
       }
     }
     return Promise.resolve(rows.toSorted(compareResponsesItemsByFreshness));
   }
 
-  insertMany(items: readonly StoredResponsesItem[]): Promise<void> {
-    for (const item of items) {
+  async insertMany(items: readonly StoredResponsesItem[], activeAfter: number): Promise<void> {
+    const quantizedItems = items.map(item => ({
+      ...item,
+      refreshedAt: quantizeResponsesRefreshedAt(item.refreshedAt),
+    }));
+    const pending = new Map<string, StoredResponsesItem>();
+    for (const item of quantizedItems) {
       const key = scopedResponsesKey(item.apiKeyId, item.id);
-      if (this.store.has(key)) continue;
-      this.store.set(key, cloneStoredResponsesItem(item));
+      const existing = pending.get(key) ?? this.store.get(key);
+      const policy = await this.apiKeys.getById(item.apiKeyId);
+      if (policy === null || policy.responsesRetentionSeconds === 0) {
+        throw new Error(`Responses persistence is disabled for API key: ${item.apiKeyId}`);
+      }
+      const currentActive = existing !== undefined
+        && policy !== null
+        && existing.refreshedAt >= responsesStateCutoff(Date.now(), policy.responsesRetentionSeconds);
+      if (existing !== undefined && (existing.refreshedAt >= activeAfter || currentActive)) {
+        assertSameStoredResponsesItem(item, existing);
+      } else {
+        pending.set(key, item);
+      }
     }
-    return Promise.resolve();
+    for (const [key, item] of pending) this.store.set(key, cloneStoredResponsesItem(item));
+    for (const item of quantizedItems) {
+      const stored = this.store.get(scopedResponsesKey(item.apiKeyId, item.id))!;
+      if (stored.refreshedAt < item.refreshedAt) stored.refreshedAt = item.refreshedAt;
+    }
   }
 
-  refreshMany(items: readonly StoredResponsesItem[], createdAt: number): Promise<void> {
+  async refreshMany(items: readonly StoredResponsesItem[], refreshedAt: number, activeAfter: number): Promise<void> {
+    const quantizedRefreshedAt = quantizeResponsesRefreshedAt(refreshedAt);
     const existing = items.map(item => this.store.get(scopedResponsesKey(item.apiKeyId, item.id)));
-    const missingIndex = existing.findIndex(item => item === undefined);
+    const currentPolicies = await Promise.all(items.map(async item => await this.apiKeys.getById(item.apiKeyId)));
+    const missingIndex = existing.findIndex((item, index) => {
+      if (item === undefined || item.refreshedAt < activeAfter) return true;
+      const policy = currentPolicies[index];
+      return policy === null
+        || policy.responsesRetentionSeconds === 0
+        || item.refreshedAt < responsesStateCutoff(Date.now(), policy.responsesRetentionSeconds);
+    });
     if (missingIndex !== -1) {
-      return Promise.reject(new Error(`Responses item disappeared before lifetime refresh: ${items[missingIndex].id}`));
+      throw new Error(`Responses item disappeared before lifetime refresh: ${items[missingIndex].id}`);
     }
-    for (const item of existing) item!.createdAt = Math.max(item!.createdAt, createdAt);
-    return Promise.resolve();
+    for (let index = 0; index < existing.length; index += 1) {
+      assertSameStoredResponsesItem(items[index], existing[index]!);
+      if (existing[index]!.refreshedAt < quantizedRefreshedAt) existing[index]!.refreshedAt = quantizedRefreshedAt;
+    }
   }
 
-  deleteOlderThan(createdBefore: number): Promise<number> {
+  async deleteExpired(now: number): Promise<number> {
     let changes = 0;
     for (const [key, row] of this.store) {
-      if (row.createdAt < createdBefore) {
+      const apiKey = await this.apiKeys.getById(row.apiKeyId);
+      if (
+        apiKey === null
+        || apiKey.responsesRetentionSeconds === 0
+        || row.refreshedAt < responsesStateCutoff(now, apiKey.responsesRetentionSeconds)
+      ) {
         this.store.delete(key);
         changes += 1;
       }
     }
-    return Promise.resolve(changes);
+    return changes;
   }
 
   deleteAll(): Promise<void> {
@@ -632,34 +680,60 @@ class MemoryResponsesItemsRepo implements ResponsesItemsRepo {
 class MemoryResponsesSnapshotsRepo implements ResponsesSnapshotsRepo {
   private store = new Map<string, StoredResponsesSnapshot>();
 
-  lookup(apiKeyId: string, id: string): Promise<StoredResponsesSnapshot | null> {
+  constructor(private readonly apiKeys: ApiKeyRepo) {}
+
+  lookup(apiKeyId: string, id: string, activeAfter: number): Promise<StoredResponsesSnapshot | null> {
     const snapshot = this.store.get(scopedResponsesKey(apiKeyId, id));
-    return Promise.resolve(snapshot ? cloneStoredResponsesSnapshot(snapshot) : null);
+    return Promise.resolve(snapshot !== undefined && snapshot.refreshedAt >= activeAfter ? cloneStoredResponsesSnapshot(snapshot) : null);
   }
 
-  insert(snapshot: StoredResponsesSnapshot): Promise<void> {
-    const key = scopedResponsesKey(snapshot.apiKeyId, snapshot.id);
+  async insert(snapshot: StoredResponsesSnapshot): Promise<void> {
+    const quantized = {
+      ...snapshot,
+      refreshedAt: quantizeResponsesRefreshedAt(snapshot.refreshedAt),
+    };
+    const policy = await this.apiKeys.getById(quantized.apiKeyId);
+    if (
+      policy === null
+      || policy.responsesRetentionSeconds === 0
+      || quantized.refreshedAt < responsesStateCutoff(Date.now(), policy.responsesRetentionSeconds)
+    ) return;
+    const key = scopedResponsesKey(quantized.apiKeyId, quantized.id);
     const existing = this.store.get(key);
-    if (existing === undefined || snapshot.createdAt >= existing.createdAt) {
-      this.store.set(key, cloneStoredResponsesSnapshot(snapshot));
+    if (existing === undefined || quantized.refreshedAt > existing.refreshedAt) {
+      this.store.set(key, cloneStoredResponsesSnapshot(quantized));
     }
-    return Promise.resolve();
   }
 
-  deleteOlderThan(createdBefore: number): Promise<number> {
+  async deleteExpired(now: number): Promise<number> {
     let changes = 0;
     for (const [key, snapshot] of this.store) {
-      if (snapshot.createdAt < createdBefore) {
+      const apiKey = await this.apiKeys.getById(snapshot.apiKeyId);
+      if (
+        apiKey === null
+        || apiKey.responsesRetentionSeconds === 0
+        || snapshot.refreshedAt < responsesStateCutoff(now, apiKey.responsesRetentionSeconds)
+      ) {
         this.store.delete(key);
         changes += 1;
       }
     }
-    return Promise.resolve(changes);
+    return changes;
   }
 
   deleteAll(): Promise<void> {
     this.store.clear();
     return Promise.resolve();
+  }
+}
+
+class MemorySpilledFilesRepo implements SpilledFilesRepo {
+  claimCollectible(): Promise<string[]> {
+    return Promise.resolve([]);
+  }
+
+  acknowledge(): Promise<number> {
+    return Promise.resolve(0);
   }
 }
 
@@ -989,6 +1063,7 @@ export class InMemoryRepo implements Repo {
   modelAliases: ModelAliasesRepo;
   responsesItems: ResponsesItemsRepo;
   responsesSnapshots: ResponsesSnapshotsRepo;
+  spilledFiles: SpilledFilesRepo;
   agentSetup: AgentSetupRepository;
 
   constructor() {
@@ -1004,8 +1079,9 @@ export class InMemoryRepo implements Repo {
     this.proxies = new MemoryProxyRepo(this.upstreams);
     this.proxyBackoffs = new MemoryProxyBackoffRepo();
     this.modelAliases = new MemoryModelAliasesRepo();
-    this.responsesItems = new MemoryResponsesItemsRepo();
-    this.responsesSnapshots = new MemoryResponsesSnapshotsRepo();
+    this.responsesItems = new MemoryResponsesItemsRepo(this.apiKeys);
+    this.responsesSnapshots = new MemoryResponsesSnapshotsRepo(this.apiKeys);
+    this.spilledFiles = new MemorySpilledFilesRepo();
     this.agentSetup = new MemoryAgentSetupRepo();
   }
 }

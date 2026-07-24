@@ -19,6 +19,7 @@ import { z } from 'zod';
 
 import { normalizeDisabledPublicModelIds } from '../repo/disabled-public-models.ts';
 import { CUSTOM_API_KEY_MAX_LENGTH, KEY_SOURCES } from '../shared/api-key-tokens.ts';
+import { RETENTION_MAX_SECONDS, SECONDS_PER_DAY } from '../shared/retention.ts';
 import { kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS } from '@floway-dev/protocols/common';
 import { type FlagOverrides, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, normalizeUpstreamColor, parseFlagOverridesWire } from '@floway-dev/provider';
 
@@ -264,8 +265,13 @@ export const changeOwnPasswordBody = z.object({
 // which has no sensible behavior, so it is rejected at the schema layer.
 // The 10-year upper bound rejects absurd inputs as a clean validation error
 // rather than letting them through as de-facto "never expire".
-export const DUMP_RETENTION_MAX_SECONDS = 10 * 365 * 24 * 60 * 60;
-const dumpRetentionSecondsSchema = z.number().int().positive().max(DUMP_RETENTION_MAX_SECONDS).nullable();
+const dumpRetentionSecondsSchema = z.number().int().positive().max(RETENTION_MAX_SECONDS).nullable();
+// Keep the wire/storage unit aligned with dump retention while requiring the
+// dashboard's whole-day Responses contract at every control-plane boundary.
+const responsesRetentionSecondsSchema = z.union([
+  z.literal(0),
+  z.number().int().min(SECONDS_PER_DAY).max(RETENTION_MAX_SECONDS).multipleOf(SECONDS_PER_DAY),
+]);
 
 // `key_source` picks how the raw key on this create/rotate request is
 // produced: 'generate' means the gateway mints an sk-...T3BlbkFJ... token
@@ -281,6 +287,7 @@ export const createKeyBody = z.object({
   name: z.string().min(1),
   upstream_ids: upstreamIdsValueSchema.optional(),
   dump_retention_seconds: dumpRetentionSecondsSchema.optional(),
+  responses_retention_seconds: responsesRetentionSecondsSchema.optional(),
   ...keySourceShape,
 });
 
@@ -290,6 +297,7 @@ export const updateKeyBody = z.object({
   name: z.string().min(1).optional(),
   upstream_ids: upstreamIdsValueSchema.optional(),
   dump_retention_seconds: dumpRetentionSecondsSchema.optional(),
+  responses_retention_seconds: responsesRetentionSecondsSchema.optional(),
 });
 
 // --- upstreams ---
@@ -693,7 +701,7 @@ export const updateAliasBody = aliasBodyCore.superRefine(aliasBodyRulesRefinemen
 // --- data transfer ---
 
 export const importBody = z.object({
-  version: z.literal(15, { error: 'version must be 15 — older export formats are not supported; re-export from the current deployment' }),
+  version: z.literal(16, { error: 'version must be 16 — older export formats are not supported; re-export from the current deployment' }),
   mode: z.enum(['merge', 'replace'], { error: "mode must be 'merge' or 'replace'" }),
   data: z.unknown().optional(),
 });
