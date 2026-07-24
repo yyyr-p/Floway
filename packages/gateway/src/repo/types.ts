@@ -35,7 +35,6 @@ export interface User {
   // null = unrestricted at the user level; an array intersects with the
   // per-key whitelist when both are present.
   upstreamIds: string[] | null;
-  canViewGlobalTelemetry: boolean;
   createdAt: string;
   deletedAt: string | null;
 }
