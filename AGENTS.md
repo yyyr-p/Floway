@@ -11,6 +11,22 @@
   without running any test, lint, or typecheck first. Verification belongs to
   the completion and merge-to-main gate, not to each in-flight worktree
   commit.
+- Vitest suites and package-local test support live outside `src/`. Each tested
+  package keeps them under `__tests__/`, mirroring the production directory
+  structure while retaining behavior-oriented suite names for cross-module and
+  integration coverage. Fixtures, stubs, helpers, setup modules, and ambient
+  declarations sit beside their test consumers in that mirror. A file under
+  `src/` whose only consumers are tests is misplaced. Root Vitest configs and
+  standalone verifier scripts stay at their tool entrypoints;
+  `@floway-dev/test-utils` is itself the shared test-support package, so its
+  exported implementation remains its production `src/`. `.gitattributes`
+  marks both forms generated and vendored: generated collapses each diff body
+  by default, and vendored is the label the pull request file filter can
+  toggle away.
+- A checked-in file written by a generator carries a `.generated.` infix in
+  its name. `.gitattributes` keys off that infix, so output named anything
+  else stays in the language statistics, expanded in diffs, and outside the
+  reviewer's filter.
 - When investigating Copilot upstream quirks, compare at least one other
   Copilot gateway implementation before inventing a policy. For generic
   adapter behavior, compare at least one Copilot gateway and one general
@@ -234,10 +250,13 @@ implementations only through local relative imports. Every cross-package
 runtime import must use a declared `exports` entry; deep
 `@floway-dev/<pkg>/src/...` imports are banned.
 
-Tests are co-located as `*_test.ts`. Every tested package owns a
-`vitest.config.ts`, and the root Vitest config discovers
+Tests live in each package's `__tests__/` mirror of `src/`; directory placement
+follows the production area while suite names describe the behavior under
+test. Every tested package owns a `vitest.config.ts` including
+`__tests__/**/*_test.ts`, and the root Vitest config discovers
 `packages/*/vitest.config.ts` and `apps/*/vitest.config.ts`. Package TypeScript
-projects include their Vitest configs. Root `scripts/**/*.ts` and
+projects include their Vitest configs and their `__tests__/` tree. Root
+`scripts/**/*.ts` and
 `packages/agent-setup/scripts/**/*.ts` have Node-typed script projects; the
 base config sets `types: []` so ambient types enter only projects that request
 them. ESLint checks both script trees and every package Vitest config; the
