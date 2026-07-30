@@ -613,9 +613,16 @@ export type ResponsesToolAllowedCaller = 'direct' | 'programmatic';
 export interface ResponsesFunctionTool {
   type: 'function';
   name: string;
-  parameters: Record<string, unknown>;
-  strict: boolean;
-  description?: string;
+  // One interface serves both wire directions, and they disagree on
+  // `description`, `parameters` and `strict`: a request may omit all three,
+  // while the echoed response tool marks all three required with an explicit
+  // `null` alternative. The union of the two is optional-and-nullable, so a
+  // translator must handle absent and `null` alike.
+  // Request: https://github.com/openresponses/openresponses/blob/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/openapi.json#L808-L847
+  // Response: https://github.com/openresponses/openresponses/blob/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/openapi.json#L2141-L2192
+  description?: string | null;
+  parameters?: Record<string, unknown> | null;
+  strict?: boolean | null;
   allowed_callers?: ResponsesToolAllowedCaller[] | null;
   defer_loading?: boolean;
   output_schema?: Record<string, unknown> | null;
@@ -831,6 +838,12 @@ export interface ResponsesResult {
   // confirm they're populated with server-enriched defaults.
   tools?: ResponsesTool[];
   tool_choice?: ResponsesToolChoice | null;
+  // The response resource requires `usage` and gives it an explicit `null`
+  // alternative, so `null` is what an upstream sends for a response that
+  // reported no token counts. The key stays optional because a partially built
+  // envelope carries no usage until the terminal event accounts for the turn.
+  // https://github.com/openresponses/openresponses/blob/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/openapi.json#L2613-L2629
+  // https://github.com/openresponses/openresponses/blob/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/openapi.json#L2691-L2723
   usage?: {
     input_tokens: number;
     output_tokens: number;
@@ -841,7 +854,7 @@ export interface ResponsesResult {
     // https://github.com/openai/openai-node/blob/61539248cbe04665de68a71e6fd878127ae4db87/src/resources/responses/responses.ts#L7259-L7269
     input_tokens_details?: { cached_tokens: number; cache_write_tokens?: number };
     output_tokens_details?: { reasoning_tokens: number };
-  };
+  } | null;
 }
 
 // Stored/output additional-tools roles are wider than the input-only
