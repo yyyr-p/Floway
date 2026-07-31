@@ -110,3 +110,12 @@ export const syntheticEventsFromResult = async function* (result: ResponsesResul
   yield* responsesResultToEvents(result, { genericOutputItems: true });
   yield doneFrame();
 };
+
+// `CompactResource` declares exactly `id`, `object`, `output`, `created_at` and
+// `usage`, so there is no `status` to read and no spelling for a failed
+// compaction — that arrives as an HTTP error instead of a 200 body.
+// https://github.com/openresponses/openresponses/blob/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/public/openapi/openapi.json#L3935-L4008
+export const syntheticEventsFromCompaction = async function* (result: ResponsesResult): AsyncIterable<ProtocolFrame<ResponsesStreamEvent>> {
+  yield* responsesResultToEvents(result, { genericOutputItems: true, terminal: 'response.completed' });
+  yield doneFrame();
+};

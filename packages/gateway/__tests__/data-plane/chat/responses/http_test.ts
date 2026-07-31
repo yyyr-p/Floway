@@ -659,6 +659,17 @@ test('POST /v1/responses renders the OpenAI-shaped model-unsupported 400 when no
   assert(body.error.message.includes('does not support'));
 });
 
+test('POST /v1/responses/compact answers a body that states no status, as a native compact upstream sends', async () => {
+  installRepo();
+  const { response } = await compactTurn({ status: undefined as unknown as ResponsesResult['status'] });
+
+  assertEquals(response.status, 200);
+  const body = await response.json() as Record<string, unknown>;
+  assertEquals(body.object, 'response.compaction');
+  assertEquals(missingRequiredCompactionKeys(body), []);
+  assertEquals((body.output as Array<{ type: string }>).map(item => item.type), ['compaction']);
+});
+
 test('POST /v1/responses nests a mid-stream failure under `error` so an SDK stream reader throws on it, then follows it with response.failed', async () => {
   installRepo();
   const callResponses = vi.fn(async (): Promise<ProviderResponsesResult> => ({
