@@ -658,3 +658,47 @@ test('POST /v1/responses renders the OpenAI-shaped model-unsupported 400 when no
   assertEquals(body.error.type, 'invalid_request_error');
   assert(body.error.message.includes('does not support'));
 });
+
+test('POST /v1/responses nests a mid-stream failure under `error` so an SDK stream reader throws on it, then follows it with response.failed', async () => {
+  installRepo();
+  const callResponses = vi.fn(async (): Promise<ProviderResponsesResult> => ({
+    action: 'generate', ok: true,
+    events: (async function* (): AsyncGenerator<ProtocolFrame<ResponsesStreamEvent>> {
+      yield eventFrame(completedEvents()[0]!);
+      throw new Error('upstream exploded mid-stream');
+    })(),
+    modelKey: 'test-model-key',
+    headers: new Headers(),
+  }));
+  queueResolution([makeCandidate({ callResponses })]);
+
+  const response = await makeApp().request('/v1/responses', {
+    method: 'POST',
+    headers: new Headers({ 'content-type': 'application/json' }),
+    body: JSON.stringify({ model: 'test-model', input: 'hello', stream: true }),
+  });
+
+  const body = await response.text();
+  const chunk = body.split('\n\n').find(part => part.startsWith('event: error'));
+  assert(chunk !== undefined, `expected an error frame in ${body}`);
+  const data = JSON.parse(chunk.slice(chunk.indexOf('data: ') + 'data: '.length)) as {
+    type: string;
+    error?: { message?: unknown };
+    message?: unknown;
+  };
+  assertEquals(data.type, 'error');
+  assertEquals(data.error?.message, 'upstream exploded mid-stream');
+  assert(data.message === undefined, 'expected the payload to sit under `error`, not at the top level');
+
+  const failedChunk = body.split('\n\n').find(part => part.startsWith('event: response.failed'));
+  assert(failedChunk !== undefined, `expected a response.failed frame in ${body}`);
+  const failed = JSON.parse(failedChunk.slice(failedChunk.indexOf('data: ') + 'data: '.length)) as {
+    response: { status: string; id: string; error: { message: string } };
+  };
+  assertEquals(failed.response.status, 'failed');
+  assertEquals(failed.response.error.message, 'upstream exploded mid-stream');
+  const created = JSON.parse(
+    body.split('\n\n').find(part => part.startsWith('event: response.created'))!.split('data: ')[1]!,
+  ) as { response: { id: string } };
+  assertEquals(failed.response.id, created.response.id);
+});
