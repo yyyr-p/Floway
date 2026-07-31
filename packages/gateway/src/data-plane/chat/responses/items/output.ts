@@ -77,13 +77,21 @@ export const wrapResponsesClientOutput = async function* (
 
     if (event.type === 'response.completed' || event.type === 'response.incomplete') {
       if (store.writesState) {
-        const orderedOutputIds = event.response.output.map((_item, outputIndex) => {
-          const id = finalizedOutputIds.get(outputIndex);
-          if (id === undefined) {
+        // A terminal may restate fewer items than the turn closed, but never
+        // one that never closed: that item reached the client without the
+        // lifecycle the spec requires of it.
+        event.response.output.forEach((_item, outputIndex) => {
+          if (!finalizedOutputIds.has(outputIndex)) {
             throw new TypeError(`Responses terminal output_index ${outputIndex} arrived before output_item.done`);
           }
-          return id;
         });
+        // The snapshot a `previous_response_id` continuation replays is the
+        // items this turn closed, in `output_index` order; taking the terminal's
+        // own restatement would drop the assistant's message from the history
+        // the next turn continues from.
+        const orderedOutputIds = [...finalizedOutputIds]
+          .sort(([left], [right]) => left - right)
+          .map(([, id]) => id);
         await store.commitSnapshot(responseId, sawCompactionItem ? 'replace' : 'append', orderedOutputIds);
       }
       yield eventFrame({ ...event, response: clientEnvelope(event.response) });
