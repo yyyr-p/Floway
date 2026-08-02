@@ -260,7 +260,7 @@ test('PATCH /api/upstreams preserves omitted secrets and re-warms the models cac
   // Plant a stale row so the post-PATCH read can verify the warm overwrote
   // it with the new upstream-supplied catalog rather than leaving the old
   // models in place.
-  await repo.modelsCache.put(created.id, {
+  await repo.upstreams.saveModelsCache(created.id, {
     revision: MODEL_CATALOG_REVISION,
     fetchedAt: 1,
     models: [{ id: 'stale-model', kind: 'chat', endpoints: {}, enabledFlags: new Set(), limits: {} }],
@@ -291,8 +291,8 @@ test('PATCH /api/upstreams preserves omitted secrets and re-warms the models cac
   assertEquals((updated?.config as Record<string, unknown>).apiKey, 'sk-test');
   assertEquals((updated?.config as Record<string, unknown>).endpoints, { responses: {} });
 
-  const cached = await repo.modelsCache.get(created.id);
-  assertEquals(cached?.models.map(m => m.id), ['fresh-model']);
+  const cached = updated?.modelsCache;
+  assertEquals(cached?.models.map(model => model.id), ['fresh-model']);
   assertEquals(cached!.fetchedAt > 1, true);
 });
 
@@ -311,6 +311,7 @@ test('PATCH /api/upstreams keeps Azure as a single endpoint config', async () =>
     disabledPublicModelIds: [],
     proxyFallbackList: [],
     modelPrefix: null,
+    modelsCache: null,
     color: null,
     config: {
       endpoint: 'https://example.openai.azure.com/openai/v1',
@@ -357,6 +358,7 @@ test('PATCH /api/upstreams round-trips a flat per-model flagOverrides map', asyn
     disabledPublicModelIds: [],
     proxyFallbackList: [],
     modelPrefix: null,
+    modelsCache: null,
     color: null,
     config: {
       endpoint: 'https://example.openai.azure.com/openai/v1',
@@ -390,7 +392,7 @@ test('GET /api/upstreams attaches models-cache freshness to every row', async ()
   await repo.upstreams.deleteAll();
 
   // Three upstreams cover the three cache states: no row, warm row, warm row
-  // with a follow-up failure annotated via setLastError.
+  // with a follow-up failure annotated via saveModelsCacheError.
   const baseRow = {
     kind: 'custom' as const,
     enabled: true,
@@ -401,6 +403,7 @@ test('GET /api/upstreams attaches models-cache freshness to every row', async ()
     disabledPublicModelIds: [],
     proxyFallbackList: [],
     modelPrefix: null,
+    modelsCache: null,
     color: null,
     config: { baseUrl: 'https://a.example.com', authStyle: 'bearer', apiKey: 'x', endpoints: { chatCompletions: {} } },
     state: null,
@@ -409,17 +412,17 @@ test('GET /api/upstreams attaches models-cache freshness to every row', async ()
   await repo.upstreams.save({ ...baseRow, id: 'up_warm', name: 'Warm', sortOrder: 1 });
   await repo.upstreams.save({ ...baseRow, id: 'up_failed', name: 'Failed', sortOrder: 2 });
 
-  await repo.modelsCache.put('up_warm', {
+  await repo.upstreams.saveModelsCache('up_warm', {
     revision: MODEL_CATALOG_REVISION,
     fetchedAt: 1_700_000_000_000,
     models: [{ id: 'm1', kind: 'chat', endpoints: {}, enabledFlags: new Set(), limits: {} }],
   });
-  await repo.modelsCache.put('up_failed', {
+  await repo.upstreams.saveModelsCache('up_failed', {
     revision: MODEL_CATALOG_REVISION,
     fetchedAt: 1_700_000_000_000,
     models: [{ id: 'm1', kind: 'chat', endpoints: {}, enabledFlags: new Set(), limits: {} }],
   });
-  await repo.modelsCache.setLastError('up_failed', { message: 'boom', at: 1_700_000_500_000 });
+  await repo.upstreams.saveModelsCacheError('up_failed', { message: 'boom', at: 1_700_000_500_000 });
 
   const list = await requestApp('/api/upstreams', { headers: { 'x-floway-session': adminSession } });
   assertEquals(list.status, 200);
@@ -462,6 +465,7 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
     disabledPublicModelIds: [],
     proxyFallbackList: [],
     modelPrefix: null,
+    modelsCache: null,
     color: null,
     config: { baseUrl: 'https://custom.example.com', authStyle: 'bearer', apiKey: 'sk-secret', endpoints: { chatCompletions: {} } },
     state: null,
@@ -632,6 +636,7 @@ test('POST /api/upstreams/list-models with a persisted id forces a fresh upstrea
     disabledPublicModelIds: [],
     proxyFallbackList: [],
     modelPrefix: null,
+    modelsCache: null,
     color: null,
     config: { ...customConfig, apiKey: 'sk-refresh' },
     state: null,
@@ -689,12 +694,16 @@ test('POST /api/upstreams warms the models cache before responding', async () =>
     async () => {
       const resp = await requestApp('/api/upstreams', authed(adminSession, createBody()));
       assertEquals(resp.status, 201);
-      return (await resp.json()) as { id: string };
+      return (await resp.json()) as { id: string; modelsCache: { fetchedAt: number | null; lastError: unknown } };
     },
   );
 
-  const cached = await repo.modelsCache.get(created.id);
-  assertEquals(cached?.models.map(m => m.id), ['warmed-on-create']);
+  const cached = (await repo.upstreams.getById(created.id))?.modelsCache;
+  assertEquals(cached?.models.map(model => model.id), ['warmed-on-create']);
+  // The dashboard re-seeds its draft from this body, so it has to carry the
+  // freshness the warm just produced rather than the record's pre-warm one.
+  assertEquals(created.modelsCache.fetchedAt, cached?.fetchedAt ?? null);
+  assertEquals(created.modelsCache.lastError, null);
 });
 
 test('PATCH /api/upstreams warms the models cache before responding', async () => {
@@ -703,11 +712,19 @@ test('PATCH /api/upstreams warms the models cache before responding', async () =
 
   const create = await requestApp('/api/upstreams', authed(adminSession, createBody()));
   const created = (await create.json()) as { id: string };
-  // Drop whatever the create-time warm landed on disk so the PATCH-time warm
-  // is the only writer in this test's window.
-  await repo.modelsCache.delete(created.id);
+  // Overwrite whatever the create-time warm landed on the row with a marker
+  // catalog, so the assertion below can only pass if the PATCH-time warm wrote
+  // over it.
+  await repo.upstreams.saveModelsCache(created.id, {
+    revision: MODEL_CATALOG_REVISION,
+    fetchedAt: 1,
+    models: [{ id: 'warmed-on-create', kind: 'chat', endpoints: {}, enabledFlags: new Set(), limits: {} }],
+  });
+  // …and annotate it with an error the successful PATCH-time warm must clear,
+  // so the response body cannot pass by echoing the pre-warm row.
+  await repo.upstreams.saveModelsCacheError(created.id, { message: 'stale failure', at: 1 });
 
-  await withMockedFetch(
+  const patched = await withMockedFetch(
     async request => {
       const url = new URL(request.url);
       if (url.hostname === 'custom.example.com' && url.pathname === '/v1/models') {
@@ -722,11 +739,14 @@ test('PATCH /api/upstreams warms the models cache before responding', async () =
         body: JSON.stringify({ name: 'Renamed' }),
       });
       assertEquals(patch.status, 200);
+      return (await patch.json()) as { modelsCache: { fetchedAt: number | null; lastError: unknown } };
     },
   );
 
-  const cached = await repo.modelsCache.get(created.id);
-  assertEquals(cached?.models.map(m => m.id), ['warmed-on-update']);
+  const cached = (await repo.upstreams.getById(created.id))?.modelsCache;
+  assertEquals(cached?.models.map(model => model.id), ['warmed-on-update']);
+  assertEquals(patched.modelsCache.fetchedAt, cached?.fetchedAt ?? null);
+  assertEquals(patched.modelsCache.lastError, null);
 });
 
 test('POST /api/upstreams/list-models without an id still serves draft preview', async () => {
@@ -2100,6 +2120,7 @@ test('spec invariant (3): POST /api/upstreams/list-models ignores record.name mu
     disabledPublicModelIds: [],
     proxyFallbackList: [],
     modelPrefix: null,
+    modelsCache: null,
     color: null,
     config: {
       endpoint: 'https://invariant.openai.azure.com',

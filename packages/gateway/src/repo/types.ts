@@ -1,7 +1,7 @@
 import type { WebSearchConfig, WebSearchProviderName } from '../shared/web-search-providers.ts';
 import type { AgentSetupRepository } from '@floway-dev/agent-setup';
 import type { AliasSelection, AliasTarget, AnnouncedMetadata, BillingMetric, DecimalString, ModelKind, PricingSelector } from '@floway-dev/protocols/common';
-import type { PerformanceTelemetryContext, ProviderModel, UpstreamRecord } from '@floway-dev/provider';
+import type { PerformanceTelemetryContext, UpstreamModelsCache, UpstreamRecord } from '@floway-dev/provider';
 
 export interface ApiKey {
   id: string;
@@ -243,20 +243,6 @@ export interface PerformanceRepo {
   deleteAll(): Promise<void>;
 }
 
-export interface ModelsCacheRow {
-  revision: number;
-  fetchedAt: number;
-  models: ProviderModel[];
-  lastError: { message: string; at: number } | null;
-}
-
-export interface ModelsCacheRepo {
-  get(upstreamId: string): Promise<ModelsCacheRow | null>;
-  put(upstreamId: string, row: { revision: number; fetchedAt: number; models: ProviderModel[] }): Promise<void>;
-  setLastError(upstreamId: string, error: { message: string; at: number } | null): Promise<void>;
-  delete(upstreamId: string): Promise<void>;
-}
-
 export interface WebSearchConfigRepo {
   get(): Promise<unknown>;
   save(config: WebSearchConfig): Promise<void>;
@@ -275,6 +261,11 @@ export interface UpstreamRepo {
   // throws. See UpstreamsRepoSlim in @floway-dev/provider for why the change
   // is a function.
   saveState(id: string, mutate: (current: unknown) => unknown): Promise<void>;
+  // Catalog-cache writes. They touch only the cache column, so a refresh and a
+  // credential write to the same row do not contend — `saveState`'s CAS
+  // predicate reads `state_json` alone.
+  saveModelsCache(id: string, cache: Omit<UpstreamModelsCache, 'lastError'>): Promise<void>;
+  saveModelsCacheError(id: string, error: NonNullable<UpstreamModelsCache['lastError']>): Promise<void>;
 }
 
 export interface ProxyRecord {
@@ -453,7 +444,6 @@ export interface Repo {
   usage: UsageRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
-  modelsCache: ModelsCacheRepo;
   webSearchConfig: WebSearchConfigRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
