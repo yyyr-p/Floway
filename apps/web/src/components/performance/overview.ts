@@ -1,0 +1,156 @@
+import { oneOf } from '../../lib/search-params';
+import { dashboardRangeQuery, type DashboardRange } from '../charts/dashboard-time';
+
+export type PerformanceView = 'all-by-user' | 'self-by-key';
+export type PerformanceRange = DashboardRange;
+export type PerformanceGroupBy = 'keyId' | 'userId' | 'model' | 'upstream' | 'operation' | 'runtimeLocation';
+export type PerformanceMetric = 'ttft' | 'tokPerSec';
+export type PerformancePercentile = 'p50' | 'p95' | 'p99';
+
+export interface PerformanceDisplayRecord {
+  bucket: string;
+  group: string;
+  requests: number;
+  errors: number;
+  ttftSamples: number;
+  tpotSamples: number;
+  neutral: number;
+  ttftMsP50: number | null;
+  ttftMsP95: number | null;
+  ttftMsP99: number | null;
+  tpotUsP50: number | null;
+  tpotUsP95: number | null;
+  tpotUsP99: number | null;
+}
+
+export interface PerformanceFilters {
+  model: string;
+  upstream: string;
+  operation: string;
+  runtimeLocation: string;
+  userId: string;
+  keyId: string;
+}
+
+export interface PerformanceUrlState {
+  metric: PerformanceMetric;
+  percentile: PerformancePercentile;
+  groupBy: PerformanceGroupBy;
+  range: PerformanceRange;
+  filters: PerformanceFilters;
+  hidden: string[];
+}
+
+export interface PerformanceOverviewResponse {
+  series: PerformanceDisplayRecord[];
+  axes: Record<PerformanceGroupBy | 'none', PerformanceDisplayRecord[]>;
+  dimensionValues: {
+    models: string[];
+    upstreams: string[];
+    operations: string[];
+    runtimeLocations: string[];
+    keyIds: string[];
+    userIds: number[];
+  };
+  users: Array<{ id: number; username: string }>;
+  keys: Array<{ id: string; name: string; createdAt: string }>;
+}
+
+export const buildPerformanceQuery = (
+  view: PerformanceView,
+  range: PerformanceRange,
+  groupBy: PerformanceGroupBy,
+  filters: PerformanceFilters,
+  nowMs: number,
+): URLSearchParams => {
+  const window = dashboardRangeQuery(range, nowMs);
+  const search = new URLSearchParams({
+    ...window,
+    view,
+    group_by: groupBy,
+    timezone_offset_minutes: String(new Date(nowMs).getTimezoneOffset()),
+  });
+  const values: Array<[string, string]> = [
+    ['filter_model', filters.model],
+    ['filter_upstream', filters.upstream],
+    ['filter_operation', filters.operation],
+    ['filter_runtime_location', filters.runtimeLocation],
+    ['filter_user_id', filters.userId],
+    ['filter_key_id', filters.keyId],
+  ];
+  for (const [key, value] of values) if (value) search.set(key, value);
+  return search;
+};
+
+export const performanceValue = (
+  record: PerformanceDisplayRecord,
+  metric: PerformanceMetric,
+  percentile: PerformancePercentile,
+): number | null => {
+  if (metric === 'ttft') {
+    return percentile === 'p50' ? record.ttftMsP50 : percentile === 'p95' ? record.ttftMsP95 : record.ttftMsP99;
+  }
+  const us = percentile === 'p50' ? record.tpotUsP50 : percentile === 'p95' ? record.tpotUsP95 : record.tpotUsP99;
+  return us === null || us <= 0 ? null : 1_000_000 / us;
+};
+
+// Indexed rather than scanned per call: a group is resolved to a name once per
+// chart series, once per table row and twice per sort comparison.
+export interface PerformanceLabels {
+  upstreams: ReadonlyMap<string, string>;
+  users: ReadonlyMap<string, string>;
+  keys: ReadonlyMap<string, string>;
+}
+
+export const performanceLabels = (
+  overview: PerformanceOverviewResponse,
+  upstreamNames: ReadonlyMap<string, string>,
+): PerformanceLabels => ({
+  upstreams: upstreamNames,
+  users: new Map(overview.users.map(user => [String(user.id), user.username])),
+  keys: new Map(overview.keys.map(key => [key.id, key.name])),
+});
+
+export const resolvePerformanceGroup = (
+  group: string,
+  groupBy: PerformanceGroupBy,
+  labels: PerformanceLabels,
+): string => {
+  if (groupBy === 'upstream') return labels.upstreams.get(group) ?? group;
+  if (groupBy === 'userId') return labels.users.get(group) ?? `user ${group}`;
+  if (groupBy === 'keyId') return labels.keys.get(group) ?? group;
+  return group;
+};
+
+export const parsePerformanceUrlState = (search: URLSearchParams): PerformanceUrlState => ({
+  metric: oneOf(search.get('m'), ['ttft', 'tokPerSec'], 'ttft'),
+  percentile: oneOf(search.get('pct'), ['p50', 'p95', 'p99'], 'p95'),
+  groupBy: oneOf(search.get('g'), ['model', 'upstream', 'operation', 'runtimeLocation', 'keyId', 'userId'], 'model'),
+  range: oneOf(search.get('r'), ['today', '7d', '30d'], 'today'),
+  filters: {
+    model: search.get('fm') ?? '', upstream: search.get('fu') ?? '', operation: search.get('fo') ?? '',
+    runtimeLocation: search.get('fr') ?? '', userId: search.get('fusr') ?? '', keyId: search.get('fk') ?? '',
+  },
+  hidden: (search.get('hide') ?? '').split(',').map(decodeURIComponent).filter(Boolean),
+});
+
+export const serializePerformanceUrlState = (state: PerformanceUrlState): URLSearchParams => {
+  const search = new URLSearchParams();
+  if (state.metric !== 'ttft') search.set('m', state.metric);
+  if (state.percentile !== 'p95') search.set('pct', state.percentile);
+  if (state.groupBy !== 'model') search.set('g', state.groupBy);
+  if (state.range !== 'today') search.set('r', state.range);
+  const filters: Array<[string, string]> = [['fm', state.filters.model], ['fu', state.filters.upstream], ['fo', state.filters.operation], ['fr', state.filters.runtimeLocation], ['fusr', state.filters.userId], ['fk', state.filters.keyId]];
+  for (const [key, value] of filters) if (value) search.set(key, value);
+  if (state.hidden.length) search.set('hide', state.hidden.map(encodeURIComponent).join(','));
+  return search;
+};
+
+export const clearGroupedFilter = (filters: PerformanceFilters, groupBy: PerformanceGroupBy): PerformanceFilters => ({
+  ...filters,
+  ...(groupBy === 'model' ? { model: '' } : {}),
+  ...(groupBy === 'upstream' ? { upstream: '' } : {}),
+  ...(groupBy === 'operation' ? { operation: '' } : {}),
+  ...(groupBy === 'runtimeLocation' ? { runtimeLocation: '' } : {}),
+  ...(groupBy === 'userId' || groupBy === 'keyId' ? { userId: '', keyId: '' } : {}),
+});

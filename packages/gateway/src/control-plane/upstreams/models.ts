@@ -1,6 +1,7 @@
 import { resolveControlPlaneFetcher } from './proxy-resolution.ts';
 import { isValidProviderKind, upstreamErrorMessage as errorMessage } from './shared.ts';
-import { MODEL_LISTING_FAILURE_MESSAGE } from '../../data-plane/models/shared.ts';
+import type { ListedUpstreamModel } from './types.ts';
+import { MODEL_LISTING_FAILURE_CODE, MODEL_LISTING_FAILURE_MESSAGE } from '../../data-plane/models/shared.ts';
 import { fetchUpstreamModelsCached } from '../../data-plane/providers/models-cache.ts';
 import { createProvider } from '../../data-plane/providers/registry.ts';
 import type { CtxWithJson } from '../../middleware/zod-validator.ts';
@@ -8,8 +9,7 @@ import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
 import { getRuntimeLocation } from '../../runtime/runtime-info.ts';
 import type { listModelsBody } from '../schemas.ts';
 import { ProviderModelsUnavailableError, type Fetcher, type ProviderModel, type ProxyFallbackEntry, type UpstreamRecord } from '@floway-dev/provider';
-import { assertCustomUpstreamRecord, fetchCustomModels } from '@floway-dev/provider-custom';
-import { assertOllamaUpstreamRecord, createOllamaProvider } from '@floway-dev/provider-ollama';
+import { assertCustomUpstreamRecord, fetchCustomModels, projectCustomModels } from '@floway-dev/provider-custom';
 
 // `upstreamModelId` is the wire-side identifier the provider will send when
 // a caller invokes the public `model.id` — Claude Code exposes
@@ -18,7 +18,7 @@ import { assertOllamaUpstreamRecord, createOllamaProvider } from '@floway-dev/pr
 // not a universal upstream-id field: only the providers that shape it as
 // `{ upstreamModelId }` surface a distinct wire id here, and the rest
 // (Copilot carries its raw variant list there) report the public id.
-const reshapeModelForDashboard = (model: ProviderModel): Record<string, unknown> => {
+const reshapeModelForDashboard = (model: ProviderModel): ListedUpstreamModel => {
   const providerData = typeof model.providerData === 'object' && model.providerData !== null ? model.providerData as { upstreamModelId?: unknown } : null;
   const wireId = typeof providerData?.upstreamModelId === 'string' && providerData.upstreamModelId.length > 0 ? providerData.upstreamModelId : model.id;
   return {
@@ -84,16 +84,29 @@ export const listModels = async (c: CtxWithJson<typeof listModelsBody>) => {
   try {
     if (kind === 'custom') {
       const assertedConfig = assertCustomUpstreamRecord(synthRecord).config;
-      const result = await fetchCustomModels(assertedConfig, fetcher);
-      return c.json(result);
+      const provider = createProvider(synthRecord);
+      let result: Awaited<ReturnType<typeof fetchCustomModels>> | undefined;
+      if (record.id === '') {
+        result = await fetchCustomModels(assertedConfig, fetcher);
+      } else {
+        await fetchUpstreamModelsCached(provider, {
+          scheduler,
+          fetcher,
+          force: true,
+          loadProvidedModels: async () => {
+            result = await fetchCustomModels(assertedConfig, fetcher);
+            return projectCustomModels(synthRecord, result);
+          },
+        });
+        // A concurrent refresh may already own the cache's in-flight slot, in
+        // which case our raw-shape loader was not invoked. The dashboard still
+        // needs its raw response, so only that joined-flight case fetches it
+        // separately.
+        result ??= await fetchCustomModels(assertedConfig, fetcher);
+      }
+      return c.json({ kind, data: result.data });
     }
-    if (kind === 'ollama') {
-      assertOllamaUpstreamRecord(synthRecord);
-      const instance = createOllamaProvider(synthRecord);
-      const models = await instance.instance.getProvidedModels(fetcher);
-      return c.json({ data: models.map(reshapeModelForDashboard) });
-    }
-    // Copilot / codex / claude-code / azure — use the provider factory.
+    // Copilot / codex / claude-code / azure / ollama — use the provider factory.
     // Force through the SWR cache when the record is persisted so the
     // side-effect refresh keeps the data-plane cache in step; otherwise
     // live-fetch without any caching.
@@ -101,10 +114,10 @@ export const listModels = async (c: CtxWithJson<typeof listModelsBody>) => {
     const models = record.id !== ''
       ? await fetchUpstreamModelsCached(provider, { scheduler, fetcher, force: true })
       : await provider.instance.getProvidedModels(fetcher);
-    return c.json({ data: models.map(reshapeModelForDashboard) });
+    return c.json({ kind, data: models.map(reshapeModelForDashboard) });
   } catch (e) {
     if (e instanceof ProviderModelsUnavailableError) {
-      return c.json({ error: { message: MODEL_LISTING_FAILURE_MESSAGE, type: 'api_error' } }, 502);
+      return c.json({ error: { message: MODEL_LISTING_FAILURE_MESSAGE, type: 'api_error', code: MODEL_LISTING_FAILURE_CODE } }, 502);
     }
     if (e instanceof Error && /Malformed .* upstream config/.test(e.message)) {
       return c.json({ error: errorMessage(e) }, 400);

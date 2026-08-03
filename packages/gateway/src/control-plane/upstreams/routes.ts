@@ -1,7 +1,9 @@
 import type { Context } from 'hono';
 
-import { blueprintUpstreamRecord, upstreamRecordToFullJson, upstreamRecordToJson, type SerializedUpstreamRecord } from './serialize.ts';
+import { blueprintUpstreamRecord, upstreamRecordToFullJson, upstreamRecordToJson } from './serialize.ts';
 import { isValidProviderKind, upstreamErrorMessage as errorMessage } from './shared.ts';
+import type { FullSerializedUpstreamRecord, ModelsCacheStatus, RedactedSerializedUpstreamRecord } from './types.ts';
+import { storedCatalogSize } from '../../data-plane/providers/catalog.ts';
 import { type AuthedContext } from '../../middleware/auth.ts';
 import { type CtxWithJson } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
@@ -13,7 +15,6 @@ import { nextSortOrder } from '../shared/sort-order.ts';
 import { warmModelsCache } from '../shared/warm-models-cache.ts';
 import {
   normalizeModelPrefix,
-  OPTIONAL_FLAGS,
   ALL_PROVIDER_KINDS,
   type ModelPrefixConfig,
   type ProxyFallbackEntry,
@@ -29,13 +30,12 @@ import { assertOllamaUpstreamRecord } from '@floway-dev/provider-ollama';
 
 type CodexQuotaProjection = { codex_quota?: CodexQuotaSnapshotMap | null };
 
+type SerializedUpstreamRecord = FullSerializedUpstreamRecord | RedactedSerializedUpstreamRecord;
+
 type UpstreamResponse = SerializedUpstreamRecord & CodexQuotaProjection;
 
 type UpstreamWithCacheResponse = UpstreamResponse & {
-  modelsCache: {
-    fetchedAt: number | null;
-    lastError: { message: string; at: number } | null;
-  };
+  modelsCache: ModelsCacheStatus;
 };
 
 const codexQuotaForResponse = async (record: UpstreamRecord): Promise<CodexQuotaProjection> => {
@@ -77,6 +77,7 @@ const serializeForResponse = async (
     modelsCache: {
       fetchedAt: record.modelsCache?.fetchedAt ?? null,
       lastError: record.modelsCache?.lastError ?? null,
+      modelCount: storedCatalogSize(record),
     },
     ...codexQuota,
   };
@@ -180,22 +181,25 @@ export const listUpstreamOptions = async (c: Context) => {
       kind: upstream.kind,
       enabled: upstream.enabled,
       color: upstream.color,
+      // The picker states a model count per upstream, and a disabled upstream
+      // is absent from the live catalog the picker counts against, so it also
+      // carries the size of the catalog it stored while it was on.
+      cachedModelCount: storedCatalogSize(upstream),
     })));
 };
 
-export const listOptionalFlags = (c: Context) => c.json(OPTIONAL_FLAGS);
-
-// Serve a shape-complete blank SerializedUpstreamRecord for the requested
-// kind. The create page's loader calls this so it can render the same
-// UpstreamEditPage component edit uses, treating a fresh upstream as an
-// edit of an unpersisted record. The record is never written; the client's
-// draft state is the sole source of truth until Save.
-export const getUpstreamBlueprint = (c: Context): Response => {
+// Supply every shared editor field for an unpersisted record. The empty cache
+// projection avoids querying storage, while persisted-only projections remain
+// exclusive to full edit responses.
+export const getUpstreamBlueprint = (c: Context) => {
   const kind = c.req.query('kind');
   if (!isValidProviderKind(kind)) {
     return c.json({ error: `kind must be one of: ${ALL_PROVIDER_KINDS.join(', ')}` }, 400);
   }
-  return c.json(upstreamRecordToFullJson(blueprintUpstreamRecord(kind)));
+  return c.json({
+    ...blueprintUpstreamRecord(kind),
+    modelsCache: { fetchedAt: null, lastError: null, modelCount: null },
+  });
 };
 
 // Single-record read for the edit page. Returns the FULL record — no

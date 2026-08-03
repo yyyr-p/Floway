@@ -1,6 +1,7 @@
 import { test } from 'vitest';
 
 import { blueprintUpstreamRecord, upstreamRecordToFullJson } from '../../../src/control-plane/upstreams/serialize.ts';
+import { MODEL_LISTING_FAILURE_CODE } from '../../../src/data-plane/models/shared.ts';
 import { MODEL_CATALOG_REVISION } from '../../../src/data-plane/providers/models-cache.ts';
 import { requestApp, setupAppTest } from '../../test-utils/app.ts';
 import type { UpstreamProviderKind, UpstreamRecord } from '@floway-dev/provider';
@@ -8,14 +9,13 @@ import { assertEquals, jsonResponse, withMockedFetch } from '@floway-dev/test-ut
 
 type JsonObject = Record<string, any>;
 
-// Every action endpoint takes a `record` envelope — the wire projection of
-// SerializedUpstreamRecord. Two build paths: a blueprint-shaped envelope for
+// Every action endpoint takes a `record` envelope. Two build paths: a blueprint-shaped envelope for
 // create-flow tests (`record.id === ''`), and a full-record envelope for
 // edit-flow tests (`record.id !== ''`) built from a repo-fetched row.
 const envelopeFromRecord = (record: UpstreamRecord): Record<string, unknown> => upstreamRecordToFullJson(record) as unknown as Record<string, unknown>;
 
 const blueprintEnvelope = (kind: UpstreamProviderKind, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-  ...envelopeFromRecord(blueprintUpstreamRecord(kind)),
+  ...blueprintUpstreamRecord(kind),
   ...overrides,
 });
 
@@ -87,10 +87,8 @@ test('POST /api/upstreams creates custom upstreams and redacts bearer tokens', a
   assertEquals(items[0].config.apiKey, undefined);
 });
 
-// Regression: the Zod modelEndpointsSchema previously did not list
-// `completions`, so a POST that declared a model with only the completions
-// capability had it silently stripped by Zod and then failed the runtime
-// "must declare at least one endpoint" check.
+// `completions` must survive request validation as a complete endpoint map;
+// stripping it would make this otherwise valid model fail provider validation.
 test('POST /api/upstreams accepts a custom model whose only endpoint is /completions', async () => {
   const { repo, adminSession } = await setupAppTest();
   await repo.upstreams.deleteAll();
@@ -429,26 +427,13 @@ test('GET /api/upstreams attaches models-cache freshness to every row', async ()
   const items = (await list.json()) as JsonObject[];
   const byId = Object.fromEntries(items.map(i => [i.id, i]));
 
-  assertEquals(byId.up_fresh.modelsCache, { fetchedAt: null, lastError: null });
-  assertEquals(byId.up_warm.modelsCache, { fetchedAt: 1_700_000_000_000, lastError: null });
+  assertEquals(byId.up_fresh.modelsCache, { fetchedAt: null, lastError: null, modelCount: null });
+  assertEquals(byId.up_warm.modelsCache, { fetchedAt: 1_700_000_000_000, lastError: null, modelCount: 1 });
   assertEquals(byId.up_failed.modelsCache, {
     fetchedAt: 1_700_000_000_000,
     lastError: { message: 'boom', at: 1_700_000_500_000 },
+    modelCount: 1,
   });
-});
-
-test('GET /api/upstreams/flags returns the flag catalog and requires admin auth', async () => {
-  const { adminSession, apiKey } = await setupAppTest();
-
-  const resp = await requestApp('/api/upstreams/flags', { method: 'GET', headers: { 'x-floway-session': adminSession } });
-  assertEquals(resp.status, 200);
-  const catalog = (await resp.json()) as Array<Record<string, unknown>>;
-  const sample = catalog.find(e => e.id === 'vendor-kimi');
-  assertEquals(typeof sample?.label, 'string');
-  assertEquals(typeof sample?.description, 'string');
-
-  const forbidden = await requestApp('/api/upstreams/flags', { method: 'GET', headers: { 'x-api-key': apiKey.key } });
-  assertEquals(forbidden.status, 403);
 });
 
 test('GET /api/upstream-options returns the minimal picker shape to admin and non-admin callers', async () => {
@@ -470,10 +455,20 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
     config: { baseUrl: 'https://custom.example.com', authStyle: 'bearer', apiKey: 'sk-secret', endpoints: { chatCompletions: {} } },
     state: null,
   });
+  // A disabled upstream is absent from the live catalog, so the picker's count
+  // comes from the catalog it stored while it was on.
+  await repo.upstreams.saveModelsCache('up_disabled_custom', {
+    revision: MODEL_CATALOG_REVISION,
+    fetchedAt: 1_700_000_000_000,
+    models: [
+      { id: 'm1', kind: 'chat', endpoints: {}, enabledFlags: new Set(), limits: {} },
+      { id: 'm2', kind: 'chat', endpoints: {}, enabledFlags: new Set(), limits: {} },
+    ],
+  });
 
   const expected = [
-    { id: 'up_copilot', name: 'GitHub Copilot (tester)', kind: 'copilot', enabled: true, color: null },
-    { id: 'up_disabled_custom', name: 'Disabled Custom', kind: 'custom', enabled: false, color: null },
+    { id: 'up_copilot', name: 'GitHub Copilot (tester)', kind: 'copilot', enabled: true, color: null, cachedModelCount: null },
+    { id: 'up_disabled_custom', name: 'Disabled Custom', kind: 'custom', enabled: false, color: null, cachedModelCount: 2 },
   ];
 
   const adminResp = await requestApp('/api/upstream-options', { headers: { 'x-floway-session': adminSession } });
@@ -486,7 +481,7 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
   assertEquals(userBody, expected);
   // No secret-bearing or operator-only fields leak through this endpoint.
   for (const row of userBody) {
-    assertEquals(Object.keys(row).sort(), ['color', 'enabled', 'id', 'kind', 'name']);
+    assertEquals(Object.keys(row).sort(), ['cachedModelCount', 'color', 'enabled', 'id', 'kind', 'name']);
   }
 });
 
@@ -578,8 +573,9 @@ test('POST /api/upstreams/list-models surfaces upstream model-listing failures a
         record: blueprintEnvelope('custom', { config: customConfig }),
       }));
       assertEquals(resp.status, 502);
-      const body = (await resp.json()) as { error: { message: string; type: string } };
+      const body = (await resp.json()) as { error: { message: string; type: string; code: string } };
       assertEquals(body.error.type, 'api_error');
+      assertEquals(body.error.code, MODEL_LISTING_FAILURE_CODE);
     },
   );
 });
@@ -602,8 +598,9 @@ test('POST /api/upstreams/list-models surfaces an ollama /api/tags failure as 50
         }),
       }));
       assertEquals(resp.status, 502);
-      const body = (await resp.json()) as { error: { message: string; type: string } };
+      const body = (await resp.json()) as { error: { message: string; type: string; code: string } };
       assertEquals(body.error.type, 'api_error');
+      assertEquals(body.error.code, MODEL_LISTING_FAILURE_CODE);
     },
   );
 });
@@ -664,6 +661,8 @@ test('POST /api/upstreams/list-models with a persisted id forces a fresh upstrea
       // through the draft's endpoints.
       assertEquals(body.data.map(m => m.id), ['fresh-model']);
       assertEquals(upstreamCalls, 1);
+      const cached = (await repo.upstreams.getById(savedRecord.id))?.modelsCache;
+      assertEquals(cached?.models.map((model: { id: string }) => model.id), ['fresh-model']);
     },
   );
 });
@@ -807,7 +806,7 @@ const codexAuthJsonImport = (overrides: Record<string, unknown> = {}) => ({
 
 // Two-step create flow: (1) exchange endpoint yields a codex config+state
 // patch from the fake auth.json blob, (2) POST /api/upstreams persists the
-// merged draft. Mirrors the SPA's UpstreamEditPage.save() path so tests
+// merged draft. Mirrors the SPA editor's exchange-then-save flow so tests
 // touching subsequent codex actions see the same row a real user would
 // have.
 const createCodexUpstreamViaExchange = async (adminSession: string, overrides: Record<string, unknown> = {}): Promise<{ id: string }> => {
@@ -2144,8 +2143,8 @@ test('spec invariant (3): POST /api/upstreams/list-models ignores record.name mu
 // --- Group B: endpoint tests for surfaces with zero coverage ---
 //
 // GET /api/upstreams/blueprint — the create page's loader consumes this so
-// the same UpstreamEditPage component serves both create and edit; the
-// blueprint is a shape-complete blank UpstreamRecord that never touches
+// the shared upstream editor serves both create and edit; the
+// blueprint is a shape-complete blank editor response that never touches
 // the DB or an assert. GET /api/upstreams/:id — the unredacted single-record
 // read the edit page depends on. POST /api/upstreams/copilot/quota — the
 // operator-driven refresh of the seat's entitlement snapshot.
@@ -2160,6 +2159,7 @@ test('GET /api/upstreams/blueprint round-trips a shape-complete blank for every 
     assertEquals(body.id, '');
     assertEquals(body.kind, kind);
     assertEquals(body.config !== null && typeof body.config === 'object', true);
+    assertEquals(body.modelsCache, { fetchedAt: null, lastError: null, modelCount: null });
   }
 });
 
@@ -2169,18 +2169,19 @@ test('GET /api/upstreams/blueprint rejects an unknown kind with 400', async () =
   assertEquals(resp.status, 400);
 });
 
-test('GET /api/upstreams/blueprint serves a pure-blank record with provider flag defaults filled in', async () => {
+test('GET /api/upstreams/blueprint serves the record a new upstream starts as with provider flag defaults filled in', async () => {
   const { adminSession } = await setupAppTest();
 
-  // Blueprints are pure-blank shape-complete records; the SPA discards
-  // everything except `flag_defaults` and lets the operator fill the
-  // actual config in from an empty draft. Serialization is a static
-  // registry lookup so no provider asserter runs against the blank.
-  // The blueprint travels through `upstreamRecordToFullJson`, so
-  // credentials come through verbatim (empty strings, not `*Set` bools).
+  // The blueprint is the create form's opening record, so it carries the
+  // starting values as well as the shape: a custom upstream opens on an
+  // OpenAI-compatible chat endpoint with catalog fetching on. Serialization is
+  // a static registry lookup so no provider asserter runs against it.
+  // Credentials are editable empty strings, not redacted `*Set` projections.
   const custom = (await (await requestApp('/api/upstreams/blueprint?kind=custom', { headers: { 'x-floway-session': adminSession } })).json()) as JsonObject;
   assertEquals(custom.config.authStyle, 'bearer');
   assertEquals(custom.config.apiKey, '');
+  assertEquals(custom.config.endpoints, { chatCompletions: {} });
+  assertEquals(custom.config.modelsFetch, { enabled: true });
   const azure = (await (await requestApp('/api/upstreams/blueprint?kind=azure', { headers: { 'x-floway-session': adminSession } })).json()) as JsonObject;
   assertEquals(azure.config.models, []);
   const ollama = (await (await requestApp('/api/upstreams/blueprint?kind=ollama', { headers: { 'x-floway-session': adminSession } })).json()) as JsonObject;

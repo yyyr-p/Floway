@@ -25,6 +25,11 @@ export interface ModelsCacheFetchOptions {
   // single upstream request. Failure throws; no fall-back to the stored
   // row.
   force?: boolean;
+  // Some control-plane callers also need the upstream's raw catalog shape.
+  // Their loader projects that already-fetched response into the exact
+  // ProviderModel catalog the provider would otherwise return, avoiding a
+  // second upstream request while keeping cache writes in this module.
+  loadProvidedModels?: () => Promise<ProviderModel[]>;
 }
 
 // L1: per-isolate in-flight memoization. Collapses concurrent callers for
@@ -53,13 +58,14 @@ const runFetch = async (
   instance: Provider,
   fetcher: Fetcher,
   key: string,
+  loadProvidedModels?: () => Promise<ProviderModel[]>,
 ): Promise<ProviderModel[]> => {
   try {
-    const models = [...await instance.instance.getProvidedModels(fetcher)];
+    const models = [...await (loadProvidedModels?.() ?? instance.instance.getProvidedModels(fetcher))];
     const entry = { revision: MODEL_CATALOG_REVISION, fetchedAt: Date.now(), models, lastError: null };
     await getRepo().upstreams.saveModelsCache(key, entry);
     // The instance carries the row as it was read at request start, and a
-    // request reaches this function more than once — once per alias target
+    // request reaches this function more than once -- once per alias target
     // resolved. Writing the entry back keeps every later read in the request
     // seeing what was just persisted, which is what re-querying the row used
     // to give us.
@@ -78,12 +84,12 @@ export const fetchUpstreamModelsCached = async (
   instance: Provider,
   opts: ModelsCacheFetchOptions,
 ): Promise<ProviderModel[]> => {
-  const { scheduler, fetcher, force } = opts;
+  const { scheduler, fetcher, force, loadProvidedModels } = opts;
   const key = instance.upstreamId;
   const now = Date.now();
 
   if (force) {
-    return await memoInFlight(key, () => runFetch(instance, fetcher, key));
+    return await memoInFlight(key, () => runFetch(instance, fetcher, key, loadProvidedModels));
   }
 
   // Read off the instance rather than queried: the row that produced this

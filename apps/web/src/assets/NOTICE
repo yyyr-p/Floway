@@ -1,0 +1,103 @@
+The five logo marks are taken from microsoft/fluentui-emoji at commit
+62ecdc0d7ca5c6df32148c169556bc8d3782fca4, in the Color style, which is the
+design Windows 11 renders:
+
+- emoji-cherry-blossom.svg
+  https://github.com/microsoft/fluentui-emoji/blob/62ecdc0d7ca5c6df32148c169556bc8d3782fca4/assets/Cherry%20blossom/Color/cherry_blossom_color.svg
+- emoji-blossom.svg
+  https://github.com/microsoft/fluentui-emoji/blob/62ecdc0d7ca5c6df32148c169556bc8d3782fca4/assets/Blossom/Color/blossom_color.svg
+- emoji-hibiscus.svg
+  https://github.com/microsoft/fluentui-emoji/blob/62ecdc0d7ca5c6df32148c169556bc8d3782fca4/assets/Hibiscus/Color/hibiscus_color.svg
+- emoji-snowflake.svg
+  https://github.com/microsoft/fluentui-emoji/blob/62ecdc0d7ca5c6df32148c169556bc8d3782fca4/assets/Snowflake/Color/snowflake_color.svg
+- emoji-broccoli.svg
+  https://github.com/microsoft/fluentui-emoji/blob/62ecdc0d7ca5c6df32148c169556bc8d3782fca4/assets/Broccoli/Color/broccoli_color.svg
+
+Each is passed through svgo 4.0.2 with --precision=2 --multipass, which halves
+the byte count and changes no drawn shape. The artwork is otherwise verbatim.
+
+MIT License
+
+Copyright (c) Microsoft Corporation.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The following assets are taken from lobe-icons at commit
+a88f09a2892016a74f4c20f096c167c88f6c19c1:
+
+- azure-color.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/azure-color.svg
+- claude-color.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/claude-color.svg
+- githubcopilot.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/githubcopilot.svg
+- jina-color.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/jina.svg
+- microsoft-color.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/microsoft-color.svg
+- ollama.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/ollama.svg
+- openai.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/openai.svg
+- tavily-color.svg
+  https://github.com/lobehub/lobe-icons/blob/a88f09a2892016a74f4c20f096c167c88f6c19c1/packages/static-svg/icons/tavily-color.svg
+
+codex.svg comes from the same project at a later commit, because the Codex mark
+did not exist at the one above:
+
+- codex.svg
+  https://github.com/lobehub/lobe-icons/blob/63c800e3db6427b3f156f7b88d426ccb3f7277a1/packages/static-svg/icons/codex-color.svg
+
+codex.svg drops the white app-icon plate and tightens the viewBox to the glyph,
+so it renders at the same optical size as the other provider marks.
+
+microsoft-color.svg is the four-square Microsoft logo, which upstream files
+under the Azure name; its title is changed to "Microsoft".
+
+lobe-icons ships Jina as one `currentColor` path and no colour variant.
+jina-color.svg splits that path at its two subpaths — the dot and the J — and
+fills them with Jina's own brand colours, sampled as the two dominant opaque
+values of the 256x256 mark at https://jina.ai/favicon.ico: #EB6161 for the dot
+and #009191 for the J.
+
+Everything else here is verbatim: take a replacement from the static-svg
+directory above rather than from a rendered page, whose gradient ids carry
+React's per-render suffix.
+
+MIT License
+
+Copyright (c) 2025 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

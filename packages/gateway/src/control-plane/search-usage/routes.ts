@@ -5,13 +5,13 @@
 // aggregate, administrators only).
 
 import { aggregateWebSearchUsageByKey, aggregateWebSearchUsageByUser } from './aggregate.ts';
-import { loadWebSearchConfig } from '../../data-plane/tools/web-search/config.ts';
 import { type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { WEB_SEARCH_PROVIDER_NAMES, isWebSearchProviderName } from '../../shared/web-search-providers.ts';
 import type { webSearchUsageQuery } from '../schemas.ts';
 import { buildKeyToUserMap } from '../shared/key-to-user.ts';
 import { resolveUsageView } from '../shared/usage-view.ts';
+import type { SearchUsageByKeyResponse, SearchUsageByUserResponse } from '../usage-types.ts';
 
 export const webSearchUsage = async (c: CtxWithQuery<typeof webSearchUsageQuery>) => {
   const query = c.req.valid('query');
@@ -44,12 +44,11 @@ export const webSearchUsage = async (c: CtxWithQuery<typeof webSearchUsageQuery>
     const userMetadata = users
       .map(u => ({ id: u.id, username: u.username }))
       .sort((a, b) => a.id - b.id);
-    const webSearchConfig = await loadWebSearchConfig();
     return c.json({
+      view: 'all-by-user',
       records,
       users: userMetadata,
-      activeProvider: webSearchConfig.provider,
-    });
+    } satisfies SearchUsageByUserResponse);
   }
 
   // self-by-key: scope rows to the actor's keys (active + soft-deleted).
@@ -69,13 +68,12 @@ export const webSearchUsage = async (c: CtxWithQuery<typeof webSearchUsageQuery>
   const filtered = explicitKeyId ? rawRecords : rawRecords.filter(r => ownedSet.has(r.keyId));
   const aggregated = aggregateWebSearchUsageByKey(filtered);
 
-  // Aggregated-records-only callers (CI, automation) skip the active-provider
-  // read and the sorted key-name/createdAt block via include_key_metadata=0.
+  // Aggregated-records-only callers (CI, automation) skip the sorted
+  // key-name/createdAt block via include_key_metadata=0.
   // The api_keys listing above still runs — it gates ownership on the raw
   // rows and cannot be elided.
   if (query.include_key_metadata !== '1') return c.json(aggregated);
 
-  const webSearchConfig = await loadWebSearchConfig();
   const keyMap = new Map(keys.map(k => [k.id, k]));
   const recordsWithKeyMetadata = aggregated.map(r => {
     const k = keyMap.get(r.keyId);
@@ -85,8 +83,8 @@ export const webSearchUsage = async (c: CtxWithQuery<typeof webSearchUsageQuery>
   const keyMetadata = keys.map(k => ({ id: k.id, name: k.name, createdAt: k.createdAt })).sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 
   return c.json({
+    view: 'self-by-key',
     records: recordsWithKeyMetadata,
     keys: keyMetadata,
-    activeProvider: webSearchConfig.provider,
-  });
+  } satisfies SearchUsageByKeyResponse);
 };

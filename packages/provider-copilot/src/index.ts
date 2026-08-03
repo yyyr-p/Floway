@@ -21,11 +21,13 @@ export {
   type CopilotUsageResponse,
 } from './quota.ts';
 export {
+  assertCopilotUpstreamRecord,
   parseCopilotUpstreamConfig,
   type CopilotUpstreamConfig,
   type CopilotUpstreamUser,
 } from './config.ts';
 export {
+  assertCopilotUpstreamState,
   emptyCopilotUpstreamState,
   readCopilotUpstreamState,
   type CopilotQuotaSnapshotEntry,

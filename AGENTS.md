@@ -56,6 +56,63 @@
 - Keep this file aligned with real architecture. When something changes,
   rewrite the relevant section; do not accrete contradictory notes.
 
+## Working Rules
+
+Earned from this project's history. Each exists because the same mistake was
+made more than once. A defect seen twice means the first fix was wrong in kind,
+not that it was incomplete.
+
+- **An instrument is a claim before it is evidence.** Establish that it ran,
+  that it can see the property you are asking about, and that it reaches the
+  state it says it forces. Doubt about an instrument is a reason to fix it, never
+  a reason to discard the result it gave you.
+- **A finding you did not derive is a lead, not a fact.** Open the primary
+  source before acting on it, and say how much did not survive. Rejecting a
+  finding takes the same evidence as acting on one — unverified is not refuted.
+- **Disproving an explanation does not disprove the observation.** When your
+  measurement contradicts what someone reports seeing, the measurement is aimed
+  at the wrong thing. Only reproducing the stated scenario closes a report.
+- **Not finding it is not evidence that it is not there.** Where an instrument
+  cannot look, say so and cover that ground another way. "Unavailable" and
+  "unsourceable" are conclusions to be earned, not defaults to record.
+- **An edit a tool made for you is still your edit.** An autofix, a codemod, a
+  bulk substitution: read the diff it produced and check it against the files,
+  not against the transformation you intended. An autofix can change what the
+  code means, and a rewrite driven by an assumed mapping corrupts everything
+  that mapping got wrong.
+- **A question authorizes an answer, not an edit.** Answer it, and when told to
+  change one thing, change that and nothing else. Neither is a reason to stop
+  working: what the answer implies goes on the list, it does not go into the
+  tree.
+- **Never substitute a problem you can solve for the one you were given.**
+  Restate the requirement in the requester's own words and show that your change
+  satisfies it. Evidence attached to a substituted requirement is worse than no
+  evidence, because it makes the wrong answer harder to challenge.
+- **An authority you cannot point at does not exist.** Your paraphrase is not
+  the ruling, a comment is not a source, and a comment justified by another
+  comment is a circle. Where no ruling exists, get one or decide and record the
+  decision as yours — never as the human's, and never as a reason to leave the
+  work undone.
+- **Report to the person, not from your notes.** Write for someone who has read
+  neither the code nor the transcript it came from. Re-verify a standing list
+  against the current tree before presenting any of it.
+- **Fix the class, and make the recurrence structurally impossible.** Ask what
+  would have to be true for this defect to be unable to happen again, and build
+  that: one source of truth instead of two, a shared implementation instead of
+  parallel ones, a derived value instead of a hardcoded one, a gate where the
+  invariant can be checked. "I fixed every occurrence" is a weaker answer than
+  "this can no longer be got wrong", and the difference is the task.
+- **Parity with what you replace is the default specification.** Everything the
+  old surface did is required unless it was explicitly dropped; behaviour that
+  quietly disappears in a rewrite is a regression, not a simplification. This is
+  the converse of the removed-concepts rule above: the old *names* must go, the
+  old *behaviour* must not.
+- **When a fix degrades across iterations, revert and reconsider.** By the third
+  patch, rebuilding from the specification is cheaper than the fourth, and a fix
+  on the wrong path is deleted rather than left in. When successive point fixes
+  each make the next defect more obvious, the surface itself is assembled
+  wrongly.
+
 ## Pull Requests
 
 Open a Pull Request only when the human explicitly includes PR work in the
@@ -152,8 +209,9 @@ bin edges, canonical enum values, header sets, protocol quirks. Prose like
 
 ## Architecture
 
-Stack: Hono on Web APIs, TypeScript, pnpm, Vitest. The dashboard is a Vue +
-Vite SPA. Cloudflare Workers is the production deployment target; Node.js
+Stack: Hono on Web APIs, TypeScript, pnpm, Vitest. The dashboard is a React +
+Fluent UI SPA on React Router in framework mode with runtime server rendering
+off, built by Vite. Cloudflare Workers is the production deployment target; Node.js
 (`node:sqlite` + `sharp` + filesystem) is a parallel target running the same
 Hono app and the same `packages/gateway/migrations` SQL.
 
@@ -164,7 +222,9 @@ proxies, Agent Setup, telemetry views, and data transfer. Its routes live under
 The **data plane** is the client-facing inference and model-discovery surface;
 it resolves public model ids, selects and calls upstreams, translates protocol
 shapes, and returns client-protocol responses. Its routes live under
-`packages/gateway/src/data-plane/`.
+`packages/gateway/src/data-plane/`. The public method/path manifest lives in
+`@floway-dev/protocols/common`; gateway registration and the dashboard API
+reference both consume it, so the documented route inventory cannot drift.
 
 Hono middleware is the HTTP request boundary: logger, CORS, authentication,
 validation, and top-level error shaping live under `packages/gateway/src/middleware/`
@@ -202,11 +262,10 @@ Floway/
 │   ├── proxy/                # @floway-dev/proxy — proxy URIs, protocol dialers, request runners
 │   ├── test-utils/           # @floway-dev/test-utils — shared Vitest fixtures and stubs
 │   ├── translate/            # @floway-dev/translate — direct cross-protocol translation pairs
-│   └── ui/                   # @floway-dev/ui — internal Vue component library
 └── apps/
     ├── platform-cloudflare/  # Cloudflare runtime implementations and Worker entry
     ├── platform-node/        # Node runtime implementations and node-server entry
-    └── web/                  # Vue + Vite dashboard SPA
+    └── web/                  # React + Fluent UI dashboard SPA
 ```
 
 Dependency direction is strict. `protocols` and `interceptor` have no runtime
@@ -250,15 +309,19 @@ filesystem, `sharp`, WebSocket, socket, and runtime-root-CA implementations;
 its migrator consumes the gateway's exported migration directory. These apps
 are the only deployment-target composition roots.
 
-`apps/web` depends at runtime on `ui`, `protocols`, `provider`, and `proxy`.
+`apps/web` depends at runtime on `protocols`, `provider`, and `proxy`.
 Its protocol imports use `/common`, `/chat-completions`, `/completions`,
 `/messages`, `/responses`, `/gemini`, and `/rerank`; its provider imports use
 the root, `/flags`, `/model`, and `/model-prefix`; its proxy imports are
 restricted to `/url`, `/url-kind`, `/proxy-config`, and `/constants` so the SPA
 does not pull in dialers, userspace TLS, or Node `crypto`. It type-imports
 gateway contracts through `/app-type`, `/dump-types`,
-`/control-plane/performance/aggregate`, and
-`/control-plane/proxies/serialize`. It does not depend on
+`/control-plane/performance/aggregate`, `/control-plane/upstreams/types`,
+`/control-plane/usage-types`,
+`/control-plane/proxies/serialize`, and `/data-plane/models/shared`;
+`@floway-dev/gateway` stays a
+devDependency, because every one of those imports is type-only. It does not
+depend on
 `@floway-dev/agent-setup`; the dashboard derives Agent Setup types from the RPC
 client, and ESLint blocks a runtime import of that package from `apps/web`.
 
@@ -272,15 +335,59 @@ runtime import must use a declared `exports` entry; deep
 Tests live in each package's `__tests__/` mirror of `src/`; directory placement
 follows the production area while suite names describe the behavior under
 test. Every tested package owns a `vitest.config.ts` including
-`__tests__/**/*_test.ts`, and the root Vitest config discovers
+`__tests__/**/*_test.{ts,tsx}`, and the root Vitest config discovers
 `packages/*/vitest.config.ts` and `apps/*/vitest.config.ts`. Package TypeScript
 projects include their Vitest configs and their `__tests__/` tree. Root
-`scripts/**/*.ts` and
+`scripts/**/*.ts`, `apps/web/scripts/**/*.ts` and
 `packages/agent-setup/scripts/**/*.ts` have Node-typed script projects; the
 base config sets `types: []` so ambient types enter only projects that request
-them. ESLint checks both script trees and every package Vitest config; the
+them. ESLint checks every script tree and every package Vitest config; the
 workspace-root `eslint.config.ts` and `vitest.config.ts` sit outside every
 checked TypeScript project and are ignored.
+
+The dashboard imports Fluent components through `apps/web/src/fluent.ts` and
+form controls through `components/ui/fluent-form-controls.tsx`, which applies
+the shared minimum-width reset. One Fluent `Field` wraps exactly one control; a
+composite editor uses `role="group"` with `aria-labelledby`. Shared surfaces and
+type use the `fui-*` UnoCSS tokens; provider identity colors come from typed
+upstream color metadata and the owning Fluent components. Generic primitives
+live in `components/ui/`, and ESLint keeps them from importing Floway domain
+modules.
+
+`apps/web/src/winui/` restyles Fluent 2 for Web onto WinUI 3, so the dashboard
+reads as a Windows 11 app rather than as a Fluent web app. It is a layer, not a
+fork: `tokens.ts` transcribes the WinUI theme dictionaries into `--winui-*`
+custom properties on `:root`, `motion.ts` carries the durations and easings as
+values so the same numbers reach both CSS and the Web Animations API,
+`theme.ts` re-points the Fluent tokens that have a direct WinUI counterpart,
+and `controls/*.css.ts` restates per control what a token substitution cannot
+say. Every value carries a permalink into microsoft-ui-xaml, and a departure
+from WinUI is written down at the rule that departs.
+
+Fluent resolves `appearance`, `size`, `shape` and `intent` in JavaScript and
+writes nothing a selector can name, so `appearance.ts` stamps the resolved
+value back onto the DOM as `data-winui-*`; `presence.ts` replaces the entrance
+and exit motion of the overlays whose WinUI counterpart states its own
+keyframes. Both wrap Fluent at `fluent.ts`, the app's only value import of
+`@fluentui/react-components`. The selector convention and the `--winui-*`
+scoping rules are documented in `tokens.ts`. The layer restyles every Fluent
+control the dashboard renders and nothing withdraws from it: a surface that must
+not read as WinUI — the playground's transcript bubbles, pinned to Bing's 2023
+chat design — is built as its own element and calls no Fluent component.
+
+React Router client loaders are resource barriers: authentication and every
+initial route resource resolve before the target location and component tree
+are committed. An in-flight navigation leaves the current URL and route fully
+mounted without introducing another loading surface. `callApi` preserves the Hono client's inferred success
+payload for typed JSON control-plane calls. Direct request handling is limited
+to playground data-plane streaming and dump SSE subscriptions. The document never scrolls. Every scrollable region
+declares its axes through `ScrollArea`; it enables OverlayScrollbars only where
+native scrollbars consume layout space, and otherwise retains native overlay
+scrolling inside the same explicit viewport.
+
+User-visible strings go through `react-i18next` in `en` and `zh-Hans`; a locale
+ships only if somebody here can review it, and the parity suite requires every
+plural key to supply the `other` form each language actually has.
 
 Client-carried affinity is a source-protocol membrane. Shared codec, candidate
 narrowing, and affinity request context live under
@@ -320,6 +427,13 @@ Run lint and test through the scripts rather than a bare `eslint` or `vitest`:
 a workspace-wide pass exhausts Node's default heap, so the scripts raise the
 ceiling — 12 GiB for `lint` and `lint:fix`, 8 GiB for `test`.
 
+`.github/workflows/verify.yaml` runs each of these on every pull request and on
+every push to `main`, one job per command, plus the generated-asset drift check
+and a web build. It generates `apps/web/.react-router/types` before the checks:
+those types are gitignored but sit in the web tsconfig's `include`, and the
+lint config is type-aware, so a fresh checkout cannot lint the dashboard until
+they exist.
+
 ## Development
 
 ```bash
@@ -333,9 +447,9 @@ pnpm run db:migrate:remote   # production D1
 `dev` runs the Worker on `http://127.0.0.1:8788` and the SPA on
 `http://localhost:5174`. For frontend development open the Vite SPA (5174):
 Vite proxies the gateway's HTTP paths to the Worker (see the canonical list in
-`apps/web/vite.config.ts`'s `wranglerProxiedPaths`), so relative-URL fetches in
+`apps/web/gateway-paths.ts`'s `wranglerProxiedPaths`), so relative-URL fetches in
 `apps/web` work identically in dev and prod. The Worker port serves the last
-built `apps/web/dist` via Workers Static Assets; direct SPA routes (e.g.
+built `apps/web/dist/client` via Workers Static Assets; direct SPA routes (e.g.
 `/login`, `/dashboard/...`) require
 `assets.not_found_handling: "single-page-application"` plus the backend-only
 `assets.run_worker_first` route list in the gitignored `wrangler.jsonc` (see
