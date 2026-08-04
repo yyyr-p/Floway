@@ -1,4 +1,5 @@
 import { ServerRegular } from '@fluentui/react-icons';
+import type { RefCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import azureIconUrl from '../../assets/azure-color.svg?no-inline';
@@ -11,6 +12,7 @@ import { hueBadgeTone } from '../../lib/hue';
 import { useBadgeHue } from '../ui/badge-hue';
 import { Chip } from '../ui/chip';
 import { MaskedIcon } from '../ui/masked-icon';
+import { TruncationTooltip } from '../ui/truncation-tooltip';
 import type { UpstreamProviderKind } from '@floway-dev/provider/model';
 
 const { Tooltip, makeStyles } = fluentComponents;
@@ -50,18 +52,27 @@ export function ProviderBadge({ label, title, upstream }: {
   const hue = useBadgeHue(hueBadgeTone(upstream.hue));
   const visibleLabel = label ?? t(`provider.${upstream.kind}`, providerLabel(upstream.kind));
 
-  // A caller-supplied title describes the badge; the default is the clipped
-  // label restored, which names it.
+  const badge = (measureRef?: RefCallback<HTMLElement>) => (
+    <Chip
+      className={hue.className}
+      style={hue.style}
+      icon={<ProviderIcon kind={upstream.kind} className="h-4 w-4" />}
+      textRef={measureRef}
+    >
+      {visibleLabel}
+    </Chip>
+  );
+
+  // A caller-supplied title describes the badge and says more than the chip
+  // shows, so it always stands; the default names the badge with the label it
+  // already carries, and is worth a tooltip only where the chip clips it.
+  if (title !== undefined) {
+    return <Tooltip content={title} relationship="description">{badge()}</Tooltip>;
+  }
   return (
-    <Tooltip content={title ?? visibleLabel} relationship={title === undefined ? 'label' : 'description'}>
-      <Chip
-        className={hue.className}
-        style={hue.style}
-        icon={<ProviderIcon kind={upstream.kind} className="h-4 w-4" />}
-      >
-        {visibleLabel}
-      </Chip>
-    </Tooltip>
+    <TruncationTooltip content={visibleLabel} relationship="label">
+      {measureRef => badge(measureRef)}
+    </TruncationTooltip>
   );
 }
 
