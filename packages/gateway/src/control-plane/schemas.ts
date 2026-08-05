@@ -182,6 +182,10 @@ const customConfigSchema = z.object({
   // PATCH passes `null` to explicitly clear pathOverrides; nullable() keeps
   // that escape hatch.
   pathOverrides: z.record(z.string(), z.string()).nullable().optional(),
+  ingressHeadersRules: z.array(z.object({
+    key: z.string(),
+    value: z.string().nullable(),
+  }).strict()),
   // Live upstream /models fetch. `endpoint` parsing happens in the runtime.
   modelsFetch: z.object({ enabled: z.boolean(), endpoint: z.string().optional() }).optional(),
   // Statically configured per-model overrides merged with the live fetch.

@@ -11,6 +11,7 @@ import { Controller, useFormContext, useWatch } from 'react-hook-form';
 import { ClaudeCodeAccountCard } from './claude-code-account-card';
 import { CodexAccountCard } from './codex-account-card';
 import { CopilotQuotaCard } from './copilot-quota-card';
+import { CustomIngressHeaderRules } from './custom-ingress-header-rules';
 import type { UpstreamEditorValues } from './data';
 import { isPersisted, previewRecord } from './data';
 import { CHAT_ENDPOINT_KEYS, endpointOptionsFor, PATH_OVERRIDE_PATHS } from './endpoints';
@@ -139,6 +140,7 @@ function CustomConfig({ onRefreshModels, record }: { onRefreshModels: () => void
           <Controller control={control} name="config.modelsFetch.endpoint" render={({ field }) => <Input className="font-mono" name={field.name} onBlur={field.onBlur} onChange={(_, data) => field.onChange(data.value)} placeholder="/v1/models" ref={field.ref} value={field.value ?? ''} />} />
         </Field>
       )}
+      <CustomIngressHeaderRules />
     </div>
   );
 }

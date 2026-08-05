@@ -91,6 +91,10 @@ const CUSTOM_UPSTREAM: UpstreamRecord = {
   config: {
     baseUrl: 'https://custom.example.com',
     authStyle: 'bearer',
+    ingressHeadersRules: [
+      { key: 'x-request-id', value: null },
+      { key: 'x-route', value: 'backup' },
+    ],
     apiKey: 'sk-custom',
     endpoints: { chatCompletions: {}, responses: {} },
     modelsFetch: { enabled: true, endpoint: '/models' },
@@ -404,6 +408,10 @@ test('export includes full upstream configs and omits performance by default', a
   assertEquals(result.data.apiKeys, [KEY_A]);
   assertEquals(result.data.upstreams.map((upstream: any) => upstream.id), ['up_copilot_a', 'up_custom_a', 'up_azure_a']);
   assertEquals(result.data.upstreams.find((upstream: any) => upstream.id === 'up_custom_a').config.apiKey, 'sk-custom');
+  assertEquals(result.data.upstreams.find((upstream: any) => upstream.id === 'up_custom_a').config.ingressHeadersRules, [
+    { key: 'x-request-id', value: null },
+    { key: 'x-route', value: 'backup' },
+  ]);
   assertEquals(result.data.upstreams.find((upstream: any) => upstream.id === 'up_copilot_a').config.githubToken, 'ghu-alice');
   assertEquals(result.data.upstreams.find((upstream: any) => upstream.id === 'up_azure_a').config.apiKey, 'az-key');
   assertEquals(result.data.usage, [USAGE_1]);
@@ -1646,7 +1654,7 @@ test('any data bearing a historical version is rejected on the version gate, bef
     searchConfig: DEFAULT_WEB_SEARCH_CONFIG,
   };
 
-  for (const version of [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]) {
+  for (let version = 1; version < 20; version++) {
     const result = await doImport(app, 'replace', wellFormed, version);
     assertEquals(result.status, 400);
     assertEquals(String(result.body.error).includes('version must be 20'), true);
