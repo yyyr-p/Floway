@@ -89,6 +89,63 @@ describe('upstream model workspace field-array transitions', () => {
     expect((screen.getByRole('textbox', { name: models('upstreamId') }) as HTMLInputElement).value).toBe('');
   });
 
+  it('keeps the same focused input while a new model ID changes', async () => {
+    renderInApp(<Harness />);
+    const table = screen.getByRole('table', { name: models('title') });
+
+    fireEvent.click(screen.getByRole('button', { name: models('add') }));
+    const input = screen.getByRole('textbox', { name: models('upstreamId') });
+    input.focus();
+    fireEvent.change(input, { target: { value: 'm' } });
+
+    await waitFor(() => expect(screen.queryByRole('table', { name: models('title') })).toBe(null));
+    expect(table.isConnected).toBe(false);
+    expect(screen.getByRole('textbox', { name: models('upstreamId') })).toBe(input);
+    expect(document.activeElement).toBe(input);
+    fireEvent.change(input, { target: { value: 'model-new' } });
+    expect(screen.getByRole('textbox', { name: models('upstreamId') })).toBe(input);
+    expect((input as HTMLInputElement).value).toBe('model-new');
+    fireEvent.blur(input);
+    expect(screen.getByRole('textbox', { name: models('upstreamId') })).toBe(input);
+  });
+
+  it('keeps temporarily duplicate IDs attached to separate rows while swapping them', async () => {
+    renderInApp(<Harness />);
+
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('dashboard.upstreamEditor.models.editNamed', { name: 'model-a' }) }));
+    const firstInput = screen.getByRole('textbox', { name: models('upstreamId') });
+    fireEvent.change(firstInput, { target: { value: 'model-b' } });
+    fireEvent.blur(firstInput);
+    expect(screen.getByRole('textbox', { name: models('upstreamId') })).toBe(firstInput);
+    fireEvent.click(screen.getByRole('button', { name: models('back') }));
+
+    await screen.findByRole('table', { name: models('title') });
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('dashboard.upstreamEditor.models.editNamed', { name: 'model-b' }) }));
+    const secondInput = screen.getByRole('textbox', { name: models('upstreamId') });
+    expect(secondInput).not.toBe(firstInput);
+    fireEvent.change(secondInput, { target: { value: 'model-a' } });
+    fireEvent.blur(secondInput);
+    expect(screen.getByRole('textbox', { name: models('upstreamId') })).toBe(secondInput);
+    fireEvent.click(screen.getByRole('button', { name: models('back') }));
+
+    await screen.findByRole('table', { name: models('title') });
+    fireEvent.click(screen.getByRole('button', { name: i18n.t('dashboard.upstreamEditor.models.editNamed', { name: 'model-a' }) }));
+    expect((screen.getByRole('textbox', { name: models('upstreamId') }) as HTMLInputElement).value).toBe('model-b');
+    fireEvent.click(screen.getByRole('button', { name: models('back') }));
+    fireEvent.click(await screen.findByRole('button', { name: i18n.t('dashboard.upstreamEditor.models.editNamed', { name: 'model-b' }) }));
+    expect((screen.getByRole('textbox', { name: models('upstreamId') }) as HTMLInputElement).value).toBe('model-a');
+  });
+
+  it('prevents returning to the list from an incomplete new model', () => {
+    renderInApp(<Harness />);
+
+    fireEvent.click(screen.getByRole('button', { name: models('add') }));
+    fireEvent.click(screen.getByRole('button', { name: models('back') }));
+
+    expect(screen.queryByRole('table', { name: models('title') })).toBe(null);
+    expect(screen.getByRole('textbox', { name: models('upstreamId') })).toBeTruthy();
+  });
+
   it('returns from a model detail to the model list', async () => {
     renderInApp(<Harness />);
     const table = screen.getByRole('table', { name: models('title') });
@@ -105,6 +162,7 @@ describe('upstream model workspace field-array transitions', () => {
     expect(deleteCommands()).toHaveLength(2);
 
     fireEvent.click(screen.getByRole('button', { name: models('add') }));
+    fireEvent.change(screen.getByRole('textbox', { name: models('upstreamId') }), { target: { value: 'temporary' } });
     fireEvent.click(screen.getByRole('button', { name: models('back') }));
     expect(deleteCommands()).toHaveLength(3);
     fireEvent.click(deleteCommands()[2]!);
