@@ -15,7 +15,8 @@ import type { ModelListingFailure, ModelRow, UpstreamEditorValues } from './data
 import { canFetchModelCatalog, manualModelsSupported, publicModelId } from './data';
 import { shapeForKind } from './endpoints';
 import { FeatureFlagsEditor } from './feature-flags';
-import { ModelDetail, modelsAreValid } from './model-detail';
+import { ModelDetail } from './model-detail';
+import { modelValidationIssues } from './model-validation';
 import { parseModels, serializeModels } from './models-yaml';
 import type { UpstreamRecord } from '../../api/types';
 import { fluentComponents } from '../../fluent';
@@ -105,7 +106,7 @@ export function UpstreamWorkspace({
 }) {
   const { t } = useTranslation();
   const dangerText = useDangerTextClass();
-  const { formState: { errors }, getValues } = useFormContext<UpstreamEditorValues>();
+  const { formState: { errors, submitCount }, getValues } = useFormContext<UpstreamEditorValues>();
   const [params, setParams] = useSearchParams();
   const rewrite = useEntryRewrite();
   // The YAML text is a projection of the manual models — serialized on the way
@@ -114,6 +115,7 @@ export function UpstreamWorkspace({
   // every entrance into the view show the same text: there is nothing for a
   // link, a reload or the button to remember to seed.
   const [modelSelection, setModelSelection] = useState<ModelSelection | null>(null);
+  const [modelValidationAttempted, setModelValidationAttempted] = useState(false);
   const workspaceScrollRef = useRef<HTMLDivElement>(null);
 
   // `model` is only a reloadable locator. The mounted editor uses the
@@ -163,6 +165,7 @@ export function UpstreamWorkspace({
   });
   const openModel = (selection: ModelSelection | null) => {
     setModelSelection(selection);
+    setModelValidationAttempted(false);
     navigate({ tab, model: selection?.locator ?? null, section: 'details', view: 'list' });
   };
   const selectedManualIndex = modelSelection
@@ -173,7 +176,10 @@ export function UpstreamWorkspace({
   const leaveModel = () => {
     if (selectedManualIndex !== null && selectedManualIndex >= 0) {
       const model = getValues('manualModels')[selectedManualIndex];
-      if (model && !modelsAreValid([model])) return;
+      if (model && modelValidationIssues(model).length > 0) {
+        setModelValidationAttempted(true);
+        return;
+      }
     }
     openModel(null);
   };
@@ -185,7 +191,7 @@ export function UpstreamWorkspace({
   useLayoutEffect(() => {
     workspaceScrollRef.current?.scrollTo({ left: 0, top: 0 });
   }, [modelDetailTab, modelView, tab]);
-  const modelsWorkspace = <ModelsWorkspace detailSection={modelDetailTab} modelSelection={modelSelection} onModelLocatorCommit={commitModelLocator} onModelSelectionChange={setModelSelection} onOpenModel={openModel} selectedUpstreamModelId={selectedUpstreamModelId} discovered={discovered} modelsLoading={modelsLoading} modelsError={modelsError} onRefreshModels={onRefreshModels} onViewChange={changeModelView} readOnly={!editableCatalog} record={record} view={modelView} yamlDraft={modelsYamlDraft} onYamlDraftChange={onModelsYamlDraftChange} />;
+  const modelsWorkspace = <ModelsWorkspace detailSection={modelDetailTab} modelSelection={modelSelection} onModelLocatorCommit={commitModelLocator} onModelSelectionChange={setModelSelection} onOpenModel={openModel} selectedUpstreamModelId={selectedUpstreamModelId} discovered={discovered} modelsLoading={modelsLoading} modelsError={modelsError} onRefreshModels={onRefreshModels} onViewChange={changeModelView} readOnly={!editableCatalog} record={record} revealValidation={modelValidationAttempted || submitCount > 0} view={modelView} yamlDraft={modelsYamlDraft} onYamlDraftChange={onModelsYamlDraftChange} />;
   return <section className="grid grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)] h-full min-h-0 min-w-0 max-[1050px]:h-auto">
     <div className="flex items-center gap-2 border-0 border-b border-solid border-fui-divider px-5 pt-2">
       {showModelDetail
@@ -223,7 +229,7 @@ export function UpstreamWorkspace({
   </section>;
 }
 
-function ModelsWorkspace({ detailSection, discovered, modelSelection, modelsError, modelsLoading, onModelLocatorCommit, onModelSelectionChange, onOpenModel, onRefreshModels, onViewChange, onYamlDraftChange, readOnly, record, selectedUpstreamModelId, view, yamlDraft }: {
+function ModelsWorkspace({ detailSection, discovered, modelSelection, modelsError, modelsLoading, onModelLocatorCommit, onModelSelectionChange, onOpenModel, onRefreshModels, onViewChange, onYamlDraftChange, readOnly, record, revealValidation, selectedUpstreamModelId, view, yamlDraft }: {
   detailSection: ModelDetailTab;
   discovered: UpstreamModelConfig[];
   modelSelection: ModelSelection | null;
@@ -237,6 +243,7 @@ function ModelsWorkspace({ detailSection, discovered, modelSelection, modelsErro
   onYamlDraftChange: (draft: ModelsYamlDraft | null) => void;
   readOnly: boolean;
   record: UpstreamRecord;
+  revealValidation: boolean;
   selectedUpstreamModelId: string | null;
   view: ModelView;
   yamlDraft: ModelsYamlDraft | null;
@@ -373,7 +380,7 @@ function ModelsWorkspace({ detailSection, discovered, modelSelection, modelsErro
     </div>{deleteConfirmation}</>;
   }
 
-  if (view === 'detail' && activeDetailRow) return <><ModelDetail section={detailSection} row={activeDetailRow} readOnly={readOnly} onDelete={() => deleteDialog.open(activeDetailRow)} onSourceChange={source => setModelSource(activeDetailRow, source)} onUpstreamModelIdCommit={onModelLocatorCommit} onChange={value => {
+  if (view === 'detail' && activeDetailRow) return <><ModelDetail section={detailSection} row={activeDetailRow} readOnly={readOnly} revealValidation={revealValidation} onDelete={() => deleteDialog.open(activeDetailRow)} onSourceChange={source => setModelSource(activeDetailRow, source)} onUpstreamModelIdCommit={onModelLocatorCommit} onChange={value => {
     if (activeDetailRow.manualIndex === null) return;
     setValue(`manualModels.${activeDetailRow.manualIndex}`, value, {
       shouldDirty: true,
