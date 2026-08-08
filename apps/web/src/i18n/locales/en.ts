@@ -869,6 +869,27 @@ const en = {
             'uuid-mismatch': 'Configured account missing from state - re-import to recover',
           },
         },
+        ollama: {
+          cloudUsage: 'Fetch account usage',
+          cloudUsageHint: "Read this Ollama Cloud account's usage windows after the calls this upstream serves. A self-hosted Ollama serves no such endpoint.",
+          usage: {
+            title: 'Usage',
+            load: 'Load',
+            refresh: 'Refresh',
+            usedPercent: '{{percent, number}}% used',
+            // Ollama states the session allowance resets every five hours and
+            // the other weekly; the endpoint reports neither the length nor a
+            // reset time. https://ollama.com/pricing
+            window: {
+              session: '5-hour window',
+              weekly: 'Weekly window',
+            },
+            observed: 'Observed {{time}}',
+            empty: 'No usage observed yet. One arrives with the first request this upstream serves, or refresh to fetch one now.',
+            unreadable: 'Ollama reported no usage windows in a shape this dashboard understands.',
+            backgroundFailed: 'The last background refresh failed: {{message}}',
+          },
+        },
         oauth: {
           refresh: 'Refresh credential',
           reimport: 'Re-import credential',
