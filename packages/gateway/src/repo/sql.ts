@@ -5,6 +5,7 @@ import { decodeAliasTargets, decodeAnnouncedMetadata, encodeAliasTargets, encode
 import { querySqlPerformanceOverview } from './performance-overview-sql.ts';
 import { normalizeProxyFallbackList } from './proxy-fallback-list.ts';
 import { SqlResponsesItemsRepo, SqlResponsesSnapshotsRepo } from './responses-state-sql.ts';
+import { SqlScheduledMaintenanceRepo } from './scheduled-maintenance-sql.ts';
 import { generateSessionToken } from './session-tokens.ts';
 import { SqlSpilledFilesRepo } from './spilled-files-sql.ts';
 import { runStatements } from './sql-batch.ts';
@@ -35,6 +36,7 @@ import type {
   Repo,
   ResponsesItemsRepo,
   ResponsesSnapshotsRepo,
+  ScheduledMaintenanceRepo,
   SpilledFilesRepo,
   WebSearchConfigRepo,
   WebSearchUsageRecord,
@@ -1586,6 +1588,7 @@ export class SqlRepo implements Repo {
   responsesSnapshots: ResponsesSnapshotsRepo;
   spilledFiles: SpilledFilesRepo;
   expirationSweeps: ExpirationSweepsRepo;
+  scheduledMaintenance: ScheduledMaintenanceRepo;
   agentSetup: AgentSetupRepository;
 
   constructor(db: SqlDatabase) {
@@ -1604,6 +1607,7 @@ export class SqlRepo implements Repo {
     this.responsesSnapshots = new SqlResponsesSnapshotsRepo(db);
     this.spilledFiles = new SqlSpilledFilesRepo(db);
     this.expirationSweeps = new SqlExpirationSweepsRepo(db);
+    this.scheduledMaintenance = new SqlScheduledMaintenanceRepo(db);
     this.agentSetup = new SqlAgentSetupRepo(db);
   }
 }

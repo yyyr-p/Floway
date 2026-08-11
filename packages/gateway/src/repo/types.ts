@@ -530,6 +530,12 @@ export interface ExpirationSweepsRepo {
   complete(token: string, expectedRevision: number, completion: ExpirationSweepCompletion): Promise<void>;
 }
 
+export interface ScheduledMaintenanceRepo {
+  tryClaim(token: string, now: number, staleClaimedBefore: number): Promise<boolean>;
+  renew(token: string, now: number): Promise<void>;
+  release(token: string): Promise<void>;
+}
+
 // The Agent Setup lease store. Its shape, record, and mutation discriminants
 // are owned by @floway-dev/agent-setup; the SQL and in-memory implementations
 // here satisfy that contract. Re-exported so the repo layer imports one source.
@@ -551,5 +557,6 @@ export interface Repo {
   responsesSnapshots: ResponsesSnapshotsRepo;
   spilledFiles: SpilledFilesRepo;
   expirationSweeps: ExpirationSweepsRepo;
+  scheduledMaintenance: ScheduledMaintenanceRepo;
   agentSetup: AgentSetupRepository;
 }

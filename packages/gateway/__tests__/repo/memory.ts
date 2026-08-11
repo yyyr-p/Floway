@@ -44,6 +44,7 @@ import type {
   Repo,
   ResponsesItemsRepo,
   ResponsesSnapshotsRepo,
+  ScheduledMaintenanceRepo,
   SpilledFilesRepo,
   WebSearchConfigRepo,
   WebSearchUsageRecord,
@@ -1064,6 +1065,29 @@ interface MemoryExpirationSweepRow extends ExpirationSweepClaim {
   claimedAt: number | null;
 }
 
+class MemoryScheduledMaintenanceRepo implements ScheduledMaintenanceRepo {
+  private maintenanceClaim: { token: string; claimedAt: number } | null = null;
+
+  tryClaim(token: string, now: number, staleClaimedBefore: number): Promise<boolean> {
+    if (this.maintenanceClaim !== null && this.maintenanceClaim.claimedAt >= staleClaimedBefore) {
+      return Promise.resolve(false);
+    }
+    this.maintenanceClaim = { token, claimedAt: now };
+    return Promise.resolve(true);
+  }
+
+  renew(token: string, now: number): Promise<void> {
+    if (this.maintenanceClaim?.token !== token) throw new Error('Scheduled maintenance lease was lost before renewal');
+    this.maintenanceClaim.claimedAt = now;
+    return Promise.resolve();
+  }
+
+  release(token: string): Promise<void> {
+    if (this.maintenanceClaim?.token === token) this.maintenanceClaim = null;
+    return Promise.resolve();
+  }
+}
+
 class MemoryExpirationSweepsRepo implements ExpirationSweepsRepo {
   private readonly rows = new Map<string, MemoryExpirationSweepRow>();
 
@@ -1451,12 +1475,14 @@ export class InMemoryRepo implements Repo {
   responsesSnapshots: ResponsesSnapshotsRepo;
   spilledFiles: SpilledFilesRepo;
   expirationSweeps: ExpirationSweepsRepo;
+  scheduledMaintenance: ScheduledMaintenanceRepo;
   agentSetup: AgentSetupRepository;
 
   constructor() {
     this.users = new MemoryUsersRepo();
     this.sessions = new MemorySessionsRepo();
     this.expirationSweeps = new MemoryExpirationSweepsRepo();
+    this.scheduledMaintenance = new MemoryScheduledMaintenanceRepo();
     this.apiKeys = new MemoryApiKeyRepo(this.expirationSweeps);
     this.usage = new MemoryUsageRepo(this.apiKeys);
     this.webSearchUsage = new MemoryWebSearchUsageRepo();

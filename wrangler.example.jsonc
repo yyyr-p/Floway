@@ -34,7 +34,9 @@
   // cannot resolve those modules at cold start without the Node compat flag.
   "compatibility_flags": ["nodejs_compat"],
   "triggers": {
-    "crons": ["17 * * * *"]
+    // Minute scheduling provides catch-up throughput while bounded deletion
+    // and collection batches keep each tick's D1 write load predictable.
+    "crons": ["* * * * *"]
   },
   "assets": {
     "directory": "apps/web/dist/client",
