@@ -2,7 +2,7 @@ name: Build and Push
 
 on:
   push:
-    branches: [main]
+    branches: [staging]
   workflow_dispatch:
   schedule:
     - cron: '0 6 * * *'
