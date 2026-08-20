@@ -1,6 +1,7 @@
 import { analyzeAnthropicMessagesAffinity } from './affinity/ingress.ts';
 import { anthropicMessagesAttempt, anthropicMessagesGenerateTarget, anthropicMessagesCountTokensTarget } from './attempt.ts';
 import { renderAnthropicMessagesFailure } from './errors.ts';
+import { decodeClaudeCodeModelId } from '../../models/claude-code-prefix.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
@@ -29,7 +30,7 @@ export const anthropicMessagesServe = {
     const affinity = await analyzeAnthropicMessagesAffinity(payload, ctx.affinity.codec);
     const { candidates: enumerated, sawModel, failedUpstreams } = await enumerateModelCandidates({
       upstreamIds: ctx.upstreamIds,
-      model: payload.model,
+      model: decodeClaudeCodeModelId(payload.model, headers.get('user-agent') ?? undefined),
       kind: 'chat',
       scheduler: ctx.backgroundScheduler,
       runtimeLocation: ctx.runtimeLocation,
@@ -64,7 +65,7 @@ export const anthropicMessagesServe = {
     const affinity = await analyzeAnthropicMessagesAffinity(payload, ctx.affinity.codec);
     const { candidates: enumerated, sawModel, failedUpstreams } = await enumerateModelCandidates({
       upstreamIds: ctx.upstreamIds,
-      model: payload.model,
+      model: decodeClaudeCodeModelId(payload.model, headers.get('user-agent') ?? undefined),
       kind: 'chat',
       scheduler: ctx.backgroundScheduler,
       runtimeLocation: ctx.runtimeLocation,
