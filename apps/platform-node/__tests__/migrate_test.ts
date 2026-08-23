@@ -32,7 +32,7 @@ test('applies all real migration files against a fresh sqlite', () => withTemp(a
   const recorded = await db.prepare('SELECT COUNT(*) AS n FROM _migrations').first<{ n: number }>();
   assertEquals(recorded !== null && recorded.n > 0, true);
   const latest = await db.prepare('SELECT name FROM _migrations ORDER BY name DESC LIMIT 1').first<{ name: string }>();
-  assertEquals(latest?.name, '0087_oauth2_policy_controls.sql');
+  assertEquals(latest?.name, '0088_oauth2_policy_controls.sql');
 
   const providerCols = await db.prepare('PRAGMA table_info(oauth2_providers)').all<{ name: string; dflt_value: string | null }>();
   assertEquals(providerCols.results.find(column => column.name === 'access_denied_message')?.dflt_value, "''");
@@ -80,7 +80,7 @@ test('OAuth2 access migration converts the former Gitea membership list to UserI
     '2026-08-19T00:00:00.000Z',
   ).run();
 
-  const migration = await readFile(new URL('../../../packages/gateway/migrations/0086_oauth2_claim_access_policies.sql', import.meta.url), 'utf8');
+  const migration = await readFile(new URL('../../../packages/gateway/migrations/0087_oauth2_claim_access_policies.sql', import.meta.url), 'utf8');
   await db.exec(migration);
 
   const row = await db.prepare('SELECT access_policy_json FROM oauth2_providers WHERE id = ?')
