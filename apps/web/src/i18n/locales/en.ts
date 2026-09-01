@@ -1150,6 +1150,8 @@ const en = {
         noCollector: 'No protocol-specific collector is available for this path. Use Events to inspect raw frames.',
         unlabeled: 'unlabeled',
         jsonParseFailed: 'JSON parse failed',
+        upstreamResponseBody: 'Upstream (pre-translation) body',
+        upstreamStreamView: 'Upstream body view',
       },
       charts: {
         series: {
