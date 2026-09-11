@@ -744,9 +744,16 @@ test('mid-attempt throw stamps telemetry with the throwing candidate, not the pr
 
 test('Claude Code generation decodes at most one synthetic model-id prefix before resolution', async () => {
   installRepo();
+  // Discovery hex-encodes the raw id after the `claude-code!` marker, so
+  // the inbound ids below mirror what the picker actually surfaces. A
+  // literal `claude-code!` in the raw id is itself hex-encoded into the
+  // suffix (so the encoded form never contains a second marker), and
+  // decoding reverses exactly one layer — `claude-code!gpt-5` is the
+  // decoded form of the doubly-prefixed raw id, not a second layer to
+  // strip. A bare non-prefixed Anthropic id passes through untouched.
   for (const [requested, resolved] of [
-    ['claude-code!gpt-5', 'gpt-5'],
-    ['claude-code!claude-code!gpt-5', 'claude-code!gpt-5'],
+    ['claude-code!6770742d35', 'gpt-5'],
+    ['claude-code!636c617564652d636f6465216770742d35', 'claude-code!gpt-5'],
     ['claude-haiku-4-5', 'claude-haiku-4-5'],
   ] as const) {
     queueResolution([], { sawModel: false });
@@ -768,7 +775,7 @@ test('Claude Code count_tokens decodes its synthetic model id before resolution'
   queueResolution([], { sawModel: false });
 
   await messagesServe.countTokens({
-    payload: makePayload({ model: 'claude-code!gpt-5' }),
+    payload: makePayload({ model: 'claude-code!6770742d35' }),
     ctx: makeGatewayCtx(),
     headers: new Headers({ 'user-agent': 'claude-cli/2.1.211' }),
   });
@@ -786,8 +793,8 @@ test('Claude Desktop generation decodes the synthetic model-id prefix before res
   installRepo();
   const desktopUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.34493.1 Chrome/148.0.7778.280 Electron/42.9.2 Safari/537.36';
   for (const [requested, resolved] of [
-    ['claude-code!gpt-5', 'gpt-5'],
-    ['claude-code!claude-code!gpt-5', 'claude-code!gpt-5'],
+    ['claude-code!6770742d35', 'gpt-5'],
+    ['claude-code!636c617564652d636f6465216770742d35', 'claude-code!gpt-5'],
     ['claude-haiku-4-5', 'claude-haiku-4-5'],
   ] as const) {
     queueResolution([], { sawModel: false });
@@ -810,7 +817,7 @@ test('Claude Desktop count_tokens decodes its synthetic model id before resoluti
   const desktopUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.34493.1 Chrome/148.0.7778.280 Electron/42.9.2 Safari/537.36';
 
   await messagesServe.countTokens({
-    payload: makePayload({ model: 'claude-code!gpt-5' }),
+    payload: makePayload({ model: 'claude-code!6770742d35' }),
     ctx: makeGatewayCtx(),
     headers: new Headers({ 'user-agent': desktopUserAgent }),
   });
@@ -820,14 +827,18 @@ test('Claude Desktop count_tokens decodes its synthetic model id before resoluti
 
 test('non-inference User-Agents preserve literal synthetic-looking model ids', async () => {
   installRepo();
+  // The hex form is a valid decode candidate, so a non-inference UA is
+  // what gates the pass-through — this is a stronger property than the
+  // old literal `claude-code!gpt-5` form, which could not have decoded
+  // anyway.
   for (const userAgent of [undefined, 'claude-code/2.1.211', 'openai-python/2.0.0']) {
     queueResolution([], { sawModel: false });
     const headers = new Headers(userAgent === undefined ? undefined : { 'user-agent': userAgent });
     await messagesServe.generate({
-      payload: makePayload({ model: 'claude-code!gpt-5' }),
+      payload: makePayload({ model: 'claude-code!6770742d35' }),
       ctx: makeGatewayCtx(),
       headers,
     });
-    assertEquals(lastResolveCall.model, 'claude-code!gpt-5');
+    assertEquals(lastResolveCall.model, 'claude-code!6770742d35');
   }
 });

@@ -1041,13 +1041,16 @@ test('/v1/models serves Anthropic-shape rows without a [1m] suffix when no model
 });
 
 // Non-Anthropic ids get a `claude-code!` synthetic prefix so the CLI's
-// `/^(claude|anthropic)/i` picker filter admits them. `display_name`
-// stays untouched because the picker renders `display_name ?? id`, so the
-// operator-configured label reaches the user unchanged. The `[1m]` suffix
-// composes on the possibly-prefixed form (`claude-code!<id>[1m]`).
-// Embedding and image models are dropped upstream of the prefix rewrite —
-// the picker is a chat surface, matching the same chat-only narrow the
-// Codex and Gemini discovery handlers already apply.
+// `/^(claude|anthropic)/i` picker filter admits them, then the raw id is
+// hex-encoded after the prefix so the newer deny-side vendor-name filter
+// (`deepseek`, `glm`, …) cannot match the hex alphabet either.
+// `display_name` stays untouched because the picker renders
+// `display_name ?? id`, so the operator-configured label reaches the user
+// unchanged. The `[1m]` suffix composes on the possibly-prefixed form
+// (`claude-code!<hex>[1m]`). Embedding and image models are dropped
+// upstream of the prefix rewrite — the picker is a chat surface, matching
+// the same chat-only narrow the Codex and Gemini discovery handlers
+// already apply.
 test('/v1/models prefixes non-Anthropic ids for the Claude Code CLI picker while preserving display_name', async () => {
   const { repo, apiKey } = await setupAppTest();
 
@@ -1139,15 +1142,16 @@ test('/v1/models prefixes non-Anthropic ids for the Claude Code CLI picker while
 
       // Real Anthropic id passes the picker filter as-is; [1m] still lands.
       assertEquals(byDisplayName.get('Claude Opus 4.7'), 'claude-opus-4-7[1m]');
-      // Non-Anthropic ids gain one prefix; literal prefixed ids gain another.
-      // This keeps every advertised id unique without reserving `!` from raw
-      // upstream ids.
-      assertEquals(byDisplayName.get('GPT-4o'), 'claude-code!gpt-4o');
-      assertEquals(byDisplayName.get('Literal Prefixed GPT-4o'), 'claude-code!claude-code!gpt-4o');
-      assertEquals(byDisplayName.get('Literal Doubly Prefixed GPT-4o'), 'claude-code!claude-code!claude-code!gpt-4o');
+      // Non-Anthropic ids gain a prefix with the raw id hex-encoded after
+      // it; literal prefixed ids are hex-encoded whole, which keeps every
+      // advertised id unique without reserving `!` from raw upstream ids
+      // and keeps the vendor-name deny filter from matching the suffix.
+      assertEquals(byDisplayName.get('GPT-4o'), 'claude-code!6770742d346f');
+      assertEquals(byDisplayName.get('Literal Prefixed GPT-4o'), 'claude-code!636c617564652d636f6465216770742d346f');
+      assertEquals(byDisplayName.get('Literal Doubly Prefixed GPT-4o'), 'claude-code!636c617564652d636f646521636c617564652d636f6465216770742d346f');
       assertEquals(new Set(claudeCodeBody.data.map(m => m.id)).size, claudeCodeBody.data.length);
       // Prefix composes with the [1m] suffix on 1M-capable non-Anthropic models.
-      assertEquals(byDisplayName.get('GPT-5 (1M)'), 'claude-code!gpt-5-1m[1m]');
+      assertEquals(byDisplayName.get('GPT-5 (1M)'), 'claude-code!6770742d352d316d[1m]');
 
       // Non-chat kinds never reach the picker — they would only clutter
       // a chat-only surface, and the CLI can't dispatch to them anyway.
@@ -1237,9 +1241,11 @@ test('/v1/models serves the prefixed Anthropic-shape catalog to the Claude Deskt
       assertEquals(desktopBody.has_more, false);
       const byDisplayName = new Map(desktopBody.data.map(m => [m.display_name, m.id]));
       // Anthropic id passes the picker filter as-is; non-Anthropic id is
-      // prefixed so the picker's `claude`/`anthropic` filter admits it.
+      // prefixed with the raw id hex-encoded after it so the picker's
+      // `claude`/`anthropic` allow filter and the deny-side vendor-name
+      // filter both admit it.
       assertEquals(byDisplayName.get('Claude Haiku 4.5'), 'claude-haiku-4-5');
-      assertEquals(byDisplayName.get('GPT-4o'), 'claude-code!gpt-4o');
+      assertEquals(byDisplayName.get('GPT-4o'), 'claude-code!6770742d346f');
       assertEquals(desktopBody.data.every(m => m.type === 'model'), true);
     },
   );
