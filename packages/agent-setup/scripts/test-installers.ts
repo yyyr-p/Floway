@@ -739,6 +739,7 @@ const runShellInstaller = (options: RunOptions): Promise<RunResult> => {
   if (options.disableJqDownload) env.AGENT_SETUP_TEST_NO_JQ_DOWNLOAD = '1';
   if (options.forceColor) env.AGENT_SETUP_TEST_FORCE_COLOR = '1';
   if (options.noColor) env.NO_COLOR = '1';
+  if (options.extraEnv) Object.assign(env, options.extraEnv);
 
   if (options.fakeRestoreFailure) {
     // A `mv` shim (binDir precedes SHIM_BIN on PATH) that refuses only the
@@ -2759,7 +2760,10 @@ test('opencode', 'Bash merges the converted provider into opencode.json', async 
 test('vscode', 'Bash writes the converted groups into chatLanguageModels.json', async t => {
   if (!hostPython) skip('no python3 interpreter on this host');
   const ws = makeWorkspace();
-  const run = await runShellInstaller({ workspace: ws, baseUrl: modelServer.url, configuration: harnessConfig('vscode') });
+  // The Bash installer derives the Darwin default from ~/Library/Application
+  // Support, so pin the profile dir the same way the PowerShell tests do.
+  const vscodeDir = join(ws.home, '.config', 'Code', 'User');
+  const run = await runShellInstaller({ workspace: ws, baseUrl: modelServer.url, configuration: harnessConfig('vscode'), extraEnv: { VSCODE_CONFIG_DIR: vscodeDir } });
   t.equal(run.code, 0, `should succeed:\n${run.combined}`);
   t.includes(run.stdout, 'Written to', 'the installer reports the written path');
   const groups = JSON.parse(readFileSync(vscodeSettingsPath(ws), 'utf8')) as Array<Record<string, unknown>>;
@@ -2775,9 +2779,12 @@ test('vscode', 'Bash writes the converted groups into chatLanguageModels.json', 
 test('vscode', 'Bash preserves unrelated provider groups when merging', async t => {
   if (!hostPython) skip('no python3 interpreter on this host');
   const ws = makeWorkspace();
-  mkdirSync(join(ws.home, '.config', 'Code', 'User'), { recursive: true });
+  // Pin the same profile dir the merge test reads back, so the Darwin
+  // default never diverges from the seeded file.
+  const vscodeDir = join(ws.home, '.config', 'Code', 'User');
+  mkdirSync(vscodeDir, { recursive: true });
   writeFileSync(vscodeSettingsPath(ws), '[{"name":"Other","vendor":"customendpoint","models":[{"id":"other"}]}]');
-  const run = await runShellInstaller({ workspace: ws, baseUrl: modelServer.url, configuration: harnessConfig('vscode') });
+  const run = await runShellInstaller({ workspace: ws, baseUrl: modelServer.url, configuration: harnessConfig('vscode'), extraEnv: { VSCODE_CONFIG_DIR: vscodeDir } });
   t.equal(run.code, 0, `should succeed:\n${run.combined}`);
   const groups = JSON.parse(readFileSync(vscodeSettingsPath(ws), 'utf8')) as Array<Record<string, unknown>>;
   t.equal(groups.length, 2, 'the unrelated group survives alongside Floway');
