@@ -800,7 +800,7 @@ test('Claude Desktop generation decodes the synthetic model-id prefix before res
     queueResolution([], { sawModel: false });
     const payload = makePayload({ model: requested });
 
-    await messagesServe.generate({
+    await anthropicMessagesServe.generate({
       payload,
       ctx: makeGatewayCtx(),
       headers: new Headers({ 'user-agent': desktopUserAgent }),
@@ -816,7 +816,7 @@ test('Claude Desktop count_tokens decodes its synthetic model id before resoluti
   queueResolution([], { sawModel: false });
   const desktopUserAgent = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.34493.1 Chrome/148.0.7778.280 Electron/42.9.2 Safari/537.36';
 
-  await messagesServe.countTokens({
+  await anthropicMessagesServe.countTokens({
     payload: makePayload({ model: 'claude-code!6770742d35' }),
     ctx: makeGatewayCtx(),
     headers: new Headers({ 'user-agent': desktopUserAgent }),
