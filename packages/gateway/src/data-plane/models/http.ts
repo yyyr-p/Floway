@@ -43,13 +43,15 @@ import { ProviderModelsUnavailableError } from '@floway-dev/provider';
 // it pairs with. Any non-Anthropic model advertised through gateway
 // discovery is silently dropped from the menu unless its id carries one
 // of those substrings. We prepend `CLAUDE_CODE_SYNTHETIC_PREFIX` on ids
-// that don't, so the picker admits them; because the picker renders
+// that don't, then hex-encode the raw id after it, so the picker admits
+// them and the newer deny-side vendor-name filter (`deepseek`, `glm`, …)
+// cannot match the hex alphabet either; because the picker renders
 // `display_name` (with id as a fallback), the original label the operator
 // configured is what the user sees. The Messages entry boundary decodes
-// exactly one prefix layer when the same id comes back from a Claude Code
-// inference request (`claude-cli/*` or the Claude Desktop app's Electron
-// UA), so generic model resolution remains unaware of this client
-// compatibility projection.
+// the hex suffix when the same id comes back from a Claude Code inference
+// request (`claude-cli/*` or the Claude Desktop app's Electron UA), so
+// generic model resolution remains unaware of this client compatibility
+// projection.
 //
 // (3) Mirroring the official shape (instead of the OpenAI-Anthropic
 // superset the handler serves everyone else) also lets any future
