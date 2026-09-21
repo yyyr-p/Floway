@@ -287,30 +287,25 @@ export const updateOAuth2ProviderBody = z.object({
   ...oauth2ProviderFields,
 }).strict();
 
-const upstreamIdsArraySchema = z.array(z.string().min(1))
-  .refine(arr => new Set(arr).size === arr.length, { message: 'upstreamIds contains duplicates' });
-
-// API-key upstream_ids: null = inherit the user cap, non-empty array = whitelist.
-const upstreamIdsValueSchema = upstreamIdsArraySchema
-  .min(1, 'Select at least one upstream, or turn off the override to allow all.')
+// null leaves this level unrestricted; an empty list grants no upstreams. The
+// same shape applies to users and API keys so either can deliberately restrict
+// to zero upstreams.
+const upstreamIdsValueSchema = z.array(z.string().min(1))
+  .refine(arr => new Set(arr).size === arr.length, { message: 'upstreamIds contains duplicates' })
   .nullable();
-
-// A user may deliberately have no upstream access. null remains unrestricted;
-// an array, including [], is the complete user-level whitelist.
-const userUpstreamIdsValueSchema = upstreamIdsArraySchema.nullable();
 
 export const createUserBody = z.object({
   username: usernameSchema,
   password: passwordSchema,
   isAdmin: z.boolean().optional(),
-  upstreamIds: userUpstreamIdsValueSchema.optional(),
+  upstreamIds: upstreamIdsValueSchema.optional(),
 });
 
 export const updateUserBody = z.object({
   username: usernameSchema.optional(),
   password: passwordSchema.optional(),
   isAdmin: z.boolean().optional(),
-  upstreamIds: userUpstreamIdsValueSchema.optional(),
+  upstreamIds: upstreamIdsValueSchema.optional(),
 });
 
 export const updateUsersUpstreamAccessBody = z.object({

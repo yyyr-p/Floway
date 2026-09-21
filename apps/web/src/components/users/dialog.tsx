@@ -218,12 +218,11 @@ export function UserDialog(props: UserDialogProps) {
       <UpstreamAccessControl
         available={upstreams}
         disabled={saving}
-        error={errors.upstreamIds?.message ? t(errors.upstreamIds.message) : null}
         ids={values.upstreamIds}
         models={models}
         onChange={next => {
-          setValue('upstreamOverride', next.override, { shouldValidate: true });
-          setValue('upstreamIds', next.ids, { shouldValidate: true });
+          setValue('upstreamOverride', next.override);
+          setValue('upstreamIds', next.ids);
         }}
         override={values.upstreamOverride}
       />

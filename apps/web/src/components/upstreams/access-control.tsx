@@ -5,7 +5,6 @@ import { ProviderBadge } from './provider-badge';
 import type { ControlPlaneModel, UpstreamOption } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
-import { useDangerTextClass } from '../ui/danger';
 import { ReorderButtons } from '../ui/reorder-buttons';
 import { ScrollArea } from '../ui/scroll-area';
 import { SettingsExpander, SettingsSwitch } from '../ui/settings-card';
@@ -13,13 +12,14 @@ import { TableColumns } from '../ui/table-columns';
 
 const {
   Checkbox,
+  MessageBar,
+  MessageBarBody,
   Table,
   TableBody,
   TableCell,
   TableHeader,
   TableHeaderCell,
   TableRow,
-  Text,
 } = fluentComponents;
 
 interface UpstreamAccessRow {
@@ -81,7 +81,6 @@ export function UpstreamAccessControl({
   available,
   description,
   disabled,
-  error,
   ids,
   models,
   onChange,
@@ -91,7 +90,6 @@ export function UpstreamAccessControl({
   available: UpstreamOption[];
   description?: string;
   disabled: boolean;
-  error: string | null;
   ids: string[];
   models: ControlPlaneModel[];
   onChange: (value: { override: boolean; ids: string[] }) => void;
@@ -99,18 +97,13 @@ export function UpstreamAccessControl({
   title?: string;
 }) {
   const { t } = useTranslation();
-  const dangerText = useDangerTextClass();
-  const errorId = useId();
+  const warningId = useId();
+  const emptySelection = override && ids.length === 0;
   const rows = useMemo(() => accessRows(available, ids, models), [available, ids, models]);
 
-  // Opening on an empty selection would fail validation before the operator has
-  // touched a row, so it opens on everything the scope can see.
   const toggleOverride = useCallback((next: boolean) => {
-    onChange({
-      override: next,
-      ids: next && ids.length === 0 ? available.map(upstream => upstream.id) : ids,
-    });
-  }, [available, ids, onChange]);
+    onChange({ override: next, ids });
+  }, [ids, onChange]);
 
   const toggleUpstream = useCallback((id: string, enabled: boolean) => {
     const nextIds = enabled ? [...new Set([...ids, id])] : ids.filter(candidate => candidate !== id);
@@ -127,7 +120,7 @@ export function UpstreamAccessControl({
     onChange({ override: true, ids: next });
   }, [ids, onChange]);
 
-  return <section className="grid gap-3 min-w-0" aria-describedby={error ? errorId : undefined}>
+  return <section className="grid gap-3 min-w-0" aria-describedby={emptySelection ? warningId : undefined}>
     <SettingsExpander
       action={<SettingsSwitch
         checked={override}
@@ -138,11 +131,9 @@ export function UpstreamAccessControl({
       description={description ?? t('dashboard.upstreamAccess.description')}
       header={title ?? t('dashboard.upstreamAccess.title')}
       icon={<ShieldKeyhole24Regular />}
-      revealOn={error !== null}
       toggledOn={override}
     >
       <div className="grid gap-3 min-w-0">
-        {error && <Text className={dangerText} id={errorId} role="alert" size={200}>{error}</Text>}
         <ScrollArea axes="horizontal" className="min-w-0">
           {/* The minimum only decides when the region starts scrolling: the
               three sized columns plus enough room for a provider chip to stay
@@ -168,6 +159,9 @@ export function UpstreamAccessControl({
         </ScrollArea>
       </div>
     </SettingsExpander>
+    {emptySelection && <MessageBar id={warningId} intent="warning">
+      <MessageBarBody>{t('dashboard.upstreamAccess.emptyWarning')}</MessageBarBody>
+    </MessageBar>}
   </section>;
 }
 
