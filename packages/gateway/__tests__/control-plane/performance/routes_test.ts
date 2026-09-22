@@ -273,7 +273,7 @@ test('/api/performance/overview rejects group_by=userId from a non-admin', async
   const response = await requestApp('/api/performance/overview?start=2026-04-30T00&end=2026-05-01T00&group_by=userId', { headers: { 'x-api-key': apiKey.key } });
 
   assertEquals(response.status, 403);
-  assertEquals(await response.json(), { error: 'group_by=userId requires administrator privileges' });
+  assertEquals(await response.json(), { error: 'group_by=userId requires user attribution permission' });
 });
 
 test('/api/performance/overview rejects filter_user_id from a non-admin', async () => {
@@ -282,7 +282,7 @@ test('/api/performance/overview rejects filter_user_id from a non-admin', async 
   const response = await requestApp('/api/performance/overview?start=2026-04-30T00&end=2026-05-01T00&filter_user_id=1', { headers: { 'x-api-key': apiKey.key } });
 
   assertEquals(response.status, 403);
-  assertEquals(await response.json(), { error: 'filter_user_id requires administrator privileges' });
+  assertEquals(await response.json(), { error: 'filter_user_id requires user attribution permission' });
 });
 
 test('/api/performance/overview narrows an administrator to their own keys under group_by=keyId too', async () => {

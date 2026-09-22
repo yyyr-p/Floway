@@ -58,7 +58,7 @@ const overviewHoursSql = (scoped: boolean) => `/* usage-overview-hours */
 
 const overviewSql = (scoped: boolean) => `/* usage-overview */
 WITH
-settings(actor_user_id, is_admin, unattributed_user_id, no_upstream_value, upstream_prefix) AS (
+settings(actor_user_id, can_view_global_usage, unattributed_user_id, no_upstream_value, upstream_prefix) AS (
   VALUES (?, ?, ?, ?, ?)
 ),
 model_filter(value) AS MATERIALIZED (
@@ -130,7 +130,7 @@ filtered AS MATERIALIZED (
 -- workerd caps compound SELECTs at five terms, so this extensible axis catalog
 -- is a VALUES table rather than a UNION ALL chain.
 -- https://github.com/cloudflare/workerd/blob/243fd41f8944c2446c46e415373b107ecb9bc789/src/workerd/util/sqlite.c%2B%2B#L1380-L1385
-axes(axis, grouping, bucketed, owned_only, admin_only) AS (
+axes(axis, grouping, bucketed, owned_only, global_only) AS (
   VALUES
     ('series', ?, 1, 0, 0),
     ('none', 'none', 0, 0, 0),
@@ -156,7 +156,7 @@ projected AS MATERIALIZED (
   CROSS JOIN settings
   JOIN bucket_map ON bucket_map.hour = filtered.hour
   WHERE (axes.owned_only = 0 OR filtered.owned = 1)
-    AND (axes.admin_only = 0 OR settings.is_admin = 1)
+    AND (axes.global_only = 0 OR settings.can_view_global_usage = 1)
 ),
 facet_rows AS (
   SELECT 'facet' AS row_kind, NULL AS axis, NULL AS bucket, NULL AS group_value,
@@ -168,7 +168,7 @@ facet_rows AS (
   UNION ALL
   SELECT 'facet', NULL, NULL, NULL, 'userId', CAST(user_id AS TEXT), NULL, NULL, NULL, NULL, NULL, NULL
   FROM scoped CROSS JOIN settings
-  WHERE settings.is_admin = 1
+  WHERE settings.can_view_global_usage = 1
   GROUP BY user_id
   UNION ALL
   SELECT 'facet', NULL, NULL, NULL, 'model', model, NULL, NULL, NULL, NULL, NULL, NULL
@@ -399,7 +399,7 @@ export const querySqlUsageOverview = async (
   db: SqlDatabase,
   opts: UsageOverviewQueryOptions,
 ): Promise<UsageOverviewResult> => {
-  const scoped = !opts.isAdmin || opts.groupBy === 'keyId';
+  const scoped = !opts.canViewGlobalUsage || opts.groupBy === 'keyId';
   const range = rangeBinds(opts, scoped);
   const { results: hours } = await db.prepare(overviewHoursSql(scoped))
     .bind(...range, ...range)
@@ -408,7 +408,7 @@ export const querySqlUsageOverview = async (
   while (true) {
     const binds: SqlBindValue[] = [
       opts.actorUserId,
-      opts.isAdmin ? 1 : 0,
+      opts.canViewGlobalUsage ? 1 : 0,
       tokenUsageUnattributedUserId,
       usageWithoutUpstreamDimensionValue,
       usageUpstreamDimensionPrefix,

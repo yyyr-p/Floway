@@ -33,6 +33,7 @@ interface UserFormValues {
   username: string;
   password: string;
   isAdmin: boolean;
+  canViewGlobalUsage: boolean;
   upstreamOverride: boolean;
   upstreamIds: string[];
 }
@@ -67,6 +68,7 @@ export function UserDialog(props: UserDialogProps) {
       username: z.string().regex(/^[a-zA-Z0-9_.-]{1,64}$/, 'dashboard.users.validation.username'),
       password: z.string().max(1024, 'dashboard.users.validation.passwordMax'),
       isAdmin: z.boolean(),
+      canViewGlobalUsage: z.boolean(),
       upstreamOverride: z.boolean(),
       upstreamIds: z.array(z.string()),
     }).superRefine((value, ctx) => {
@@ -132,6 +134,7 @@ export function UserDialog(props: UserDialogProps) {
               username,
               password: form.password,
               isAdmin: form.isAdmin,
+              canViewGlobalUsage: form.canViewGlobalUsage,
               upstreamIds,
             },
           }))
@@ -139,6 +142,7 @@ export function UserDialog(props: UserDialogProps) {
             param: { id: String(props.user.id) }, json: {
               username,
               ...(!adminLocked ? { isAdmin: form.isAdmin } : {}),
+              canViewGlobalUsage: form.canViewGlobalUsage,
               upstreamIds,
             },
           }));
@@ -215,6 +219,16 @@ export function UserDialog(props: UserDialogProps) {
         header={t('dashboard.users.form.administrator')}
         icon={<PersonKey24Regular />}
       />
+      <SettingsCard
+        action={<SettingsSwitch
+          checked={values.isAdmin || values.canViewGlobalUsage}
+          disabled={saving || values.isAdmin}
+          label={t('dashboard.users.form.globalUsage')}
+          onChange={checked => setValue('canViewGlobalUsage', checked, { shouldValidate: true })}
+        />}
+        description={t(values.isAdmin ? 'dashboard.users.form.globalUsageAdmin' : 'dashboard.users.form.globalUsageDescription')}
+        header={t('dashboard.users.form.globalUsage')}
+      />
       <UpstreamAccessControl
         available={upstreams}
         disabled={saving}
@@ -266,6 +280,7 @@ const userFormDefaults = (user: ControlPlaneUser | null): UserFormValues => {
     username: user?.username ?? '',
     password: '',
     isAdmin: user?.isAdmin ?? false,
+    canViewGlobalUsage: user?.canViewGlobalUsage ?? false,
     upstreamOverride: user?.upstreamIds !== null && user?.upstreamIds !== undefined,
     upstreamIds: user?.upstreamIds ?? [],
   };

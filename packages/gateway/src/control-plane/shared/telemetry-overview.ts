@@ -53,20 +53,22 @@ export const readTelemetryOverviewWindow = (
 
 export interface TelemetryOverviewIdentity {
   actor: ReturnType<typeof userFromContext>;
+  canViewUsers: boolean;
   ownedKeys: ApiKey[];
   ownedKeyIds: ReadonlySet<string>;
   users: User[];
 }
 
-export const loadTelemetryOverviewIdentity = async (c: Context): Promise<TelemetryOverviewIdentity> => {
+export const loadTelemetryOverviewIdentity = async (c: Context, canViewUsers: boolean): Promise<TelemetryOverviewIdentity> => {
   const actor = userFromContext(c);
   const repo = getRepo();
   const [ownedKeys, users] = await Promise.all([
     repo.apiKeys.listByUserIdIncludingDeleted(actor.id),
-    actor.isAdmin ? repo.users.listIncludingDeleted() : Promise.resolve([]),
+    canViewUsers ? repo.users.listIncludingDeleted() : Promise.resolve([]),
   ]);
   return {
     actor,
+    canViewUsers,
     ownedKeys,
     ownedKeyIds: new Set(ownedKeys.map(key => key.id)),
     users,
@@ -79,11 +81,11 @@ export const telemetryIdentityError = (
   userIds: ReadonlySet<string>,
   keyIds: ReadonlySet<string>,
 ): { status: 403 | 404; error: string } | null => {
-  if (!identity.actor.isAdmin && groupBy === 'userId') {
-    return { status: 403, error: 'group_by=userId requires administrator privileges' };
+  if (!identity.canViewUsers && groupBy === 'userId') {
+    return { status: 403, error: 'group_by=userId requires user attribution permission' };
   }
-  if (!identity.actor.isAdmin && userIds.size > 0) {
-    return { status: 403, error: 'filter_user_id requires administrator privileges' };
+  if (!identity.canViewUsers && userIds.size > 0) {
+    return { status: 403, error: 'filter_user_id requires user attribution permission' };
   }
   const unknownKeyId = [...keyIds].find(keyId => !identity.ownedKeyIds.has(keyId));
   return unknownKeyId === undefined ? null : { status: 404, error: 'Unknown filter_key_id' };

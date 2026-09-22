@@ -115,6 +115,7 @@ test('/api/models is scoped to the caller\'s effective upstreams — a removed u
     username: 'tester',
     passwordHash: null,
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: ['up_copilot', 'up_custom_models'],
     createdAt: '2026-03-15T00:00:00.000Z',
     deletedAt: null,
@@ -160,6 +161,7 @@ test('/api/models for an admin session returns the gateway-wide catalog, bypassi
     username: 'admin',
     passwordHash: null,
     isAdmin: true,
+    canViewGlobalUsage: false,
     upstreamIds: ['up_copilot', 'up_custom_models'],
     createdAt: '2026-03-15T00:00:00.000Z',
     deletedAt: null,
@@ -204,6 +206,7 @@ test('/api/models — admin sees raw alias.targets; non-admin sees the caller-na
     username: 'tester',
     passwordHash: null,
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: null,
     createdAt: '2026-03-15T00:00:00.000Z',
     deletedAt: null,
@@ -287,6 +290,7 @@ test('/api/models — admin self-restriction does NOT leak per-alias metadata va
   // Non-admin user scoped to ONLY the big-window upstream.
   await repo.users.save({
     id: 2, username: 'tester', passwordHash: null, isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: ['up_big'],
     createdAt: '2026-03-15T00:00:00.000Z', deletedAt: null,
   });

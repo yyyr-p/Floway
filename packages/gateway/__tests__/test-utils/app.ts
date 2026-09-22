@@ -195,6 +195,7 @@ export async function setupAppTest(options: SetupOptions = {}): Promise<AppTestC
     username: 'tester',
     passwordHash: null,
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: null,
     createdAt: '2026-03-15T00:00:00.000Z',
     deletedAt: null,

@@ -1,6 +1,8 @@
+import { userFromContext } from '../../middleware/auth.ts';
 import { type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { UsageOverviewGroupBy } from '../../repo/types.ts';
+import { canViewGlobalUsage } from '../../repo/user-permissions.ts';
 import type { tokenUsageOverviewQuery } from '../schemas.ts';
 import { createTelemetryBucket } from '../shared/telemetry-bucket.ts';
 import { loadTelemetryOverviewIdentity, readTelemetryOverviewWindow, telemetryIdentityError, telemetryIdentityMetadata } from '../shared/telemetry-overview.ts';
@@ -51,13 +53,13 @@ export const tokenUsageOverview = async (c: Ctx) => {
   if (params.type === 'error') return c.json({ error: params.error }, 400);
   const { start, end, groupBy, bucket, timezoneOffsetMinutes, filters } = params.value;
   const repo = getRepo();
-  const identity = await loadTelemetryOverviewIdentity(c);
+  const identity = await loadTelemetryOverviewIdentity(c, canViewGlobalUsage(userFromContext(c)));
   const identityError = telemetryIdentityError(identity, groupBy, filters.userId, filters.keyId);
   if (identityError !== null) return c.json({ error: identityError.error }, identityError.status);
 
   const overview = await repo.usage.queryOverview({
     actorUserId: identity.actor.id,
-    isAdmin: identity.actor.isAdmin,
+    canViewGlobalUsage: identity.canViewUsers,
     start,
     end,
     groupBy,

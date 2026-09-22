@@ -273,18 +273,20 @@ interface UserRow {
   username: string;
   password_hash: string | null;
   is_admin: number;
+  can_view_global_usage: number;
   upstream_ids: string | null;
   created_at: string;
   deleted_at: string | null;
 }
 
-const USER_COLUMNS = 'id, username, password_hash, is_admin, upstream_ids, created_at, deleted_at';
+const USER_COLUMNS = 'id, username, password_hash, is_admin, can_view_global_usage, upstream_ids, created_at, deleted_at';
 
 const toUser = (row: UserRow): User => ({
   id: row.id,
   username: row.username,
   passwordHash: row.password_hash,
   isAdmin: row.is_admin === 1,
+  canViewGlobalUsage: row.can_view_global_usage === 1,
   upstreamIds: parseUpstreamIds(row.upstream_ids, `users.id=${row.id}`),
   createdAt: row.created_at,
   deletedAt: row.deleted_at,
@@ -329,14 +331,15 @@ class SqlUsersRepo implements UsersRepo {
     // pick distinct ids.
     const row = await this.db
       .prepare(
-        `INSERT INTO users (id, username, password_hash, is_admin, upstream_ids, created_at, deleted_at)
-         SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ?, ? FROM users
+        `INSERT INTO users (${USER_COLUMNS})
+         SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM users
          RETURNING id`,
       )
       .bind(
         template.username,
         template.passwordHash,
         template.isAdmin ? 1 : 0,
+        template.canViewGlobalUsage ? 1 : 0,
         serializeUpstreamIds(template.upstreamIds),
         template.createdAt,
         template.deletedAt,
@@ -349,11 +352,12 @@ class SqlUsersRepo implements UsersRepo {
   async save(user: User): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            username = excluded.username,
            password_hash = excluded.password_hash,
            is_admin = excluded.is_admin,
+           can_view_global_usage = excluded.can_view_global_usage,
            upstream_ids = excluded.upstream_ids,
            deleted_at = excluded.deleted_at`,
       )
@@ -362,6 +366,7 @@ class SqlUsersRepo implements UsersRepo {
         user.username,
         user.passwordHash,
         user.isAdmin ? 1 : 0,
+        user.canViewGlobalUsage ? 1 : 0,
         serializeUpstreamIds(user.upstreamIds),
         user.createdAt,
         user.deletedAt,

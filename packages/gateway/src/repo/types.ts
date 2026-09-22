@@ -33,6 +33,7 @@ export interface User {
   // dev-only passwordless shortcut when ADMIN_KEY is unset).
   passwordHash: string | null;
   isAdmin: boolean;
+  canViewGlobalUsage: boolean;
   // null = unrestricted at the user level; an array intersects with the
   // per-key whitelist when both are present. Membership only — the key's
   // order carries the intersection, so this order applies only to requests
@@ -185,7 +186,7 @@ export interface UsageOverviewFilters {
 
 export interface UsageOverviewQueryOptions {
   actorUserId: number;
-  isAdmin: boolean;
+  canViewGlobalUsage: boolean;
   start: string;
   end: string;
   groupBy: UsageOverviewGroupBy;

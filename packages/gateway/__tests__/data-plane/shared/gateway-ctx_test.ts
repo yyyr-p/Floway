@@ -30,6 +30,7 @@ const buildUser = (overrides: Partial<User> = {}): User => ({
   username: 'tester',
   passwordHash: null,
   isAdmin: false,
+  canViewGlobalUsage: false,
   upstreamIds: null,
   createdAt: '2026-01-01T00:00:00.000Z',
   deletedAt: null,

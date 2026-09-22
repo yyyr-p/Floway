@@ -248,6 +248,7 @@ const userSchema = z.object({
     z.null(),
   ], { error: `passwordHash must be null or start with ${PASSWORD_HASH_SCHEME}$` }),
   isAdmin: z.boolean({ error: 'isAdmin must be a boolean' }),
+  canViewGlobalUsage: z.boolean({ error: 'canViewGlobalUsage must be a boolean' }),
   upstreamIds: parsedBy(value => {
     if (value === undefined) throw new Error('upstreamIds must be present (null or array)');
     const result = parseUpstreamIdsValue(value);

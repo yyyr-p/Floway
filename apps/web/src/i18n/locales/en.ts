@@ -295,6 +295,9 @@ const en = {
           password: 'Initial password',
           newPassword: 'New password',
           confirmPassword: 'Confirm new password',
+          globalUsage: 'View global usage',
+          globalUsageDescription: 'View all users’ token and search usage, costs, and usernames; API key details remain limited to their own keys',
+          globalUsageAdmin: 'Administrators always have access to global usage',
           administrator: 'Administrator',
           administratorDescription:
               'Can manage users, upstreams, search configuration, and data transfer',

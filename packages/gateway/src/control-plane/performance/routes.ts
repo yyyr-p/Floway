@@ -15,6 +15,7 @@
 // scoped to the actor's own keys in every breakdown, so other users' key ids
 // never surface either.
 
+import { userFromContext } from '../../middleware/auth.ts';
 import { type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { PerformanceOverviewGroupBy } from '../../repo/types.ts';
@@ -73,7 +74,7 @@ export const performanceOverview = async (c: Ctx) => {
   const { start, end, bucket, groupBy, timezoneOffsetMinutes, filters } = params.value;
 
   const repo = getRepo();
-  const identity = await loadTelemetryOverviewIdentity(c);
+  const identity = await loadTelemetryOverviewIdentity(c, userFromContext(c).isAdmin);
   const identityError = telemetryIdentityError(identity, groupBy, filters.userId, filters.keyId);
   if (identityError !== null) return c.json({ error: identityError.error }, identityError.status);
 

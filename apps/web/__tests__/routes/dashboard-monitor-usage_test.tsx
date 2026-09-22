@@ -21,7 +21,7 @@ const usageRecord = { bucket, group: 'gpt-5', requests: 1, metrics: { input_toke
 const loaderData = {
   currentUserId: '1',
   error: null,
-  isAdmin: true,
+  canViewGlobalUsage: true,
   loadedAt,
   search: { records: [], keys: [] },
   state: {
@@ -49,7 +49,7 @@ const loaderData = {
 };
 
 const renderPage = (data: Parameters<typeof DashboardMonitorUsage>[0]['loaderData']) => {
-  const user = { id: 1, username: 'admin', isAdmin: true, upstreamIds: null };
+  const user = { id: 1, username: 'admin', isAdmin: true, canViewGlobalUsage: false, upstreamIds: null };
   const router = createMemoryRouter([{
     path: '/',
     Component: () => <Outlet context={{ user }} />,
@@ -186,7 +186,7 @@ describe('usage dimension controls', () => {
   it('loads the overview contract and derives Search scope from the actor', async () => {
     useAuthStore.getState().primeFromLogin({
       token: 'admin-session',
-      user: { id: 1, username: 'admin', isAdmin: true, upstreamIds: null },
+      user: { id: 1, username: 'admin', isAdmin: true, canViewGlobalUsage: false, upstreamIds: null },
     });
     stubUsageGateway();
 
@@ -200,7 +200,7 @@ describe('usage dimension controls', () => {
   it('keeps token charts available when upstream names fail to load', async () => {
     useAuthStore.getState().primeFromLogin({
       token: 'admin-session',
-      user: { id: 1, username: 'admin', isAdmin: true, upstreamIds: null },
+      user: { id: 1, username: 'admin', isAdmin: true, canViewGlobalUsage: false, upstreamIds: null },
     });
     stubUsageGateway(() => Response.json({ error: 'Unavailable' }, { status: 500 }));
 
@@ -257,4 +257,28 @@ describe('usage dimension controls', () => {
     expect(requestedGroups).toEqual(['upstream', 'model', 'upstream']);
     await waitFor(() => expect(screen.getByRole<HTMLInputElement>('combobox', { name: 'Group by' }).value).toBe('By Upstream'));
   });
+});
+
+it.each([false, true])('uses the ordinary user’s global usage grant (%s) for grouping and Search scope', async canViewGlobalUsage => {
+  useAuthStore.getState().primeFromLogin({
+    token: 'reader-session',
+    user: { id: 2, username: 'reader', isAdmin: false, canViewGlobalUsage, upstreamIds: null },
+  });
+  const requests: URL[] = [];
+  vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    const url = new URL(String(input), 'http://localhost');
+    requests.push(url);
+    if (url.pathname === '/api/token-usage/overview') return Response.json({
+      series: [], axes: { none: [], model: [], upstream: [], userId: [], keyId: [] },
+      dimensionValues: { models: [], upstreams: [], userIds: [], keyIds: [] }, users: [], keys: [],
+    });
+    if (url.pathname === '/api/search-usage') return Response.json({
+      view: url.searchParams.get('view'), records: [], users: [], keys: [],
+    });
+    return Response.json([]);
+  }));
+  const data = await clientLoader({ request: new Request('http://localhost/dashboard/monitor/usage?g=userId') } as never);
+  expect(data.canViewGlobalUsage).toBe(canViewGlobalUsage);
+  expect(data.state.groupBy).toBe(canViewGlobalUsage ? 'userId' : 'model');
+  expect(requests.find(url => url.pathname === '/api/search-usage')?.searchParams.get('view')).toBe(canViewGlobalUsage ? 'all-by-user' : 'self-by-key');
 });

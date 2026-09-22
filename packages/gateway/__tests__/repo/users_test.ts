@@ -10,6 +10,7 @@ const sampleUser = (over: Partial<User> = {}): User => ({
   username: 'alice',
   passwordHash: 'pbkdf2-sha256$600000$YQ==$YQ==',
   isAdmin: false,
+  canViewGlobalUsage: false,
   upstreamIds: null,
   createdAt: '2026-06-07T00:00:00.000Z',
   deletedAt: null,
@@ -99,5 +100,16 @@ describe.each(backends)('UsersRepo (%s)', (_label, makeRepo) => {
     await repo.users.save(sampleUser({ id: 2, username: 'alice' }));
     await repo.users.softDelete(2);
     expect(await repo.users.findByUsername('alice')).toBeNull();
+  });
+});
+
+describe.each(backends)('global usage permission (%s)', (_label, makeRepo) => {
+  test('persists grants through create, save, and revocation independently of administrator status', async () => {
+    const repo = await makeRepo();
+    const user = await repo.users.createNewUser(sampleUser({ canViewGlobalUsage: true }));
+    expect(await repo.users.getById(user.id)).toMatchObject({ isAdmin: false, canViewGlobalUsage: true });
+    await repo.users.save({ ...user, canViewGlobalUsage: false });
+    expect(await repo.users.getById(user.id)).toMatchObject({ isAdmin: false, canViewGlobalUsage: false });
+    expect(await repo.users.getById(1)).toMatchObject({ isAdmin: true, canViewGlobalUsage: false });
   });
 });

@@ -85,6 +85,7 @@ const SEED_ADMIN_USER: User = {
   username: 'admin',
   passwordHash: null,
   isAdmin: true,
+  canViewGlobalUsage: false,
   upstreamIds: null,
   createdAt: new Date(0).toISOString(),
   deletedAt: null,
@@ -293,6 +294,7 @@ class MemoryOAuth2Repo implements OAuth2Repo {
         username: input.username,
         passwordHash: null,
         isAdmin: false,
+        canViewGlobalUsage: false,
         upstreamIds: handoff.registrationUpstreamIds,
         createdAt: input.createdAt,
         deletedAt: null,
@@ -610,7 +612,7 @@ const aggregateMemoryOverview = (
   const axes: UsageOverviewAxis[] = ['series', 'none', 'keyId', 'userId', 'model', 'upstream'];
   const result = new Map<UsageOverviewAxis, UsageOverviewRecord[]>();
   for (const axis of axes) {
-    if (axis === 'userId' && !opts.isAdmin) {
+    if (axis === 'userId' && !opts.canViewGlobalUsage) {
       result.set(axis, []);
       continue;
     }
@@ -687,7 +689,7 @@ class MemoryUsageRepo implements UsageRepo {
     const records = [...this.store.values()]
       .filter(record => record.hour >= opts.start && record.hour < opts.end)
       .map(record => this.toRecord(record));
-    const scoped = !opts.isAdmin || opts.groupBy === 'keyId'
+    const scoped = !opts.canViewGlobalUsage || opts.groupBy === 'keyId'
       ? records.filter(record => keyToUser.get(record.keyId) === opts.actorUserId)
       : records;
     const visibleKeyIds = new Set([...keyToUser]
@@ -700,7 +702,7 @@ class MemoryUsageRepo implements UsageRepo {
       },
       userId: {
         value: record => String(memoryUsageUserIdForKey(record.keyId, keyToUser)),
-        includeFacet: () => opts.isAdmin,
+        includeFacet: () => opts.canViewGlobalUsage,
       },
       model: { value: record => record.model },
       upstream: { value: record => usageUpstreamDimensionValue(record.upstream) },

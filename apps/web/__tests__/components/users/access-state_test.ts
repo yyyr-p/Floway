@@ -7,6 +7,7 @@ const user = (id: number, upstreamIds: string[] | null): ControlPlaneUser => ({
   id,
   username: `user-${id}`,
   isAdmin: false,
+  canViewGlobalUsage: false,
   upstreamIds,
   createdAt: '2026-08-19T00:00:00.000Z',
 });

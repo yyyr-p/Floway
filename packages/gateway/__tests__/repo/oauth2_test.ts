@@ -127,6 +127,7 @@ for (const [kind, makeRepo] of repoFactories) {
     if (created[0]?.status !== 'created') throw new Error('expected exactly one created registration');
     assertEquals(created[0].user.passwordHash, null);
     assertEquals(created[0].user.isAdmin, false);
+    assertEquals(created[0].user.canViewGlobalUsage, false);
     assertEquals(created[0].user.upstreamIds, ['up-registration']);
     assertEquals((await repo.apiKeys.listByUserId(created[0].user.id)).map(key => key.id), [`key-oauth2-${created[0].user.username.slice(-3)}`]);
     assertEquals((await repo.oauth2.listAccounts()).map(account => account.providerUserId), ['provider-user-1']);
@@ -164,6 +165,7 @@ for (const [kind, makeRepo] of repoFactories) {
       username: 'oauth-user',
       passwordHash: null,
       isAdmin: false,
+      canViewGlobalUsage: false,
       upstreamIds: null,
       createdAt: '2026-08-19T00:00:00.000Z',
       deletedAt: null,

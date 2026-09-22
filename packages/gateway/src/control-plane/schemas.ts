@@ -298,6 +298,7 @@ export const createUserBody = z.object({
   username: usernameSchema,
   password: passwordSchema,
   isAdmin: z.boolean().optional(),
+  canViewGlobalUsage: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
 });
 
@@ -305,6 +306,7 @@ export const updateUserBody = z.object({
   username: usernameSchema.optional(),
   password: passwordSchema.optional(),
   isAdmin: z.boolean().optional(),
+  canViewGlobalUsage: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
 });
 
@@ -774,7 +776,7 @@ export const updateAliasBody = aliasBodyCore.superRefine(aliasBodyRulesRefinemen
 // --- data transfer ---
 
 export const importBody = z.object({
-  version: z.literal(25, { error: 'version must be 25 — older export formats are not supported; re-export from the current deployment' }),
+  version: z.literal(26, { error: 'version must be 26 — older export formats are not supported; re-export from the current deployment' }),
   mode: z.enum(['merge', 'replace'], { error: "mode must be 'merge' or 'replace'" }),
   data: z.unknown().optional(),
 });

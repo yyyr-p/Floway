@@ -8,6 +8,7 @@ export const userToSessionWire = (user: User, knownUpstreamIds: ReadonlySet<stri
   id: user.id,
   username: user.username,
   isAdmin: user.isAdmin,
+  canViewGlobalUsage: user.canViewGlobalUsage,
   upstreamIds: pruneUnreachableUpstreamIds(user.upstreamIds, knownUpstreamIds),
 });
 

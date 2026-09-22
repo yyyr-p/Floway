@@ -118,9 +118,9 @@ test('/api/token-usage/overview enforces identity filter authorization', async (
   const foreignKey = await requestApp(`/api/token-usage/overview?start=2026-04-30T00&end=2026-05-01T00&filter_key_id=${apiKey.id}`, { headers: { 'x-floway-session': adminSession } });
 
   assertEquals(userGroup.status, 403);
-  assertEquals(await userGroup.json(), { error: 'group_by=userId requires administrator privileges' });
+  assertEquals(await userGroup.json(), { error: 'group_by=userId requires user attribution permission' });
   assertEquals(userFilter.status, 403);
-  assertEquals(await userFilter.json(), { error: 'filter_user_id requires administrator privileges' });
+  assertEquals(await userFilter.json(), { error: 'filter_user_id requires user attribution permission' });
   assertEquals(foreignKey.status, 404);
   assertEquals(await foreignKey.json(), { error: 'Unknown filter_key_id' });
 });
@@ -144,17 +144,60 @@ test('/api/token-usage/overview delegates every dashboard axis to one overview r
   assertEquals(queryCount, 1);
   assertEquals(queryOptions && {
     actorUserId: queryOptions.actorUserId,
-    isAdmin: queryOptions.isAdmin,
+    canViewGlobalUsage: queryOptions.canViewGlobalUsage,
     start: queryOptions.start,
     end: queryOptions.end,
     groupBy: queryOptions.groupBy,
     filters: queryOptions.filters,
   }, {
     actorUserId: 2,
-    isAdmin: false,
+    canViewGlobalUsage: false,
     start: '2026-04-30T00',
     end: '2026-05-01T00',
     groupBy: 'model',
     filters: { keyIds: [], userIds: [], models: [], upstreams: [] },
   });
+});
+
+test('global usage permission grants usage attribution without granting performance attribution or foreign keys', async () => {
+  const { repo, apiKey, adminSession } = await setupAppTest();
+  await repo.apiKeys.save(adminKey);
+  await seedUsage(repo, { keyId: apiKey.id, model: 'own', upstream: null, hour: '2026-04-30T10', requests: 2 });
+  await seedUsage(repo, { keyId: adminKey.id, model: 'other', upstream: null, hour: '2026-04-30T10', requests: 5 });
+  const headers = { 'x-api-key': apiKey.key };
+  const query = '?start=2026-04-30T00&end=2026-05-01T00';
+  const grant = await requestApp(`/api/users/${apiKey.userId}`, {
+    method: 'PATCH', headers: { 'x-floway-session': adminSession, 'content-type': 'application/json' },
+    body: JSON.stringify({ canViewGlobalUsage: true }),
+  });
+  assertEquals(grant.status, 200);
+  const all = await requestApp(`/api/token-usage/overview${query}&group_by=userId`, { headers });
+  assertEquals(all.status, 200);
+  const body = await all.json();
+  assertEquals(body.axes.none[0].requests, 7);
+  assertEquals(body.users.map((user: { id: number }) => user.id), [1, 2]);
+  assertEquals(body.keys.map((key: { id: string }) => key.id), [apiKey.id]);
+  assertEquals(body.dimensionValues.keyIds, [apiKey.id]);
+  const filtered = await requestApp(`/api/token-usage/overview${query}&filter_user_id=1`, { headers });
+  assertEquals((await filtered.json()).axes.none[0].requests, 5);
+  const own = await requestApp(`/api/token-usage/overview${query}&group_by=keyId`, { headers });
+  assertEquals((await own.json()).axes.none[0].requests, 2);
+  assertEquals((await requestApp(`/api/token-usage/overview${query}&filter_key_id=${adminKey.id}`, { headers })).status, 404);
+  assertEquals((await requestApp(`/api/performance/overview${query}&group_by=userId`, { headers })).status, 403);
+  assertEquals((await requestApp('/api/users', { headers })).status, 403);
+  assertEquals((await requestApp('/api/keys', { headers })).status, 200);
+  for (const endpoint of ['token-usage', 'search-usage']) {
+    assertEquals((await requestApp(`/api/${endpoint}${query}&view=all-by-user`, { headers })).status, 200);
+  }
+  const revoked = await requestApp(`/api/users/${apiKey.userId}`, {
+    method: 'PATCH', headers: { 'x-floway-session': adminSession, 'content-type': 'application/json' },
+    body: JSON.stringify({ canViewGlobalUsage: false }),
+  });
+  assertEquals(revoked.status, 200);
+  assertEquals((await requestApp(`/api/token-usage/overview${query}&group_by=userId`, { headers })).status, 403);
+  const after = await requestApp(`/api/token-usage/overview${query}`, { headers });
+  assertEquals((await after.json()).axes.none[0].requests, 2);
+  for (const endpoint of ['token-usage', 'search-usage']) {
+    assertEquals((await requestApp(`/api/${endpoint}${query}&view=all-by-user`, { headers })).status, 403);
+  }
 });

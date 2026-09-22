@@ -126,6 +126,7 @@ test('admin password reset on another user revokes that user\'s sessions', async
     username: 'bob',
     passwordHash: await hashPassword('old-pw'),
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
@@ -144,6 +145,7 @@ test('PATCH /api/users/:id can demote a non-self admin', async () => {
     username: 'bob',
     passwordHash: await hashPassword('pw'),
     isAdmin: true,
+    canViewGlobalUsage: false,
     upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
@@ -168,6 +170,7 @@ test('PATCH /api/users/upstream-access changes only named upstream membership fo
     id: 3,
     username: 'limited',
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: ['up_a'],
   });
   await repo.users.save({
@@ -175,6 +178,7 @@ test('PATCH /api/users/upstream-access changes only named upstream membership fo
     id: 4,
     username: 'untouched',
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: ['up_b'],
   });
 
@@ -259,6 +263,7 @@ test('PATCH /api/users/me/password requires session and a correct current passwo
     username: 'alice',
     passwordHash: await hashPassword('old-pw'),
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
@@ -306,6 +311,7 @@ test('OAuth2 account management preserves a login method for self-service and ad
     username: 'oauth-only',
     passwordHash: null,
     isAdmin: false,
+    canViewGlobalUsage: false,
     upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
@@ -387,4 +393,30 @@ test('GET /api/users and /auth/me drop a cap entry whose upstream was deleted', 
   const me = await requestApp('/auth/me', { headers: { 'x-floway-session': adminSession } });
   assertEquals(me.status, 200);
   assertEquals(((await me.json()) as { user: { upstreamIds: string[] } }).user.upstreamIds, ['up_x']);
+});
+
+test('only administrators can grant global usage and session descriptions reflect the stored grant', async () => {
+  const { adminSession, apiKey } = await setupAppTest();
+  const created = await adminPost(adminSession, { username: 'usage-reader', password: 'pw', canViewGlobalUsage: true });
+  assertEquals(created.status, 201);
+  assertEquals((await created.json()).user.canViewGlobalUsage, true);
+  const ordinary = await adminPost(adminSession, { username: 'ordinary', password: 'pw' });
+  assertEquals((await ordinary.json()).user.canViewGlobalUsage, false);
+  const session = await requestApp('/auth/login', {
+    method: 'POST', headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'usage-reader', password: 'pw' }),
+  });
+  const login = await session.json();
+  assertEquals(login.user.canViewGlobalUsage, true);
+  const headers = { 'x-floway-session': login.token };
+  const denied = await requestApp(`/api/users/${apiKey.userId}`, {
+    method: 'PATCH', headers: { ...headers, 'content-type': 'application/json' },
+    body: JSON.stringify({ canViewGlobalUsage: true }),
+  });
+  assertEquals(denied.status, 403);
+  assertEquals((await adminPatch(adminSession, login.user.id, { canViewGlobalUsage: false })).status, 200);
+  const me = await requestApp('/auth/me', { headers });
+  assertEquals((await me.json()).user.canViewGlobalUsage, false);
+  const query = '?start=2026-04-30T00&end=2026-05-01T00&view=all-by-user';
+  assertEquals((await requestApp(`/api/token-usage${query}`, { headers })).status, 403);
 });

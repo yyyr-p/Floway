@@ -9,7 +9,7 @@ import { useAuthStore } from '../../src/stores/auth-store';
 import { renderInApp } from '../render';
 import { settle } from '../settle';
 
-const user = { id: 2, username: 'alice', isAdmin: false, upstreamIds: null };
+const user = { id: 2, username: 'alice', isAdmin: false, canViewGlobalUsage: false, upstreamIds: null };
 
 const renderLogin = () => {
   const router = createMemoryRouter([

@@ -128,6 +128,7 @@ export const createUser = async (c: CtxWithJson<typeof createUserBody>) => {
     username: body.username,
     passwordHash: await hashPassword(body.password),
     isAdmin: body.isAdmin ?? false,
+    canViewGlobalUsage: body.canViewGlobalUsage ?? false,
     upstreamIds: body.upstreamIds ?? null,
     createdAt: new Date().toISOString(),
     deletedAt: null,
@@ -178,6 +179,7 @@ export const updateUser = async (c: CtxWithJson<typeof updateUserBody>) => {
   if (body.username !== undefined) overrides.username = body.username;
   if (body.password !== undefined) overrides.passwordHash = await hashPassword(body.password);
   if (body.isAdmin !== undefined) overrides.isAdmin = body.isAdmin;
+  if (body.canViewGlobalUsage !== undefined) overrides.canViewGlobalUsage = body.canViewGlobalUsage;
   if (body.upstreamIds !== undefined) overrides.upstreamIds = body.upstreamIds;
   const next: User = { ...existing, ...overrides };
   await repo.users.save(next);
