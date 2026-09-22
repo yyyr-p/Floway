@@ -173,6 +173,14 @@ export interface TargetRequestResult {
 
 export const buildTargetRequest = (source: OpenAIResponsesRequestPayload): TargetRequestResult => {
   const payload = canonicalizeOpenAIResponsesPayload(source);
+  // Chat Completions only declares tools at the request level. Hoisting late
+  // declarations sacrifices prompt-cache reuse when the tool list grows.
+  // https://github.com/openai/openai-node/blob/61539248cbe04665de68a71e6fd878127ae4db87/src/resources/responses/responses.ts#L4265-L4285
+  payload.input = payload.input.filter(item => {
+    if (item.type !== 'additional_tools') return true;
+    payload.tools = [...(payload.tools ?? []), ...item.tools];
+    return false;
+  });
   rejectProgrammaticOpenAIResponsesPayload(payload, 'OpenAI Chat Completions');
   const customToolNames = new Set<string>();
   const responseFormat = buildOpenAIChatCompletionsResponseFormat(payload.text);

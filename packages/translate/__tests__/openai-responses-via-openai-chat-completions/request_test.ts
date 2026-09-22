@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 
 import { buildTargetRequest } from '../../src/openai-responses-via-openai-chat-completions/request.ts';
-import type { OpenAIResponsesInputMultiAgentCallOutputItem, OpenAIResponsesTool, OpenAIResponsesToolChoice } from '@floway-dev/protocols/openai-responses';
+import type { OpenAIResponsesInputMultiAgentCallOutputItem, OpenAIResponsesRequestPayload, OpenAIResponsesTool, OpenAIResponsesToolChoice } from '@floway-dev/protocols/openai-responses';
 import { assertEquals, assertThrows } from '@floway-dev/test-utils';
 
 test('buildTargetRequest accepts an implicit message discriminator', () => {
@@ -531,8 +531,57 @@ test('buildTargetRequest projects custom_tool_call history into wrapped tool_cal
   });
 });
 
+test.each([undefined, null, []])('buildTargetRequest hoists additional_tools with initial tools %j', tools => {
+  const source: OpenAIResponsesRequestPayload = {
+    model: 'gpt-test',
+    tools,
+    input: [
+      { type: 'additional_tools', role: 'developer', tools: [] },
+      { type: 'message', role: 'user', content: 'Hi' },
+      { type: 'additional_tools', role: 'developer', tools: [{ type: 'function', name: 'lookup', parameters: { type: 'object' } }] },
+    ],
+  };
+  const original = structuredClone(source);
+  const result = buildTargetRequest(source);
+  assertEquals(result.target.messages, [{ role: 'user', content: 'Hi' }]);
+  assertEquals(result.target.tools, [{ type: 'function', function: { name: 'lookup', parameters: { type: 'object' } } }]);
+  assertEquals(source, original);
+});
+
+test('buildTargetRequest merges late tools without splitting assistant tool-call history', () => {
+  const result = buildTargetRequest({
+    model: 'gpt-test',
+    tools: [{ type: 'function', name: 'initial' }],
+    input: [
+      { type: 'message', role: 'assistant', content: 'Working' },
+      { type: 'additional_tools', role: 'developer', tools: [{ type: 'custom', name: 'apply_patch' }] },
+      { type: 'custom_tool_call', name: 'apply_patch', call_id: 'call_1', input: 'patch' },
+      { type: 'additional_tools', role: 'developer', tools: [{ type: 'function', name: 'lookup' }] },
+      { type: 'custom_tool_call_output', call_id: 'call_1', output: 'ok' },
+    ],
+    tool_choice: { type: 'custom', name: 'apply_patch' },
+  });
+  assertEquals(result.target.tools?.map(tool => tool.function.name), ['initial', 'apply_patch', 'lookup']);
+  assertEquals([...result.customToolNames], ['apply_patch']);
+  assertEquals(result.target.tool_choice, { type: 'function', function: { name: 'apply_patch' } });
+  assertEquals(result.target.messages, [
+    { role: 'assistant', content: 'Working', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'apply_patch', arguments: '{"input":"patch"}' } }] },
+    { role: 'tool', tool_call_id: 'call_1', content: 'ok' },
+  ]);
+});
+
 test.each([
-  { name: 'additional_tools', input: [{ type: 'additional_tools', role: 'developer', tools: [] as OpenAIResponsesTool[] }] },
+  { type: 'function', name: 'lookup', allowed_callers: ['programmatic'] },
+  { type: 'function', name: 'lookup', defer_loading: true },
+] satisfies OpenAIResponsesTool[])('buildTargetRequest validates hoisted tool %j', tool => {
+  assertThrows(
+    () => buildTargetRequest({ model: 'gpt-test', input: [{ type: 'additional_tools', role: 'developer', tools: [tool] }] }),
+    Error,
+    'tooling cannot be translated to OpenAI Chat Completions',
+  );
+});
+
+test.each([
   { name: 'program', input: [{ type: 'program', id: 'prog_1', call_id: 'call_prog_1', code: 'return 1', fingerprint: 'opaque' }] },
   { name: 'program_output', input: [{ type: 'program_output', id: 'prog_out_1', call_id: 'call_prog_1', result: '1', status: 'completed' }] },
   { name: 'multi_agent_call', input: [{ type: 'multi_agent_call', action: 'spawn_agent', arguments: '{}', call_id: 'call_1' }] },
