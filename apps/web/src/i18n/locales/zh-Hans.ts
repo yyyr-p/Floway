@@ -283,7 +283,7 @@ const zhHansCN = {
           newPassword: '新密码',
           confirmPassword: '确认新密码',
           globalUsage: '查看全局用量',
-          globalUsageDescription: '可查看所有用户的 Token 和搜索用量、费用及用户名；API Key 明细仍仅限本人',
+          globalUsageDescription: '可查看所有用户的 Token 和搜索用量、费用及用户名',
           globalUsageAdmin: '管理员始终可以查看全局用量',
           administrator: '管理员',
           administratorDescription: '可以管理用户、上游、搜索配置和数据迁移',
