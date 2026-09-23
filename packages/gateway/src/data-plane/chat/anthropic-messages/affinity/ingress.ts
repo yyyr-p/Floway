@@ -29,6 +29,7 @@ export const analyzeAnthropicMessagesAffinity = async (
     return {
       kind: 'accepted',
       degrades: projections.some(item => item.projection.kind === 'remove' && item.projection.degrades),
+      preferred: projections.every(item => item.projection.preferred),
       materialize: () => {
         const candidatePayload = structuredClone(payload);
         const byMessage = Map.groupBy(projections, item => item.location.messageIndex);
@@ -39,7 +40,7 @@ export const analyzeAnthropicMessagesAffinity = async (
           for (const { location, projection } of messageProjections) {
             const block = message.content[location.blockIndex];
             if (location.kind === 'thinking') {
-              if (block.type !== 'thinking') throw new Error('Messages affinity thinking location no longer points at a thinking block');
+              if (block.type !== 'thinking') throw new Error('Anthropic Messages affinity thinking location no longer points at a thinking block');
               // Anthropic requires an assistant thinking block to retain the
               // signature issued by the upstream that produced it. If affinity
               // selects another candidate, remove the complete block rather

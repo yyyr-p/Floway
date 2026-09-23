@@ -127,6 +127,10 @@ const reasoningSchema = z.object({
 
 const chatSchema = z.object({
   modalities: modalitiesSchema.optional(),
+  // A real boolean, unlike reasoning.adaptive / reasoning.mandatory: false is
+  // the upstream stating it rejects detail 'original', not the absence of a
+  // statement.
+  image_detail_original: z.boolean().optional(),
   reasoning: reasoningSchema.optional(),
 });
 
@@ -137,6 +141,11 @@ const limitsSchema = z.object({
   max_prompt_tokens: z.number().optional(),
   max_output_tokens: z.number().optional(),
 });
+
+const opaqueBlobCompatibilityScopeSchema = z.object({
+  bindToUpstream: z.boolean(),
+  key: z.string().min(1).optional(),
+}).strict();
 
 // Mirrors the runtime UpstreamModelConfig in @floway-dev/provider.
 // Azure, custom, and ollama upstreams share this per-model entry; the
@@ -160,6 +169,7 @@ const upstreamModelSchema = z.object({
   flagOverrides: flagOverridesSchema.optional(),
   limits: limitsSchema.optional(),
   chat: chatSchema.optional(),
+  opaqueBlobCompatibilityScope: opaqueBlobCompatibilityScopeSchema.optional(),
 }).refine(
   m => m.chat === undefined || m.kind === undefined || m.kind === 'chat',
   { message: "chat metadata only allowed when kind === 'chat'", path: ['chat'] },

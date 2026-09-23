@@ -2,7 +2,7 @@ import type { AnthropicMessagesPayloadInterceptor } from './types.ts';
 import { providerModelOf } from '@floway-dev/provider';
 
 // Opt-in compatibility rewrite for upstreams that reject an active
-// `tool_choice` when the caller explicitly supplies no tools. Messages uses
+// `tool_choice` when the caller explicitly supplies no tools. Anthropic Messages uses
 // an object for its native no-tool choice.
 export const withEmptyToolsToolChoiceNormalized: AnthropicMessagesPayloadInterceptor = async (ctx, _gatewayCtx, run) => {
   if (!providerModelOf(ctx.candidate).enabledFlags.has('empty-tools-tool-choice-none')) return await run();
