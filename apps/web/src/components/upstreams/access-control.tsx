@@ -5,6 +5,7 @@ import { ProviderBadge } from './provider-badge';
 import type { ControlPlaneModel, UpstreamOption } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
+import { useDangerTextClass } from '../ui/danger';
 import { moveItem, ReorderHandle, type ReorderList, useReorderList } from '../ui/reorder-list';
 import { ScrollArea } from '../ui/scroll-area';
 import { SettingsExpander, SettingsSwitch } from '../ui/settings-card';
@@ -20,6 +21,7 @@ const {
   TableHeader,
   TableHeaderCell,
   TableRow,
+  Text,
 } = fluentComponents;
 
 interface UpstreamAccessRow {
@@ -81,6 +83,7 @@ export function UpstreamAccessControl({
   available,
   description,
   disabled,
+  error = null,
   ids,
   models,
   onChange,
@@ -90,6 +93,7 @@ export function UpstreamAccessControl({
   available: UpstreamOption[];
   description?: string;
   disabled: boolean;
+  error?: string | null;
   ids: string[];
   models: ControlPlaneModel[];
   onChange: (value: { override: boolean; ids: string[] }) => void;
@@ -97,6 +101,8 @@ export function UpstreamAccessControl({
   title?: string;
 }) {
   const { t } = useTranslation();
+  const dangerText = useDangerTextClass();
+  const errorId = useId();
   const warningId = useId();
   const emptySelection = override && ids.length === 0;
   const rows = useMemo(() => accessRows(available, ids, models), [available, ids, models]);
@@ -119,7 +125,9 @@ export function UpstreamAccessControl({
   // cap and answers with the index none of them has.
   const reorder = useReorderList({ disabled: disabled || !override, length: ids.length, onReorder: moveUpstream });
 
-  return <section className="grid gap-3 min-w-0" aria-describedby={emptySelection ? warningId : undefined}>
+  const describedBy = [error ? errorId : null, emptySelection ? warningId : null].filter((id): id is string => id !== null).join(' ') || undefined;
+
+  return <section className="grid gap-3 min-w-0" aria-describedby={describedBy}>
     <SettingsExpander
       action={<SettingsSwitch
         checked={override}
@@ -127,12 +135,15 @@ export function UpstreamAccessControl({
         label={title ?? t('dashboard.upstreamAccess.title')}
         onChange={toggleOverride}
       />}
+      defaultOpen={Boolean(error)}
       description={description ?? t('dashboard.upstreamAccess.description')}
       header={title ?? t('dashboard.upstreamAccess.title')}
       icon={<ShieldKeyhole24Regular />}
+      revealOn={error !== null}
       toggledOn={override}
     >
       <div className="grid gap-3 min-w-0">
+        {error && <Text className={dangerText} id={errorId} role="alert" size={200}>{error}</Text>}
         <ScrollArea axes="horizontal" className="min-w-0">
           {/* The minimum only decides when the region starts scrolling: the two
               sized columns plus enough room for a provider chip to stay

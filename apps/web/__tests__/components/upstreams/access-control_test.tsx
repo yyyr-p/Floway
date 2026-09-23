@@ -11,9 +11,9 @@ const available: UpstreamOption[] = [
   { id: 'up_a', name: 'Alpha', kind: 'custom', enabled: true, hue: 210, cachedModelCount: 1 },
 ];
 
-const Control = ({ initialIds }: { initialIds: string[] }) => {
+const Control = ({ error, initialIds }: { error?: string | null; initialIds: string[] }) => {
   const [value, setValue] = useState({ override: true, ids: initialIds });
-  return <UpstreamAccessControl available={available} disabled={false} ids={value.ids} models={[]} onChange={setValue} override={value.override} />;
+  return <UpstreamAccessControl available={available} disabled={false} error={error} ids={value.ids} models={[]} onChange={setValue} override={value.override} />;
 };
 
 const click = async (element: HTMLElement) => {
@@ -21,6 +21,32 @@ const click = async (element: HTMLElement) => {
 };
 
 describe('upstream access selection', () => {
+  it('reveals a validation error from a collapsed list and keeps correction controls open after it clears', () => {
+    const { rerender } = renderInApp(<Control initialIds={[]} />);
+    const disclosure = screen.getByRole('button', { name: i18n.t('dashboard.upstreamAccess.title') });
+    expect(disclosure.getAttribute('aria-expanded')).toBe('false');
+
+    const error = i18n.t('dashboard.upstreamAccess.validation');
+    rerender(<Control error={error} initialIds={[]} />);
+    const alert = screen.getByText(error);
+    expect(alert.getAttribute('role')).toBe('alert');
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+    expect(alert.closest('[inert]')).toBeNull();
+    const warning = screen.getByText(i18n.t('dashboard.upstreamAccess.emptyWarning')).closest('.fui-MessageBar');
+    expect(alert.closest('section')?.getAttribute('aria-describedby')?.split(' ')).toEqual([alert.id, warning?.id]);
+
+    rerender(<Control error={null} initialIds={[]} />);
+    expect(screen.queryByText(error)).toBeNull();
+    expect(disclosure.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('makes an error present on mount accessible immediately', () => {
+    const error = i18n.t('dashboard.upstreamAccess.validation');
+    renderInApp(<Control error={error} initialIds={[]} />);
+    expect(screen.getByRole('button', { name: i18n.t('dashboard.upstreamAccess.title') }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByText(error).closest('[inert]')).toBeNull();
+  });
+
   it('warns immediately for a saved empty selection even while the list is collapsed', async () => {
     renderInApp(<Control initialIds={[]} />);
     const warning = i18n.t('dashboard.upstreamAccess.emptyWarning');
