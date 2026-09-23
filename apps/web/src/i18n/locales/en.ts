@@ -436,6 +436,7 @@ const en = {
         modelCountUnknown: 'Count unavailable',
         upstreamDisabled: 'Upstream disabled',
         emptyWarning: 'No upstreams are selected. No upstreams will be available while this limit is on.',
+        validation: 'Select at least one upstream, or turn off the limit.',
       },
       apiKeys: {
         empty: 'No API keys yet. Create one to call Floway.',

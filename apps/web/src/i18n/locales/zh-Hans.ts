@@ -421,6 +421,7 @@ const zhHansCN = {
         modelCountUnknown: '数量不可用',
         upstreamDisabled: '上游已停用',
         emptyWarning: '未选择任何上游。启用限制时，将没有可用上游。',
+        validation: '至少选择一个上游，或关闭限制。',
       },
       apiKeys: {
         empty: '还没有 API 密钥。创建一个后即可调用 Floway。',
