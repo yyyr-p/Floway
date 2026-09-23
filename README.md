@@ -30,7 +30,7 @@ cd Floway
 ADMIN_KEY='replace-with-a-secret' docker compose -f docker/docker-compose.yml up --build -d
 ```
 
-Open <http://localhost:18088>, leave the username blank, and use `ADMIN_KEY` as
+Open <http://localhost:8788>, leave the username blank, and use `ADMIN_KEY` as
 the password. Then:
 
 1. Add at least one provider under **Providers → Upstreams**.
@@ -140,6 +140,9 @@ Signed-in users manage their own OAuth2 bindings under **Settings → OAuth2
 Accounts**. An account with no password must keep at least one OAuth2 binding;
 it can bind another enabled provider first and then remove the old binding.
 Administrators can inspect and unlink the same identities while editing a user.
+**Upgrade notice:** Floway used to listen on both `0.0.0.0:8788` and
+`0.0.0.0:18088`. As a result of container image merging, Floway only listen on
+one single port now.
 
 ## Compatibility
 
