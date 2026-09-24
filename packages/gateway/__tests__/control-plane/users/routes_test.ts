@@ -3,6 +3,7 @@ import { expect, test } from 'vitest';
 import { initDumpBroker, initDumpStore } from '../../../src/dump/registry.ts';
 import { hashPassword } from '../../../src/shared/passwords.ts';
 import { installDumpStubs } from '../../dump/test-fixtures.ts';
+import { saveUpstreamForTest } from '../../repo/upstreams.ts';
 import { buildCustomUpstreamRecord, requestApp, setupAppTest } from '../../test-utils/app.ts';
 import { assertEquals, assertExists } from '@floway-dev/test-utils';
 
@@ -159,9 +160,9 @@ test('PATCH /api/users/:id can demote a non-self admin', async () => {
 
 test('PATCH /api/users/upstream-access changes only named upstream membership for selected users', async () => {
   const { adminSession, repo } = await setupAppTest();
-  await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_a', name: 'A', sortOrder: 0 }));
-  await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_b', name: 'B', sortOrder: 1 }));
-  await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_c', name: 'C', sortOrder: 2 }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_a', name: 'A', sortOrder: 0 }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_b', name: 'B', sortOrder: 1 }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_c', name: 'C', sortOrder: 2 }));
   const admin = await repo.users.getById(1);
   assertExists(admin);
   await repo.users.save({ ...admin, upstreamIds: ['up_c', 'up_b'] });
@@ -197,7 +198,7 @@ test('PATCH /api/users/upstream-access changes only named upstream membership fo
 
 test('PATCH /api/users/upstream-access supports an empty whitelist and validates its targets', async () => {
   const { adminSession, apiKey, repo } = await setupAppTest();
-  await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_only', name: 'Only' }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_only', name: 'Only' }));
 
   const response = await adminBulkUpstreamPatch(adminSession, {
     userIds: [1],
@@ -380,7 +381,7 @@ test('OAuth2 account management preserves a login method for self-service and ad
 
 test('GET /api/users and /auth/me drop a cap entry whose upstream was deleted', async () => {
   const { adminSession, repo } = await setupAppTest();
-  await repo.upstreams.save(buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));
   const admin = await repo.users.getById(1);
   assertExists(admin);
   await repo.users.save({ ...admin, upstreamIds: ['up_gone', 'up_x'] });

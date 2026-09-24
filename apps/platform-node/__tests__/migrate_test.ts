@@ -32,7 +32,7 @@ test('applies all real migration files against a fresh sqlite', () => withTemp(a
   const recorded = await db.prepare('SELECT COUNT(*) AS n FROM _migrations').first<{ n: number }>();
   assertEquals(recorded !== null && recorded.n > 0, true);
   const latest = await db.prepare('SELECT name FROM _migrations ORDER BY name DESC LIMIT 1').first<{ name: string }>();
-  assertEquals(latest?.name, '0090_dump_upstream_body.sql');
+  assertEquals(latest?.name, '0091_upstream_config_version.sql');
 
   const providerCols = await db.prepare('PRAGMA table_info(oauth2_providers)').all<{ name: string; dflt_value: string | null }>();
   assertEquals(providerCols.results.find(column => column.name === 'access_denied_message')?.dflt_value, "''");

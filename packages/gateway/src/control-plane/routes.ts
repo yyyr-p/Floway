@@ -11,7 +11,7 @@ import { createAlias, deleteAlias, listAliases, updateAlias } from './model-alia
 import { controlPlaneModels } from './models/routes.ts';
 import { performanceOverview } from './performance/routes.ts';
 import { createProxy, deleteProxy, listAllBackoffs, listProxies, listProxyBackoffs, resetProxyBackoffs, testProxy, updateProxy } from './proxies/routes.ts';
-import { authLoginBody, changeOwnPasswordBody, claudeCodeOAuthAuthorizeUrlBody, claudeCodeOAuthExchangeBody, claudeCodeOAuthRefreshBody, claudeCodeProbeBody, claudeCodeSetupTokenAuthorizeUrlBody, claudeCodeSetupTokenExchangeBody, codexImportExchangeBody, codexImportPreviewBody, codexOAuthAuthorizeUrlBody, codexOAuthRefreshBody, copilotOAuthDeviceLoginPollBody, copilotOAuthDeviceLoginStartBody, copilotQuotaBody, createAliasBody, createKeyBody, createOAuth2ProviderBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, importBody, listModelsBody, modelsQuery, oauth2RegisterBody, oauth2ResultBody, oauth2SettingsBody, ollamaUsageBody, performanceQuery, resetBackoffBody, rotateKeyBody, testProxyBody, tokenUsageOverviewQuery, tokenUsageQuery, updateAliasBody, updateKeyBody, updateOAuth2ProviderBody, updateProxyBody, updateUpstreamBody, updateUsersUpstreamAccessBody, updateUserBody, webSearchConfigSchema, webSearchUsageQuery } from './schemas.ts';
+import { authLoginBody, changeOwnPasswordBody, claudeCodeOAuthAuthorizeUrlBody, claudeCodeOAuthExchangeBody, claudeCodeOAuthRefreshBody, claudeCodeProbeBody, claudeCodeSetupTokenAuthorizeUrlBody, claudeCodeSetupTokenExchangeBody, codexImportExchangeBody, codexImportPreviewBody, codexOAuthAuthorizeUrlBody, codexOAuthRefreshBody, copilotOAuthDeviceLoginPollBody, copilotOAuthDeviceLoginStartBody, copilotQuotaBody, createAliasBody, createKeyBody, createOAuth2ProviderBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, importBody, modelsQuery, oauth2RegisterBody, oauth2ResultBody, oauth2SettingsBody, ollamaUsageBody, performanceQuery, resetBackoffBody, rotateKeyBody, testProxyBody, tokenUsageOverviewQuery, tokenUsageQuery, updateAliasBody, updateKeyBody, updateOAuth2ProviderBody, updateProxyBody, updateUpstreamBody, updateUsersUpstreamAccessBody, updateUserBody, webSearchConfigSchema, webSearchUsageQuery, previewModelsBody } from './schemas.ts';
 import { getWebSearchConfigRoute, putWebSearchConfigRoute, testWebSearchConfigRoute } from './search-config/routes.ts';
 import { webSearchUsage } from './search-usage/routes.ts';
 import { tokenUsageOverview } from './token-usage/overview.ts';
@@ -19,7 +19,7 @@ import { tokenUsage } from './token-usage/routes.ts';
 import { claudeCodeOAuthAuthorizeUrl, claudeCodeOAuthExchange, claudeCodeOAuthRefresh, claudeCodeProbe, claudeCodeSetupTokenAuthorizeUrl, claudeCodeSetupTokenExchange } from './upstreams/claude-code.ts';
 import { codexImportExchange, codexImportPreview, codexOAuthAuthorizeUrl, codexOAuthRefresh } from './upstreams/codex.ts';
 import { copilotOAuthDeviceLoginPoll, copilotOAuthDeviceLoginStart, copilotQuota } from './upstreams/copilot.ts';
-import { listModels } from './upstreams/models.ts';
+import { fetchSavedModels, previewModels } from './upstreams/models.ts';
 import { ollamaUsage } from './upstreams/ollama.ts';
 import { createUpstream, deleteUpstream, getUpstream, getUpstreamBlueprint, listUpstreamOptions, listUpstreams, updateUpstream } from './upstreams/routes.ts';
 import { changeOwnPassword, createUser, deleteUser, listOwnOAuth2Accounts, listUserOAuth2Accounts, listUsers, unlinkOwnOAuth2Account, unlinkUserOAuth2Account, updateUsersUpstreamAccess, updateUser } from './users/routes.ts';
@@ -112,7 +112,8 @@ export const controlPlaneRoutes = new Hono<{ Variables: AuthVars }>()
     .post('/upstreams/claude-code/setup-token/exchange', zValidator('json', claudeCodeSetupTokenExchangeBody), claudeCodeSetupTokenExchange)
     .post('/upstreams/claude-code/probe', zValidator('json', claudeCodeProbeBody), claudeCodeProbe)
     .post('/upstreams/ollama/usage', zValidator('json', ollamaUsageBody), ollamaUsage)
-    .post('/upstreams/list-models', zValidator('json', listModelsBody), listModels)
+    .post('/upstreams/preview-models', zValidator('json', previewModelsBody), previewModels)
+    .post('/upstreams/:id/list-models', fetchSavedModels)
     .post('/upstreams', zValidator('json', createUpstreamBody), createUpstream)
     .get('/upstreams/:id', getUpstream)
     .patch('/upstreams/:id', zValidator('json', updateUpstreamBody), updateUpstream)
