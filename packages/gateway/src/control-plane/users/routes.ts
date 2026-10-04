@@ -9,7 +9,8 @@ import type { ApiKey, OAuth2Account, OAuth2Provider, User } from '../../repo/typ
 import { generateApiKeyToken } from '../../shared/api-key-tokens.ts';
 import { hashPassword, verifyPassword } from '../../shared/passwords.ts';
 import { generateServerSecret } from '../../shared/server-secret.ts';
-import type { changeOwnPasswordBody, createUserBody, updateUsersUpstreamAccessBody, updateUserBody } from '../schemas.ts';
+import type { changeOwnPasswordBody, createUserBody, updateUserBody } from '../schemas.ts';
+import type { updateUsersUpstreamAccessBody } from './upstream-access-schemas.ts';
 import { loadKnownUpstreamIds, unknownUpstreamIdsError } from '../shared/upstream-ids.ts';
 
 const parseUserId = (raw: string): number | null => {

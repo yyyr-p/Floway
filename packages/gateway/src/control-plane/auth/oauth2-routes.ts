@@ -8,7 +8,7 @@ import type { CtxWithJson } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { generateApiKeyToken } from '../../shared/api-key-tokens.ts';
 import { generateServerSecret } from '../../shared/server-secret.ts';
-import type { oauth2RegisterBody, oauth2ResultBody } from '../schemas.ts';
+import type { oauth2RegisterBody, oauth2ResultBody } from './oauth2-schemas.ts';
 import { loadKnownUpstreamIds } from '../shared/upstream-ids.ts';
 import { userToSessionWire } from '../users/wire.ts';
 import { sha256Hex, timingSafeEqual } from '@floway-dev/platform';
