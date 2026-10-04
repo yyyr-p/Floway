@@ -2,12 +2,11 @@
 // that have no native compaction wire.
 //
 // Engagement is the OR of two conditions:
-//   1. The per-upstream `openai-responses-compact-shim` flag is on. This is the
-//      operator-controlled opt-in for OpenAI-Responses-target upstreams that
-//      already answer a compact request themselves — natively through
+//   1. The per-upstream `openai-responses-compact-shim` flag is on, as it is
+//      by default for every provider. Operators can disable it for Responses
+//      targets that answer compact requests themselves — natively through
 //      `/responses/compact` (codex / azure / custom), or by replaying
-//      `RemoteCompactionV2` over `/responses` (copilot) — but where we still
-//      want shim-synthesized envelopes.
+//      `RemoteCompactionV2` over `/responses` (copilot).
 //   2. The candidate's `targetApi` is not `responses`. When the upstream is
 //      Anthropic Messages or OpenAI Chat Completions, the translation layer has no concept
 //      of a `compaction` output item or a `compaction_trigger` input item.
@@ -251,15 +250,7 @@ const resultMetadata = async (
     ...(result.performance !== undefined ? { performance: result.performance } : {}),
   });
 
-// The spec makes the item lifecycle the authority and requires nothing of the
-// terminal's `output`; a Codex upstream states an `output` that omits the
-// assistant message it just closed. A turn that closed nothing falls back to
-// the terminal, as the client-facing egress does.
-// https://github.com/openresponses/openresponses/blob/92c12d96d7b61d6d15e2214daa5e9c6000ab6e1c/src/specifications/2026-04-24.mdx#L237
-const summaryTextFrom = (closed: Map<number, OpenAIResponsesOutputItem>, stated: readonly OpenAIResponsesOutputItem[]): string => {
-  const items = closed.size === 0
-    ? stated
-    : [...closed].sort(([left], [right]) => left - right).map(([, item]) => item);
+const summaryTextFrom = (items: readonly OpenAIResponsesOutputItem[]): string => {
   const parts: string[] = [];
   for (const item of items) {
     if (item.type !== 'message') continue;
@@ -273,17 +264,8 @@ const summaryTextFrom = (closed: Map<number, OpenAIResponsesOutputItem>, stated:
 const collectSummaryTurn = async (
   result: Extract<ExecuteResult<ProtocolFrame<OpenAIResponsesStreamEvent>>, { type: 'events' }>,
 ): Promise<{ response: OpenAIResponsesResult; text: string }> => {
-  const closedItems = new Map<number, OpenAIResponsesOutputItem>();
-  const observed = (async function* (): AsyncIterable<ProtocolFrame<OpenAIResponsesStreamEvent>> {
-    for await (const frame of result.events) {
-      if (frame.type === 'event' && frame.event.type === 'response.output_item.done') {
-        closedItems.set(frame.event.output_index, frame.event.item);
-      }
-      yield frame;
-    }
-  })();
-  const response = await collectOpenAIResponsesProtocolEventsToResult(observed);
-  return { response, text: summaryTextFrom(closedItems, response.output) };
+  const response = await collectOpenAIResponsesProtocolEventsToResult(result.events);
+  return { response, text: summaryTextFrom(response.output) };
 };
 
 const buildCompactionEnvelope = (cmpId: string, summaryText: string, upstream: OpenAIResponsesResult): OpenAIResponsesResult => {
@@ -510,10 +492,6 @@ export const withOpenAIResponsesCompactShim: OpenAIResponsesInterceptor = async 
   // candidate without sending our private envelope to an upstream.
   ctx.payload = expandShimCompactionItems(ctx.payload);
 
-  // The shim is engaged when the operator turned it on for this upstream,
-  // OR when the upstream's targetApi is not OpenAI Responses (Anthropic Messages /
-  // OpenAI Chat Completions have no compaction wire and would crash on the
-  // unknown `compaction_trigger` input variant).
   const flagOn = providerModelOf(ctx.candidate).enabledFlags.has('openai-responses-compact-shim');
   const decryptFlagOn = providerModelOf(ctx.candidate).enabledFlags.has('openai-responses-compact-decrypt');
   const structurallyRequired = ctx.targetApi !== 'openaiResponses';

@@ -137,6 +137,7 @@ export function UpstreamAccessControl({
       />}
       defaultOpen={Boolean(error)}
       description={description ?? t('dashboard.upstreamAccess.description')}
+      disclosureDisabled={!override}
       header={title ?? t('dashboard.upstreamAccess.title')}
       icon={<ShieldKeyhole24Regular />}
       revealOn={error !== null}
