@@ -7,7 +7,7 @@ import { CUSTOM_API_KEY_MAX_LENGTH, generateApiKeyToken, type KeySource } from '
 import { generateServerSecret } from '../../shared/server-secret.ts';
 import type { createKeyBody, rotateKeyBody, updateKeyBody } from '../schemas.ts';
 import { ownedKeyForUser } from '../shared/owned-key.ts';
-import { loadKnownUpstreamIds, pruneUnreachableUpstreamIds, reachableUpstreamIds, unknownUpstreamIdsError } from '../shared/upstream-ids.ts';
+import { loadKnownUpstreamIds, pruneUnreachableUpstreamIds, pruneUnreachableUpstreamModelAccess, reachableUpstreamIds, unknownUpstreamIdsError, unknownUpstreamModelAccessError } from '../shared/upstream-ids.ts';
 
 const GENERATED_KEY_RETRIES = 5;
 
@@ -31,6 +31,7 @@ const apiKeyToJson = (key: ApiKey, reachable: ReadonlySet<string>) => ({
   created_at: key.createdAt,
   last_used_at: key.lastUsedAt ?? null,
   upstream_ids: pruneUnreachableUpstreamIds(key.upstreamIds, reachable),
+  upstream_model_access: pruneUnreachableUpstreamModelAccess(key.upstreamModelAccess, reachable),
   dump_retention_seconds: key.dumpRetentionSeconds,
   responses_retention_seconds: key.openaiResponsesRetentionSeconds,
 });
@@ -119,6 +120,21 @@ const validateUpstreamIdsAgainstUserCap = (
     : null;
 };
 
+const validateModelAccessAgainstUserCap = (
+  c: AuthedContext,
+  rules: ApiKey['upstreamModelAccess'],
+  knownUpstreamIds: ReadonlySet<string>,
+): string | null => {
+  const unknown = unknownUpstreamModelAccessError(rules ?? [], knownUpstreamIds);
+  if (unknown !== null) return unknown;
+  const userCap = userUpstreamIdsFromContext(c);
+  if (userCap === null) return null;
+  const userSet = new Set(userCap);
+  return rules?.some(rule => !userSet.has(rule.upstreamId))
+    ? "Some model access upstreams aren't available to your account."
+    : null;
+};
+
 export const listKeys = async (c: AuthedContext) => {
   const userId = userFromContext(c).id;
   const [keys, knownUpstreamIds] = await Promise.all([getRepo().apiKeys.listByUserId(userId), loadKnownUpstreamIds()]);
@@ -133,6 +149,8 @@ export const createKey = async (c: CtxWithJson<typeof createKeyBody>) => {
   const knownUpstreamIds = await loadKnownUpstreamIds();
   const upstreamErr = validateUpstreamIdsAgainstUserCap(c, body.upstream_ids ?? null, knownUpstreamIds);
   if (upstreamErr) return c.json({ error: upstreamErr }, 400);
+  const modelAccessError = validateModelAccessAgainstUserCap(c, body.upstream_model_access ?? [], knownUpstreamIds);
+  if (modelAccessError) return c.json({ error: modelAccessError }, 400);
 
   const template = {
     id: crypto.randomUUID(),
@@ -141,6 +159,7 @@ export const createKey = async (c: CtxWithJson<typeof createKeyBody>) => {
     serverSecret: generateServerSecret(),
     createdAt: new Date().toISOString(),
     upstreamIds: body.upstream_ids ?? null,
+    upstreamModelAccess: body.upstream_model_access ?? [],
     deletedAt: null,
     dumpRetentionSeconds: body.dump_retention_seconds ?? null,
     openaiResponsesRetentionSeconds: body.responses_retention_seconds ?? 0,
@@ -177,8 +196,8 @@ export const updateKey = async (c: CtxWithJson<typeof updateKeyBody>) => {
   const id = c.req.param('id')!;
   const body = c.req.valid('json');
 
-  if (body.name === undefined && body.upstream_ids === undefined && body.dump_retention_seconds === undefined && body.responses_retention_seconds === undefined) {
-    return c.json({ error: 'Provide a new name, upstream selection, dump retention, or Stateful OpenAI Responses retention to update.' }, 400);
+  if (body.name === undefined && body.upstream_ids === undefined && body.upstream_model_access === undefined && body.dump_retention_seconds === undefined && body.responses_retention_seconds === undefined) {
+    return c.json({ error: 'Provide a new name, upstream or model access selection, dump retention, or Stateful OpenAI Responses retention to update.' }, 400);
   }
 
   const owned = await ownedKeyForUser(c, id);
@@ -189,10 +208,15 @@ export const updateKey = async (c: CtxWithJson<typeof updateKeyBody>) => {
     const err = validateUpstreamIdsAgainstUserCap(c, body.upstream_ids, knownUpstreamIds);
     if (err) return c.json({ error: err }, 400);
   }
+  if (body.upstream_model_access !== undefined) {
+    const err = validateModelAccessAgainstUserCap(c, body.upstream_model_access, knownUpstreamIds);
+    if (err) return c.json({ error: err }, 400);
+  }
 
   const updated = await getRepo().apiKeys.update(id, {
     ...(body.name !== undefined ? { name: body.name } : {}),
     ...(body.upstream_ids !== undefined ? { upstreamIds: body.upstream_ids } : {}),
+    ...(body.upstream_model_access !== undefined ? { upstreamModelAccess: body.upstream_model_access } : {}),
     ...(body.dump_retention_seconds !== undefined ? { dumpRetentionSeconds: body.dump_retention_seconds } : {}),
     ...(body.responses_retention_seconds !== undefined ? { openaiResponsesRetentionSeconds: body.responses_retention_seconds } : {}),
   });

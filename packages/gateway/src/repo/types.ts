@@ -1,3 +1,4 @@
+import type { UpstreamModelAccessRule } from './model-access.ts';
 import type { WebSearchConfig, WebSearchProviderName } from '../shared/web-search-providers.ts';
 import type { AgentSetupRepository } from '@floway-dev/agent-setup';
 import type { AliasSelection, AliasTarget, AnnouncedMetadata, BillingMetric, DecimalString, ModelKind, PricingSelector } from '@floway-dev/protocols/common';
@@ -21,6 +22,9 @@ export interface ApiKey {
   // When both levels carry a list the effective list is their intersection
   // taken in this order, so a key that sets one also decides the priority.
   upstreamIds: string[] | null;
+  // Per-upstream model constraints add to the user-level policy; absent rules
+  // inherit. Legacy rows and backups default to no key-level constraint.
+  upstreamModelAccess?: UpstreamModelAccessRule[];
   deletedAt: string | null;
   // null = dump capture disabled; positive integer = seconds of retention.
   dumpRetentionSeconds: number | null;
@@ -42,6 +46,8 @@ export interface User {
   // order carries the intersection, so this order applies only to requests
   // whose key sets no list of its own.
   upstreamIds: string[] | null;
+  // Per-upstream model rules. No rule means inherit the unrestricted default.
+  upstreamModelAccess?: UpstreamModelAccessRule[];
   createdAt: string;
   deletedAt: string | null;
 }
@@ -265,7 +271,7 @@ export interface ApiKeyRepo {
 
 export type ApiKeyUpdate = Partial<Pick<
   ApiKey,
-  'name' | 'key' | 'lastUsedAt' | 'upstreamIds' | 'dumpRetentionSeconds' | 'openaiResponsesRetentionSeconds'
+  'name' | 'key' | 'lastUsedAt' | 'upstreamIds' | 'upstreamModelAccess' | 'dumpRetentionSeconds' | 'openaiResponsesRetentionSeconds'
 >>;
 
 export interface UsersRepo {

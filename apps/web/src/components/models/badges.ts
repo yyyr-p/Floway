@@ -1,5 +1,5 @@
 import type { CatalogIndex } from './catalog-index';
-import { reachableTargets } from './reachability';
+import { isModelBindingReachable, reachableTargets, type UpstreamModelAccessRule } from './reachability';
 import type { ControlPlaneModel } from '../../api/types';
 import { ALIAS_RULE_BADGE_FIELDS, formatAliasRuleBadges, type AliasRuleBadge, type AliasRuleBadgeField, type AliasTarget } from '@floway-dev/protocols/common';
 
@@ -23,13 +23,13 @@ export const effectiveUpstreams = (
   model: ControlPlaneModel,
   catalog: CatalogIndex,
   cap: readonly string[] | null,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): readonly ControlPlaneModel['upstreams'][number][] => {
-  if (model.aliasedFrom === undefined) return cap === null
-    ? model.upstreams
-    : model.upstreams.filter(binding => cap.includes(binding.id));
+  if (model.aliasedFrom === undefined) return model.upstreams.filter(binding =>
+    isModelBindingReachable(binding, cap, modelAccess));
   const seen = new Set<string>();
-  return reachableTargets(model, catalog, cap).flatMap(target => target.upstreams.filter(binding => {
-    if ((cap !== null && !cap.includes(binding.id)) || seen.has(binding.id)) return false;
+  return reachableTargets(model, catalog, cap, modelAccess).flatMap(target => target.upstreams.filter(binding => {
+    if (!isModelBindingReachable(binding, cap, modelAccess) || seen.has(binding.id)) return false;
     seen.add(binding.id);
     return true;
   }));
@@ -65,6 +65,7 @@ export const modelBadges = (
   model: ControlPlaneModel,
   catalog: CatalogIndex,
   cap: readonly string[] | null,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): ModelBadge[] => {
   const badges: ModelBadge[] = ([
     ['context', model.limits.max_context_window_tokens],
@@ -77,7 +78,7 @@ export const modelBadges = (
   const alias = model.aliasedFrom;
   if (alias === undefined) return badges;
 
-  const reachable = reachableTargets(model, catalog, cap);
+  const reachable = reachableTargets(model, catalog, cap, modelAccess);
   const reachableIds = new Set(reachable.map(target => target.id));
   const reachableAliasTargets = alias.targets.filter(target => reachableIds.has(target.target_model_id));
   const sole = reachable.length === 1 ? reachable[0]! : null;

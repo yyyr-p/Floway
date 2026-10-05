@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { parseWebSearchConfigStrict } from '../../data-plane/tools/web-search/config.ts';
 import type { WebSearchConfig } from '../../data-plane/tools/web-search/types.ts';
 import { parseDisabledPublicModelIdsWire } from '../../repo/disabled-public-models.ts';
+import { parseUpstreamModelAccess } from '../../repo/model-access.ts';
 import { isOpenAIResponsesRetentionSeconds, OPENAI_RESPONSES_RETENTION_MAX_SECONDS, OPENAI_RESPONSES_RETENTION_MIN_SECONDS } from '../../repo/openai-responses-retention.ts';
 import { isDirectFallbackId, normalizeProxyFallbackList } from '../../repo/proxy-fallback-list.ts';
 import { SEED_ADMIN_USER_ID } from '../../repo/seed-admin.ts';
@@ -206,6 +207,7 @@ const openaiResponsesRetentionSchema = parsedBy((value): number => {
 const apiKeySchema = parsedBy((value): ApiKey => {
   const wire = parseRecord(value, 'record must be an object');
   const upstreamIds = parseValue(upstreamIdsSchema, wire.upstreamIds);
+  const upstreamModelAccess = parseValue(parsedBy(value => parseUpstreamModelAccess(value, 'apiKeys import')).optional().default([]), wire.upstreamModelAccess);
   const userId = parseValue(positiveIntegerSchema('userId'), wire.userId);
   const deletedAt = parseValue(nullableStringSchema('deletedAt'), wire.deletedAt);
   const id = parseValue(nonEmptyStringSchema('id'), wire.id);
@@ -227,6 +229,7 @@ const apiKeySchema = parsedBy((value): ApiKey => {
     createdAt,
     ...lastUsedAt,
     upstreamIds,
+    upstreamModelAccess,
     deletedAt,
     dumpRetentionSeconds,
     openaiResponsesRetentionSeconds,
@@ -250,6 +253,7 @@ const userSchema = z.object({
     if (!result.ok) throw new Error(result.error);
     return result.value;
   }),
+  upstreamModelAccess: parsedBy(value => parseUpstreamModelAccess(value, 'users import')).optional().default([]),
   deletedAt: nullableStringSchema('deletedAt'),
   createdAt: nonEmptyStringSchema('createdAt'),
 });

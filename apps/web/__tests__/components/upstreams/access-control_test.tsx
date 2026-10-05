@@ -12,8 +12,12 @@ const available: UpstreamOption[] = [
 ];
 
 const Control = ({ initialIds, initialOverride = true }: { initialIds: string[]; initialOverride?: boolean }) => {
-  const [value, setValue] = useState({ override: initialOverride, ids: initialIds });
-  return <UpstreamAccessControl available={available} disabled={false} ids={value.ids} models={[]} onChange={setValue} override={value.override} />;
+  const [value, setValue] = useState<{
+    override: boolean;
+    ids: string[];
+    modelAccess: { upstreamId: string; mode: 'inherit' | 'allow' | 'deny'; modelIds: string[] }[];
+  }>({ override: initialOverride, ids: initialIds, modelAccess: [] });
+  return <UpstreamAccessControl available={available} disabled={false} ids={value.ids} modelAccess={value.modelAccess} models={[]} onChange={setValue} override={value.override} />;
 };
 
 const click = async (element: HTMLElement) => {

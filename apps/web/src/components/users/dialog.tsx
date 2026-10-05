@@ -31,6 +31,7 @@ interface UserFormValues {
   isAdmin: boolean;
   upstreamOverride: boolean;
   upstreamIds: string[];
+  upstreamModelAccess: NonNullable<ControlPlaneUser['upstreamModelAccess']>;
 }
 
 interface UserDialogCommonProps {
@@ -61,6 +62,11 @@ export function UserDialog(props: UserDialogProps) {
       isAdmin: z.boolean(),
       upstreamOverride: z.boolean(),
       upstreamIds: z.array(z.string()),
+      upstreamModelAccess: z.array(z.object({
+        upstreamId: z.string(),
+        mode: z.enum(['inherit', 'allow', 'deny']),
+        modelIds: z.array(z.string()),
+      })),
     }).superRefine((value, ctx) => {
       if (mode === 'create' && !value.password) {
         ctx.addIssue({ code: 'custom', message: 'dashboard.users.validation.passwordRequired', path: ['password'] });
@@ -94,6 +100,7 @@ export function UserDialog(props: UserDialogProps) {
               password: form.password,
               isAdmin: form.isAdmin,
               upstreamIds,
+              upstreamModelAccess: form.upstreamModelAccess,
             },
           }))
         : await callApi(() => api.api.users[':id'].$patch({
@@ -101,6 +108,7 @@ export function UserDialog(props: UserDialogProps) {
               username,
               ...(!adminLocked ? { isAdmin: form.isAdmin } : {}),
               upstreamIds,
+              upstreamModelAccess: form.upstreamModelAccess,
             },
           }));
       if (result.error) {
@@ -180,10 +188,12 @@ export function UserDialog(props: UserDialogProps) {
         available={upstreams}
         disabled={saving}
         ids={values.upstreamIds}
+        modelAccess={values.upstreamModelAccess}
         models={models}
         onChange={next => {
           setValue('upstreamOverride', next.override);
           setValue('upstreamIds', next.ids);
+          setValue('upstreamModelAccess', next.modelAccess);
         }}
         override={values.upstreamOverride}
       />
@@ -202,5 +212,6 @@ const userFormDefaults = (user: ControlPlaneUser | null): UserFormValues => {
     isAdmin: user?.isAdmin ?? false,
     upstreamOverride: user?.upstreamIds !== null && user?.upstreamIds !== undefined,
     upstreamIds: user?.upstreamIds ?? [],
+    upstreamModelAccess: user?.upstreamModelAccess ?? [],
   };
 };

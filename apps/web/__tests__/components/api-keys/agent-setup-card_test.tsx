@@ -42,6 +42,7 @@ const apiKey = (id: string): ApiKey => ({
   name: `Key ${id}`,
   key: `sk-${id}`,
   upstream_ids: null,
+  upstream_model_access: [],
   created_at: '2026-01-01T00:00:00.000Z',
   last_used_at: null,
   dump_retention_seconds: null,

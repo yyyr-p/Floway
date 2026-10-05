@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { expect, test } from 'vitest';
 
-import { authMiddleware } from '../../src/middleware/auth.ts';
+import { authMiddleware, effectiveUpstreamModelAccessFromContext, type AuthVars } from '../../src/middleware/auth.ts';
 import { initRepo } from '../../src/repo/index.ts';
 import { setupAppTest } from '../test-utils/app.ts';
 import { assertEquals } from '@floway-dev/test-utils';
@@ -22,6 +22,36 @@ test('API key on data-plane is accepted', async () => {
   });
   assertEquals(response.status, 200);
   assertEquals(await response.text(), 'ok');
+});
+
+test('each authenticated request composes current user and key model rules', async () => {
+  const { repo, apiKey } = await setupAppTest();
+  const user = await repo.users.getById(apiKey.userId);
+  if (!user) throw new Error('key owner missing');
+  await repo.users.save({
+    ...user,
+    upstreamModelAccess: [{ upstreamId: 'up_x', mode: 'deny', modelIds: ['model-a'] }],
+  });
+  await repo.apiKeys.save({
+    ...apiKey,
+    upstreamModelAccess: [{ upstreamId: 'up_x', mode: 'allow', modelIds: ['model-a', 'model-b'] }],
+  });
+
+  const app = new Hono<{ Variables: AuthVars }>();
+  app.use('*', authMiddleware);
+  app.get('/policy', c => c.json(effectiveUpstreamModelAccessFromContext(c)));
+  const response = await app.request('/policy', { headers: { 'x-api-key': apiKey.key } });
+  assertEquals(response.status, 200);
+  assertEquals(await response.json(), [
+    { upstreamId: 'up_x', mode: 'deny', modelIds: ['model-a'] },
+    { upstreamId: 'up_x', mode: 'allow', modelIds: ['model-a', 'model-b'] },
+  ]);
+
+  await repo.users.save({ ...user, upstreamModelAccess: [] });
+  const updated = await app.request('/policy', { headers: { 'x-api-key': apiKey.key } });
+  assertEquals(await updated.json(), [
+    { upstreamId: 'up_x', mode: 'allow', modelIds: ['model-a', 'model-b'] },
+  ]);
 });
 
 test('ADMIN_KEY presented as x-api-key on any path is rejected with login hint', async () => {

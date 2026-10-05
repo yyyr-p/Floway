@@ -180,6 +180,9 @@ export interface InternalAliasedFrom {
 // ever see their own emission — the surrounding `InternalModel` map is
 // assembled by the registry.
 export interface ProviderModel extends ModelMetadata {
+  // Original public catalog id before Floway's optional upstream prefix
+  // projects another inbound id onto this model.
+  catalogModelId?: string;
   // The provider-neutral upstream catalog id shown on auto rows and used when
   // an opaque-blob scope omits its key. A provider that selects a request-time
   // wire variant still keeps that invocation detail in providerData.

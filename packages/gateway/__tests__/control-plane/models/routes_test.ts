@@ -75,9 +75,9 @@ test('/api/models exposes each upstream as { kind, id } so multi-provider models
       assertEquals(response.status, 200);
       const body = (await response.json()) as { data: Array<Record<string, unknown>> };
 
-      assertEquals(body.data.find(model => model.id === 'claude-sonnet-4')?.upstreams, [{ kind: 'copilot', id: 'up_copilot', name: 'GitHub Copilot (tester)', hue: 210 }]);
-      assertEquals(body.data.find(model => model.id === 'custom-model')?.upstreams, [{ kind: 'custom', id: 'up_custom_models', name: 'Custom Provider', hue: 210 }]);
-      assertEquals(body.data.find(model => model.id === 'azure-public')?.upstreams, [{ kind: 'azure', id: 'up_azure_models', name: 'Azure Models', hue: 210 }]);
+      assertEquals(body.data.find(model => model.id === 'claude-sonnet-4')?.upstreams, [{ kind: 'copilot', id: 'up_copilot', modelId: 'claude-sonnet-4', name: 'GitHub Copilot (tester)', hue: 210 }]);
+      assertEquals(body.data.find(model => model.id === 'custom-model')?.upstreams, [{ kind: 'custom', id: 'up_custom_models', modelId: 'custom-model', name: 'Custom Provider', hue: 210 }]);
+      assertEquals(body.data.find(model => model.id === 'azure-public')?.upstreams, [{ kind: 'azure', id: 'up_azure_models', modelId: 'azure-public', name: 'Azure Models', hue: 210 }]);
       for (const model of body.data) {
         // Legacy split fields must not reappear.
         assertEquals(Object.hasOwn(model, 'provider'), false);

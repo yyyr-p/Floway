@@ -126,6 +126,46 @@ test('enumerateModelCandidates strips an -YYYYMMDD suffix when nothing matched a
   );
 });
 
+test('model access matches the source catalog ID after prefix and dated-suffix normalization', async () => {
+  const { repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_prefixed_access',
+    modelPrefix: { prefix: 'tenant/', addressable: ['prefixed'], listed: ['prefixed'] },
+    config: { baseUrl: 'https://prefixed-access.example.com', authStyle: 'bearer', apiKey: 'sk-x', endpoints: { openaiChatCompletions: {} }, ingressHeadersRules: [] },
+  }));
+
+  await withMockedFetch(
+    request => {
+      const url = new URL(request.url);
+      if (url.hostname === 'prefixed-access.example.com' && url.pathname === '/v1/models') {
+        return jsonResponse({ object: 'list', data: [{ id: 'gpt-4o', supported_endpoints: ['/chat/completions'] }] });
+      }
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const request = {
+        upstreamIds: null,
+        model: 'tenant/gpt-4o-20300101',
+        kind: 'chat' as const,
+        scheduler: testScheduler,
+        runtimeLocation: 'TEST',
+      };
+      const allowed = await enumerateModelCandidates({
+        ...request,
+        upstreamModelAccess: [{ upstreamId: 'up_prefixed_access', mode: 'allow', modelIds: ['gpt-4o'] }],
+      });
+      expect(allowed.candidates.map(candidate => candidate.provider.upstreamId)).toEqual(['up_prefixed_access']);
+
+      const projectedIdOnly = await enumerateModelCandidates({
+        ...request,
+        upstreamModelAccess: [{ upstreamId: 'up_prefixed_access', mode: 'allow', modelIds: ['tenant/gpt-4o'] }],
+      });
+      expect(projectedIdOnly.candidates).toEqual([]);
+    },
+  );
+});
+
 test('enumerateModelCandidates does not retry when the inbound id has no dated suffix', async () => {
   const { repo } = await setupAppTest();
   await repo.upstreams.deleteAll();
@@ -557,6 +597,41 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
           resolved.candidates.map(c => `${c.model.id}@${c.provider.upstreamId}`),
           ['gpt-5@up_a', 'claude@up_b'],
         );
+      },
+    );
+  });
+
+  test('model access checks the alias target model on its upstream, not the alias name', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert({
+      id: 'alias_access',
+      name: 'friendly', kind: 'chat', selection: 'first-available',
+      targets: [{ target_model_id: 'gpt-5', rules: {} }],
+      ...aliasCommon,
+    });
+
+    await withMockedFetch(
+      buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }),
+      async () => {
+        const base = {
+          upstreamIds: null,
+          model: 'friendly',
+          kind: 'chat' as const,
+          scheduler: testScheduler,
+          runtimeLocation: 'TEST',
+        };
+        const aliasNameRule = await enumerateModelCandidates({
+          ...base,
+          upstreamModelAccess: [{ upstreamId: 'up_a', mode: 'deny', modelIds: ['friendly'] }],
+        });
+        assertEquals(aliasNameRule.candidates.map(candidate => candidate.model.id), ['gpt-5']);
+
+        const targetRule = await enumerateModelCandidates({
+          ...base,
+          upstreamModelAccess: [{ upstreamId: 'up_a', mode: 'deny', modelIds: ['gpt-5'] }],
+        });
+        assertEquals(targetRule.candidates, []);
       },
     );
   });

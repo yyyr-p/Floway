@@ -27,6 +27,7 @@ const KEY_A: ApiKey = {
   createdAt: '2026-01-01T00:00:00.000Z',
   lastUsedAt: '2026-01-02T00:00:00.000Z',
   upstreamIds: null,
+  upstreamModelAccess: [],
   deletedAt: null,
   dumpRetentionSeconds: null,
   openaiResponsesRetentionSeconds: 0,
@@ -40,6 +41,7 @@ const KEY_B: ApiKey = {
   serverSecret: '22'.repeat(32),
   createdAt: '2026-02-01T00:00:00.000Z',
   upstreamIds: null,
+  upstreamModelAccess: [],
   deletedAt: null,
   dumpRetentionSeconds: null,
   openaiResponsesRetentionSeconds: 0,
@@ -51,6 +53,7 @@ const SEED_ADMIN: User = {
   passwordHash: null,
   isAdmin: true,
   upstreamIds: null,
+  upstreamModelAccess: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   deletedAt: null,
 };
@@ -61,6 +64,7 @@ const USER_BOB: User = {
   passwordHash: 'pbkdf2-sha256$600000$c2FsdA==$aGFzaA==',
   isAdmin: false,
   upstreamIds: null,
+  upstreamModelAccess: [],
   createdAt: '2026-02-01T00:00:00.000Z',
   deletedAt: null,
 };
@@ -344,14 +348,24 @@ const latestImportData = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-test('export and import preserve empty upstream restrictions separately from unrestricted access', async () => {
+test('export and import preserve empty upstream and model restrictions separately from unrestricted access', async () => {
   const { app, repo } = setup();
-  const restrictedUser = { ...USER_BOB, upstreamIds: [] };
-  const restrictedKey = { ...KEY_B, userId: USER_BOB.id, upstreamIds: [] };
+  const restrictedUser = {
+    ...USER_BOB,
+    upstreamIds: [],
+    upstreamModelAccess: [{ upstreamId: CUSTOM_UPSTREAM.id, mode: 'allow' as const, modelIds: ['model-a'] }],
+  };
+  const restrictedKey = {
+    ...KEY_B,
+    userId: USER_BOB.id,
+    upstreamIds: [],
+    upstreamModelAccess: [{ upstreamId: CUSTOM_UPSTREAM.id, mode: 'deny' as const, modelIds: ['model-b'] }],
+  };
   await repo.users.save(SEED_ADMIN);
   await repo.users.save(restrictedUser);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save(restrictedKey);
+  await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
 
   const exported = await doExport(app);
   await repo.users.save(USER_BOB);
@@ -361,9 +375,25 @@ test('export and import preserve empty upstream restrictions separately from unr
   assertEquals(imported.status, 200);
   assertEquals((await repo.users.getById(SEED_ADMIN.id))?.upstreamIds, null);
   assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamIds, []);
+  assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamModelAccess, restrictedUser.upstreamModelAccess);
   assertEquals((await repo.apiKeys.getById(KEY_A.id))?.upstreamIds, null);
   assertEquals((await repo.apiKeys.getById(KEY_B.id))?.upstreamIds, []);
+  assertEquals((await repo.apiKeys.getById(KEY_B.id))?.upstreamModelAccess, restrictedKey.upstreamModelAccess);
   assertEquals((await doExport(app)).data, exported.data);
+});
+
+test('v20 imports default absent model restrictions to unrestricted', async () => {
+  const { app, repo } = setup();
+  const legacyUser = { ...USER_BOB };
+  const legacyKey = { ...KEY_A, userId: USER_BOB.id };
+  delete legacyUser.upstreamModelAccess;
+  delete legacyKey.upstreamModelAccess;
+
+  const result = await doImport(app, 'replace', latestImportData({ users: [SEED_ADMIN, legacyUser], apiKeys: [legacyKey] }), 20);
+
+  assertEquals(result.status, 200, String(result.body.error ?? ''));
+  assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamModelAccess, []);
+  assertEquals((await repo.apiKeys.getById(KEY_A.id))?.upstreamModelAccess, []);
 });
 
 test('import round-trips a usage record carrying a positive input-length coordinate', async () => {
@@ -384,13 +414,13 @@ test('import validates generic pricing selectors', async () => {
   assertEquals(String(fractional.body.error).includes('positive safe integer'), true);
 });
 
-test('export emits the v20 envelope with users and upstreams', async () => {
+test('export emits the v21 envelope with users and upstreams', async () => {
   const { app, repo } = setup();
   await repo.users.save(SEED_ADMIN);
 
   const result = await doExport(app);
 
-  assertEquals(result.version, 20);
+  assertEquals(result.version, 21);
   assertEquals(typeof result.exportedAt, 'string');
   assertEquals(result.data.users, [SEED_ADMIN]);
   assertEquals(result.data.apiKeys, []);
@@ -454,12 +484,12 @@ test('export includes performance only when requested', async () => {
   assertEquals(fullExport.data.performance, [PERFORMANCE_1, PERFORMANCE_2]);
 });
 
-test('import rejects any version other than the current one before deleting data', async () => {
+test('import accepts v20 and v21 and rejects older versions before deleting data', async () => {
   const { app, repo } = setup();
   await repo.apiKeys.save(KEY_A);
   await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
 
-  const VERSION_ERROR = 'version must be 20 — older export formats are not supported; re-export from the current deployment';
+  const VERSION_ERROR = 'version must be 20 or 21 — older export formats are not supported; re-export from the current deployment';
   const previousV19 = await doImport(app, 'replace', latestImportData(), 19);
   const previousV11 = await doImport(app, 'replace', latestImportData(), 11);
   const ancientVersion = await doImport(app, 'replace', { apiKeys: [] }, 1);
@@ -1341,7 +1371,7 @@ test('export includes proxies with full credential URIs and round-trips through 
   initRepo(fresh);
   const importApp = new Hono();
   importApp.post('/import', zValidator('json', importBody), importData);
-  const result = await doImport(importApp, 'replace', exported.data);
+  const result = await doImport(importApp, 'replace', exported.data, exported.version);
   assertEquals(result.status, 200);
   assertEquals(result.body.imported.proxies, 2);
 
@@ -1460,7 +1490,7 @@ test('import replace wipes proxy_upstream_backoffs alongside the proxies it cool
   assertEquals(await repo.proxyBackoffs.listAll(), []);
 });
 
-test('v20 export/import round-trips users and per-key user_id', async () => {
+test('v21 export/import round-trips users and per-key user_id', async () => {
   const { app, repo } = setup();
   await repo.users.save(SEED_ADMIN);
   await repo.users.save(USER_BOB);
@@ -1468,10 +1498,10 @@ test('v20 export/import round-trips users and per-key user_id', async () => {
   await repo.apiKeys.save({ ...KEY_B, userId: USER_BOB.id });
 
   const exportResult = await doExport(app);
-  assertEquals(exportResult.version, 20);
+  assertEquals(exportResult.version, 21);
   assertEquals(exportResult.data.users.map((u: any) => u.id).sort(), [SEED_ADMIN.id, USER_BOB.id]);
 
-  const result = await doImport(app, 'replace', exportResult.data, 20);
+  const result = await doImport(app, 'replace', exportResult.data, exportResult.version);
   assertEquals(result.status, 200);
   assertEquals(result.body.imported.users, 2);
   assertEquals(result.body.imported.apiKeys, 2);
@@ -1545,7 +1575,7 @@ test('import rejects a pre-accounts v3 export instead of coercing its legacy api
   }, 3);
 
   assertEquals(result.status, 400);
-  assertEquals(String(result.body.error).includes('version must be 20'), true);
+  assertEquals(String(result.body.error).includes('version must be 20 or 21'), true);
   // Rejected at the version gate, before touching any data.
   assertEquals(await repo.apiKeys.list(), [KEY_A]);
   assertEquals((await repo.users.list()).map(u => u.id), [SEED_ADMIN.id]);
@@ -1620,7 +1650,7 @@ test('v20 replace import refuses payload missing user 1', async () => {
   expect(result.body.error).toMatch(/user 1/);
 });
 
-test('a full v20 export re-imports verbatim — the export→import round trip is closed', async () => {
+test('a full v21 export re-imports verbatim — the export→import round trip is closed', async () => {
   const { app, repo } = setup();
   await repo.users.save(SEED_ADMIN);
   await repo.users.save(USER_BOB);
@@ -1646,12 +1676,12 @@ test('a full v20 export re-imports verbatim — the export→import round trip i
   await repo.webSearchConfig.save(config);
 
   const exported = await doExport(app, true);
-  assertEquals(exported.version, 20);
+  assertEquals(exported.version, 21);
 
   // Replace-import the export's own `data`, verbatim. If the export emits any
   // shape the import parser rejects, this 400s — the round trip is the
   // invariant, so this test fails the moment the two sides drift.
-  const result = await doImport(app, 'replace', exported.data, 20);
+  const result = await doImport(app, 'replace', exported.data, exported.version);
   assertEquals(result.status, 200);
   assertEquals(result.body.imported, { users: 2, apiKeys: 2, upstreams: 4, proxies: 0, usage: 2, searchUsage: 2, performance: 2 });
 
@@ -1687,7 +1717,7 @@ test('any data bearing a historical version is rejected on the version gate, bef
   for (let version = 1; version < 20; version++) {
     const result = await doImport(app, 'replace', wellFormed, version);
     assertEquals(result.status, 400);
-    assertEquals(String(result.body.error).includes('version must be 20'), true);
+    assertEquals(String(result.body.error).includes('version must be 20 or 21'), true);
   }
 
   // Nothing was touched — the version gate runs before any delete or write.

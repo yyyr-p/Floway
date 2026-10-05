@@ -6,6 +6,7 @@ import { listModelProviders, type GatewayProvider } from './registry.ts';
 import { createPerRequestFetcher } from '../../dial/per-request.ts';
 import { createModelsRefreshScheduler, type ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
 import { getRepo } from '../../repo/index.ts';
+import { isModelAllowedByUpstreamModelAccess, type UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import type { ModelAliasRecord } from '../../repo/types.ts';
 import type { BackgroundScheduler } from '@floway-dev/platform';
 import type { ModelKind } from '@floway-dev/protocols/common';
@@ -32,9 +33,10 @@ const enumerateOneUpstreamCandidates = (
   context: {
     fetcher: Fetcher;
     scheduleRefresh: ModelsRefreshScheduler;
+    modelAccess: readonly UpstreamModelAccessRule[];
   },
 ): { candidates: ModelCandidate[]; sawAnyId: boolean; modelsError: boolean } => {
-  const { fetcher, scheduleRefresh } = context;
+  const { fetcher, scheduleRefresh, modelAccess } = context;
   const cfg = provider.modelPrefix;
   const lookupIds: string[] = [];
   if (cfg === null) {
@@ -54,6 +56,7 @@ const enumerateOneUpstreamCandidates = (
   for (const lookupId of lookupIds) {
     const match = snapshot.models.find(m => m.id === lookupId && !disabled.has(m.id));
     if (!match) continue;
+    if (!isModelAllowedByUpstreamModelAccess(modelAccess, provider.upstreamId, match.id)) continue;
     sawAnyId = true;
     if (match.kind === kind) {
       candidates.push({ provider, model: internalModelFromProviderModel(match, provider.upstreamId), fetcher });
@@ -79,13 +82,14 @@ export const enumerateRealModelCandidates = (
   context: {
     fetcherForUpstream: (upstreamId: string) => Fetcher;
     scheduleRefresh: ModelsRefreshScheduler;
+    modelAccess?: readonly UpstreamModelAccessRule[];
   },
 ): {
   readonly candidates: readonly ModelCandidate[];
   readonly sawAnyId: boolean;
   readonly failedUpstreams: readonly string[];
 } => {
-  const { fetcherForUpstream, scheduleRefresh } = context;
+  const { fetcherForUpstream, scheduleRefresh, modelAccess = [] } = context;
   const failedUpstreams: string[] = [];
   const candidates: ModelCandidate[] = [];
   let sawAnyId = false;
@@ -93,6 +97,7 @@ export const enumerateRealModelCandidates = (
     const result = enumerateOneUpstreamCandidates(provider, modelId, kind, {
       fetcher: fetcherForUpstream(provider.upstreamId),
       scheduleRefresh,
+      modelAccess,
     });
     candidates.push(...result.candidates);
     sawAnyId = sawAnyId || result.sawAnyId;
@@ -186,10 +191,11 @@ const orderAliasTargets = (alias: ModelAliasRecord): readonly ModelAliasRecord['
 // whose first target matches its own name) resolves to the real model on
 // the first pass; alias names never re-enter the alias layer.
 export const enumerateModelCandidates = async ({
-  upstreamIds, model, kind, scheduler, runtimeLocation,
+  upstreamIds, upstreamModelAccess = [], model, kind, scheduler, runtimeLocation,
 }: {
   // null = unrestricted; empty list = no providers visible.
   upstreamIds: readonly string[] | null;
+  upstreamModelAccess?: readonly UpstreamModelAccessRule[];
   model: string;
   kind: ModelKind;
   scheduler: BackgroundScheduler;
@@ -207,6 +213,7 @@ export const enumerateModelCandidates = async ({
   const resolutionContext = {
     fetcherForUpstream: createFetcherForUpstream,
     scheduleRefresh: createModelsRefreshScheduler(runtimeLocation, scheduler),
+    modelAccess: upstreamModelAccess,
   };
 
   const alias = await getRepo().modelAliases.getByName(model);

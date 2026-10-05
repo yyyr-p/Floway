@@ -1,4 +1,5 @@
 import { getRepo } from '../../repo/index.ts';
+import type { UpstreamModelAccessRule } from '../../repo/model-access.ts';
 
 type UpstreamIdsValue = string[] | null;
 
@@ -30,6 +31,13 @@ export const unknownUpstreamIdsError = (ids: readonly string[] | null, known: Re
   return unknown.length ? `Unknown upstream(s): ${unknown.join(', ')}` : null;
 };
 
+export const unknownUpstreamModelAccessError = (
+  rules: readonly UpstreamModelAccessRule[],
+  known: ReadonlySet<string>,
+): string | null => rules.some(rule => !known.has(rule.upstreamId))
+  ? 'Model access refers to an unknown upstream.'
+  : null;
+
 // Deleting an upstream leaves its id behind in every user and api-key cap that
 // named it, and narrowing a user's cap leaves it behind in that user's keys —
 // nothing cascades either way, and the data plane treats both as inert: it
@@ -43,6 +51,11 @@ export const pruneUnreachableUpstreamIds = (
   ids: readonly string[] | null,
   reachable: ReadonlySet<string>,
 ): string[] | null => ids === null ? null : ids.filter(id => reachable.has(id));
+
+export const pruneUnreachableUpstreamModelAccess = (
+  rules: readonly UpstreamModelAccessRule[] | undefined,
+  reachable: ReadonlySet<string>,
+): UpstreamModelAccessRule[] => (rules ?? []).filter(rule => reachable.has(rule.upstreamId));
 
 // What a key of this user's can grant: the live catalog, capped by the user's
 // own grant when they have one. `loadKnownUpstreamIds` stays the set the write

@@ -5,6 +5,7 @@ import { ProviderBadge } from './provider-badge';
 import type { ControlPlaneModel, UpstreamOption } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
+import { MultiselectCombobox, type MultiselectOption } from '../ui/multiselect-combobox';
 import { moveItem, ReorderHandle, type ReorderList, useReorderList } from '../ui/reorder-list';
 import { ScrollArea } from '../ui/scroll-area';
 import { SettingsExpander, SettingsSwitch } from '../ui/settings-card';
@@ -12,6 +13,8 @@ import { TableColumns } from '../ui/table-columns';
 
 const {
   Checkbox,
+  Dropdown,
+  Field,
   MessageBar,
   MessageBarBody,
   Table,
@@ -20,7 +23,14 @@ const {
   TableHeader,
   TableHeaderCell,
   TableRow,
+  Option,
 } = fluentComponents;
+
+interface UpstreamModelAccessRule {
+  upstreamId: string;
+  mode: 'inherit' | 'allow' | 'deny';
+  modelIds: string[];
+}
 
 interface UpstreamAccessRow {
   id: string;
@@ -37,6 +47,7 @@ export function UpstreamAccessControl({
   available,
   disabled,
   ids,
+  modelAccess,
   models,
   onChange,
   override,
@@ -44,8 +55,9 @@ export function UpstreamAccessControl({
   available: UpstreamOption[];
   disabled: boolean;
   ids: string[];
+  modelAccess: UpstreamModelAccessRule[];
   models: ControlPlaneModel[];
-  onChange: (value: { override: boolean; ids: string[] }) => void;
+  onChange: (value: { override: boolean; ids: string[]; modelAccess: UpstreamModelAccessRule[] }) => void;
   override: boolean;
 }) {
   const { t } = useTranslation();
@@ -54,17 +66,22 @@ export function UpstreamAccessControl({
   const rows = useMemo(() => accessRows(available, ids, models), [available, ids, models]);
 
   const toggleOverride = useCallback((next: boolean) => {
-    onChange({ override: next, ids });
-  }, [ids, onChange]);
+    onChange({ override: next, ids, modelAccess });
+  }, [ids, modelAccess, onChange]);
 
   const toggleUpstream = useCallback((id: string, enabled: boolean) => {
     const nextIds = enabled ? [...new Set([...ids, id])] : ids.filter(candidate => candidate !== id);
-    onChange({ override: true, ids: nextIds });
-  }, [ids, onChange]);
+    onChange({ override: true, ids: nextIds, modelAccess });
+  }, [ids, modelAccess, onChange]);
 
   const moveUpstream = useCallback((from: number, to: number) => {
-    onChange({ override: true, ids: moveItem(ids, from, to) });
-  }, [ids, onChange]);
+    onChange({ override: true, ids: moveItem(ids, from, to), modelAccess });
+  }, [ids, modelAccess, onChange]);
+
+  const changeModelRule = useCallback((upstreamId: string, mode: UpstreamModelAccessRule['mode'], modelIds: string[]) => {
+    const rest = modelAccess.filter(rule => rule.upstreamId !== upstreamId);
+    onChange({ override, ids, modelAccess: mode === 'inherit' ? rest : [...rest, { upstreamId, mode, modelIds }] });
+  }, [ids, modelAccess, onChange, override]);
 
   // Only the selected rows carry an order, and the table puts them first, so
   // the orderable list is the head of it. An unselected row has no place in the
@@ -107,8 +124,65 @@ export function UpstreamAccessControl({
     {emptySelection && <MessageBar id={warningId} intent="warning">
       <MessageBarBody>{t('dashboard.upstreamAccess.emptyWarning')}</MessageBarBody>
     </MessageBar>}
+    <SettingsExpander
+      description={t('dashboard.upstreamAccess.modelRulesDescription')}
+      header={t('dashboard.upstreamAccess.modelRulesTitle')}
+      icon={<ShieldKeyhole24Regular />}
+      toggledOn={modelAccess.some(rule => rule.mode !== 'inherit')}
+    >
+      <div className="grid gap-3 min-w-0">
+        {available.map(upstream => {
+          const rule = modelAccess.find(candidate => candidate.upstreamId === upstream.id);
+          const mode = rule?.mode ?? 'inherit';
+          const selectedModels = rule?.modelIds ?? [];
+          const modelOptions = modelOptionsForUpstream(models, upstream.id);
+          return <div className="grid grid-cols-[minmax(160px,1fr)_minmax(150px,0.8fr)_minmax(220px,1.5fr)] items-start gap-3 border-b border-fui-stroke-divider py-2 max-[760px]:grid-cols-1" key={upstream.id}>
+            <ProviderBadge label={upstream.name} upstream={{ hue: upstream.hue, kind: upstream.kind }} />
+            <Field label={t('dashboard.upstreamAccess.modelModeLabel')}>
+              <Dropdown
+                disabled={disabled}
+                selectedOptions={[mode]}
+                value={t(`dashboard.upstreamAccess.modelMode.${mode}`)}
+                onOptionSelect={(_, data) => {
+                  if (data.optionValue === 'inherit' || data.optionValue === 'allow' || data.optionValue === 'deny') {
+                    changeModelRule(upstream.id, data.optionValue, selectedModels);
+                  }
+                }}
+              >
+                {(['inherit', 'allow', 'deny'] as const).map(value => <Option key={value} value={value}>{t(`dashboard.upstreamAccess.modelMode.${value}`)}</Option>)}
+              </Dropdown>
+            </Field>
+            {mode === 'inherit'
+              ? <span className="text-fui-fg2 text-sm">{t('dashboard.upstreamAccess.modelMode.inheritHint')}</span>
+              : <Field label={t('dashboard.upstreamAccess.modelIdsLabel')}>
+                  <MultiselectCombobox
+                    clearLabel={t('dashboard.upstreamAccess.modelIdsEmpty')}
+                    closedLabel={t('dashboard.upstreamAccess.modelIdsCount', { count: selectedModels.length })}
+                    disabled={disabled}
+                    freeform
+                    normalizeValue={value => value.trim()}
+                    onChange={value => changeModelRule(upstream.id, mode, value)}
+                    options={modelOptions}
+                    placeholder={t('dashboard.upstreamAccess.modelIdsPlaceholder')}
+                    value={selectedModels}
+                  />
+                </Field>}
+          </div>;
+        })}
+      </div>
+    </SettingsExpander>
   </section>;
 }
+
+const modelOptionsForUpstream = (models: ControlPlaneModel[], upstreamId: string): MultiselectOption[] => {
+  const ids = new Set<string>();
+  for (const model of models) {
+    for (const upstream of model.upstreams) {
+      if (upstream.id === upstreamId) ids.add(upstream.modelId);
+    }
+  }
+  return [...ids].sort((a, b) => a.localeCompare(b)).map(id => ({ value: id, label: id }));
+};
 
 // An index outside the cap is a row the cap does not order: it renders the same
 // grip, dead, beside its checkbox so the enabled column keeps one shape.

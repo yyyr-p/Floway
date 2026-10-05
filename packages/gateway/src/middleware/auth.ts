@@ -1,6 +1,7 @@
 import type { Context, Next } from 'hono';
 
 import { getRepo } from '../repo/index.ts';
+import type { UpstreamModelAccessRule } from '../repo/model-access.ts';
 import type { ApiKey, User } from '../repo/types.ts';
 import { getEnvOptional, timingSafeEqual } from '@floway-dev/platform';
 
@@ -138,3 +139,10 @@ export const effectiveUpstreamIdsFromContext = (c: AuthedContext): readonly stri
   const userSet = new Set(userIds);
   return keyIds.filter(id => userSet.has(id));
 };
+
+// User and key rules are conjunctive. A key may narrow its owner's model
+// access, but a key-level allow rule cannot undo a user-level denial.
+export const effectiveUpstreamModelAccessFromContext = (c: AuthedContext): readonly UpstreamModelAccessRule[] => [
+  ...(c.get('user')?.upstreamModelAccess ?? []),
+  ...(c.get('apiKey')?.upstreamModelAccess ?? []),
+];

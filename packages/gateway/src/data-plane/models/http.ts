@@ -7,7 +7,7 @@ import type { Context } from 'hono';
 
 import { loadModels } from './load.ts';
 import { createModelsRefreshScheduler } from '../../execution/models-refresh.ts';
-import { effectiveUpstreamIdsFromContext } from '../../middleware/auth.ts';
+import { effectiveUpstreamIdsFromContext, effectiveUpstreamModelAccessFromContext } from '../../middleware/auth.ts';
 import { getRepo } from '../../repo/index.ts';
 import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
 import { getRuntimeLocation } from '../../runtime/runtime-info.ts';
@@ -75,13 +75,14 @@ export const serveModels = async (c: Context): Promise<Response> => {
     const userAgent = c.req.header('user-agent');
     const runtimeLocation = getRuntimeLocation(c.req.raw);
     const upstreamIds = effectiveUpstreamIdsFromContext(c);
+    const upstreamModelAccess = effectiveUpstreamModelAccessFromContext(c);
     const scheduleRefresh = createModelsRefreshScheduler(runtimeLocation, backgroundSchedulerFromContext(c));
 
     if (isCodexUserAgent(userAgent)) {
-      return Response.json(await loadCodexCatalog(userAgent, upstreamIds, scheduleRefresh));
+      return Response.json(await loadCodexCatalog(userAgent, upstreamIds, scheduleRefresh, upstreamModelAccess));
     }
 
-    const publicCatalog = await loadModels(upstreamIds, scheduleRefresh, getRepo().modelAliases);
+    const publicCatalog = await loadModels(upstreamIds, scheduleRefresh, getRepo().modelAliases, upstreamModelAccess);
     // The Claude Code CLI's model discovery request identifies itself with
     // a `claude-code/<version>` User-Agent (built from the CLI's `n_()`
     // helper — verified in the v2.1.206 binary). The CLI's other request

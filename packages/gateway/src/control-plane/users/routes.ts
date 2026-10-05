@@ -9,7 +9,7 @@ import { generateApiKeyToken } from '../../shared/api-key-tokens.ts';
 import { hashPassword, verifyPassword } from '../../shared/passwords.ts';
 import { generateServerSecret } from '../../shared/server-secret.ts';
 import type { changeOwnPasswordBody, createUserBody, updateUserBody } from '../schemas.ts';
-import { loadKnownUpstreamIds, unknownUpstreamIdsError } from '../shared/upstream-ids.ts';
+import { loadKnownUpstreamIds, unknownUpstreamIdsError, unknownUpstreamModelAccessError } from '../shared/upstream-ids.ts';
 
 const parseUserId = (raw: string): number | null => {
   const n = Number(raw);
@@ -33,12 +33,15 @@ export const createUser = async (c: CtxWithJson<typeof createUserBody>) => {
     const upstreamErr = unknownUpstreamIdsError(body.upstreamIds, knownUpstreamIds);
     if (upstreamErr) return c.json({ error: upstreamErr }, 400);
   }
+  const modelAccessError = unknownUpstreamModelAccessError(body.upstreamModelAccess ?? [], knownUpstreamIds);
+  if (modelAccessError) return c.json({ error: modelAccessError }, 400);
 
   const user = await repo.users.createNewUser({
     username: body.username,
     passwordHash: await hashPassword(body.password),
     isAdmin: body.isAdmin ?? false,
     upstreamIds: body.upstreamIds ?? null,
+    upstreamModelAccess: body.upstreamModelAccess ?? [],
     createdAt: new Date().toISOString(),
     deletedAt: null,
   });
@@ -51,6 +54,7 @@ export const createUser = async (c: CtxWithJson<typeof createUserBody>) => {
     serverSecret: generateServerSecret(),
     createdAt: new Date().toISOString(),
     upstreamIds: null,
+    upstreamModelAccess: [],
     deletedAt: null,
     dumpRetentionSeconds: null,
     openaiResponsesRetentionSeconds: 0,
@@ -83,12 +87,17 @@ export const updateUser = async (c: CtxWithJson<typeof updateUserBody>) => {
     const err = unknownUpstreamIdsError(body.upstreamIds, knownUpstreamIds);
     if (err) return c.json({ error: err }, 400);
   }
+  if (body.upstreamModelAccess !== undefined) {
+    const err = unknownUpstreamModelAccessError(body.upstreamModelAccess, knownUpstreamIds);
+    if (err) return c.json({ error: err }, 400);
+  }
 
   const overrides: Partial<User> = {};
   if (body.username !== undefined) overrides.username = body.username;
   if (body.password !== undefined) overrides.passwordHash = await hashPassword(body.password);
   if (body.isAdmin !== undefined) overrides.isAdmin = body.isAdmin;
   if (body.upstreamIds !== undefined) overrides.upstreamIds = body.upstreamIds;
+  if (body.upstreamModelAccess !== undefined) overrides.upstreamModelAccess = body.upstreamModelAccess;
   const next: User = { ...existing, ...overrides };
   await repo.users.save(next);
 

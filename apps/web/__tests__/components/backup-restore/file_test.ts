@@ -26,7 +26,8 @@ describe('backup file validation', () => {
   });
 
   it('rejects a superseded envelope version outright', () => {
-    expect(parseBackupFile(backup({ version: BACKUP_FILE_VERSION - 1 })).ok).toBe(false);
+    expect(parseBackupFile(backup({ version: 19 })).ok).toBe(false);
+    expect(parseBackupFile(backup({ version: 20 })).ok).toBe(true);
   });
 
   it('rejects unknown fields instead of stripping them', () => {
