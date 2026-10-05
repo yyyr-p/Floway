@@ -1,4 +1,4 @@
-import { act, fireEvent, screen } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ControlPlaneUser } from '../../../src/api/types';
@@ -23,9 +23,10 @@ describe('user discard dialog focus', () => {
 
     await act(async () => { fireEvent.change(username, { target: { value: 'draft' } }); });
     await act(async () => { screen.getByRole('button', { name: i18n.t('common.cancel') }).click(); });
-    await act(async () => { screen.getByRole('button', { name: i18n.t('common.discard.keep') }).click(); });
+    const keepEditing = await screen.findByRole('button', { name: i18n.t('common.discard.keep') });
+    await act(async () => { keepEditing.click(); });
 
-    expect(document.activeElement).toBe(username);
+    await waitFor(() => expect(document.activeElement).toBe(username));
     await act(async () => { fireEvent.change(username, { target: { value: 'editable-again' } }); });
     expect((username as HTMLInputElement).value).toBe('editable-again');
     expect(username.closest('[role="dialog"]')?.getAttribute('aria-hidden')).not.toBe('true');
