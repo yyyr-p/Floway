@@ -69,6 +69,7 @@ const CUSTOM_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_custom_a',
   kind: 'custom',
   name: 'Custom A',
+  userVisible: false,
   enabled: true,
   sortOrder: 10,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -98,6 +99,7 @@ const COPILOT_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_copilot_a',
   kind: 'copilot',
   name: 'GitHub Copilot (alice)',
+  userVisible: false,
   enabled: true,
   sortOrder: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -126,6 +128,7 @@ const AZURE_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_azure_a',
   kind: 'azure',
   name: 'Azure A',
+  userVisible: false,
   enabled: true,
   sortOrder: 20,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -161,6 +164,7 @@ const OLLAMA_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_ollama_a',
   kind: 'ollama',
   name: 'Ollama A',
+  userVisible: false,
   enabled: true,
   sortOrder: 25,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -191,6 +195,7 @@ const CODEX_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_codex_a',
   kind: 'codex',
   name: 'ChatGPT Codex (alice)',
+  userVisible: false,
   enabled: true,
   sortOrder: 30,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -529,6 +534,24 @@ test('import replace writes upstreams and clears replaced collections', async ()
     jina: { apiKey: '' },
     passthroughOpenAiSearch: { enabled: false, upstreamId: '', model: '' },
   });
+});
+
+test('upstream visibility survives current backups and older backups default to private', async () => {
+  const { app, repo } = setup();
+  await repo.users.save(SEED_ADMIN);
+  await saveUpstreamForTest(repo.upstreams, { ...CUSTOM_UPSTREAM, userVisible: true });
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.upstreams[0].user_visible, true);
+  const currentImport = await doImport(app, 'replace', exported.data);
+  assertEquals(currentImport.status, 200);
+  assertEquals((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))?.userVisible, true);
+
+  const olderData = structuredClone(exported.data);
+  delete olderData.upstreams[0].user_visible;
+  const olderImport = await doImport(app, 'replace', olderData);
+  assertEquals(olderImport.status, 200);
+  assertEquals((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))?.userVisible, false);
 });
 
 test('replace import preserves API-key IDs and imported references', async () => {

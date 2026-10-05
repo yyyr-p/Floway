@@ -27,6 +27,9 @@ test('config-version migration preserves cached models and gives existing failur
   const migration = migrationSqlByFilename.find(([filename]) => filename === '0085_upstream_config_version.sql');
   if (!migration) throw new Error('config version migration missing');
   db.run(migration[1]);
+  const visibilityMigration = migrationSqlByFilename.find(([filename]) => filename === '0086_upstream_user_visibility.sql');
+  if (!visibilityMigration) throw new Error('upstream visibility migration missing');
+  db.run(visibilityMigration[1]);
 
   const record = await new SqlRepo(wrapSqlJsDatabase(db)).upstreams.getById('up_legacy_failure');
   expect(record?.configVersion).toBe(1);

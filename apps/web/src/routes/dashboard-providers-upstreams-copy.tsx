@@ -24,6 +24,7 @@ const copyableRecord = (source: UpstreamRecord, name: string, hue: number): {
   const base = {
     id: '',
     name,
+    user_visible: false,
     enabled: true,
     sort_order: 0,
     created_at: '',

@@ -748,7 +748,7 @@ class MemoryUpstreamRepo implements UpstreamRepo {
 
   insertForModels(upstream: UpstreamRecord): Promise<StoredUpstreamRecord | null> {
     if (this.store.has(upstream.id)) return Promise.resolve(null);
-    const stored = cloneUpstreamRecord({ ...upstream, configVersion: 1, modelsCache: null });
+    const stored = cloneUpstreamRecord({ ...upstream, userVisible: upstream.userVisible ?? false, configVersion: 1, modelsCache: null });
     this.store.set(upstream.id, stored);
     return Promise.resolve(cloneUpstreamRecord(stored));
   }
@@ -772,6 +772,7 @@ class MemoryUpstreamRepo implements UpstreamRepo {
     if (serializeStoredConfig(comparableExisting) !== serializeStoredConfig(comparablePrevious)) return Promise.resolve(null);
     const next = cloneUpstreamRecord({
       ...upstream,
+      userVisible: upstream.userVisible ?? false,
       createdAt: existing.createdAt,
       configVersion,
       state: replaceState ? upstream.state : existing.state,

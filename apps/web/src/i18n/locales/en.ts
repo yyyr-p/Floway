@@ -435,6 +435,7 @@ const en = {
           copyNamed: 'Copy upstream {{name}}',
           deleteNamed: 'Delete upstream {{name}}',
           toggle: 'Toggle upstream {{name}}',
+          toggleVisibilityNamed: 'Show upstream {{name}} to regular users',
           reorder: 'Reorder upstream {{name}}',
         },
         table: {
@@ -444,7 +445,14 @@ const en = {
           details: 'Details',
           models: 'Models',
           enabled: 'Enabled',
+          visibleToUsers: 'Visible to users',
           actions: 'Actions',
+        },
+        directory: {
+          tableLabel: 'Upstreams visible to this account',
+          provider: 'Provider',
+          empty: 'No upstreams are visible to this account.',
+          loadFailed: 'Could not load the upstream directory.',
         },
         // Whatever an upstream publishes about itself beyond its identity. Only
         // the providers whose upstream reports usage contribute any.
@@ -500,6 +508,7 @@ const en = {
           missing: 'That upstream no longer exists.',
           models: 'Model counts are unavailable: {{message}}',
           toggle: 'Could not update availability: {{message}}',
+          visibility: 'Could not update user visibility.',
           reorder: 'Could not update routing priority: {{message}} {{sync}}',
           delete: 'Could not delete upstream: {{message}}',
           syncFailed: 'The server order could not be refreshed.',
@@ -511,6 +520,7 @@ const en = {
         toast: {
           reload: { pending: 'Refreshing upstreams' },
           toggle: { pending: 'Updating availability' },
+          visibility: { pending: 'Updating user visibility' },
           reorder: { pending: 'Updating routing priority' },
           delete: { pending: 'Deleting upstream {{name}}', success: 'Deleted upstream {{name}}' },
         },

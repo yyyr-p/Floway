@@ -348,6 +348,7 @@ const upstreamHueSchema = z.number().int().min(0).max(UPSTREAM_HUE_DEGREES - 1);
 
 const upstreamBaseFields = {
   name: z.string().min(1),
+  user_visible: z.boolean().optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
   flag_overrides: flagOverridesSchema.optional(),
@@ -387,6 +388,7 @@ export const createUpstreamBody = z.discriminatedUnion('kind', [
 export const updateUpstreamBody = z.object({
   kind: z.enum(['custom', 'azure', 'copilot', 'codex', 'claude-code', 'ollama']).optional(),
   name: z.string().min(1).optional(),
+  user_visible: z.boolean().optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
   flag_overrides: flagOverridesSchema.optional(),

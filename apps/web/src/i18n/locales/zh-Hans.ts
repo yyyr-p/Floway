@@ -413,6 +413,7 @@ const zhHansCN = {
           copyNamed: '复制上游 {{name}}',
           deleteNamed: '删除上游 {{name}}',
           toggle: '切换上游 {{name}} 的启用状态',
+          toggleVisibilityNamed: '向普通用户显示上游 {{name}}',
           reorder: '拖动排序上游 {{name}}',
         },
         table: {
@@ -422,7 +423,14 @@ const zhHansCN = {
           details: '详情',
           models: '模型',
           enabled: '启用',
+          visibleToUsers: '普通用户可见',
           actions: '操作',
+        },
+        directory: {
+          tableLabel: '当前账号可见的上游',
+          provider: '提供商',
+          empty: '当前账号没有可见的上游。',
+          loadFailed: '无法加载上游列表。',
         },
         signals: {
           plan: '{{plan}}：',
@@ -474,6 +482,7 @@ const zhHansCN = {
           missing: '该上游已不存在。',
           models: '模型数量不可用：{{message}}',
           toggle: '无法更新可用状态：{{message}}',
+          visibility: '无法更新普通用户可见状态。',
           reorder: '无法更新路由优先级：{{message}} {{sync}}',
           delete: '无法删除上游：{{message}}',
           syncFailed: '无法重新读取服务端顺序。',
@@ -485,6 +494,7 @@ const zhHansCN = {
         toast: {
           reload: { pending: '正在刷新上游' },
           toggle: { pending: '正在更新可用状态' },
+          visibility: { pending: '正在更新普通用户可见状态' },
           reorder: { pending: '正在更新路由优先级' },
           delete: { pending: '正在删除上游 {{name}}', success: '已删除上游 {{name}}' },
         },

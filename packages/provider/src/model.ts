@@ -67,6 +67,10 @@ export interface UpstreamRecord {
   id: string;
   kind: UpstreamProviderKind;
   name: string;
+  // Controls discovery in the non-admin upstream directory and picker only;
+  // model publication and request routing remain governed by `enabled` and
+  // the caller's upstream access policy.
+  userVisible?: boolean;
   enabled: boolean;
   sortOrder: number;
   createdAt: string;

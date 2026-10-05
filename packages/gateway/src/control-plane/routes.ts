@@ -19,7 +19,7 @@ import { codexImportExchange, codexImportPreview, codexOAuthAuthorizeUrl, codexO
 import { copilotOAuthDeviceLoginPoll, copilotOAuthDeviceLoginStart, copilotQuota } from './upstreams/copilot.ts';
 import { fetchSavedModels, previewModels } from './upstreams/models.ts';
 import { ollamaUsage } from './upstreams/ollama.ts';
-import { createUpstream, deleteUpstream, getUpstream, getUpstreamBlueprint, listUpstreamOptions, listUpstreams, updateUpstream } from './upstreams/routes.ts';
+import { createUpstream, deleteUpstream, getUpstream, getUpstreamBlueprint, listUpstreamOptions, listUpstreams, listVisibleUpstreams, updateUpstream } from './upstreams/routes.ts';
 import { changeOwnPassword, createUser, deleteUser, listUsers, updateUser } from './users/routes.ts';
 import { type AuthedContext, type AuthVars, userFromContext } from '../middleware/auth.ts';
 import { zValidator } from '../middleware/zod-validator.ts';
@@ -62,6 +62,10 @@ export const controlPlaneRoutes = new Hono<{ Variables: AuthVars }>()
   // `upstream_ids ⊆ user.upstreamIds` check) is the real authorization gate;
   // this endpoint just feeds the picker UI.
   .get('/api/upstream-options', listUpstreamOptions)
+  // Read-only upstream identities visible to ordinary accounts. This DTO is
+  // explicitly allow-listed so provider config and subscription state cannot
+  // cross the control-plane boundary.
+  .get('/api/upstream-directory', listVisibleUpstreams)
   .route('/api/dump', dumpRoutes)
   // Per-user Agent Setup lease control routes (POST / PUT / heartbeat). Not
   // admin-gated. The public GET/HEAD setup-script routes are mounted separately
