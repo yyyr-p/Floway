@@ -2,10 +2,10 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 
 import { parseOAuth2Provider, parseOAuth2PublicBaseUrl } from './oauth2-config.ts';
+import type { createOAuth2ProviderBody, oauth2SettingsBody, updateOAuth2ProviderBody } from './oauth2-schemas.ts';
 import type { CtxWithJson } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { OAuth2Provider } from '../../repo/types.ts';
-import type { createOAuth2ProviderBody, oauth2SettingsBody, updateOAuth2ProviderBody } from './oauth2-schemas.ts';
 import { loadKnownUpstreamIds, unknownUpstreamIdsError } from '../shared/upstream-ids.ts';
 
 const providerToAdminWire = (provider: OAuth2Provider) => ({
