@@ -140,6 +140,32 @@ Signed-in users manage their own OAuth2 bindings under **Settings → OAuth2
 Accounts**. An account with no password must keep at least one OAuth2 binding;
 it can bind another enabled provider first and then remove the old binding.
 Administrators can inspect and unlink the same identities while editing a user.
+
+### Concurrent Request Backpressure
+
+Soft concurrency control is disabled unless `FLOWAY_SOFT_CONCURRENT_REQUESTS`
+is set to a positive integer (unset, blank, and `0` disable it). Requests above that active-request threshold wait
+in a FIFO queue before entering a data-plane handler. The active slot remains
+occupied until the response body finishes or is cancelled. Defaults are 100
+queued requests and a 30-second wait when their variables are unset or blank; configure these with
+`FLOWAY_CONCURRENCY_QUEUE_MAX_SIZE` (0 through 10,000) and
+`FLOWAY_CONCURRENCY_QUEUE_MAX_WAIT_MS` (1 through 2,147,483,647). A full queue
+or expired wait returns a protocol-shaped `429` with `Retry-After: 1`.
+
+Queued responses expose `X-Floway-Queue-Status`, `X-Floway-Queue-Position`, and
+`X-Floway-Queue-Wait-Ms`; rejected responses also report
+`X-Floway-Queue-Depth`. The queue is FIFO within one gateway app instance.
+With the hard `FLOWAY_MAX_CONCURRENT_REQUESTS` gate enabled, it must run before
+the soft queue: hard-cap excess is rejected immediately, and requests waiting
+in the soft queue count against the hard in-flight cap. Usage admission happens
+inside the data-plane handler, after queue admission, so waiting requests do
+not reserve usage budget.
+
+This is an in-memory queue, not a deployment-wide coordinator. Each Node
+process and each Cloudflare Worker isolate has an independent threshold and
+queue; multiple processes or isolates can therefore exceed the configured
+value in aggregate. Client aborts remove queued waiters, and aborts after
+admission cancel the response body and release the active slot.
 **Upgrade notice:** Floway used to listen on both `0.0.0.0:8788` and
 `0.0.0.0:18088`. As a result of container image merging, Floway only listen on
 one single port now.
