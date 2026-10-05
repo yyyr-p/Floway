@@ -31,6 +31,7 @@ import { TruncationTooltip } from '../components/ui/truncation-tooltip';
 import { useDialogInvocation } from '../components/ui/use-dialog-invocation';
 import { usePollWhileVisible } from '../components/ui/use-poll-while-visible';
 import { useRefresh } from '../components/ui/use-refresh';
+import { hasSubscriptionDetails, upstreamDetailsPath, upstreamEditorPath } from '../components/upstream-details/data';
 import { shortAccountId } from '../components/upstreams/account-id';
 import { planLabel } from '../components/upstreams/codex-account';
 import { MODEL_ERROR_TOOLTIP_LENGTH, modelErrorExcerpt } from '../components/upstreams/model-error';
@@ -97,9 +98,6 @@ const menuRank = (kind: UpstreamProviderKind) => {
 
 const providers = ALL_PROVIDER_KINDS.toSorted((a, b) => menuRank(a) - menuRank(b));
 
-// Both affordances that open a record — the row's name and its edit button —
-// address it from here, so the two cannot come apart.
-const upstreamEditorPath = (record: UpstreamRecord) => `/dashboard/providers/upstreams/${encodeURIComponent(record.id)}`;
 const upstreamCopyPath = (record: UpstreamRecord) => `/dashboard/providers/upstreams/${encodeURIComponent(record.id)}/copy`;
 
 const loadPageData = async (signal?: AbortSignal): Promise<LoaderData> => {
@@ -508,7 +506,8 @@ function UpstreamsTable({
               <TableCell className="overflow-hidden">
                 <ProviderBadge
                   label={record.name}
-                  to={upstreamEditorPath(record)}
+                  title={hasSubscriptionDetails(record) ? t('dashboard.upstreams.actions.detailsNamed', { name: record.name }) : undefined}
+                  to={hasSubscriptionDetails(record) ? upstreamDetailsPath(record) : upstreamEditorPath(record)}
                   upstream={record}
                 />
               </TableCell>

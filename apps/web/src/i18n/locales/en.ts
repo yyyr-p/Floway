@@ -431,6 +431,7 @@ const en = {
           create: 'New upstream',
           refresh: 'Refresh upstreams',
           delete: 'Delete upstream',
+          detailsNamed: 'Open subscription details for {{name}}',
           editNamed: 'Edit upstream {{name}}',
           copyNamed: 'Copy upstream {{name}}',
           deleteNamed: 'Delete upstream {{name}}',
@@ -513,6 +514,43 @@ const en = {
           toggle: { pending: 'Updating availability' },
           reorder: { pending: 'Updating routing priority' },
           delete: { pending: 'Deleting upstream {{name}}', success: 'Deleted upstream {{name}}' },
+        },
+      },
+      upstreamDetails: {
+        actions: {
+          back: 'Back to upstreams',
+          edit: 'Edit upstream',
+          reload: 'Reload saved status',
+        },
+        sections: {
+          connection: 'Connection and authentication',
+          usage: 'Usage and limits',
+        },
+        fields: {
+          authentication: 'Authentication',
+          tokenExpires: 'Session token expires',
+          endpoint: 'Endpoint',
+        },
+        status: {
+          enabled: 'Enabled',
+          disabled: 'Disabled',
+          configured: 'Credential configured',
+          missing: 'Credential missing',
+        },
+        credentials: {
+          active: 'Active',
+          session_terminated: 'Session terminated',
+          refresh_failed: 'Refresh failed',
+        },
+        values: {
+          unknownAccount: 'Account identity unavailable',
+          accountPending: 'Account identity not loaded',
+          expiresAt: 'Expires {{time}}',
+        },
+        errors: {
+          refreshCredential: 'Could not refresh the credential.',
+          refreshUsage: 'Could not refresh usage.',
+          reload: 'Could not reload saved status.',
         },
       },
       upstreamEditor: {
