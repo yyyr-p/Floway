@@ -99,6 +99,7 @@ export function UpstreamAccessControl({
   models,
   onChange,
   override,
+  showModelRules = true,
   title,
 }: {
   available: UpstreamOption[];
@@ -111,6 +112,7 @@ export function UpstreamAccessControl({
   onChange: (value: { override: boolean; ids: string[]; modelAccess: UpstreamModelAccessRule[] }) => void;
   override: boolean;
   title?: string;
+  showModelRules?: boolean;
 }) {
   const { t } = useTranslation();
   const dangerText = useDangerTextClass();
@@ -183,7 +185,7 @@ export function UpstreamAccessControl({
     {emptySelection && <MessageBar id={warningId} intent="warning">
       <MessageBarBody>{t('dashboard.upstreamAccess.emptyWarning')}</MessageBarBody>
     </MessageBar>}
-    <SettingsExpander
+    {showModelRules && <SettingsExpander
       description={t('dashboard.upstreamAccess.modelRulesDescription')}
       header={t('dashboard.upstreamAccess.modelRulesTitle')}
       icon={<ShieldKeyhole24Regular />}
@@ -229,7 +231,7 @@ export function UpstreamAccessControl({
           </div>;
         })}
       </div>
-    </SettingsExpander>
+    </SettingsExpander>}
   </section>;
 }
 

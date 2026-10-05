@@ -9,7 +9,7 @@ import type { ModelAlias } from '@floway-dev/protocols/common';
 
 const source: ModelAlias = {
   id: 'source', name: 'source', kind: 'chat', selection: 'first-available',
-  display_name: null, visible_in_models_list: true,
+  enabled: true, display_name: null, visible_in_models_list: true,
   targets: [{ target_model_id: 'gpt-4o', rules: {} }],
   announced_metadata: null, sort_order: 0,
   created_at: '2026-01-01T00:00:00.000Z', updated_at: '2026-01-01T00:00:00.000Z',
