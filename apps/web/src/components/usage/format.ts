@@ -1,14 +1,14 @@
 import { metricConfig, summaryFieldForMetric } from './metrics';
 import type { TokenSummary, UsageMetric } from './types';
 import { decimalStringToPlottableNumber, formatDecimalQuantity, formatUsd, usdFractionDigits } from '../../lib/decimal-display';
-import { formatCompactCount, formatCount } from '../../lib/format-number';
+import { formatCompactTokenCount, formatCount } from '../../lib/format-number';
 import { NO_READING } from '../../lib/no-reading';
 import type { DecimalString } from '@floway-dev/protocols/common';
 
 // A compact spelling is three significant figures by construction, so unlike
 // the exact labels it has no precision to keep.
 export const formatCompactDecimalCount = (value: DecimalString, locale: string): string =>
-  formatCompactCount(decimalStringToPlottableNumber(value), locale);
+  formatCompactTokenCount(decimalStringToPlottableNumber(value), locale);
 
 export const formatRatePercent = (rate: number | null): string =>
   rate === null ? NO_READING : `${rate.toFixed(1)}%`;
@@ -35,7 +35,7 @@ export const formatMetricValue = (value: number, metric: UsageMetric, locale: st
   if (kind === 'percent') return `${value.toFixed(0)}%`;
   if (kind === 'cost') return formatPlottedCost(value);
   if (kind === 'count') return formatCount(value, locale);
-  return formatCompactCount(value, locale);
+  return formatCompactTokenCount(value, locale);
 };
 
 const formatPlottedCost = (value: number): string => {
