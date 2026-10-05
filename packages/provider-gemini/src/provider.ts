@@ -15,9 +15,9 @@ import { GEMINI_DEFAULT_FLAGS } from './defaults.ts';
 import { fetchGeminiCatalog, type GeminiRawModel } from './fetch-models.ts';
 import { geminiCountTokensPath, geminiStreamGenerateContentPath, geminiFetchInternal } from './fetch.ts';
 import { pricingForGeminiModelKey } from './pricing.ts';
-import { parseGeminiGenerateContentStream } from '@floway-dev/protocols/gemini-generate-content';
 import { type ModelEndpoints } from '@floway-dev/protocols/common';
-import { jsonRequestBody, publicModelId, resolveEffectiveFlags, streamingProviderCall, type FetchInit, type Fetcher, type FlagId, type HttpHeaderLines, type Provider, type ProviderInstance, type ProviderModel, type UpstreamCallOptions, type UpstreamFetchOptions, type UpstreamRecord } from '@floway-dev/provider';
+import { parseGeminiGenerateContentStream } from '@floway-dev/protocols/gemini-generate-content';
+import { jsonRequestBody, publicModelId, resolveEffectiveFlags, streamingProviderCall, type Fetcher, type FlagId, type HttpHeaderLines, type Provider, type ProviderInstance, type ProviderModel, type UpstreamCallOptions, type UpstreamRecord } from '@floway-dev/provider';
 
 const GEMINI_ENDPOINTS: ModelEndpoints = { geminiGenerateContent: {} };
 
@@ -42,7 +42,6 @@ const finalizeGeminiModels = (
     ...(pricing ? { pricing } : {}),
   } satisfies ProviderModel;
 });
-
 
 const geminiCall = (
   config: GeminiUpstreamConfig,

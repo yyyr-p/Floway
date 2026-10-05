@@ -10,8 +10,6 @@
 import type { GeminiUpstreamConfig } from './config.ts';
 import { type FetchInit, type UpstreamFetchOptions, joinBaseAndPath } from '@floway-dev/provider';
 
-type GeminiFetchOptions = Pick<UpstreamFetchOptions, 'fetcher' | 'wrapUpstreamCall'>;
-
 export const geminiFetchInternal = async (
   config: GeminiUpstreamConfig,
   path: string,
