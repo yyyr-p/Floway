@@ -23,6 +23,7 @@ const loaderData = {
     created_at: '2026-01-01T00:00:00.000Z',
     last_used_at: null,
     upstream_ids: null,
+    upstream_model_access: [],
     dump_retention_seconds: null,
     responses_retention_seconds: 0,
   }],
