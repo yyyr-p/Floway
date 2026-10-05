@@ -388,6 +388,7 @@ const latestImportData = (overrides: Record<string, unknown> = {}) => ({
   apiKeys: [],
   upstreams: [],
   usage: [],
+  usageLimits: [],
   searchUsage: [],
   performanceIncluded: false,
   searchConfig: DEFAULT_WEB_SEARCH_CONFIG,
@@ -477,6 +478,7 @@ test('export emits the v26 envelope with users, OAuth2 configuration, and upstre
   assertEquals(result.data.upstreams, []);
   assertEquals(result.data.proxies, []);
   assertEquals(result.data.usage, []);
+  assertEquals(result.data.usageLimits, []);
   assertEquals(result.data.searchUsage, []);
   assertEquals(result.data.performanceIncluded, false);
   assertEquals(hasOwn(result.data, 'performance'), false);
@@ -534,7 +536,7 @@ test('export includes performance only when requested', async () => {
   assertEquals(fullExport.data.performance, [PERFORMANCE_1, PERFORMANCE_2]);
 });
 
-test('import accepts v20 and v21 and rejects older versions before deleting data', async () => {
+test('import rejects older versions before deleting data', async () => {
   const { app, repo } = setup();
   await repo.apiKeys.save(KEY_A);
   await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
@@ -598,7 +600,7 @@ test('import replace writes upstreams and clears replaced collections', async ()
   });
 
   assertEquals(result.status, 200);
-  assertEquals(result.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 1, upstreams: 1, proxies: 0, usage: 1, searchUsage: 1, performance: 0 });
+  assertEquals(result.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 1, upstreams: 1, proxies: 0, usage: 1, usageLimits: 0, searchUsage: 1, performance: 0 });
   const restoredKey = await repo.apiKeys.findByRawKey(KEY_B.key);
   if (restoredKey === null) throw new Error('restored key missing');
   assertEquals(restoredKey, KEY_B);
@@ -1466,7 +1468,7 @@ test('import validates mode and data before mutating', async () => {
   assertEquals(missingUpstreams.status, 400);
   assertEquals(missingUpstreams.body.error, 'invalid apiKeys: apiKeys must be an array');
   assertEquals(emptyMerge.status, 200);
-  assertEquals(emptyMerge.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 0, upstreams: 0, proxies: 0, usage: 0, searchUsage: 0, performance: 0 });
+  assertEquals(emptyMerge.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 0, upstreams: 0, proxies: 0, usage: 0, usageLimits: 0, searchUsage: 0, performance: 0 });
 });
 
 const HTTP_PROXY_URL = 'http://198.51.100.20:3128';
@@ -1615,15 +1617,19 @@ test('v26 export/import round-trips users and per-key user_id', async () => {
   await repo.users.save(USER_BOB);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save({ ...KEY_B, userId: USER_BOB.id });
+  await repo.usageLimits.save({ principalType: 'user', principalId: USER_BOB.id, window: 'day', maxTokens: 1_000, maxCostUsd: '0.25' });
 
   const exportResult = await doExport(app);
   assertEquals(exportResult.version, 26);
   assertEquals(exportResult.data.users.map((u: any) => u.id).sort(), [SEED_ADMIN.id, USER_BOB.id]);
+  assertEquals(exportResult.data.usageLimits, [{ principalType: 'user', principalId: USER_BOB.id, window: 'day', maxTokens: 1_000, maxCostUsd: '0.25' }]);
 
   const result = await doImport(app, 'replace', exportResult.data, 26);
   assertEquals(result.status, 200);
   assertEquals(result.body.imported.users, 2);
   assertEquals(result.body.imported.apiKeys, 2);
+  assertEquals(result.body.imported.usageLimits, 1);
+  assertEquals(await repo.usageLimits.list(), [{ principalType: 'user', principalId: USER_BOB.id, window: 'day', maxTokens: 1_000, maxCostUsd: '0.25' }]);
 
   const restoredUsers = await repo.users.listIncludingDeleted();
   assertEquals(restoredUsers.find(u => u.id === USER_BOB.id)?.passwordHash, USER_BOB.passwordHash);
@@ -1828,6 +1834,7 @@ test('a full v26 export re-imports verbatim — the export→import round trip i
   await repo.oauth2Config.saveProvider(OAUTH2_PROVIDER);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save({ ...KEY_B, userId: USER_BOB.id });
+  await repo.usageLimits.save({ principalType: 'key', principalId: KEY_A.id, window: 'month', maxTokens: 50_000, maxCostUsd: null });
   await saveUpstreamForTest(repo.upstreams, COPILOT_UPSTREAM);
   await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
   await saveUpstreamForTest(repo.upstreams, AZURE_UPSTREAM);
@@ -1855,7 +1862,8 @@ test('a full v26 export re-imports verbatim — the export→import round trip i
   // invariant, so this test fails the moment the two sides drift.
   const result = await doImport(app, 'replace', exported.data, 26);
   assertEquals(result.status, 200);
-  assertEquals(result.body.imported, { users: 2, oauth2Accounts: 1, oauth2Providers: 1, apiKeys: 2, upstreams: 4, proxies: 0, usage: 2, searchUsage: 2, performance: 2 });
+  assertEquals(result.body.imported, { users: 2, oauth2Accounts: 1, oauth2Providers: 1, apiKeys: 2, upstreams: 4, proxies: 0, usage: 2, usageLimits: 1, searchUsage: 2, performance: 2 });
+  assertEquals(await repo.usageLimits.list(), [{ principalType: 'key', principalId: KEY_A.id, window: 'month', maxTokens: 50_000, maxCostUsd: null }]);
 
   // Spot-check fidelity across collection types (order-independent).
   assertEquals((await repo.upstreams.list()).find(u => u.id === 'up_codex_a')?.state, CODEX_UPSTREAM.state);

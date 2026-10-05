@@ -5,6 +5,8 @@ import type { OpenAIResponsesAttemptResult } from './interceptors/types.ts';
 import { syntheticEventsFromCompaction } from './items/output.ts';
 import { prepareOpenAIResponsesServePlan } from './serve-prep.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
+import { reserveUsageLimit } from '../../shared/usage-limit-admission.ts';
+import { openAiUsageLimitErrorResult } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import { collectOpenAIResponsesProtocolEventsToResult, type CanonicalOpenAIResponsesPayload, type ClientOpenAIResponsesCompaction, type OpenAIResponsesStreamEvent } from '@floway-dev/protocols/openai-responses';
@@ -21,6 +23,8 @@ export const openaiResponsesServe = {
     const { payload, ctx, headers } = args;
     const plan = await prepareOpenAIResponsesServePlan({ payload, ctx });
     if (plan.kind === 'failure') return plan.result;
+    const admission = await reserveUsageLimit(ctx, plan.candidates);
+    if (!admission.ok) return openAiUsageLimitErrorResult(admission);
     // Iterate the affinity-selected candidates: success (SSE stream opened) is the
     // final answer; per-candidate failures fall through so a transient
     // 5xx/429/network does not become the request's verdict when another
@@ -61,6 +65,8 @@ export const openaiResponsesServe = {
     // re-tags the result as compact on the way out.
     const plan = await prepareOpenAIResponsesServePlan({ payload, ctx });
     if (plan.kind === 'failure') return plan.result;
+    const admission = await reserveUsageLimit(ctx, plan.candidates);
+    if (!admission.ok) return openAiUsageLimitErrorResult(admission);
     const result = await iterateCandidates(
       plan.candidates,
       'openaiResponsesServe.compact',

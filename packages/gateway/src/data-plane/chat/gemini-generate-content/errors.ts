@@ -1,4 +1,5 @@
 import { appendFailedUpstreams } from '../../shared/failed-upstreams.ts';
+import { usageLimitDenialMessage, type UsageLimitAdmission } from '../../shared/usage-limit-admission.ts';
 import type { ChatServeFailure } from '../shared/errors.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { GeminiGenerateContentStreamEvent } from '@floway-dev/protocols/gemini-generate-content';
@@ -39,6 +40,12 @@ const geminiGenerateContentRpcErrorResult = (status: number, message: string, pe
   })),
   ...(performance ? { performance } : {}),
 });
+
+export const geminiUsageLimitErrorResult = (admission: Exclude<UsageLimitAdmission, { readonly ok: true }>): ExecuteResult<ProtocolFrame<GeminiGenerateContentStreamEvent>> =>
+  geminiGenerateContentRpcErrorResult(
+    admission.reason === 'storage' ? 503 : 429,
+    admission.reason === 'storage' ? usageLimitDenialMessage(admission.reason, admission.error) : usageLimitDenialMessage(admission.reason),
+  );
 
 // Translator surfaced a caller-input violation (unsupported content part,
 // disallowed role, missing required field, etc.). Render as a 400

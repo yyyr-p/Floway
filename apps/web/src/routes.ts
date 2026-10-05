@@ -57,6 +57,7 @@ export default [
     route('monitor/performance', 'routes/dashboard-monitor-performance.tsx'),
     route('admin/users', 'routes/dashboard-admin-users.tsx'),
     route('admin/oauth2', 'routes/dashboard-admin-oauth2.tsx'),
+    route('admin/usage-limits', 'routes/dashboard-admin-usage-limits.tsx'),
     route('admin/backup-restore', 'routes/dashboard-admin-backup-restore.tsx'),
     route('settings', 'routes/dashboard-settings.tsx'),
     ...dashboardLegacyRoutes,

@@ -1,8 +1,39 @@
 import { recordPerformance, type PerformanceTelemetryContext } from './performance.ts';
 import { recordTokenUsage, recordUsage, type UsageMeasurement } from './usage.ts';
+import { getRepo } from '../../../repo/index.ts';
 import type { TokenUsage } from '../../../repo/types.ts';
 import type { GatewayCtx } from '../gateway-ctx.ts';
 import type { TelemetryModelIdentity } from '@floway-dev/provider';
+
+export const persistUsageAndReleaseReservation = async (
+  ctx: GatewayCtx,
+  persistUsage: () => Promise<void>,
+): Promise<void> => {
+  const reservationId = ctx.usageLimitReservationId;
+  if (reservationId !== null && ctx.usageLimitSettlementScheduled) return;
+  if (reservationId !== null) ctx.usageLimitSettlementScheduled = true;
+  await persistUsage();
+  if (reservationId === null) return;
+  await getRepo().usageLimits.release(reservationId);
+  if (ctx.usageLimitReservationId === reservationId) ctx.usageLimitReservationId = null;
+};
+
+export const settleUnpricedReservation = (ctx: GatewayCtx, identity: TelemetryModelIdentity | undefined): void => {
+  const reservationId = ctx.usageLimitReservationId;
+  if (reservationId === null || ctx.usageLimitSettlementScheduled) return;
+  if (identity === undefined) {
+    ctx.usageLimitSettlementScheduled = true;
+    ctx.backgroundScheduler(getRepo().usageLimits.release(reservationId).then(() => {
+      if (ctx.usageLimitReservationId === reservationId) ctx.usageLimitReservationId = null;
+    }).catch(error => {
+      console.error('Failed to release an unattributed usage-limit reservation:', error);
+    }));
+    return;
+  }
+  ctx.backgroundScheduler(persistUsageAndReleaseReservation(ctx, () => recordTokenUsage(ctx.apiKeyId, identity, null)).catch(error => {
+    console.error('Failed to record unpriced usage after a limited request:', error);
+  }));
+};
 
 // Terminal settle for a successful upstream call (or a partial-output
 // failure where tokens were metered): schedule the usage row and record
@@ -29,7 +60,8 @@ export const settle = (
   failed: boolean,
   requestFinishedAt: number = performance.now(),
 ): void => {
-  ctx.backgroundScheduler(recordTokenUsage(ctx.apiKeyId, identity, usage).catch(error => {
+  const persist = persistUsageAndReleaseReservation(ctx, () => recordTokenUsage(ctx.apiKeyId, identity, usage));
+  ctx.backgroundScheduler(persist.catch(error => {
     console.error('Failed to record usage:', error);
   }));
   recordPerformance(ctx, telemetry, failed, usage?.output ?? 0, requestFinishedAt);
@@ -44,12 +76,12 @@ export const settleUsageMeasurement = (
   requestFinishedAt: number = performance.now(),
 ): void => {
   const outputTokens = Number(measurement.quantities.output_tokens ?? '0');
-  ctx.backgroundScheduler(recordUsage(
+  ctx.backgroundScheduler(persistUsageAndReleaseReservation(ctx, () => recordUsage(
     ctx.apiKeyId,
     identity,
     measurement.quantities,
     measurement.pricingFacts,
-  ).catch(error => {
+  )).catch(error => {
     console.error('Failed to record usage:', error);
   }));
   recordPerformance(ctx, telemetry, failed, outputTokens, requestFinishedAt);

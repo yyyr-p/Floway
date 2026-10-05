@@ -1,4 +1,5 @@
 import { appendFailedUpstreams } from '../../shared/failed-upstreams.ts';
+import { usageLimitDenialMessage, type UsageLimitAdmission } from '../../shared/usage-limit-admission.ts';
 import type { ChatServeFailure } from '../shared/errors.ts';
 import { generateAnthropicId, type AnthropicMessagesStreamEvent } from '@floway-dev/protocols/anthropic-messages';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
@@ -28,6 +29,13 @@ const anthropicErrorResult = (
   })),
   ...(performance ? { performance } : {}),
 });
+
+export const anthropicUsageLimitErrorResult = (admission: Exclude<UsageLimitAdmission, { readonly ok: true }>): ExecuteResult<ProtocolFrame<AnthropicMessagesStreamEvent>> =>
+  anthropicErrorResult(
+    admission.reason === 'storage' ? 503 : 429,
+    admission.reason === 'storage' ? 'overloaded_error' : 'rate_limit_error',
+    admission.reason === 'storage' ? usageLimitDenialMessage(admission.reason, admission.error) : usageLimitDenialMessage(admission.reason),
+  );
 
 // Translator surfaced a caller-input violation (unsupported content part,
 // disallowed role, missing required field, etc.). Render as a 400

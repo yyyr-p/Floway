@@ -1,8 +1,9 @@
 import { analyzeGeminiGenerateContentAffinity } from './affinity/ingress.ts';
 import { geminiGenerateContentAttempt, geminiGenerateContentCountTokensTarget, geminiGenerateContentGenerateTarget } from './attempt.ts';
-import { renderGeminiGenerateContentFailure } from './errors.ts';
+import { geminiUsageLimitErrorResult, renderGeminiGenerateContentFailure } from './errors.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
+import { reserveUsageLimit } from '../../shared/usage-limit-admission.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
@@ -43,6 +44,9 @@ export const geminiGenerateContentServe = {
     const selection = selectAffinityCandidates(viable, affinity);
     if ('kind' in selection) return renderGeminiGenerateContentFailure(selection, 'generate');
     if (selection.candidates.length === 0) return renderGeminiGenerateContentFailure(noViableCandidateFailure(sawModel, model, failedUpstreams), 'generate');
+
+    const admission = await reserveUsageLimit(ctx, selection.candidates);
+    if (!admission.ok) return geminiUsageLimitErrorResult(admission);
 
     // Gemini generateContent carries the requested model in its URL, so affinity preparation
     // owns each candidate payload while dispatch uses the candidate's canonical model.
