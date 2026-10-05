@@ -19,4 +19,5 @@ export const AZURE_DEFAULT_FLAGS: FlagDefaults = {
   'strip-billing-attribution': true,
   'strip-prompt-cache-key': false,
   'usage-exclusive-cached-tokens': false,
+  'cyber-intercept': false,
 };

@@ -621,6 +621,7 @@ const en = {
             shims: 'Capability Shims',
             apiCompatibility: 'API Feature Compatibility',
             sanitization: 'Request Sanitization',
+            interception: 'Content Interception',
           },
           entries: {
             'vendor-deepseek': {
@@ -710,6 +711,11 @@ const en = {
               label: 'Cached Tokens Reported Outside Input Tokens',
               description:
                   'The OpenAI API counts cached tokens as part of the input token total, but some upstreams report them separately, so that the input token count covers only what the cache did not serve. This is the Anthropic convention.\nEnable this option to add the cache read and cache write counts back into the input token total, so that usage and cost are recorded correctly.\nWhen the upstream reports a `total_tokens` that settles the question, Floway follows it and this option is not needed. Enable it for an upstream whose totals leave the two conventions indistinguishable.',
+            },
+            'cyber-intercept': {
+              label: 'Cyber Intercept',
+              description:
+                  'Before forwarding a request to this upstream, Floway routes it through the judge model configured in the global Cyber Intercept settings to check whether it could trigger cyber abuse or other Terms-of-Service-violating content.\nWhen the verdict is unsafe, the request is either rejected (HTTP 403) or routed to an upstream without this flag, depending on the global mode. A judge-model failure is treated as unsafe (fail-closed).\nThis option has no effect when the global switch is off.',
             },
           },
         },

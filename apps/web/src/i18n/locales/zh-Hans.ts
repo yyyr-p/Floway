@@ -591,6 +591,7 @@ const zhHansCN = {
             shims: '能力兼容层',
             apiCompatibility: 'API 功能兼容',
             sanitization: '请求净化',
+            interception: '内容拦截',
           },
           entries: {
             'vendor-deepseek': {
@@ -680,6 +681,11 @@ const zhHansCN = {
               label: '缓存 Token 不计入输入 Token',
               description:
                   'OpenAI API 将缓存命中的 Token 计入输入 Token 总数，但部分上游会将两者分开上报，使输入 Token 仅表示未命中缓存的部分。这是 Anthropic 的约定。\n开启此开关，以将缓存读取与缓存写入的 Token 数加回输入 Token 总数，使用量与费用得以正确记录。\n当上游上报的 `total_tokens` 足以判定采用的是哪一种约定时，Floway 会据此自行处理，无需开启此开关。当上游的 `total_tokens` 无法区分两种约定时，才需要开启。',
+            },
+            'cyber-intercept': {
+              label: 'Cyber 拦截',
+              description:
+                  '将请求转发到此上游之前，Floway 会先经过全局 Cyber 拦截设置中配置的判定模型，检查该请求是否可能触发 cyber abuse 或其他违反服务条款的内容。\n判定为不安全时，按全局模式直接拒绝（HTTP 403）或路由到未启用此 flag 的上游。判定模型故障视为不安全（fail-closed）。\n全局开关关闭时此选项不生效。',
             },
           },
         },

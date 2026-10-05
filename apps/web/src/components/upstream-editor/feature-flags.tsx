@@ -7,9 +7,9 @@ import { OPTIONAL_FLAG_IDS, type FlagDefaults, type FlagId, type FlagOverrides }
 
 const { Option, Text } = fluentComponents;
 
-type FlagGroupId = 'vendor' | 'shims' | 'apiCompatibility' | 'sanitization';
+type FlagGroupId = 'vendor' | 'shims' | 'apiCompatibility' | 'sanitization' | 'interception';
 
-const flagGroupOrder: readonly FlagGroupId[] = ['vendor', 'shims', 'apiCompatibility', 'sanitization'];
+const flagGroupOrder: readonly FlagGroupId[] = ['vendor', 'shims', 'apiCompatibility', 'sanitization', 'interception'];
 
 const flagGroupById = {
   'vendor-deepseek': 'vendor',
@@ -30,6 +30,7 @@ const flagGroupById = {
   'usage-exclusive-cached-tokens': 'apiCompatibility',
   'strip-billing-attribution': 'sanitization',
   'strip-prompt-cache-key': 'sanitization',
+  'cyber-intercept': 'interception',
 } as const satisfies Record<FlagId, FlagGroupId>;
 
 export function FeatureFlagsEditor({
