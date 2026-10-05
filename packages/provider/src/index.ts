@@ -84,13 +84,16 @@ export {
 } from './flags.ts';
 
 export type {
+  ModelMetadataDefaults,
   UpstreamModelConfig,
   UpstreamChatModelConfig,
 } from './model-config.ts';
 export {
+  applyModelMetadataDefaults,
   chatField,
   endpointsField,
   isRecord,
+  modelMetadataDefaultsField,
   modelsField,
   nonEmptyStringField,
   optionalStringField,

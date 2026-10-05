@@ -27,10 +27,14 @@ test('config-version migration preserves cached models and gives existing failur
   const migration = migrationSqlByFilename.find(([filename]) => filename === '0085_upstream_config_version.sql');
   if (!migration) throw new Error('config version migration missing');
   db.run(migration[1]);
+  const metadataDefaultsMigration = migrationSqlByFilename.find(([filename]) => filename === '0086_upstream_model_metadata_defaults.sql');
+  if (!metadataDefaultsMigration) throw new Error('model metadata defaults migration missing');
+  db.run(metadataDefaultsMigration[1]);
 
   const record = await new SqlRepo(wrapSqlJsDatabase(db)).upstreams.getById('up_legacy_failure');
   expect(record?.configVersion).toBe(1);
   expect(record?.modelsCache).toBeNull();
+  expect(record?.modelMetadataDefaults).toBeUndefined();
 
   const cacheJson = db.exec("SELECT models_cache_json FROM upstreams WHERE id = 'up_legacy_failure'")[0]?.values[0]?.[0];
   if (typeof cacheJson !== 'string') throw new Error('Migrated models cache missing');

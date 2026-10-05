@@ -503,6 +503,8 @@ const zhHansCN = {
         pathOverridesHint: '留空时使用对应的默认 /v1 路径。',
         disabledModelsHint:
             '禁用后的模型不会出现在目录中，也不会参与路由；其元数据仍可编辑。',
+        metadataDefaultsDescription:
+            '作用于此接入的模型目录。字段缺省表示未知，会由此处补充；已有值（包括 false、0 和仅文本模态）优先保留。使用 {} 清除。支持字段：limits.max_context_window_tokens、max_prompt_tokens、max_output_tokens；chat.modalities.input/output、image_detail_original、reasoning.effort、budget_tokens、adaptive 和 mandatory。',
         disabledModelsPlaceholder: '搜索模型…',
         disabledModelsSelected_other: '已禁用 {{count, number}} 个模型',
         disabledModelsUnavailable: '已不存在',
@@ -525,6 +527,7 @@ const zhHansCN = {
           apiPaths: 'API 路径',
           prefix: '模型名称前缀',
           disabledModels: '禁用的模型',
+          metadataDefaults: '模型元数据默认值',
         },
         hue: {
           description: '选择在控制台中区分此上游的颜色。',
@@ -540,6 +543,7 @@ const zhHansCN = {
           catalogPath: '模型目录路径',
           defaultEndpoints: '默认 LLM API',
           pathOverrides: '路径覆盖',
+          metadataDefaults: 'JSON 元数据默认值',
         },
         auth: { none: '无认证' },
         headers: {
@@ -971,6 +975,7 @@ const zhHansCN = {
           name: '上游名称不能为空。',
           prefix: '至少保留一种可路由的模型前缀形式。',
           models: '一个或多个模型配置无效。',
+          metadataDefaults: '请输入有效的元数据默认值对象。模态与推理强度列表不能为空。',
           copilot: '请先完成 GitHub 设备授权。',
           credential: '请先导入凭据。',
         },

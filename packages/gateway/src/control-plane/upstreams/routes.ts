@@ -250,6 +250,9 @@ export const createUpstream = async (c: CtxWithJson<typeof createUpstreamBody>) 
     disabledPublicModelIds: body.disabled_public_model_ids ?? [],
     proxyFallbackList,
     modelPrefix,
+    ...(Object.keys(body.model_metadata_defaults ?? {}).length > 0
+      ? { modelMetadataDefaults: body.model_metadata_defaults }
+      : {}),
     hue: body.hue,
     config: body.config,
     state: stateFromBody,
@@ -334,6 +337,14 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
     const result = normalizeModelPrefixField(body.model_prefix);
     if (!result.ok) return c.json({ error: result.error }, 400);
     next = { ...next, modelPrefix: result.value };
+  }
+  if (body.model_metadata_defaults !== undefined) {
+    next = {
+      ...next,
+      modelMetadataDefaults: Object.keys(body.model_metadata_defaults).length === 0
+        ? undefined
+        : body.model_metadata_defaults,
+    };
   }
   if (body.hue !== undefined) next = { ...next, hue: body.hue };
   if (body.config !== undefined) {

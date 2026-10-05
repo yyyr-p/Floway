@@ -7,6 +7,13 @@ import { BILLING_METRICS, canonicalizePricingSelector, kindForEndpoints, MODEL_K
 // share a single declaration.
 export type UpstreamChatModelConfig = ChatModelInfo;
 
+// Sparse fallback metadata configured once per upstream and applied only
+// where a model's provider-emitted metadata is unknown.
+export interface ModelMetadataDefaults {
+  limits?: PublicModelLimits;
+  chat?: UpstreamChatModelConfig;
+}
+
 // One model row on an upstream. A row's kind names the source of its config,
 // not its shape — both kinds are this interface:
 //   • Manual — an entry of the upstream's persisted `config.models[]`. The
@@ -214,14 +221,12 @@ const reasoningField = (value: unknown, label: string): UpstreamChatModelConfig[
 
   if (value.adaptive !== undefined) {
     if (typeof value.adaptive !== 'boolean') throw new Error(`Malformed ${label}.adaptive: must be a boolean`);
-    // Strip false — semantically equivalent to absent.
-    if (value.adaptive) result.adaptive = true;
+    result.adaptive = value.adaptive;
   }
 
   if (value.mandatory !== undefined) {
     if (typeof value.mandatory !== 'boolean') throw new Error(`Malformed ${label}.mandatory: must be a boolean`);
-    // Strip false — semantically equivalent to absent.
-    if (value.mandatory) result.mandatory = true;
+    result.mandatory = value.mandatory;
   }
 
   if (result.effort === undefined && result.budget_tokens === undefined && result.adaptive === undefined && result.mandatory === undefined) {
@@ -246,13 +251,114 @@ export const chatField = (value: unknown, label: string): UpstreamChatModelConfi
     if (typeof value.image_detail_original !== 'boolean') {
       throw new Error(`Malformed ${label}.image_detail_original: must be a boolean`);
     }
-    // Unlike reasoning.adaptive / reasoning.mandatory, false is a fact about the
-    // upstream rather than the absence of one, so it round-trips as false.
+    // False is an explicit capability answer, so it round-trips rather than
+    // being collapsed into unknown metadata.
     out.image_detail_original = value.image_detail_original;
   }
   if (value.reasoning !== undefined) out.reasoning = reasoningField(value.reasoning, `${label}.reasoning`);
   if (out.modalities === undefined && out.image_detail_original === undefined && out.reasoning === undefined) return undefined;
   return out;
+};
+
+const rejectUnknownFields = (value: Record<string, unknown>, allowed: readonly string[], label: string): void => {
+  const unknown = Object.keys(value).filter(key => !allowed.includes(key));
+  if (unknown.length > 0) throw new Error(`Malformed ${label}: unknown fields: ${unknown.join(', ')}`);
+};
+
+export const modelMetadataDefaultsField = (value: unknown, label: string): ModelMetadataDefaults | undefined => {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) throw new Error(`Malformed ${label}: must be an object`);
+  rejectUnknownFields(value, ['limits', 'chat'], label);
+
+  let limits: PublicModelLimits | undefined;
+  if (value.limits !== undefined) {
+    if (!isRecord(value.limits)) throw new Error(`Malformed ${label}.limits: must be an object`);
+    rejectUnknownFields(value.limits, ['max_context_window_tokens', 'max_prompt_tokens', 'max_output_tokens'], `${label}.limits`);
+    limits = limitsField(value.limits, `${label}.limits`);
+    if (limits !== undefined && Object.keys(limits).length === 0) limits = undefined;
+  }
+
+  if (value.chat !== undefined) {
+    if (!isRecord(value.chat)) throw new Error(`Malformed ${label}.chat: must be an object`);
+    rejectUnknownFields(value.chat, ['modalities', 'image_detail_original', 'reasoning'], `${label}.chat`);
+    if (isRecord(value.chat.modalities)) {
+      rejectUnknownFields(value.chat.modalities, ['input', 'output'], `${label}.chat.modalities`);
+    }
+    if (isRecord(value.chat.reasoning)) {
+      rejectUnknownFields(value.chat.reasoning, ['effort', 'budget_tokens', 'adaptive', 'mandatory'], `${label}.chat.reasoning`);
+      if (isRecord(value.chat.reasoning.effort)) {
+        rejectUnknownFields(value.chat.reasoning.effort, ['supported', 'default'], `${label}.chat.reasoning.effort`);
+      }
+      if (isRecord(value.chat.reasoning.budget_tokens)) {
+        rejectUnknownFields(value.chat.reasoning.budget_tokens, ['min', 'max'], `${label}.chat.reasoning.budget_tokens`);
+      }
+    }
+  }
+  const chat = chatField(value.chat, `${label}.chat`);
+  if (limits === undefined && chat === undefined) return undefined;
+  return { ...(limits !== undefined ? { limits } : {}), ...(chat !== undefined ? { chat } : {}) };
+};
+
+// Defaults fill sparse leaves only; provider facts such as false, zero, or a
+// text-only modality list remain authoritative.
+export const applyModelMetadataDefaults = <T extends { limits: PublicModelLimits; chat?: UpstreamChatModelConfig }>(
+  model: T,
+  defaults: ModelMetadataDefaults | undefined,
+): T => {
+  if (defaults === undefined) return model;
+
+  let changed = false;
+  const limits: PublicModelLimits = { ...model.limits };
+  for (const key of ['max_context_window_tokens', 'max_prompt_tokens', 'max_output_tokens'] as const) {
+    if (limits[key] !== undefined || defaults.limits?.[key] === undefined) continue;
+    limits[key] = defaults.limits[key];
+    changed = true;
+  }
+
+  const sourceChat = model.chat;
+  const fallbackChat = defaults.chat;
+  if (fallbackChat === undefined) return changed ? { ...model, limits } : model;
+
+  const modalities = sourceChat?.modalities ?? fallbackChat.modalities;
+  const imageDetailOriginal = sourceChat?.image_detail_original ?? fallbackChat.image_detail_original;
+  const sourceReasoning = sourceChat?.reasoning;
+  const fallbackReasoning = fallbackChat.reasoning;
+  const effort = sourceReasoning?.effort ?? fallbackReasoning?.effort;
+  const sourceBudget = sourceReasoning?.budget_tokens;
+  const fallbackBudget = fallbackReasoning?.budget_tokens;
+  const min = sourceBudget?.min ?? fallbackBudget?.min;
+  const max = sourceBudget?.max ?? fallbackBudget?.max;
+  const budgetTokens = min === undefined && max === undefined ? undefined : {
+    ...(min !== undefined ? { min } : {}),
+    ...(max !== undefined ? { max } : {}),
+  };
+  const adaptive = sourceReasoning?.adaptive ?? fallbackReasoning?.adaptive;
+  const mandatory = sourceReasoning?.mandatory ?? fallbackReasoning?.mandatory;
+  const reasoning = effort === undefined && budgetTokens === undefined && adaptive === undefined && mandatory === undefined
+    ? undefined
+    : {
+        ...(effort !== undefined ? { effort } : {}),
+        ...(budgetTokens !== undefined ? { budget_tokens: budgetTokens } : {}),
+        ...(adaptive !== undefined ? { adaptive } : {}),
+        ...(mandatory !== undefined ? { mandatory } : {}),
+      };
+
+  const chat = modalities === undefined && imageDetailOriginal === undefined && reasoning === undefined
+    ? undefined
+    : {
+        ...(modalities !== undefined ? { modalities } : {}),
+        ...(imageDetailOriginal !== undefined ? { image_detail_original: imageDetailOriginal } : {}),
+        ...(reasoning !== undefined ? { reasoning } : {}),
+      };
+  if (chat !== undefined && (sourceChat?.modalities === undefined && modalities !== undefined
+    || sourceChat?.image_detail_original === undefined && imageDetailOriginal !== undefined
+    || sourceReasoning?.effort === undefined && effort !== undefined
+    || sourceBudget?.min === undefined && min !== undefined
+    || sourceBudget?.max === undefined && max !== undefined
+    || sourceReasoning?.adaptive === undefined && adaptive !== undefined
+    || sourceReasoning?.mandatory === undefined && mandatory !== undefined)) changed = true;
+
+  return changed ? { ...model, limits, ...(chat !== undefined ? { chat } : {}) } : model;
 };
 
 // An omitted kind derives from endpoints. Explicit legacy values remain

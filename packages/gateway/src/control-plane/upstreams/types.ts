@@ -3,6 +3,7 @@ import type {
   FlagDefaults,
   FlagOverrides,
   ModelPrefixConfig,
+  ModelMetadataDefaults,
   ProxyFallbackEntry,
   UpstreamModelConfig,
 } from '@floway-dev/provider';
@@ -141,6 +142,7 @@ interface SerializedUpstreamRecordBase {
   disabled_public_model_ids: string[];
   proxy_fallback_list: ProxyFallbackEntry[];
   model_prefix: ModelPrefixConfig | null;
+  model_metadata_defaults: ModelMetadataDefaults;
   hue: number;
 }
 

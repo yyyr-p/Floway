@@ -3,7 +3,7 @@ import { readUpstreamModelsSnapshotAndScheduleRefresh, MODEL_CATALOG_REVISION } 
 import type { GatewayProvider } from './registry.ts';
 import type { ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
 import { kindForEndpoints, type OpaqueBlobCompatibilityScope } from '@floway-dev/protocols/common';
-import type { InternalModel, Provider, ProviderModel, UpstreamChatModelConfig, UpstreamRecord } from '@floway-dev/provider';
+import { applyModelMetadataDefaults, type InternalModel, type Provider, type ProviderModel, type UpstreamChatModelConfig, type UpstreamRecord } from '@floway-dev/provider';
 
 interface ProviderModelsResult {
   models: InternalModel[];
@@ -140,7 +140,8 @@ const collectProviderModels = (
     // listed form — so a disabled `gpt-4o` hides both `gpt-4o` and
     // `<prefix>gpt-4o` from this upstream's contribution.
     const disabled = new Set(instance.disabledPublicModelIds);
-    for (const providerModel of providedModels) {
+    for (const sourceModel of providedModels) {
+      const providerModel = applyModelMetadataDefaults(sourceModel, instance.modelMetadataDefaults);
       if (!providerModel.id) continue;
       if (disabled.has(providerModel.id)) continue;
 
