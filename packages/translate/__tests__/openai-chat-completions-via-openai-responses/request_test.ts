@@ -265,6 +265,37 @@ test('buildTargetRequest rejects an unknown message role', () => {
   );
 });
 
+test('buildTargetRequest forwards supported and future reasoning_effort strings onto the native slot', () => {
+  for (const effort of ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'future_effort']) {
+    const result = buildTargetRequest({
+      model: 'gpt-test',
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoning_effort: effort,
+    });
+
+    assertEquals(result.reasoning, { effort });
+  }
+});
+
+test("buildTargetRequest preserves its existing omission of reasoning_effort='none'", () => {
+  const result = buildTargetRequest({
+    model: 'gpt-test',
+    messages: [{ role: 'user', content: 'hi' }],
+    reasoning_effort: 'none',
+  });
+
+  assertEquals(result.reasoning, undefined);
+});
+
+test('buildTargetRequest omits reasoning when the source effort is unset', () => {
+  const result = buildTargetRequest({
+    model: 'gpt-test',
+    messages: [{ role: 'user', content: 'hi' }],
+  });
+
+  assertEquals(result.reasoning, undefined);
+});
+
 test('buildTargetRequest forwards reasoning_effort and service_tier onto the native slots', () => {
   const result = buildTargetRequest({
     model: 'gpt-test',
@@ -275,14 +306,4 @@ test('buildTargetRequest forwards reasoning_effort and service_tier onto the nat
 
   assertEquals(result.reasoning, { effort: 'medium' });
   assertEquals(result.service_tier, 'priority');
-});
-
-test("buildTargetRequest drops reasoning_effort='none' since OpenAI Responses has no equivalent", () => {
-  const result = buildTargetRequest({
-    model: 'gpt-test',
-    messages: [{ role: 'user', content: 'hi' }],
-    reasoning_effort: 'none',
-  });
-
-  assertEquals(result.reasoning, undefined);
 });

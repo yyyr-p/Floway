@@ -27,6 +27,19 @@ test('buildTargetRequest prefers output_config.effort over thinking.disabled', (
   assertEquals(result.reasoning_effort, 'high');
 });
 
+test('buildTargetRequest forwards Anthropic effort strings verbatim, including unknown future levels', () => {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'future_effort']) {
+    const result = buildTargetRequest({
+      model: 'gpt-test',
+      max_tokens: 256,
+      output_config: { effort },
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+
+    assertEquals(result.reasoning_effort, effort);
+  }
+});
+
 test('buildTargetRequest treats empty output_config.effort as absent', () => {
   const result = buildTargetRequest({
     model: 'gpt-test',
