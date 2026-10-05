@@ -104,7 +104,7 @@ export const serveModels = async (c: Context): Promise<Response> => {
     const scheduleRefresh = createModelsRefreshScheduler(runtimeLocation, backgroundSchedulerFromContext(c));
 
     if (isCodexUserAgent(userAgent)) {
-      return Response.json(await loadCodexCatalog(userAgent, upstreamIds, scheduleRefresh, upstreamModelAccess));
+      return Response.json(await loadCodexCatalog(userAgent, upstreamIds, scheduleRefresh, getRepo().modelAliases, upstreamModelAccess));
     }
 
     const publicCatalog = await loadModels(upstreamIds, scheduleRefresh, getRepo().modelAliases, upstreamModelAccess);
