@@ -1442,6 +1442,7 @@ interface ModelAliasRow {
   name: string;
   kind: string;
   selection: string;
+  enabled: number;
   display_name: string | null;
   visible_in_models_list: number;
   targets: string;
@@ -1451,13 +1452,14 @@ interface ModelAliasRow {
   updated_at: string;
 }
 
-const MODEL_ALIAS_COLUMNS = 'id, name, kind, selection, display_name, visible_in_models_list, targets, announced_metadata_json, sort_order, created_at, updated_at';
+const MODEL_ALIAS_COLUMNS = 'id, name, kind, selection, enabled, display_name, visible_in_models_list, targets, announced_metadata_json, sort_order, created_at, updated_at';
 
 const toModelAliasRecord = (row: ModelAliasRow): ModelAliasRecord => ({
   id: row.id,
   name: row.name,
   kind: parseModelKind(row.kind, `model_aliases.kind for ${row.name}`),
   selection: row.selection as AliasSelection,
+  enabled: row.enabled !== 0,
   displayName: row.display_name,
   visibleInModelsList: row.visible_in_models_list !== 0,
   targets: decodeAliasTargets(row.targets, row.id),
@@ -1499,13 +1501,14 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
   async insert(record: ModelAliasRecord): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO model_aliases (${MODEL_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO model_aliases (${MODEL_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         record.id,
         record.name,
         record.kind,
         record.selection,
+        record.enabled ? 1 : 0,
         record.displayName,
         record.visibleInModelsList ? 1 : 0,
         encodeAliasTargets(record.targets),
@@ -1524,6 +1527,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
            name = ?,
            kind = ?,
            selection = ?,
+           enabled = ?,
            display_name = ?,
            visible_in_models_list = ?,
            targets = ?,
@@ -1537,6 +1541,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
         record.name,
         record.kind,
         record.selection,
+        record.enabled ? 1 : 0,
         record.displayName,
         record.visibleInModelsList ? 1 : 0,
         encodeAliasTargets(record.targets),

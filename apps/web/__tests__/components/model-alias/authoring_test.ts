@@ -84,7 +84,7 @@ describe('announced metadata', () => {
 
 describe('alias wire body', () => {
   const existing: ModelAlias = {
-    id: 'alias_old', name: 'old', kind: 'chat', selection: 'first-available', display_name: null,
+    id: 'alias_old', name: 'old', kind: 'chat', selection: 'first-available', enabled: true, display_name: null,
     visible_in_models_list: true, targets: [target('a')], announced_metadata: null,
     sort_order: 7, created_at: '2026-01-01', updated_at: '2026-01-01',
   };

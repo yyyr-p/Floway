@@ -10,6 +10,7 @@ const aliasFixture = (overrides: Partial<ModelAliasRecord> = {}): ModelAliasReco
   name: 'gpt-fast',
   kind: 'chat',
   selection: 'first-available',
+  enabled: true,
   displayName: null,
   visibleInModelsList: true,
   targets: [{ target_model_id: 'gpt-5.4', rules: {} }],
@@ -241,6 +242,12 @@ describe('synthesizeListedAliases', () => {
 
   test('hidden alias is not emitted', () => {
     const aliases = [aliasFixture({ visibleInModelsList: false })];
+    const realModels = [realModel({ id: 'gpt-5.4' })];
+    expect(synthesizeListedAliases({ aliases, gatewayAddressableModelIds: listed(realModels), callerAddressableModelIds: listed(realModels), narrowTargets: false })).toEqual([]);
+  });
+
+  test('disabled alias is not emitted', () => {
+    const aliases = [aliasFixture({ enabled: false })];
     const realModels = [realModel({ id: 'gpt-5.4' })];
     expect(synthesizeListedAliases({ aliases, gatewayAddressableModelIds: listed(realModels), callerAddressableModelIds: listed(realModels), narrowTargets: false })).toEqual([]);
   });

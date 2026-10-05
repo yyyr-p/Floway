@@ -60,6 +60,7 @@ export const updateAlias = async (c: CtxWithJson<typeof updateAliasBody>) => {
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   });
+  next.enabled = body.enabled ?? existing.enabled;
   try {
     await repo.modelAliases.update(next);
   } catch (err) {

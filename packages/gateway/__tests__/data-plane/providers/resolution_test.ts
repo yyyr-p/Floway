@@ -1,5 +1,6 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import { MODEL_CATALOG_REVISION } from '../../../src/data-plane/providers/models-cache.ts';
 import { listModelProviders } from '../../../src/data-plane/providers/registry.ts';
 import { enumerateModelCandidates, enumerateRealModelCandidates } from '../../../src/data-plane/providers/resolution.ts';
 import { createModelsRefreshScheduler, modelsRefreshTarget, refreshModelsExplicit } from '../../../src/execution/models-refresh.ts';
@@ -505,6 +506,7 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
   const aliasCommon = {
     displayName: null,
     visibleInModelsList: true,
+    enabled: true,
     announcedMetadata: null,
     sortOrder: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -533,6 +535,69 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
       config: { baseUrl: 'https://b.example.com', authStyle: 'bearer', apiKey: 'sk-b', endpoints: { openaiChatCompletions: {} }, ingressHeadersRules: [] },
     }));
   };
+
+  test('disabled aliases stop resolving through their configured targets', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert({
+      id: 'alias_disabled',
+      name: 'temporarily-disabled',
+      kind: 'chat',
+      selection: 'first-available',
+      targets: [{ target_model_id: 'gpt-5', rules: {} }],
+      ...aliasCommon,
+      enabled: false,
+    });
+
+    await withMockedFetch(buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }), async () => {
+      const disabled = await enumerateModelCandidates({
+        upstreamIds: null, model: 'temporarily-disabled', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      assertEquals(disabled.candidates, []);
+      assertEquals(disabled.sawModel, false);
+      assertEquals(disabled.failedUpstreams, []);
+
+      const direct = await enumerateModelCandidates({
+        upstreamIds: null, model: 'gpt-5', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      assertEquals(direct.candidates.map(candidate => candidate.model.id), ['gpt-5']);
+    });
+  });
+
+  test('disabled alias misses do not expose upstream names or refresh errors', async () => {
+    const { repo } = await setupAppTest();
+    const now = Date.now();
+    await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+      name: 'Private Provider Name',
+      modelsCache: {
+        revision: MODEL_CATALOG_REVISION,
+        fetchedAt: now,
+        models: [],
+        lastError: { message: 'private model catalog error', at: now, failureCount: 1 },
+      },
+    }));
+    await repo.modelAliases.insert({
+      id: 'alias_disabled_private',
+      name: 'disabled-private-alias',
+      kind: 'chat',
+      selection: 'first-available',
+      enabled: false,
+      displayName: null,
+      visibleInModelsList: true,
+      targets: [{ target_model_id: 'private-target-model', rules: {} }],
+      announcedMetadata: null,
+      sortOrder: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const result = await enumerateModelCandidates({
+      upstreamIds: null, model: 'disabled-private-alias', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+    });
+    assertEquals(result.candidates, []);
+    assertEquals(result.sawModel, false);
+    assertEquals(result.failedUpstreams, []);
+  });
 
   test('flattens across targets in declaration order for first-available', async () => {
     const { repo } = await setupAppTest();

@@ -213,6 +213,10 @@ export const enumerateModelCandidates = async ({
   if (alias === null) {
     return resolveRealCandidates(model, kind, providers, resolutionContext);
   }
+  if (!alias.enabled) {
+    const direct = resolveRealCandidates(model, kind, providers, resolutionContext);
+    return { ...direct, failedUpstreams: [] };
+  }
 
   // Walk every target, tag each returned candidate with the target's rule
   // overlay, then flatten (target order preserved), and dedup by

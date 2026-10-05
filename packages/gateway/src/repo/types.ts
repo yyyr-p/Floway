@@ -446,6 +446,8 @@ export interface ModelAliasRecord {
   name: string;
   kind: ModelKind;
   selection: AliasSelection;
+  // A disabled alias keeps its configuration but does not resolve its targets.
+  enabled: boolean;
   // null = derive at render time from targets + rules.
   displayName: string | null;
   // Listing-only visibility: filtered by `synthesizeListedAliases` before

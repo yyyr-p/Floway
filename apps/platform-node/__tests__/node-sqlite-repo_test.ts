@@ -119,6 +119,7 @@ test('repository JSON codecs round-trip upstream, alias, and OpenAI Responses st
     name: 'node-alias',
     kind: 'chat',
     selection: 'first-available',
+    enabled: true,
     displayName: null,
     visibleInModelsList: true,
     targets: [{ target_model_id: 'node-model', rules: { reasoning: { effort: 'high' } } }],
