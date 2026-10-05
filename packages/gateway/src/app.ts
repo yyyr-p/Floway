@@ -8,6 +8,7 @@ import { controlPlaneRoutes } from './control-plane/routes.ts';
 import { mountDataPlane } from './data-plane/routes.ts';
 import { type AuthVars, authMiddleware } from './middleware/auth.ts';
 import { internalErrorResponse } from './middleware/internal-error-response.ts';
+import { softConcurrencyQueueMiddleware } from './middleware/soft-concurrency-queue.ts';
 
 // `app` is a single chained expression so its type carries the full path/method
 // map Hono RPC needs — apps/web consumes the exported AppType as the generic of
@@ -25,8 +26,18 @@ export const app = new Hono<{ Variables: AuthVars }>()
   // reaches a log line. The package seals every failure on these routes itself.
   .route(AGENT_SETUP_ROUTE_PATH, agentSetupPublicRoutes)
   .use('*', logger())
-  .use('*', cors())
+  .use('*', cors({
+    exposeHeaders: [
+      'X-Floway-Queue-Status',
+      'X-Floway-Queue-Position',
+      'X-Floway-Queue-Wait-Ms',
+      'X-Floway-Queue-Depth',
+    ],
+  }))
   .use('*', authMiddleware)
+  // If a hard concurrency gate is installed, keep it immediately before the
+  // soft queue so waiting requests still count against the hard in-flight cap.
+  .use('*', softConcurrencyQueueMiddleware)
   .route('/', controlPlaneRoutes);
 
 mountDataPlane(app);
