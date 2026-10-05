@@ -1,5 +1,6 @@
 import { getRepo } from './repo/index.ts';
 import type { ScheduledMaintenanceRepo } from './repo/types.ts';
+import { sweepCyberInterceptAuditLog } from './scheduled/cyber-intercept-audit-sweep.ts';
 import { sweepExpirations } from './scheduled/expiration-sweeps.ts';
 import { scheduleModelsCacheRefreshes } from './scheduled/models-refresh.ts';
 import { collectSpilledFiles } from './scheduled/spilled-files.ts';
@@ -72,6 +73,8 @@ export const runScheduledMaintenance = async (
     };
     try {
       await runSweep('expirations.sweep', () => sweepExpirations(nowMs));
+      await heartbeat.assertOwned();
+      await runSweep('cyberInterceptAudit.sweep', () => sweepCyberInterceptAuditLog(nowMs));
       await heartbeat.assertOwned();
       await runSweep('spilledFiles.collect', () => collectSpilledFiles(nowMs));
       await heartbeat.assertOwned();

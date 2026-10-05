@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { parseWebSearchConfigStrict } from '../../data-plane/tools/web-search/config.ts';
 import type { WebSearchConfig } from '../../data-plane/tools/web-search/types.ts';
+import { parseCyberInterceptSettingsStrict, type CyberInterceptSettings } from '../../data-plane/chat/shared/cyber-intercept/settings.ts';
 import { parseDisabledPublicModelIdsWire } from '../../repo/disabled-public-models.ts';
 import { isOpenAIResponsesRetentionSeconds, OPENAI_RESPONSES_RETENTION_MAX_SECONDS, OPENAI_RESPONSES_RETENTION_MIN_SECONDS } from '../../repo/openai-responses-retention.ts';
 import { isDirectFallbackId, normalizeProxyFallbackList } from '../../repo/proxy-fallback-list.ts';
@@ -41,6 +42,9 @@ export interface ParsedImportData {
   performance: PerformanceTelemetryRecord[];
   performanceIncluded: boolean;
   searchConfig: WebSearchConfig;
+  // Absent on exports from builds predating the cyber-intercept gate; the
+  // importer leaves the local settings untouched in that case.
+  cyberInterceptSettings?: CyberInterceptSettings;
 }
 
 export type ImportDataParseResult = { type: 'ok'; data: ParsedImportData } | { type: 'invalid'; error: string };
@@ -516,6 +520,18 @@ export const parseImportData = (value: unknown): ImportDataParseResult => {
     return { type: 'invalid', error: `invalid searchConfig: ${messageFor(cause)}` };
   }
 
+  // The cyber-intercept settings arrived later than the other settings here,
+  // so the field stays optional: an export that predates the gate imports
+  // cleanly and simply leaves the local gate configuration alone.
+  let cyberInterceptSettings: CyberInterceptSettings | undefined;
+  if (hasOwn(value, 'cyberInterceptSettings')) {
+    try {
+      cyberInterceptSettings = parseCyberInterceptSettingsStrict(value.cyberInterceptSettings);
+    } catch (cause) {
+      return { type: 'invalid', error: `invalid cyberInterceptSettings: ${messageFor(cause)}` };
+    }
+  }
+
   if (typeof value.performanceIncluded !== 'boolean') {
     return { type: 'invalid', error: 'performanceIncluded must be a boolean' };
   }
@@ -543,6 +559,7 @@ export const parseImportData = (value: unknown): ImportDataParseResult => {
       performance,
       performanceIncluded: value.performanceIncluded,
       searchConfig,
+      ...(cyberInterceptSettings !== undefined ? { cyberInterceptSettings } : {}),
     },
   };
 };

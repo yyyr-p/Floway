@@ -616,6 +616,23 @@ export const webSearchConfigSchema = z.object({
   }
 });
 
+// --- cyber-intercept settings ---
+
+// Operator-facing shape mirrors the parsed settings document exactly; the
+// handler stores the validated document under the settings store's
+// `cyber-intercept` key. maxPayloadChars null means "estimate from the judge
+// model's context window"; auditLogRetentionSeconds null means "keep
+// forever".
+export const cyberInterceptSettingsSchema = z.object({
+  enabled: z.boolean(),
+  judgeModelId: z.string().max(512),
+  prefixPrompt: z.string().max(1024 * 1024),
+  suffixPrompt: z.string().max(1024 * 1024),
+  mode: z.union([z.literal('reject'), z.literal('fallback')]),
+  maxPayloadChars: z.number().int().positive().max(64 * 1024 * 1024).nullable(),
+  auditLogRetentionSeconds: z.number().int().positive().max(RETENTION_MAX_SECONDS).nullable(),
+});
+
 // --- model aliases ---
 
 // Per-target chat rules. Field names mirror the IR slot each value overlays.

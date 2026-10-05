@@ -11,6 +11,7 @@
 import { parseImportData, type SerializedProxy } from './import-schema.ts';
 import { parseWebSearchConfigDefault, parseWebSearchConfigStrict } from '../../data-plane/tools/web-search/config.ts';
 import type { WebSearchConfig } from '../../data-plane/tools/web-search/types.ts';
+import { loadCyberInterceptSettings, CYBER_INTERCEPT_SETTINGS_KEY, type CyberInterceptSettings } from '../../data-plane/chat/shared/cyber-intercept/settings.ts';
 import { notifyDisabledBestEffort } from '../../dump/registry.ts';
 import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
@@ -34,6 +35,7 @@ interface ExportPayload {
     performance?: PerformanceTelemetryRecord[];
     performanceIncluded: boolean;
     searchConfig: WebSearchConfig;
+    cyberInterceptSettings: CyberInterceptSettings;
   };
 }
 
@@ -100,7 +102,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
   const repo = getRepo();
   const includePerformance = c.req.valid('query').include_performance === '1';
 
-  const [users, apiKeys, usage, webSearchUsage, performance, rawWebSearchConfig, upstreams, proxies] = await Promise.all([
+  const [users, apiKeys, usage, webSearchUsage, performance, rawWebSearchConfig, upstreams, proxies, cyberInterceptSettings] = await Promise.all([
     repo.users.listIncludingDeleted(),
     repo.apiKeys.listIncludingDeleted(),
     repo.usage.listAll(),
@@ -109,6 +111,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
     repo.webSearchConfig.get(),
     repo.upstreams.list(),
     repo.proxies.list(),
+    loadCyberInterceptSettings(),
   ]);
 
   const payload: ExportPayload = {
@@ -123,6 +126,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
       searchUsage: webSearchUsage,
       performanceIncluded: includePerformance,
       searchConfig: rawWebSearchConfig === null ? parseWebSearchConfigDefault() : parseWebSearchConfigStrict(rawWebSearchConfig),
+      cyberInterceptSettings,
     },
   };
   if (includePerformance) payload.data.performance = performance;
@@ -195,6 +199,9 @@ export const importData = async (c: CtxWithJson<typeof importBody>) => {
   }))));
   for (const record of performance) await repo.performance.set(record);
   await repo.webSearchConfig.save(searchConfig);
+  if (parsed.data.cyberInterceptSettings !== undefined) {
+    await repo.settings.set(CYBER_INTERCEPT_SETTINGS_KEY, parsed.data.cyberInterceptSettings);
+  }
 
   return c.json({
     ok: true,
