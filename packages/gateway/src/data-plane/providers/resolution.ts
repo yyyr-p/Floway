@@ -5,6 +5,7 @@ import { readUpstreamModelsSnapshotAndScheduleRefresh } from './models-cache.ts'
 import { listModelProviders, type GatewayProvider } from './registry.ts';
 import { createPerRequestFetcher } from '../../dial/per-request.ts';
 import { createModelsRefreshScheduler, type ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
+import { expandAliasTargets } from '../../model-aliases/graph.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { ModelAliasRecord } from '../../repo/types.ts';
 import type { BackgroundScheduler } from '@floway-dev/platform';
@@ -112,7 +113,7 @@ const DATED_SUFFIX = /-\d{8}$/;
 // Real-catalog resolution with the dated-suffix retry baked in. Used both
 // directly (when we already hold the provider list) and by
 // `enumerateModelCandidates` below, which lists providers and then delegates
-// here — once for each alias target when the inbound id names an alias.
+// here — once for each terminal model target when the inbound id names an alias.
 const resolveRealCandidates = (
   modelId: string,
   kind: ModelKind,
@@ -154,15 +155,11 @@ const orderAliasTargets = (alias: ModelAliasRecord): readonly ModelAliasRecord['
 // Per-request model resolution. Two-branch chain:
 //
 //   1. Look the inbound id up in the alias repo. When the id names an
-//      alias, walk every target in `selection`-mode order, delegate to the
-//      real-catalog resolver for each one, tag each returned candidate
-//      with that target's rule overlay, flatten across targets, and dedup
-//      by (modelId, upstreamId, rules) — same (model, upstream) with
-//      differing rules stays as distinct candidates so both variants can
-//      be dispatched. `iterateCandidates` at the serve layer then cascades
-//      across every kept candidate: a target's upstreams all failing over
-//      falls through into the next target's candidates instead of hard-
-//      failing at the first target.
+//      alias, recursively flatten targets in each alias's `selection` order,
+//      merge outer-to-inner rule overlays, resolve terminal model ids
+//      against the real catalog, and dedup by (modelId, upstreamId, rules).
+//      `iterateCandidates` at the serve layer then cascades across every
+//      kept candidate as a failover pool.
 //   2. Otherwise (no alias match at all) run the real-catalog resolver
 //      directly on the inbound id.
 //
@@ -181,10 +178,8 @@ const orderAliasTargets = (alias: ModelAliasRecord): readonly ModelAliasRecord['
 // OpenAI Embeddings, OpenAI Images Generations/Edits, rerank, OpenAI Audio
 // Transcriptions, and OpenAI Completions.
 //
-// The alias walk is a natural top-of-chain check: by construction an
-// alias's target id is a real model id, so the shadow pattern (an alias
-// whose first target matches its own name) resolves to the real model on
-// the first pass; alias names never re-enter the alias layer.
+// Alias graph traversal rejects reachable cycles and bounds depth and target
+// expansion, including malformed rows introduced outside normal CRUD.
 export const enumerateModelCandidates = async ({
   upstreamIds, model, kind, scheduler, runtimeLocation,
 }: {
@@ -209,21 +204,23 @@ export const enumerateModelCandidates = async ({
     scheduleRefresh: createModelsRefreshScheduler(runtimeLocation, scheduler),
   };
 
-  const alias = await getRepo().modelAliases.getByName(model);
+  const modelAliases = getRepo().modelAliases;
+  const alias = await modelAliases.getByName(model);
   if (alias === null) {
     return resolveRealCandidates(model, kind, providers, resolutionContext);
   }
 
-  // Walk every target, tag each returned candidate with the target's rule
-  // overlay, then flatten (target order preserved), and dedup by
-  // (modelId, upstreamId, rules). Different rules against the same
-  // (model, upstream) stay as distinct entries so the operator can pin the
-  // same physical binding under two rule variants.
+  const aliasesByName = new Map((await modelAliases.list()).map(record => [record.name, record]));
+  aliasesByName.set(alias.name, alias);
+  const terminalTargets = expandAliasTargets(alias, aliasesByName, orderAliasTargets);
+
+  // Different effective rules against the same (model, upstream) stay as
+  // distinct entries so operators can pin the same binding under variants.
   const aggregatedFailed = new Set<string>();
   let sawAny = false;
   const flat: ModelCandidate[] = [];
-  for (const target of orderAliasTargets(alias)) {
-    const result = resolveRealCandidates(target.target_model_id, kind, providers, resolutionContext);
+  for (const target of terminalTargets) {
+    const result = resolveRealCandidates(target.targetModelId, kind, providers, resolutionContext);
     for (const name of result.failedUpstreams) aggregatedFailed.add(name);
     if (result.sawModel) sawAny = true;
     for (const candidate of result.candidates) {
