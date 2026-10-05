@@ -621,6 +621,26 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
     });
   });
 
+  test('nested disabled aliases stop resolving through their configured targets', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert({
+      id: 'alias_child_disabled', name: 'child-disabled', kind: 'chat', selection: 'first-available',
+      targets: [{ target_model_id: 'gpt-5', rules: {} }], ...aliasCommon, enabled: false,
+    });
+    await repo.modelAliases.insert({
+      id: 'alias_parent_enabled', name: 'parent-enabled', kind: 'chat', selection: 'first-available',
+      targets: [{ target_model_id: 'child-disabled', rules: {} }], ...aliasCommon,
+    });
+    await withMockedFetch(buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }), async () => {
+      const result = await enumerateModelCandidates({
+        upstreamIds: null, model: 'parent-enabled', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      expect(result.candidates).toEqual([]);
+      expect(result.sawModel).toBe(false);
+    });
+  });
+
   test('disabled alias misses do not expose upstream names or refresh errors', async () => {
     const { repo } = await setupAppTest();
     const now = Date.now();
@@ -885,15 +905,27 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
     );
   });
 
-  test('reports a self-referential alias instead of recursing forever', async () => {
+  test('same-name targets bind real models once without recursively resolving the alias', async () => {
     const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
     await repo.modelAliases.insert(graphAlias('self', [
       { target_model_id: 'self', rules: {} },
     ]));
-
-    await expect(enumerateModelCandidates({
+    await repo.modelAliases.insert(graphAlias('gpt-5', [
+      { target_model_id: 'gpt-5', rules: { reasoning: { effort: 'low' } } },
+    ]));
+    const missing = await enumerateModelCandidates({
       upstreamIds: null, model: 'self', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
-    })).rejects.toThrow('Model alias cycle detected: self -> self');
+    });
+    expect(missing.candidates).toEqual([]);
+    expect(missing.sawModel).toBe(false);
+    await withMockedFetch(buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }), async () => {
+      const resolved = await enumerateModelCandidates({
+        upstreamIds: null, model: 'gpt-5', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      expect(resolved.candidates.map(candidate => candidate.model.id)).toEqual(['gpt-5']);
+      expect(resolved.candidates[0]?.rules).toEqual({ reasoning: { effort: 'low' } });
+    });
   });
 
   test('reports the complete reachable alias cycle chain', async () => {
