@@ -13,6 +13,7 @@ import {
   hasUnsavedDiscoveryInputs,
   isPersisted,
   modelPrefixIsValid,
+  parseModelMetadataDefaults,
   previewDraftModelCatalog,
   updateBody,
   valuesFromRecord,
@@ -78,6 +79,13 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     hue: z.number(),
     proxyFallbackList: z.any(),
     modelPrefix: z.any(),
+    modelMetadataDefaults: z.string().superRefine((value, ctx) => {
+      try {
+        parseModelMetadataDefaults(value);
+      } catch {
+        ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.validation.metadataDefaults' });
+      }
+    }),
     disabledPublicModelIds: z.array(z.string()),
     flagOverrides: z.any(),
     config: z.any(),

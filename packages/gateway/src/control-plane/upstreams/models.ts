@@ -34,6 +34,9 @@ export const previewModels = async (c: CtxWithJson<typeof previewModelsBody>) =>
     disabledPublicModelIds: record.disabled_public_model_ids ?? [],
     proxyFallbackList: record.proxy_fallback_list,
     modelPrefix: record.model_prefix ?? null,
+    ...(record.model_metadata_defaults && Object.keys(record.model_metadata_defaults).length > 0
+      ? { modelMetadataDefaults: record.model_metadata_defaults }
+      : {}),
     hue: record.hue ?? 0,
     config: record.config,
     state: record.state,

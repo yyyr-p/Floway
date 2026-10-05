@@ -1,5 +1,5 @@
 import type { FlagId, FlagOverrides } from './flags.ts';
-import type { UpstreamChatModelConfig, UpstreamModelConfig } from './model-config.ts';
+import type { ModelMetadataDefaults, UpstreamChatModelConfig, UpstreamModelConfig } from './model-config.ts';
 import type { ModelPrefixConfig } from './model-prefix.ts';
 import type { AliasSelection, AliasTarget, ModelKind, ModelEndpoints, ModelPricing, OpaqueBlobCompatibilityScope, PublicModelLimits, RerankTarget } from '@floway-dev/protocols/common';
 
@@ -76,6 +76,9 @@ export interface UpstreamRecord {
   createdAt: string;
   updatedAt: string;
   config: unknown;
+  // Operator-provided fallback facts for incomplete model catalogs. Missing
+  // leaves are filled at catalog assembly; explicit provider values win.
+  modelMetadataDefaults?: ModelMetadataDefaults;
   // Gateway-written state that can change without an operator editing config;
   // null when a provider has no runtime state.
   state: unknown;

@@ -110,6 +110,40 @@ test('POST /api/upstreams creates custom upstreams and redacts bearer tokens', a
   assertEquals(items[0].config.apiKey, undefined);
 });
 
+test('upstream metadata defaults are validated, persisted, patchable, and clearable', async () => {
+  const { adminSession, repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  const modelMetadataDefaults = {
+    limits: { max_context_window_tokens: 0, max_output_tokens: 4_096 },
+    chat: {
+      modalities: { input: ['text'], output: ['text'] },
+      image_detail_original: false,
+      reasoning: { adaptive: false, budget_tokens: { min: 0, max: 8_000 } },
+    },
+  };
+
+  const invalid = await requestApp('/api/upstreams', authed(adminSession, createBody({
+    model_metadata_defaults: { chat: { modalities: { input: [], output: ['text'] } } },
+  })));
+  assertEquals(invalid.status, 400);
+
+  const createdResponse = await requestApp('/api/upstreams', authed(adminSession, createBody({ model_metadata_defaults: modelMetadataDefaults })));
+  assertEquals(createdResponse.status, 201);
+  const created = await createdResponse.json() as JsonObject;
+  assertEquals(created.model_metadata_defaults, modelMetadataDefaults);
+  assertEquals((await repo.upstreams.getById(created.id))?.modelMetadataDefaults, modelMetadataDefaults);
+
+  const updatedResponse = await requestApp(`/api/upstreams/${created.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
+    body: JSON.stringify({ model_metadata_defaults: {} }),
+  });
+  assertEquals(updatedResponse.status, 200);
+  const updated = await updatedResponse.json() as JsonObject;
+  assertEquals(updated.model_metadata_defaults, {});
+  assertEquals((await repo.upstreams.getById(created.id))?.modelMetadataDefaults, undefined);
+});
+
 // `openaiCompletions` must survive request validation as a complete endpoint map;
 // stripping it would make this otherwise valid model fail provider validation.
 test('POST /api/upstreams accepts a custom model whose only endpoint is /completions', async () => {

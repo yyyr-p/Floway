@@ -76,10 +76,12 @@ import {
   decodeDisabledPublicModelIds,
   decodeModelPrefix,
   decodeProxyFallbackList,
+  decodeUpstreamModelMetadataDefaults,
   decodeUpstreamConfig,
   decodeUpstreamFlagOverrides,
   decodeUpstreamModelsCache,
   decodeUpstreamState,
+  encodeUpstreamModelMetadataDefaults,
   encodeUpstreamModelsCache,
 } from './upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts';
@@ -1767,7 +1769,7 @@ const MODELS_CACHE_EPOCH_SQL = `CASE
   ELSE 0
 END`;
 
-const UPSTREAM_COLUMNS = 'id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, models_cache_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, hue';
+const UPSTREAM_COLUMNS = 'id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, models_cache_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue';
 
 class SqlUpstreamRepo implements UpstreamRepo {
   constructor(private db: SqlDatabase) {}
@@ -1789,7 +1791,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
 
   async insertForModels(upstream: UpstreamRecord): Promise<StoredUpstreamRecord | null> {
     const row = await this.db
-      .prepare(`INSERT INTO upstreams (id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, hue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING
+      .prepare(`INSERT INTO upstreams (id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING
         RETURNING ${UPSTREAM_COLUMNS}`)
       .bind(
         upstream.id,
@@ -1806,6 +1808,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         JSON.stringify(normalizeDisabledPublicModelIds(upstream.disabledPublicModelIds)),
         JSON.stringify(normalizeProxyFallbackList(upstream.proxyFallbackList)),
         upstream.modelPrefix === null ? null : JSON.stringify(upstream.modelPrefix),
+        encodeUpstreamModelMetadataDefaults(upstream.modelMetadataDefaults),
         upstream.hue,
       )
       .first<UpstreamRow>();
@@ -1858,6 +1861,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
            disabled_public_model_ids = ?,
            proxy_fallback_list_json = ?,
            model_prefix_json = ?,
+           model_metadata_defaults_json = ?,
            hue = ?${modelsCacheUpdate}
          WHERE id = ?
            AND provider = ?
@@ -1873,6 +1877,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
            AND disabled_public_model_ids = ?
            AND proxy_fallback_list_json = ?
            AND model_prefix_json IS ?
+           AND model_metadata_defaults_json = ?
            AND hue = ?
          RETURNING ${UPSTREAM_COLUMNS}`,
       )
@@ -1891,6 +1896,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         JSON.stringify(normalizeDisabledPublicModelIds(upstream.disabledPublicModelIds)),
         JSON.stringify(normalizeProxyFallbackList(upstream.proxyFallbackList)),
         upstream.modelPrefix === null ? null : JSON.stringify(upstream.modelPrefix),
+        encodeUpstreamModelMetadataDefaults(upstream.modelMetadataDefaults),
         upstream.hue,
         upstream.id,
         previous.kind,
@@ -1907,6 +1913,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         storedRow.disabled_public_model_ids,
         storedRow.proxy_fallback_list_json,
         storedRow.model_prefix_json,
+        storedRow.model_metadata_defaults_json,
         previous.hue,
       )
       .first<UpstreamRow>();
@@ -2033,12 +2040,14 @@ interface UpstreamRow {
   disabled_public_model_ids: string;
   proxy_fallback_list_json: string;
   model_prefix_json: string | null;
+  model_metadata_defaults_json: string;
   hue: number;
 }
 
 const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
   const config = decodeUpstreamConfig(row.config_json, row.id);
   const state = row.state_json === null ? null : decodeUpstreamState(row.state_json, row.id);
+  const modelMetadataDefaults = decodeUpstreamModelMetadataDefaults(row.model_metadata_defaults_json, row.id);
   if (!Number.isSafeInteger(row.config_version) || row.config_version < 1) {
     throw new Error(`Invalid upstream config version for ${row.id}`);
   }
@@ -2060,6 +2069,7 @@ const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
     disabledPublicModelIds: parseDisabledPublicModelIds(row.id, row.disabled_public_model_ids),
     proxyFallbackList: parseProxyFallbackList(row.id, row.proxy_fallback_list_json),
     modelPrefix: parseModelPrefix(row.id, row.model_prefix_json),
+    ...(modelMetadataDefaults !== undefined ? { modelMetadataDefaults } : {}),
     hue: parseUpstreamHue(row.id, row.hue),
   };
 };
