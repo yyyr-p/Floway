@@ -8,7 +8,7 @@ import type { Context } from 'hono';
 import { encodeClaudeCodeModelId, isClaudeCodeDiscoveryUserAgent } from './claude-code-prefix.ts';
 import { loadModels } from './load.ts';
 import { createModelsRefreshScheduler } from '../../execution/models-refresh.ts';
-import { effectiveUpstreamIdsFromContext } from '../../middleware/auth.ts';
+import { effectiveUpstreamIdsFromContext, effectiveUpstreamModelAccessFromContext } from '../../middleware/auth.ts';
 import { getRepo } from '../../repo/index.ts';
 import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
 import { getRuntimeLocation } from '../../runtime/runtime-info.ts';
@@ -100,13 +100,14 @@ export const serveModels = async (c: Context): Promise<Response> => {
   try {
     const runtimeLocation = getRuntimeLocation(c.req.raw);
     const upstreamIds = effectiveUpstreamIdsFromContext(c);
+    const upstreamModelAccess = effectiveUpstreamModelAccessFromContext(c);
     const scheduleRefresh = createModelsRefreshScheduler(runtimeLocation, backgroundSchedulerFromContext(c));
 
     if (isCodexUserAgent(userAgent)) {
-      return Response.json(await loadCodexCatalog(userAgent, upstreamIds, scheduleRefresh));
+      return Response.json(await loadCodexCatalog(userAgent, upstreamIds, scheduleRefresh, upstreamModelAccess));
     }
 
-    const publicCatalog = await loadModels(upstreamIds, scheduleRefresh, getRepo().modelAliases);
+    const publicCatalog = await loadModels(upstreamIds, scheduleRefresh, getRepo().modelAliases, upstreamModelAccess);
     // The Claude Code model discovery request identifies itself with a
     // `claude-code/<version>` User-Agent (built from the CLI's `n_()`
     // helper — verified in the v2.1.206 binary). The Claude Desktop app
@@ -122,7 +123,7 @@ export const serveModels = async (c: Context): Promise<Response> => {
   } catch (e) {
     if (
       !isCodexUserAgent(userAgent)
-      && !isClaudeCodeUserAgent(userAgent)
+      && !isClaudeCodeDiscoveryUserAgent(userAgent)
       && e instanceof Error
       && e.message.startsWith('No upstream provider configured')
     ) {

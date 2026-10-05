@@ -15,8 +15,8 @@ import { renderInApp } from '../../render';
 // sits inside one, so editing, rotating, deleting or copying a key used to
 // select it on the way.
 const keys: ApiKey[] = [
-  { id: 'first', name: 'First key', key: 'sk-first', upstream_ids: null, created_at: '2026-01-01T00:00:00.000Z', last_used_at: null, dump_retention_seconds: null, responses_retention_seconds: 0 },
-  { id: 'second', name: 'Second key', key: 'sk-second', upstream_ids: null, created_at: '2026-01-02T00:00:00.000Z', last_used_at: null, dump_retention_seconds: null, responses_retention_seconds: 0 },
+  { id: 'first', name: 'First key', key: 'sk-first', upstream_ids: null, upstream_model_access: [], created_at: '2026-01-01T00:00:00.000Z', last_used_at: null, dump_retention_seconds: null, responses_retention_seconds: 0 },
+  { id: 'second', name: 'Second key', key: 'sk-second', upstream_ids: null, upstream_model_access: [], created_at: '2026-01-02T00:00:00.000Z', last_used_at: null, dump_retention_seconds: null, responses_retention_seconds: 0 },
 ];
 
 const clipboard = { copy: vi.fn(), outcomeFor: () => 'idle' as const };

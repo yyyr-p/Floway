@@ -1,7 +1,8 @@
 import type { AttemptTiming } from './attempt-timing.ts';
 import type { RequestBody } from './request-body.ts';
 import { type DumpAccumulator, openDumpAccumulator } from '../../dump/accumulator.ts';
-import { apiKeyFromContext, type AuthedContext, effectiveUpstreamIdsFromContext } from '../../middleware/auth.ts';
+import { apiKeyFromContext, type AuthedContext, effectiveUpstreamIdsFromContext, effectiveUpstreamModelAccessFromContext } from '../../middleware/auth.ts';
+import type { UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import { getRuntimeLocation } from '../../runtime/runtime-info.ts';
 import type { BackgroundScheduler } from '@floway-dev/platform';
 import type { PerformanceTelemetryContext } from '@floway-dev/provider';
@@ -18,6 +19,7 @@ export interface GatewayCtx {
   readonly apiKeyId: string;
   readonly requestStartedAt: number;
   readonly upstreamIds: readonly string[] | null;
+  readonly upstreamModelAccess: readonly UpstreamModelAccessRule[];
   readonly abortSignal?: AbortSignal;
   readonly wantsStream: boolean;
   readonly downstreamAbortController?: AbortController;
@@ -71,6 +73,7 @@ export const createGatewayCtxFromHono = (c: AuthedContext, opts: CreateGatewayCt
   const controller = opts.downstreamAbortController ?? (opts.wantsStream ? new AbortController() : undefined);
   const apiKey = apiKeyFromContext(c);
   const upstreamIds = effectiveUpstreamIdsFromContext(c);
+  const upstreamModelAccess = effectiveUpstreamModelAccessFromContext(c);
   const attempt: AttemptState = { timing: { firstOutputTokenAt: null, upstreamCallStartedAt: null }, telemetry: undefined };
   const dump = openDumpAccumulator(c, opts.method ?? c.req.method, apiKey, opts.requestBody, opts.backgroundScheduler, opts.wantsStream, attempt.timing);
   if (opts.model !== undefined) dump?.requestedModel(opts.model);
@@ -78,6 +81,7 @@ export const createGatewayCtxFromHono = (c: AuthedContext, opts: CreateGatewayCt
     apiKeyId: apiKey.id,
     requestStartedAt: Date.now(),
     upstreamIds,
+    upstreamModelAccess,
     abortSignal: controller?.signal,
     wantsStream: opts.wantsStream,
     downstreamAbortController: controller,

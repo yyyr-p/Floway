@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { effectiveUpstreams, modelBadges, type ModelBadge } from './badges';
 import type { CatalogIndex } from './catalog-index';
+import type { UpstreamModelAccessRule } from './reachability';
 import type { ControlPlaneModel } from '../../api/types';
 import { Trans, type TFunction, useTranslation } from '../../i18n/translation';
 import { Chip } from '../ui/chip';
@@ -77,19 +78,20 @@ const badgeContent = (
   }
 };
 
-export function ModelInfoBadges({ cap, catalog, model }: {
+export function ModelInfoBadges({ cap, catalog, model, modelAccess = [] }: {
   cap: readonly string[] | null;
   catalog: CatalogIndex;
   model: ControlPlaneModel;
+  modelAccess?: readonly UpstreamModelAccessRule[];
 }) {
   const { t } = useTranslation();
 
   return (
     <div className="flex flex-wrap items-center gap-1.5 min-w-0">
-      {effectiveUpstreams(model, catalog, cap).map(upstream => (
+      {effectiveUpstreams(model, catalog, cap, modelAccess).map(upstream => (
         <ProviderBadge key={upstream.id} label={upstream.name} upstream={upstream} />
       ))}
-      {modelBadges(model, catalog, cap).map(badge => (
+      {modelBadges(model, catalog, cap, modelAccess).map(badge => (
         <Chip key={badge.key}>
           {badge.kind === 'limit'
             ? <Trans

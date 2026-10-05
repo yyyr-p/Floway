@@ -1,3 +1,4 @@
+import type { UpstreamModelAccessRule } from '../../../../repo/model-access.ts';
 import { enumerateModelCandidates } from '../../../providers/resolution.ts';
 import { filterInboundHeadersForProvider } from '../../../shared/inbound-headers.ts';
 import type { WebSearchConfig } from '../types.ts';
@@ -9,11 +10,13 @@ export type AlphaSearchDispatcher = (body: Record<string, unknown>, signal: Abor
 export const resolveAlphaSearchDispatcher = async ({
   config,
   upstreamIds,
+  upstreamModelAccess,
   scheduler,
   runtimeLocation,
 }: {
   config: Pick<WebSearchConfig['passthroughOpenAiSearch'], 'upstreamId' | 'model'>;
   upstreamIds: readonly string[] | null;
+  upstreamModelAccess?: readonly UpstreamModelAccessRule[];
   scheduler: BackgroundScheduler;
   runtimeLocation: string;
 }): Promise<AlphaSearchDispatcher> => {
@@ -22,6 +25,7 @@ export const resolveAlphaSearchDispatcher = async ({
   }
   const { candidates } = await enumerateModelCandidates({
     upstreamIds: [config.upstreamId],
+    upstreamModelAccess,
     model: config.model,
     kind: 'chat',
     scheduler,

@@ -8,7 +8,7 @@ import { i18n } from '../../../src/i18n';
 import { renderInApp } from '../../render';
 
 const apiKey: ApiKey = {
-  id: 'empty', name: 'Empty key', key: 'sk-empty', upstream_ids: [],
+  id: 'empty', name: 'Empty key', key: 'sk-empty', upstream_ids: [], upstream_model_access: [],
   created_at: '2026-01-01T00:00:00.000Z', last_used_at: null,
   dump_retention_seconds: null, responses_retention_seconds: 0,
 };

@@ -4,6 +4,7 @@ import { toPublicModel } from '../../../src/data-plane/models/load.ts';
 import { compareModelIds, getModelsFromProviders } from '../../../src/data-plane/providers/catalog.ts';
 import { listModelProviders } from '../../../src/data-plane/providers/registry.ts';
 import { enumerateModelCandidates } from '../../../src/data-plane/providers/resolution.ts';
+import { enumerateAddressableModelIds } from '../../../src/data-plane/shared/listing/addressable.ts';
 import { createModelsRefreshScheduler } from '../../../src/execution/models-refresh.ts';
 import { saveUpstreamForTest } from '../../repo/upstreams.ts';
 import { buildCustomUpstreamRecord, copilotModels, setupAppTest, warmModelsForTest } from '../../test-utils/app.ts';
@@ -476,6 +477,32 @@ describe('catalog listing under modelPrefix', () => {
         // upstream, regardless of routing path.
         const bare = await enumerateModelCandidates({ upstreamIds: null, model: 'gpt-4o', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST' });
         assertEquals(bare.candidates.length, 0);
+      },
+    );
+  });
+
+  test('model access filters listed and addressable-only prefix forms by the source catalog ID', async () => {
+    const { repo } = await setupAppTest();
+    await repo.upstreams.deleteAll();
+    await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+      id: 'up_dual_access',
+      config: { baseUrl: 'https://access.example.com', authStyle: 'bearer', apiKey: 'sk-x', endpoints: { openaiChatCompletions: {} }, ingressHeadersRules: [] },
+      modelPrefix: { prefix: 'or/', addressable: ['unprefixed', 'prefixed'], listed: ['prefixed'] },
+    }));
+
+    await withMockedFetch(
+      request => {
+        const url = new URL(request.url);
+        if (url.hostname === 'access.example.com' && url.pathname === '/v1/models') {
+          return jsonResponse({ object: 'list', data: [{ id: 'gpt-4o', supported_endpoints: ['/chat/completions'] }] });
+        }
+        throw new Error(`Unhandled fetch ${request.url}`);
+      },
+      async () => {
+        const providers = await listModelProviders(null);
+        const policy = [{ upstreamId: 'up_dual_access', mode: 'deny' as const, modelIds: ['gpt-4o'] }];
+        assertEquals(getModelsFromProviders(providers, scheduleRefresh, policy).models, []);
+        assertEquals(await enumerateAddressableModelIds(null, scheduleRefresh, undefined, policy), []);
       },
     );
   });
