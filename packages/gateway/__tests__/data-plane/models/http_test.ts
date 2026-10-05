@@ -680,12 +680,12 @@ test('public model list endpoints hide malformed upstream response bodies', asyn
   );
 });
 
-test('/v1/models returns an empty OpenAI model list when no provider is configured', async () => {
+test('model discovery returns empty catalogs when no provider is configured', async () => {
   const { repo, apiKey } = await setupAppTest();
   await repo.upstreams.deleteAll();
   clearInProcessCopilotTokenCache();
 
-  for (const path of ['/v1/models', '/models']) {
+  for (const path of ['/v1/models', '/models', '/api/models']) {
     const response = await requestAppWithWarmModels(path, {
       headers: { 'x-api-key': apiKey.key },
     });
@@ -699,6 +699,12 @@ test('/v1/models returns an empty OpenAI model list when no provider is configur
       data: [],
     });
   }
+
+  const geminiResponse = await requestAppWithWarmModels('/v1beta/models', {
+    headers: { 'x-api-key': apiKey.key },
+  });
+  assertEquals(geminiResponse.status, 200);
+  assertEquals(await geminiResponse.json(), { models: [] });
 });
 
 test('client-specific model discovery formats return empty catalogs without providers', async () => {
