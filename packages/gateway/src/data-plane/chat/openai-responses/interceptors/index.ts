@@ -10,6 +10,7 @@ import { withOpenAIResponsesServerToolShim } from './server-tool-shim.ts';
 import { imageGenerationServerTool } from './server-tools/image-generation.ts';
 import { webSearchServerTool } from './server-tools/web-search.ts';
 import { withPromptCacheKeyStripped } from './strip-prompt-cache-key.ts';
+import { withOpenAIResponsesReasoningIdStripped } from './strip-unbacked-reasoning-id.ts';
 import type { OpenAIResponsesInterceptor } from './types.ts';
 import { withVendorDeepSeekOpenAIResponsesNormalize } from './vendor-deepseek-normalize.ts';
 import { withVendorQwenOpenAIResponsesNormalize } from './vendor-qwen-normalize.ts';
@@ -44,6 +45,11 @@ import { withVendorQwenOpenAIResponsesNormalize } from './vendor-qwen-normalize.
 //   - withEmptyToolsToolChoiceNormalized: gated by
 //     `empty-tools-tool-choice-none`. Runs inside the server-tool shim so a
 //     tool injected by that shim prevents the empty-list rewrite.
+//   - withOpenAIResponsesReasoningIdStripped: unconditional on an OpenAI Responses
+//     target. Strips the id from an input reasoning item that carries no
+//     `encrypted_content`, so the upstream never resolves a store reference no
+//     row can answer. Runs before the role/flag normalizers so every downstream
+//     entry and the terminal dispatch see the id-less item.
 //   - withRoleCompatibilityApplied: applies role flags in the fixed order
 //     `system → developer → system → user`; later rewrites are authoritative
 //     when flags overlap, and the final step affects only mid-conversation system.
@@ -72,6 +78,7 @@ export const openaiResponsesInterceptors: readonly OpenAIResponsesInterceptor[] 
   ]),
   withReasoningDisabledOnForcedToolChoice,
   withEmptyToolsToolChoiceNormalized,
+  withOpenAIResponsesReasoningIdStripped,
   withRoleCompatibilityApplied,
   withPromptCacheKeyStripped,
   withExclusiveCachedTokensNormalized,
