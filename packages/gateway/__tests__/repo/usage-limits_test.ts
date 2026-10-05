@@ -94,6 +94,29 @@ for (const backend of backends) {
     }
   });
 
+  test(`[${backend.name}] cost limits retain unmetered request counts beside priced metrics`, async () => {
+    const repo = await backend.make();
+    await repo.usageLimits.save({ principalType: 'key', principalId: 'key-1', window: 'day', maxTokens: null, maxCostUsd: '1' });
+    await repo.usage.record(usage({ metrics: [{ metric: 'input_tokens', quantity: '10', unitPrice: '0.000001' }] }));
+    await repo.usage.record(usage({ metrics: [] }));
+
+    const [aggregate] = await repo.usage.query({ keyIds: ['key-1'], start: '2026-06-01T00', end: '2026-06-02T00' });
+    assertEquals(aggregate?.requests, 2);
+    assertEquals(aggregate?.unmeteredRequests, 1);
+    assertEquals(aggregate?.metrics, [{ metric: 'input_tokens', quantity: '10', unitPrice: '0.000001' }]);
+    assertEquals(await repo.usageLimits.reserve(reservation({ maxUnitPriceUsd: '0.000001' })), { ok: false, reason: 'historical-cost-unpriced' });
+  });
+
+  test(`[${backend.name}] usage rejects unmetered counts outside the request total`, async () => {
+    const repo = await backend.make();
+    await assertRejects(
+      () => Promise.resolve().then(() => repo.usage.record(usage({ requests: 2, unmeteredRequests: 3 }))),
+      RangeError,
+      'usage unmeteredRequests must be null or a non-negative safe integer not exceeding requests',
+    );
+    assertEquals(await repo.usage.listAll(), []);
+  });
+
   test(`[${backend.name}] token admission sums fractional usage metrics instead of truncating them`, async () => {
     const repo = await backend.make();
     await repo.usageLimits.save({ principalType: 'key', principalId: 'key-1', window: 'day', maxTokens: 3, maxCostUsd: null });

@@ -85,7 +85,7 @@ import type {
 } from '../../src/repo/types.ts';
 import { encodeUpstreamModelsCache } from '../../src/repo/upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from '../../src/repo/upstream-json.ts';
-import { usageMetricRows } from '../../src/repo/usage-metrics.ts';
+import { usageMetricRows, usageUnmeteredRequests } from '../../src/repo/usage-metrics.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../../src/shared/performance-histogram.ts';
 import { assertWebSearchProviderName, type WebSearchConfig } from '../../src/shared/web-search-providers.ts';
 import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
@@ -601,6 +601,7 @@ interface UsageBucketIdentity {
 interface UsageBucketState extends UsageBucketIdentity {
   metrics: Map<BillingMetric, { metric: BillingMetric; quantity: DecimalString; unitPrice: DecimalString | null }>;
   requests: number;
+  unmeteredRequests: number | null;
 }
 
 const memoryUsageUserIdForKey = (keyId: string, keyToUser: ReadonlyMap<string, number>): number =>
@@ -676,7 +677,17 @@ class MemoryUsageRepo implements UsageRepo {
   }
 
   private toRecord(state: UsageBucketState): UsageRecord {
-    return { keyId: state.keyId, model: state.model, upstream: state.upstream ?? null, modelKey: state.modelKey, hour: state.hour, pricingSelector: state.pricingSelector, requests: state.requests, metrics: [...state.metrics.values()].map(row => ({ ...row })) };
+    return {
+      keyId: state.keyId,
+      model: state.model,
+      upstream: state.upstream ?? null,
+      modelKey: state.modelKey,
+      hour: state.hour,
+      pricingSelector: state.pricingSelector,
+      requests: state.requests,
+      unmeteredRequests: state.unmeteredRequests,
+      metrics: [...state.metrics.values()].map(row => ({ ...row })),
+    };
   }
 
   private bucket(record: UsageRecord): UsageBucketState {
@@ -684,15 +695,21 @@ class MemoryUsageRepo implements UsageRepo {
     const k = this.key({ ...record, pricingSelector });
     let state = this.store.get(k);
     if (!state) {
-      state = { keyId: record.keyId, model: record.model, upstream: record.upstream ?? null, modelKey: record.modelKey, hour: record.hour, pricingSelector, metrics: new Map(), requests: 0 };
+      state = { keyId: record.keyId, model: record.model, upstream: record.upstream ?? null, modelKey: record.modelKey, hour: record.hour, pricingSelector, metrics: new Map(), requests: 0, unmeteredRequests: 0 };
       this.store.set(k, state);
     }
     return state;
   }
 
   record(record: UsageRecord): Promise<void> {
+    const unmeteredRequests = usageUnmeteredRequests(record);
     const state = this.bucket(record);
-    state.requests += record.requests;
+    const requests = state.requests + record.requests;
+    if (!Number.isSafeInteger(requests)) throw new RangeError('aggregated usage requests exceed the supported range');
+    state.unmeteredRequests = state.unmeteredRequests === null || unmeteredRequests === null
+      ? null
+      : state.unmeteredRequests + unmeteredRequests;
+    state.requests = requests;
     for (const row of usageMetricRows(record)) {
       const current = state.metrics.get(row.metric);
       state.metrics.set(row.metric, current
@@ -767,6 +784,8 @@ class MemoryUsageRepo implements UsageRepo {
   }
 
   set(record: UsageRecord): Promise<void> {
+    const rows = usageMetricRows(record);
+    const unmeteredRequests = usageUnmeteredRequests(record);
     const pricingSelector = canonicalizePricingSelector(record.pricingSelector);
     const k = this.key({ ...record, pricingSelector });
     const state: UsageBucketState = {
@@ -778,8 +797,9 @@ class MemoryUsageRepo implements UsageRepo {
       pricingSelector,
       metrics: new Map(),
       requests: record.requests,
+      unmeteredRequests,
     };
-    for (const row of usageMetricRows(record)) {
+    for (const row of rows) {
       state.metrics.set(row.metric, { ...row });
     }
     this.store.set(k, state);
@@ -876,7 +896,9 @@ class MemoryUsageLimitsRepo implements UsageLimitsRepo {
       let usedTokens = 0;
       let usedCost = 0;
       for (const record of scopedRecords) {
-        if (record.requests > 0 && record.metrics.length === 0 && limit.maxCostUsd !== null) return { ok: false, reason: 'historical-cost-unpriced' };
+        if (limit.maxCostUsd !== null && record.requests > 0 && (record.unmeteredRequests === null || (record.unmeteredRequests ?? (record.metrics.length === 0 ? record.requests : 0)) > 0)) {
+          return { ok: false, reason: 'historical-cost-unpriced' };
+        }
         for (const metric of record.metrics) {
           const quantity = Number(metric.quantity);
           if (tokenMetrics.has(metric.metric)) usedTokens += quantity;

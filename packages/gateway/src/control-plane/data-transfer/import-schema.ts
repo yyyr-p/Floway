@@ -366,7 +366,16 @@ const usageSchema = parsedBy((value): UsageRecord => {
     throw new Error(`invalid pricingSelector: ${messageFor(cause)}`);
   }
   const metrics = parseValue(metricsSchema, wire.metrics);
-  return { ...fields, pricingSelector, metrics };
+  const unmeteredRequests = hasOwn(wire, 'unmeteredRequests')
+    ? parseValue(z.union([nonNegativeSafeIntegerSchema('unmeteredRequests must be a non-negative safe integer'), z.null()]), wire.unmeteredRequests)
+    : metrics.length === 0 ? fields.requests : null;
+  if (unmeteredRequests !== null && unmeteredRequests > fields.requests) {
+    throw new Error('unmeteredRequests must not exceed requests');
+  }
+  if (metrics.length === 0 && unmeteredRequests !== null && unmeteredRequests !== fields.requests) {
+    throw new Error('unmeteredRequests must equal requests when metrics are empty');
+  }
+  return { ...fields, pricingSelector, unmeteredRequests, metrics };
 });
 
 const usageLimitSchema = parsedBy((value): UsageLimit => {
