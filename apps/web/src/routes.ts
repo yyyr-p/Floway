@@ -59,6 +59,7 @@ export default [
     route('admin/oauth2', 'routes/dashboard-admin-oauth2.tsx'),
     route('admin/usage-limits', 'routes/dashboard-admin-usage-limits.tsx'),
     route('admin/backup-restore', 'routes/dashboard-admin-backup-restore.tsx'),
+    route('admin/usage-pricing', 'routes/dashboard-admin-usage-pricing.tsx'),
     route('settings', 'routes/dashboard-settings.tsx'),
     ...dashboardLegacyRoutes,
     ...developmentRoutes,

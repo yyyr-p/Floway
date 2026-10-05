@@ -14,6 +14,10 @@
     "./control-plane/proxies/serialize": {
       "types": "./src/control-plane/proxies/serialize.ts"
     },
+    "./usage-pricing-backfill": {
+      "import": "./src/usage-pricing-backfill/index.ts",
+      "types": "./src/usage-pricing-backfill/index.ts"
+    },
     "./control-plane/usage-types": {
       "types": "./src/control-plane/usage-types.ts"
     },

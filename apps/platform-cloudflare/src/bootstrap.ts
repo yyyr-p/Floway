@@ -11,6 +11,7 @@ import { timingSafeEqual } from './timing-safe-equal.ts';
 import { FileDumpStore, initDumpBroker, initDumpStore, initExecutionCellNamespace } from '@floway-dev/gateway';
 import { dumpCodec } from '@floway-dev/gateway/dump-codec';
 import type { DumpMetadata } from '@floway-dev/gateway/dump-types';
+import type { DatabaseIdentityRuntime } from '@floway-dev/gateway/usage-pricing-backfill';
 import { addTrustedRootCAs } from '@floway-dev/http';
 import {
   IMAGE_CACHE_POLICY,
@@ -43,7 +44,7 @@ export interface CloudflareEnv {
 // than 503 on first use of the absent binding.
 const REQUIRED_BINDINGS = ['DB', 'FILES', 'IMAGES', 'KV', 'EXECUTION_DO'] as const;
 
-export const bootstrapCloudflarePlatform = (env: CloudflareEnv): { db: SqlDatabase } => {
+export const bootstrapCloudflarePlatform = (env: CloudflareEnv): { db: SqlDatabase; databaseIdentity: DatabaseIdentityRuntime } => {
   const missing = REQUIRED_BINDINGS.filter(name => env[name] === undefined);
   if (missing.length > 0) {
     throw new Error(
@@ -71,5 +72,13 @@ export const bootstrapCloudflarePlatform = (env: CloudflareEnv): { db: SqlDataba
   const executionCells = new DurableObjectExecutionCellNamespace(env.EXECUTION_DO);
   initExecutionCellNamespace(executionCells);
   initDumpBroker(new ExecutionCellChannelBroker<DumpMetadata>(executionCells, dumpCodec));
-  return { db: env.DB };
+  const databaseTarget = typeof env.FLOWAY_DATABASE_TARGET_ID === 'string' ? env.FLOWAY_DATABASE_TARGET_ID.trim() : '';
+  return {
+    db: env.DB,
+    databaseIdentity: {
+      kind: 'runtime',
+      target: databaseTarget || 'cloudflare:DB',
+      stable: databaseTarget.length > 0,
+    },
+  };
 };

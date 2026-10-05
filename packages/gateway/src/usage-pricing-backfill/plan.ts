@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import type { DatabaseIdentity, DatabaseValue, SqlStatement, ToolDatabase } from './database.ts';
 import { inputError, safetyError, ToolError, verificationError } from './errors.ts';
 import { ratesForStoredSelector, resolveUsagePricing, type PricingResolution, type StoredUpstream } from './pricing.ts';
@@ -13,7 +11,7 @@ import {
   type DecimalString,
 } from '@floway-dev/protocols/common';
 
-export const PLAN_SCHEMA_VERSION = 1;
+export const PLAN_SCHEMA_VERSION = 2;
 
 export type WriteMode = 'fill' | 'overwrite';
 
@@ -55,7 +53,7 @@ export interface SkippedRate {
 }
 
 export interface BackfillPlan {
-  schemaVersion: 1;
+  schemaVersion: 2;
   kind: 'usage-pricing-backfill-plan';
   planId: string;
   createdAt: string;
@@ -69,6 +67,11 @@ export interface BackfillPlan {
   };
   evidence: {
     pricedSiblingExists: boolean;
+  };
+  guards: {
+    upstreamConfigDigest: string;
+    guardModelsCache: boolean;
+    upstreamModelsCacheDigest?: string;
   };
   snapshot: PriceState[];
   operations: BackfillOperation[];
@@ -122,16 +125,24 @@ const canonicalValue = (value: unknown): unknown => {
 
 export const canonicalJson = (value: unknown): string => JSON.stringify(canonicalValue(value));
 
-const sha256 = (value: unknown): string =>
-  createHash('sha256').update(canonicalJson(value)).digest('hex');
+const sha256 = async (value: unknown): Promise<string> => {
+  const bytes = new TextEncoder().encode(canonicalJson(value));
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+};
+
+const sha256Text = async (value: string): Promise<string> => {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+  return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
+};
 
 const planPayload = (plan: Omit<BackfillPlan, 'planId'> | BackfillPlan): unknown => {
   const { planId: _planId, ...payload } = plan as BackfillPlan;
   return payload;
 };
 
-const planIdFor = (plan: Omit<BackfillPlan, 'planId'> | BackfillPlan): string =>
-  `sha256:${sha256(planPayload(plan))}`;
+const planIdFor = async (plan: Omit<BackfillPlan, 'planId'> | BackfillPlan): Promise<string> =>
+  `sha256:${await sha256(planPayload(plan))}`;
 
 const canonicalHour = (value: string, label: string): string => {
   if (!/^\d{4}-\d{2}-\d{2}T\d{2}$/.test(value)) {
@@ -235,13 +246,13 @@ const loadPricedSiblingExists = async (database: ToolDatabase, intent: BackfillI
   return result.rows[0].present === 1;
 };
 
-const pricingArtifact = (resolution: PricingResolution): BackfillPlan['pricing'] => {
+const pricingArtifact = async (resolution: PricingResolution): Promise<BackfillPlan['pricing']> => {
   if (resolution.status === 'unavailable') return { status: 'unavailable', reason: resolution.reason };
   if (resolution.status === 'unpriced') return { status: 'unpriced', source: resolution.source };
-  return { status: 'priced', source: resolution.source, digest: `sha256:${sha256(resolution.pricing)}` };
+  return { status: 'priced', source: resolution.source, digest: `sha256:${await sha256(resolution.pricing)}` };
 };
 
-const createPlan = (
+export const createPlan = async (
   database: DatabaseIdentity,
   intent: BackfillIntent,
   upstream: StoredUpstream,
@@ -249,7 +260,10 @@ const createPlan = (
   pricedSiblingExists: boolean,
   resolution: PricingResolution,
   createdAt: string,
-): BackfillPlan => {
+): Promise<BackfillPlan> => {
+  if (database.kind === 'runtime' && !database.stable) {
+    throw safetyError('database-identity-unavailable', 'A unique runtime database target is required before planning or applying prices');
+  }
   const operations: BackfillOperation[] = [];
   const skipped: SkippedRate[] = [];
   const blockers: BackfillPlan['blockers'] = [];
@@ -307,14 +321,23 @@ const createPlan = (
   const remainingNullRows = states
     .filter(state => state.unitPrice === null)
     .reduce((sum, state) => sum + (operationKeys.has(`${state.pricingSelector}\0${state.metric}`) ? 0 : state.rows), 0);
+  const guardModelsCache = resolution.status !== 'unavailable' && resolution.guardsModelsCache;
+  const guards: BackfillPlan['guards'] = {
+    upstreamConfigDigest: `sha256:${await sha256Text(upstream.configJson)}`,
+    guardModelsCache,
+    ...(guardModelsCache && upstream.modelsCacheJson !== null
+      ? { upstreamModelsCacheDigest: `sha256:${await sha256Text(upstream.modelsCacheJson)}` }
+      : {}),
+  };
   const draft: Omit<BackfillPlan, 'planId'> = {
     schemaVersion: PLAN_SCHEMA_VERSION,
     kind: 'usage-pricing-backfill-plan',
     createdAt,
     database,
     intent,
-    pricing: pricingArtifact(resolution),
+    pricing: await pricingArtifact(resolution),
     evidence: { pricedSiblingExists },
+    guards,
     snapshot: states,
     operations,
     skipped,
@@ -325,7 +348,7 @@ const createPlan = (
       remainingNullRows,
     },
   };
-  return { ...draft, planId: planIdFor(draft) };
+  return { ...draft, planId: await planIdFor(draft) };
 };
 
 export const buildPlan = async (
@@ -347,7 +370,7 @@ export const buildPlan = async (
     loadPricedSiblingExists(database, intent),
   ]);
   const resolution = resolveUsagePricing(upstream, { model: intent.model, modelKey: intent.modelKey }, options.now);
-  const plan = createPlan(
+  const plan = await createPlan(
     database.identity,
     intent,
     upstream,
@@ -463,23 +486,29 @@ const applyStatement = (plan: BackfillPlan, guards: PlanGuards): SqlStatement =>
   };
 };
 
-const ensurePlan = (value: unknown): BackfillPlan => {
+const ensurePlan = async (value: unknown): Promise<BackfillPlan> => {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) throw inputError('invalid-plan', 'Plan must be a JSON object');
   const plan = value as BackfillPlan;
   if (plan.schemaVersion !== PLAN_SCHEMA_VERSION || plan.kind !== 'usage-pricing-backfill-plan' || typeof plan.planId !== 'string') {
     throw inputError('invalid-plan', 'Plan schema is unsupported');
   }
+  if (plan.guards === null || typeof plan.guards !== 'object'
+    || !/^sha256:[0-9a-f]{64}$/.test(plan.guards.upstreamConfigDigest)
+    || typeof plan.guards.guardModelsCache !== 'boolean'
+    || (plan.guards.guardModelsCache && !/^sha256:[0-9a-f]{64}$/.test(plan.guards.upstreamModelsCacheDigest ?? ''))) {
+    throw inputError('invalid-plan', 'Plan guards are malformed');
+  }
   if (typeof plan.createdAt !== 'string' || Number.isNaN(Date.parse(plan.createdAt)) || new Date(plan.createdAt).toISOString() !== plan.createdAt) {
     throw inputError('invalid-plan', 'Plan createdAt must be a canonical ISO timestamp');
   }
   normalizeIntent(plan.intent);
-  if (plan.planId !== planIdFor(plan)) throw safetyError('plan-tampered', 'Plan ID does not match its contents');
+  if (plan.planId !== await planIdFor(plan)) throw safetyError('plan-tampered', 'Plan ID does not match its contents');
   return plan;
 };
 
-export const parsePlan = (source: string): BackfillPlan => {
+export const parsePlan = async (source: string): Promise<BackfillPlan> => {
   try {
-    return ensurePlan(JSON.parse(source));
+    return await ensurePlan(JSON.parse(source));
   } catch (cause) {
     if (cause instanceof ToolError) throw cause;
     throw inputError('invalid-plan-json', 'Plan is not valid JSON');
@@ -499,7 +528,7 @@ export interface ApplyResult {
   };
 }
 
-const finalStateHistogram = (plan: BackfillPlan): Array<Pick<PriceState, 'pricingSelector' | 'metric' | 'unitPrice' | 'rows'>> => {
+export const finalStateHistogram = (plan: BackfillPlan): Array<Pick<PriceState, 'pricingSelector' | 'metric' | 'unitPrice' | 'rows'>> => {
   const operations = new Map(plan.operations.map(operation => [`${operation.pricingSelector}\0${operation.metric}`, operation]));
   const aggregated = new Map<string, Pick<PriceState, 'pricingSelector' | 'metric' | 'unitPrice' | 'rows'>>();
   for (const state of plan.snapshot) {
@@ -518,7 +547,7 @@ const finalStateHistogram = (plan: BackfillPlan): Array<Pick<PriceState, 'pricin
     (left.unitPrice ?? '').localeCompare(right.unitPrice ?? ''));
 };
 
-const actualStateHistogram = (states: readonly PriceState[]): ReturnType<typeof finalStateHistogram> =>
+export const actualStateHistogram = (states: readonly PriceState[]): ReturnType<typeof finalStateHistogram> =>
   states
     .map(({ pricingSelector, metric, unitPrice, rows }) => ({ pricingSelector, metric, unitPrice, rows }))
     .toSorted((left, right) =>
@@ -526,7 +555,7 @@ const actualStateHistogram = (states: readonly PriceState[]): ReturnType<typeof 
       left.metric.localeCompare(right.metric) ||
       (left.unitPrice ?? '').localeCompare(right.unitPrice ?? ''));
 
-const remainingNullSummary = (states: readonly PriceState[]): ApplyResult['summary'] => {
+export const remainingNullSummary = (states: readonly PriceState[]): ApplyResult['summary'] => {
   const remainingNullRowsByMetric: Partial<Record<BillingMetric, number>> = {};
   let remainingNullRows = 0;
   for (const state of states) {
@@ -538,6 +567,9 @@ const remainingNullSummary = (states: readonly PriceState[]): ApplyResult['summa
 };
 
 export const applyPlan = async (database: ToolDatabase, savedPlan: BackfillPlan): Promise<ApplyResult> => {
+  if (database.identity.kind === 'runtime' && !database.identity.stable) {
+    throw safetyError('database-identity-unavailable', 'A unique runtime database target is required before planning or applying prices');
+  }
   if (canonicalJson(database.identity) !== canonicalJson(savedPlan.database)) {
     throw safetyError('database-mismatch', 'The opened database does not match the plan target');
   }

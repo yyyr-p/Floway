@@ -50,7 +50,7 @@ initBackgroundSchedulerResolver(_c => promise => {
 initOpenAIResponsesWebSocketUpgradeResolver((c, events) =>
   upgradeWebSocket(c, events, { onError: err => console.error('[websocket]', err) }));
 
-const { db } = bootstrapNodePlatform();
+const { db, databaseIdentity } = bootstrapNodePlatform();
 const port = Number(getEnvOptional('PORT', '8788'));
 const scheduledRuntimeLocation = getEnvOptional('RUNTIME_LOCATION', 'LOCAL').toUpperCase() || 'LOCAL';
 const hostname = getEnvOptional('HOST', '127.0.0.1');
@@ -67,7 +67,7 @@ if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_KEY) {
 }
 
 await applyMigrations(db);
-initRepo(new SqlRepo(db));
+initRepo(new SqlRepo(db, databaseIdentity));
 initExecutionCellNamespace(new InProcessExecutionCellNamespace(handleExecutionRequest));
 
 const scheduleBackground = (promise: Promise<unknown>): void => {

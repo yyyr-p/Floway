@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 
-import { ratesForStoredSelector, resolveUsagePricing, type StoredUpstream } from '../../src/backfill-usage-pricing/pricing.ts';
 import { MODEL_CATALOG_REVISION } from '@floway-dev/gateway';
+import { ratesForStoredSelector, resolveUsagePricing, type StoredUpstream } from '@floway-dev/gateway/usage-pricing-backfill';
 import { basePricing } from '@floway-dev/protocols/common';
 import { assertEquals } from '@floway-dev/test-utils';
 
