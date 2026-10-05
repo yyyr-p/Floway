@@ -274,6 +274,81 @@ test('Codex User-Agents receive the Codex catalog from root model-list paths', a
   );
 });
 
+test('Codex catalogs include only visible aliases with targets reachable under the API key cap', async () => {
+  const { apiKey, repo } = await setupAppTest();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_other',
+    name: 'Other provider',
+    config: {
+      baseUrl: 'https://other.example.com',
+      authStyle: 'bearer',
+      ingressHeadersRules: [],
+      apiKey: 'sk-other',
+      endpoints: { openaiChatCompletions: {} },
+      modelsFetch: { enabled: false },
+      models: [{ upstreamModelId: 'other-model', kind: 'chat', endpoints: { openaiChatCompletions: {} } }],
+    },
+  }));
+  const keyUpdate = await requestAppCold(`/api/keys/${apiKey.id}`, {
+    method: 'PATCH',
+    headers: { 'x-api-key': apiKey.key, 'content-type': 'application/json' },
+    body: JSON.stringify({ upstream_ids: ['up_copilot'] }),
+  });
+  expect(keyUpdate.status).toBe(200);
+
+  const aliasDefaults = {
+    kind: 'chat' as const,
+    selection: 'first-available' as const,
+    displayName: null,
+    announcedMetadata: null,
+    createdAt: '2026-06-26T00:00:00.000Z',
+    updatedAt: '2026-06-26T00:00:00.000Z',
+  };
+  for (const alias of [
+    { id: 'alias_visible', name: 'visible-alias', visibleInModelsList: true, target: 'gpt-5.4', sortOrder: 0 },
+    { id: 'alias_hidden', name: 'hidden-alias', visibleInModelsList: false, target: 'gpt-5.4', sortOrder: 1 },
+    { id: 'alias_capped', name: 'capped-alias', visibleInModelsList: true, target: 'other-model', sortOrder: 2 },
+    { id: 'alias_orphan', name: 'orphan-alias', visibleInModelsList: true, target: 'missing-model', sortOrder: 3 },
+  ]) {
+    await repo.modelAliases.insert({
+      ...aliasDefaults,
+      id: alias.id,
+      name: alias.name,
+      visibleInModelsList: alias.visibleInModelsList,
+      targets: [{ target_model_id: alias.target, rules: {} }],
+      sortOrder: alias.sortOrder,
+    });
+  }
+
+  await withMockedFetch(
+    request => {
+      const url = new URL(request.url);
+      if (url.hostname === 'update.code.visualstudio.com') return jsonResponse(['1.110.1']);
+      if (url.pathname === '/copilot_internal/v2/token') {
+        return jsonResponse({ token: 'copilot-access-token', expires_at: 4102444800, refresh_in: 3600, endpoints: { api: 'https://api.individual.githubcopilot.com' } });
+      }
+      if (url.pathname === '/models' && url.hostname === 'api.individual.githubcopilot.com') {
+        return jsonResponse(copilotModels([{ id: 'gpt-5.4', display_name: 'GPT-5.4', supported_endpoints: ['/v1/chat/completions'], maxContextWindowTokens: 272_000 }]));
+      }
+      if (url.hostname === 'raw.githubusercontent.com') return new Response(null, { status: 404 });
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const response = await requestAppWithWarmModels('/models', {
+        headers: { 'x-api-key': apiKey.key, 'user-agent': 'codex_cli_rs/987.654.321' },
+      });
+      expect(response.status).toBe(200);
+      const body = await response.json() as { models: Array<Record<string, unknown> & { slug: string }> };
+
+      expect(Object.keys(body)).toEqual(['models']);
+      expect(body.models.map(model => model.slug)).toEqual(['gpt-5.4', 'visible-alias']);
+      expect(body.models.find(model => model.slug === 'visible-alias')).toMatchObject({ slug: 'visible-alias', display_name: 'gpt-5.4' });
+      expect(body.models.some(model => ['hidden-alias', 'capped-alias', 'orphan-alias'].includes(model.slug))).toBe(false);
+      expect(body.models.some(model => 'aliasedFrom' in model || 'id' in model)).toBe(false);
+    },
+  );
+});
+
 test('/models returns the same superset payload as /v1/models', async () => {
   const { apiKey, repo } = await setupAppTest();
   // Image-kind projection requires a non-Copilot id like gpt-image-* (matched
