@@ -34,6 +34,7 @@ const copyableRecord = (source: UpstreamRecord, name: string, hue: number): {
     proxy_fallback_list: structuredClone(source.proxy_fallback_list),
     model_prefix: source.model_prefix === null ? null : structuredClone(source.model_prefix),
     hue,
+    logo_url: source.logo_url,
     modelsCache: { fetchedAt: null, lastError: null, modelCount: null },
   };
 
