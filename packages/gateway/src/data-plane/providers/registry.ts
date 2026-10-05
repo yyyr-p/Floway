@@ -29,13 +29,17 @@ export const createProvider = (
   const provider = providersByKind[record.kind].create(record);
   return {
     ...provider,
+    ...(record.modelMetadataDefaults !== undefined ? { modelMetadataDefaults: record.modelMetadataDefaults } : {}),
     configVersion: record.configVersion,
     modelsRefreshInputHash: modelsRefreshInputHash(record),
   };
 };
 
 export const createPreviewProvider = (record: UpstreamRecord): Provider =>
-  providersByKind[record.kind].create(record);
+  ({
+    ...providersByKind[record.kind].create(record),
+    ...(record.modelMetadataDefaults !== undefined ? { modelMetadataDefaults: record.modelMetadataDefaults } : {}),
+  });
 
 export const flagDefaultsForKind = (kind: UpstreamProviderKind): FlagDefaults =>
   providersByKind[kind].defaultFlags;

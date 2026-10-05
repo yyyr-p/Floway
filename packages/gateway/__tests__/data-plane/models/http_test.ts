@@ -298,6 +298,7 @@ test('Codex catalogs include only visible aliases with targets reachable under t
 
   const aliasDefaults = {
     kind: 'chat' as const,
+    enabled: true,
     selection: 'first-available' as const,
     displayName: null,
     announcedMetadata: null,
