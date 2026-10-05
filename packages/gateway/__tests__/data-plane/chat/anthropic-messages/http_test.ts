@@ -8,6 +8,7 @@ import { InMemoryRepo } from '../../../repo/memory.ts';
 import { flushBackground } from '../../../test-utils/background-tracker.ts';
 import type { AnthropicMessagesStreamEvent } from '@floway-dev/protocols/anthropic-messages';
 import { doneFrame, eventFrame, type ModelEndpoints, type ProtocolFrame } from '@floway-dev/protocols/common';
+import type { OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
 import { type ModelCandidate, directFetcher, type ProviderCallResult, type ProviderStreamResult, type UpstreamCallOptions } from '@floway-dev/provider';
 import { assert, assertEquals, stubProvider, stubInternalModel } from '@floway-dev/test-utils';
 
@@ -95,6 +96,26 @@ const makeAnthropicMessagesEvents = (): readonly AnthropicMessagesStreamEvent[] 
   { type: 'content_block_stop', index: 0 },
   { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 1 } },
   { type: 'message_stop' },
+];
+
+const makeOpenAIChatCompletionsEvents = (): readonly OpenAIChatCompletionsStreamEvent[] => [
+  {
+    id: 'chat_messages_http', object: 'chat.completion.chunk', created: 0, model: 'test-model',
+    choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
+  },
+  {
+    id: 'chat_messages_http', object: 'chat.completion.chunk', created: 0, model: 'test-model',
+    choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }],
+  },
+  {
+    id: 'chat_messages_http', object: 'chat.completion.chunk', created: 0, model: 'test-model',
+    choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+  },
+  {
+    id: 'chat_messages_http', object: 'chat.completion.chunk', created: 0, model: 'test-model',
+    choices: [],
+    usage: { prompt_tokens: 4, completion_tokens: 2, total_tokens: 6 },
+  },
 ];
 
 const makeProtocolFrames = async function* <TEvent>(events: readonly TEvent[]): AsyncGenerator<ProtocolFrame<TEvent>> {
@@ -317,4 +338,93 @@ test('POST /v1/messages renders the Anthropic-shaped model-unsupported 400 when 
   assertEquals(body.type, 'error');
   assertEquals(body.error.type, 'invalid_request_error');
   assert(body.error.message.includes('does not support'));
+});
+
+test('POST /v1/messages maps effort, budget, and adaptive intent through a Chat Completions upstream', async () => {
+  installRepo();
+  const bodies: Record<string, unknown>[] = [];
+  const callOpenAIChatCompletions = vi.fn(async (
+    _model: unknown,
+    body: unknown,
+  ): Promise<ProviderStreamResult<OpenAIChatCompletionsStreamEvent>> => {
+    bodies.push(structuredClone(body as Record<string, unknown>));
+    return {
+      ok: true,
+      events: makeProtocolFrames(makeOpenAIChatCompletionsEvents()),
+      modelKey: 'k',
+      headers: new Headers(),
+    };
+  });
+  const base = makeCandidate({ endpoints: { openaiChatCompletions: {} } });
+  const candidate: ModelCandidate = {
+    ...base,
+    provider: { ...base.provider, instance: stubProvider({ callOpenAIChatCompletions }) },
+    model: {
+      ...base.model,
+      chat: {
+        reasoning: {
+          effort: { supported: ['low', 'medium', 'high'], default: 'medium' },
+          adaptive: true,
+          mandatory: true,
+        },
+      },
+    },
+  };
+  const headers = { 'content-type': 'application/json' };
+
+  queueCandidates([candidate]);
+  const defaultResponse = await makeApp().request('/v1/messages', {
+    method: 'POST', headers,
+    body: JSON.stringify({ model: 'test-model', max_tokens: 32, messages: [{ role: 'user', content: 'hello' }] }),
+  });
+  assertEquals(defaultResponse.status, 200);
+  assertEquals(defaultResponse.headers.get('content-type')?.split(';')[0], 'application/json');
+  await defaultResponse.json();
+  assertEquals('reasoning_effort' in bodies[0]!, false);
+
+  queueCandidates([candidate]);
+  const unsupportedResponse = await makeApp().request('/v1/messages', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model: 'test-model', max_tokens: 32, stream: true,
+      output_config: { effort: 'future_effort' }, thinking: { type: 'disabled' },
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assertEquals(unsupportedResponse.status, 200);
+  assertEquals(unsupportedResponse.headers.get('content-type')?.split(';')[0], 'text/event-stream');
+  await unsupportedResponse.text();
+  assertEquals(bodies[1]!.reasoning_effort, 'future_effort');
+
+  queueCandidates([candidate]);
+  const budgetResponse = await makeApp().request('/v1/messages', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model: 'test-model', max_tokens: 16384, stream: false,
+      thinking: { type: 'enabled', budget_tokens: 8192 },
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assertEquals(budgetResponse.status, 200);
+  await budgetResponse.json();
+  assertEquals(bodies[2]!.reasoning_effort, 'medium');
+  assertEquals('budget_tokens' in bodies[2]!, false);
+
+  queueCandidates([{
+    ...candidate,
+    rules: { reasoning: { effort: 'low', adaptive: true, budget_tokens: 4096 } },
+  }]);
+  const aliasResponse = await makeApp().request('/v1/messages', {
+    method: 'POST', headers,
+    body: JSON.stringify({
+      model: 'test-model', max_tokens: 32, stream: true,
+      thinking: { type: 'adaptive' },
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  assertEquals(aliasResponse.status, 200);
+  await aliasResponse.text();
+  assertEquals(bodies[3]!.reasoning_effort, 'low');
+  assertEquals('adaptive' in bodies[3]!, false);
+  assertEquals('budget_tokens' in bodies[3]!, false);
 });

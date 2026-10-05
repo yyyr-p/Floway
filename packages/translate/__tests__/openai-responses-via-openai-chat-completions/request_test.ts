@@ -938,6 +938,27 @@ test('buildTargetRequest maps text.verbosity onto verbosity', () => {
   assertEquals(result.target.verbosity, 'low');
 });
 
+test('buildTargetRequest preserves the full OpenAI effort vocabulary and unknown open-string values', () => {
+  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'future_effort']) {
+    const result = buildTargetRequest({
+      model: 'gpt-test',
+      input: [{ type: 'message', role: 'user', content: 'hi' }],
+      reasoning: { effort },
+    });
+
+    assertEquals(result.target.reasoning_effort, effort);
+  }
+});
+
+test('buildTargetRequest leaves the target effort unset when the Responses source omits it', () => {
+  const result = buildTargetRequest({
+    model: 'gpt-test',
+    input: [{ type: 'message', role: 'user', content: 'hi' }],
+  });
+
+  assertEquals('reasoning_effort' in result.target, false);
+});
+
 test('buildTargetRequest co-emits reasoning.effort onto reasoning_effort and service_tier verbatim', () => {
   const result = buildTargetRequest({
     model: 'gpt-test',
