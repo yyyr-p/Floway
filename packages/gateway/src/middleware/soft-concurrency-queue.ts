@@ -1,8 +1,8 @@
 import type { Context, Next } from 'hono';
 
+import { concurrencyAbortReason, holdConcurrencyResponseStream } from './concurrency-response-stream.ts';
+import { concurrencyLimitResponse, isDataPlaneRequest } from './concurrency-response.ts';
 import { getEnvOptional } from '@floway-dev/platform';
-import { generateAnthropicId } from '@floway-dev/protocols/anthropic-messages';
-import { PUBLIC_DATA_PLANE_ROUTES, type PublicDataPlaneRouteId } from '@floway-dev/protocols/common';
 
 const SOFT_LIMIT_ENV = 'FLOWAY_SOFT_CONCURRENT_REQUESTS';
 const MAX_QUEUE_SIZE_ENV = 'FLOWAY_CONCURRENCY_QUEUE_MAX_SIZE';
@@ -11,7 +11,6 @@ const DEFAULT_MAX_QUEUE_SIZE = 100;
 const MAX_QUEUE_SIZE = 10_000;
 const DEFAULT_MAX_WAIT_MS = 30_000;
 const MAX_WAIT_MS = 2_147_483_647;
-const RETRY_AFTER_SECONDS = '1';
 const CONCURRENCY_LIMIT_MESSAGE = 'Too many concurrent requests. Retry the request shortly.';
 const QUEUE_TIMEOUT_MESSAGE = 'Timed out waiting for a concurrency slot. Retry the request shortly.';
 
@@ -92,44 +91,6 @@ export const parseSoftConcurrencyQueueConfig = (values: {
   };
 };
 
-const escapeRegex = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-const routePatternRegex = (path: string): RegExp => {
-  let source = '';
-  let offset = 0;
-  const parameter = /:[^/{}]+(?:\{([^}]+)\})?/g;
-  for (const match of path.matchAll(parameter)) {
-    const index = match.index ?? 0;
-    source += escapeRegex(path.slice(offset, index));
-    source += `(?:${match[1] ?? '[^/]+'})`;
-    offset = index + match[0].length;
-  }
-  source += escapeRegex(path.slice(offset));
-  return new RegExp(`^${source}$`);
-};
-
-const routeMatchers = Object.values(PUBLIC_DATA_PLANE_ROUTES).flatMap(route => route.paths.map(path => ({
-  method: route.method,
-  path: routePatternRegex(path),
-})));
-
-const routeMatches = (routeId: PublicDataPlaneRouteId, method: string, path: string): boolean => {
-  const route = PUBLIC_DATA_PLANE_ROUTES[routeId];
-  return route.method === method && route.paths.some(pattern => routePatternRegex(pattern).test(path));
-};
-
-const isDataPlaneRequest = (method: string, path: string): boolean =>
-  routeMatchers.some(route => route.method === method && route.path.test(path));
-
-const isAnthropicRoute = (method: string, path: string): boolean =>
-  routeMatches('anthropicMessages', method, path)
-  || routeMatches('anthropicMessagesCountTokens', method, path);
-
-const isGeminiRoute = (method: string, path: string): boolean =>
-  routeMatches('geminiGenerateContentAction', method, path)
-  || routeMatches('geminiModels', method, path)
-  || routeMatches('geminiModel', method, path);
-
 const retryResponse = (
   c: Context,
   status: 'full' | 'timeout',
@@ -138,39 +99,12 @@ const retryResponse = (
   waitedMs?: number,
 ): Response => {
   const message = status === 'timeout' ? QUEUE_TIMEOUT_MESSAGE : CONCURRENCY_LIMIT_MESSAGE;
-  c.header('Retry-After', RETRY_AFTER_SECONDS);
-  c.header('Cache-Control', 'no-store');
-  c.header('X-Floway-Queue-Status', status);
-  c.header('X-Floway-Queue-Depth', String(queueDepth));
-  if (queuePosition !== undefined) c.header('X-Floway-Queue-Position', String(queuePosition));
-  if (waitedMs !== undefined) c.header('X-Floway-Queue-Wait-Ms', String(waitedMs));
-
-  if (isAnthropicRoute(c.req.method, c.req.path)) {
-    return c.json({
-      type: 'error',
-      error: { type: 'rate_limit_error', message },
-      request_id: generateAnthropicId('req'),
-    }, 429);
-  }
-
-  if (isGeminiRoute(c.req.method, c.req.path)) {
-    return c.json({
-      error: {
-        code: 429,
-        message,
-        status: 'RESOURCE_EXHAUSTED',
-      },
-    }, 429);
-  }
-
-  return c.json({
-    error: {
-      message,
-      type: 'rate_limit_error',
-      param: null,
-      code: 'rate_limit_exceeded',
-    },
-  }, 429);
+  return concurrencyLimitResponse(c, message, {
+    status,
+    depth: queueDepth,
+    ...(queuePosition === undefined ? {} : { position: queuePosition }),
+    ...(waitedMs === undefined ? {} : { waitedMs }),
+  });
 };
 
 const admissionHeaders = (response: Response, admission: QueueAdmission): Response => {
@@ -186,9 +120,6 @@ const admissionHeaders = (response: Response, admission: QueueAdmission): Respon
   });
 };
 
-const abortReason = (signal: AbortSignal): unknown =>
-  signal.reason ?? new DOMException('Client disconnected while waiting for a concurrency slot.', 'AbortError');
-
 class FifoConcurrencyQueue {
   private active = 0;
   private currentLimit: number | null;
@@ -201,7 +132,7 @@ class FifoConcurrencyQueue {
   acquire(config: SoftConcurrencyQueueConfig, signal: AbortSignal): Promise<AcquireResult> {
     this.currentLimit = config.limit;
     this.drain();
-    if (signal.aborted) return Promise.reject(abortReason(signal));
+    if (signal.aborted) return Promise.reject(concurrencyAbortReason(signal));
 
     const limit = config.limit;
     if (limit === null || (this.active < limit && this.waiters.length === 0)) {
@@ -239,7 +170,7 @@ class FifoConcurrencyQueue {
       waiter.abort = () => {
         if (waiter.settled || !remove()) return;
         waiter.settled = true;
-        reject(abortReason(signal));
+        reject(concurrencyAbortReason(signal));
       };
       this.waiters.push(waiter);
       signal.addEventListener('abort', waiter.abort, { once: true });
@@ -280,7 +211,7 @@ class FifoConcurrencyQueue {
         waiter.settled = true;
         if (waiter.timer !== undefined) clearTimeout(waiter.timer);
         waiter.signal.removeEventListener('abort', waiter.abort);
-        waiter.reject(abortReason(waiter.signal));
+        waiter.reject(concurrencyAbortReason(waiter.signal));
         continue;
       }
       waiter.settled = true;
@@ -294,75 +225,6 @@ class FifoConcurrencyQueue {
     }
   }
 }
-
-const holdUntilBodySettles = (
-  response: Response,
-  release: () => void,
-  signal: AbortSignal,
-): Response => {
-  const body = response.body;
-  if (body === null || response.status === 101) {
-    release();
-    return response;
-  }
-
-  const reader = body.getReader();
-  let settled = false;
-  let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
-  const finish = (): void => {
-    if (settled) return;
-    settled = true;
-    signal.removeEventListener('abort', onAbort);
-    release();
-  };
-  const onAbort = (): void => {
-    void reader.cancel(abortReason(signal)).catch(error => {
-      try {
-        controllerRef?.error(error);
-      } catch {
-        // A disconnected client may already have cancelled the wrapped stream.
-      }
-    }).finally(finish);
-  };
-
-  const wrapped = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controllerRef = controller;
-    },
-    async pull(controller) {
-      try {
-        const result = await reader.read();
-        if (result.done) {
-          controller.close();
-          finish();
-          return;
-        }
-        controller.enqueue(result.value);
-      } catch (error) {
-        try {
-          controller.error(error);
-        } finally {
-          finish();
-        }
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        finish();
-      }
-    },
-  });
-
-  signal.addEventListener('abort', onAbort, { once: true });
-  if (signal.aborted) onAbort();
-  return new Response(wrapped, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: new Headers(response.headers),
-  });
-};
 
 export const createSoftConcurrencyQueueMiddleware = (
   getConfig: () => SoftConcurrencyQueueConfig,
@@ -389,7 +251,7 @@ export const createSoftConcurrencyQueueMiddleware = (
     try {
       await next();
       const withHeaders = admissionHeaders(c.res, result.admission);
-      c.res = holdUntilBodySettles(withHeaders, result.admission.release, c.req.raw.signal);
+      c.res = holdConcurrencyResponseStream(withHeaders, result.admission.release, c.req.raw.signal);
     } catch (error) {
       result.admission.release();
       throw error;
