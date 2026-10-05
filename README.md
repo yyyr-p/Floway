@@ -272,11 +272,14 @@ reservation; already-admitted concurrent requests can still preserve an
 overrun. Abandoned reservations expire after 24 hours.
 
 Cost limits fail closed: earlier requests with no usage metrics or positive
-metrics with no stored unit price block further admission with HTTP 429 until
-the missing historical prices are backfilled or the affected window rolls
-forward. Policy denials use protocol-shaped HTTP 429 responses; a limit-ledger
-storage failure returns HTTP 503. Backup exports use version 21 and include
-configured limits.
+metrics with no stored unit price block further admission with HTTP 429. Missing
+unit prices can be backfilled, but missing metrics cannot. Older metric-bearing
+hourly buckets cannot reveal whether they also contain unmetered requests;
+migration and legacy-snapshot import preserve that count as unknown, which
+blocks cost-limited admission until the affected window rolls forward. New
+records and backup round trips retain exact unmetered request counts. Policy
+denials use protocol-shaped HTTP 429 responses; a limit-ledger storage failure
+returns HTTP 503. Backup exports use version 26 and include configured limits.
 
 ## Other Deployment Options
 
