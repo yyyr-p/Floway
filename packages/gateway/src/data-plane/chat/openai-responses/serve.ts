@@ -4,8 +4,10 @@ import { completeOpenAIResponsesCompaction } from './compaction-resource.ts';
 import type { OpenAIResponsesAttemptResult } from './interceptors/types.ts';
 import { syntheticEventsFromCompaction } from './items/output.ts';
 import { prepareOpenAIResponsesServePlan } from './serve-prep.ts';
+import { renderOpenAIResponsesCyberInterceptReject } from './errors.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
+import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import { collectOpenAIResponsesProtocolEventsToResult, type CanonicalOpenAIResponsesPayload, type ClientOpenAIResponsesCompaction, type OpenAIResponsesStreamEvent } from '@floway-dev/protocols/openai-responses';
 import type { ExecuteResult } from '@floway-dev/provider';
@@ -21,6 +23,24 @@ export const openaiResponsesServe = {
     const { payload, ctx, headers } = args;
     const plan = await prepareOpenAIResponsesServePlan({ payload, ctx });
     if (plan.kind === 'failure') return plan.result;
+    // Cyber intercept: one judge turn before any dispatch, when at least one
+    // candidate opted in. Reject renders the 403 envelope; fallback filters
+    // the flag-on candidates out of the dispatch list.
+    const cyberSettings = await cyberInterceptGateSettingsFor(ctx, plan.candidates);
+    let dispatched = plan.candidates;
+    if (cyberSettings !== null) {
+      const gate = await runCyberInterceptGate({
+        model: payload.model,
+        payload: args.payload,
+        ctx,
+        candidates: plan.candidates,
+        requestMethod: 'POST',
+        requestPath: '/v1/responses',
+      }, cyberSettings, renderOpenAIResponsesCyberInterceptReject);
+      if (gate.kind === 'reject') return renderOpenAIResponsesCyberInterceptReject(gate.reason);
+      if (gate.candidates.length === 0) return renderOpenAIResponsesCyberInterceptReject('unsafe content detected');
+      dispatched = gate.candidates;
+    }
     // Iterate the affinity-selected candidates: success (SSE stream opened) is the
     // final answer; per-candidate failures fall through so a transient
     // 5xx/429/network does not become the request's verdict when another
@@ -28,7 +48,7 @@ export const openaiResponsesServe = {
     // Each attempt stamps its private prepared-payload clone with the
     // candidate's canonical model id.
     const result = await iterateCandidates(
-      plan.candidates,
+      dispatched,
       'openaiResponsesServe.generate',
       ctx,
       'chat',

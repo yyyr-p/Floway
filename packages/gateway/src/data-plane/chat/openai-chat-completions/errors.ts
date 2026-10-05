@@ -30,3 +30,10 @@ export const renderOpenAIChatCompletionsFailure = (
     return openAiErrorResult(400, appendFailedUpstreams(`Model ${failure.model} does not support the /chat/completions endpoint.`, failure.failedUpstreams));
   }
 };
+
+// The cyber-intercept gate's rejection. 403 with the gate's own error type
+// and code; `message` is the judge model's reason.
+export const renderOpenAIChatCompletionsCyberInterceptReject = (
+  reason: string,
+): ExecuteResult<ProtocolFrame<OpenAIChatCompletionsStreamEvent>> =>
+  openAiErrorResult(403, reason, { param: 'messages', code: 'cyber_intercept_blocked' });

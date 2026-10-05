@@ -29,3 +29,10 @@ export const renderOpenAIResponsesFailure = (
     return openAiErrorResult(400, appendFailedUpstreams(`Model ${failure.model} does not support the /responses endpoint.`, failure.failedUpstreams));
   }
 };
+
+// The cyber-intercept gate's rejection. 403 with the gate's own code;
+// `message` is the judge model's reason.
+export const renderOpenAIResponsesCyberInterceptReject = (
+  reason: string,
+): ExecuteResult<ProtocolFrame<OpenAIResponsesStreamEvent>> =>
+  openAiErrorResult(403, reason, { param: 'input', code: 'cyber_intercept_blocked' });

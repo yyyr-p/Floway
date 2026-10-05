@@ -67,3 +67,11 @@ export const renderGeminiGenerateContentFailure = (
     return geminiGenerateContentRpcErrorResult(400, appendFailedUpstreams(`Model ${failure.model} does not support ${endpoint === 'countTokens' ? 'countTokens' : 'the Gemini generateContent endpoint'}.`, failure.failedUpstreams));
   }
 };
+
+// The cyber-intercept gate's rejection. 403 PERMISSION_DENIED with the
+// gate's code prefixed into the message — the Google RPC status envelope
+// has no separate code field.
+export const renderGeminiGenerateContentCyberInterceptReject = (
+  reason: string,
+): ExecuteResult<ProtocolFrame<GeminiGenerateContentStreamEvent>> =>
+  geminiGenerateContentRpcErrorResult(403, `[cyber_intercept_blocked] ${reason}`);

@@ -57,3 +57,12 @@ export const renderAnthropicMessagesFailure = (
     return anthropicErrorResult(400, 'invalid_request_error', appendFailedUpstreams(`Model ${failure.model} does not support the ${endpointPath} endpoint.`, failure.failedUpstreams));
   }
 };
+
+// The cyber-intercept gate's rejection. 403 invalid_request_error carrying
+// the judge model's reason in the message with the gate's code prefixed —
+// the Anthropic envelope has no separate code field, so the code travels in
+// the message and `request_id` stays top-level per the envelope's contract.
+export const renderAnthropicMessagesCyberInterceptReject = (
+  reason: string,
+): ExecuteResult<ProtocolFrame<AnthropicMessagesStreamEvent>> =>
+  anthropicErrorResult(403, 'invalid_request_error', `[cyber_intercept_blocked] ${reason}`);

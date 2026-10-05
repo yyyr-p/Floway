@@ -58,10 +58,10 @@ export const cyberInterceptGateSettingsFor = async (
 
 // The gate's full flow for one request. `renderReject` is the per-protocol
 // envelope builder; the gate supplies only the verdict text.
-export const runCyberInterceptGate = async (
+export const runCyberInterceptGate = async <T>(
   input: CyberInterceptGateInput,
   settings: CyberInterceptSettings,
-  renderReject: (verdict: string) => ExecuteResult<never>,
+  renderReject: (verdict: string) => ExecuteResult<T>,
 ): Promise<CyberInterceptGateDecision<readonly ModelCandidate[]>> => {
   const flagOnCandidates = input.candidates.filter(candidate => providerModelOf(candidate).enabledFlags.has('cyber-intercept'));
   if (flagOnCandidates.length === 0) return { kind: 'pass', candidates: input.candidates };

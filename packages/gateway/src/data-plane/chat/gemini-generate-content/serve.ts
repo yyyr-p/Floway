@@ -1,11 +1,12 @@
 import { analyzeGeminiGenerateContentAffinity } from './affinity/ingress.ts';
 import { geminiGenerateContentAttempt, geminiGenerateContentCountTokensTarget, geminiGenerateContentGenerateTarget } from './attempt.ts';
-import { renderGeminiGenerateContentFailure } from './errors.ts';
+import { renderGeminiGenerateContentCyberInterceptReject, renderGeminiGenerateContentFailure } from './errors.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
+import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { GeminiGenerateContentPayload, GeminiGenerateContentStreamEvent } from '@floway-dev/protocols/gemini-generate-content';
 import type { ExecuteResult, PlainResult } from '@floway-dev/provider';
@@ -43,10 +44,29 @@ export const geminiGenerateContentServe = {
     if ('kind' in selection) return renderGeminiGenerateContentFailure(selection, 'generate');
     if (selection.candidates.length === 0) return renderGeminiGenerateContentFailure(noViableCandidateFailure(sawModel, model, failedUpstreams), 'generate');
 
+    // Cyber intercept: one judge turn before any dispatch, when at least one
+    // candidate opted in. Reject renders the 403 envelope; fallback filters
+    // the flag-on candidates out of the dispatch list.
+    const cyberSettings = await cyberInterceptGateSettingsFor(ctx, selection.candidates);
+    let dispatched = selection.candidates;
+    if (cyberSettings !== null) {
+      const gate = await runCyberInterceptGate({
+        model,
+        payload: args.payload,
+        ctx,
+        candidates: selection.candidates,
+        requestMethod: 'POST',
+        requestPath: '/v1beta/models/generateContent',
+      }, cyberSettings, renderGeminiGenerateContentCyberInterceptReject);
+      if (gate.kind === 'reject') return renderGeminiGenerateContentCyberInterceptReject(gate.reason);
+      if (gate.candidates.length === 0) return renderGeminiGenerateContentFailure(noViableCandidateFailure(sawModel, model, failedUpstreams), 'generate');
+      dispatched = gate.candidates;
+    }
+
     // Gemini generateContent carries the requested model in its URL, so affinity preparation
     // owns each candidate payload while dispatch uses the candidate's canonical model.
     return await iterateCandidates(
-      selection.candidates,
+      dispatched,
       'geminiGenerateContentServe.generate',
       ctx,
       'chat',
