@@ -675,7 +675,7 @@ class SqlOAuth2Repo implements OAuth2Repo {
         ).bind(input.createdAt, input.createdAt, input.username, input.tokenHash, input.now),
         this.db.prepare(
           `INSERT INTO api_keys (${API_KEY_COLUMNS})
-           SELECT ?, u.id, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           SELECT ?, u.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            FROM oauth2_handoffs h
            JOIN users u ON u.username = ? AND u.deleted_at IS NULL
            WHERE h.token_hash = ? AND h.user_id IS NULL AND h.expires_at > ?`,
@@ -687,6 +687,7 @@ class SqlOAuth2Repo implements OAuth2Repo {
           input.defaultKey.createdAt,
           input.defaultKey.lastUsedAt ?? null,
           serializeUpstreamIds(input.defaultKey.upstreamIds),
+          JSON.stringify(input.defaultKey.upstreamModelAccess ?? []),
           input.defaultKey.deletedAt,
           input.defaultKey.dumpRetentionSeconds,
           input.defaultKey.openaiResponsesRetentionSeconds,

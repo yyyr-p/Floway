@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -6,6 +6,7 @@ import { test } from 'vitest';
 
 import { applyMigrations } from '../src/migrate.ts';
 import { createNodeSqliteDatabase } from '../src/node-sqlite-database.ts';
+import { migrationsDir } from '@floway-dev/gateway/migrations-dir';
 import { assertEquals, assertRejects } from '@floway-dev/test-utils';
 
 const withTemp = async (fn: (dir: string) => Promise<void>): Promise<void> => {
@@ -29,10 +30,10 @@ test('applies all real migration files against a fresh sqlite', () => withTemp(a
   assertEquals(colNames.includes('server_secret'), true);
 
   // Every migration was recorded.
-  const recorded = await db.prepare('SELECT COUNT(*) AS n FROM _migrations').first<{ n: number }>();
-  assertEquals(recorded !== null && recorded.n > 0, true);
-  const latest = await db.prepare('SELECT name FROM _migrations ORDER BY name DESC LIMIT 1').first<{ name: string }>();
-  assertEquals(latest?.name, '0091_upstream_config_version.sql');
+  const expected = (await readdir(migrationsDir)).filter(name => name.endsWith('.sql')).toSorted();
+  assertEquals(expected.length > 0, true);
+  const recorded = await db.prepare('SELECT name FROM _migrations ORDER BY name').all<{ name: string }>();
+  assertEquals(recorded.results.map(row => row.name), expected);
 
   const providerCols = await db.prepare('PRAGMA table_info(oauth2_providers)').all<{ name: string; dflt_value: string | null }>();
   assertEquals(providerCols.results.find(column => column.name === 'access_denied_message')?.dflt_value, "''");
