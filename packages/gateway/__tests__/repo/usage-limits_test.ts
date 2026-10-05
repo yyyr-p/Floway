@@ -4,7 +4,7 @@ import { InMemoryRepo } from './memory.ts';
 import { createSqliteTestDb } from './test-sqlite.ts';
 import { SqlRepo } from '../../src/repo/sql.ts';
 import type { ApiKey, Repo, UsageLimitReservationInput, UsageRecord } from '../../src/repo/types.ts';
-import { assertEquals } from '@floway-dev/test-utils';
+import { assertEquals, assertRejects } from '@floway-dev/test-utils';
 
 const backends: { name: string; make: () => Promise<Repo> }[] = [
   { name: 'sql', make: async () => new SqlRepo(await createSqliteTestDb()) },
@@ -119,6 +119,23 @@ for (const backend of backends) {
     await repo.usage.record(usage({ metrics: [{ metric: 'input_tokens', quantity: '25', unitPrice: '0.000001' }] }));
     await repo.usageLimits.release(first.id);
     assertEquals(await repo.usageLimits.reserve(reservation({ id: 'cost-after-settlement', maxUnitPriceUsd: '0.000001', inputTokens: 10, outputTokens: 50 })), { ok: true, limited: true });
+  });
+
+  test(`[${backend.name}] cost reservations round sub-micro dollar prices upward`, async () => {
+    const repo = await backend.make();
+    await repo.usageLimits.save({ principalType: 'key', principalId: 'key-1', window: 'day', maxTokens: null, maxCostUsd: '0.000002' });
+    const request = (id: string) => reservation({ id, inputTokens: 1, outputTokens: 0, maxUnitPriceUsd: '0.0000001' });
+
+    assertEquals(await repo.usageLimits.reserve(request('sub-micro-first')), { ok: true, limited: true });
+    assertEquals(await repo.usageLimits.reserve(request('sub-micro-second')), { ok: true, limited: true });
+    assertEquals(await repo.usageLimits.reserve(request('sub-micro-third')), { ok: false, reason: 'cost' });
+  });
+
+  test(`[${backend.name}] configured cost limits retain micro-dollar precision`, async () => {
+    const repo = await backend.make();
+    await assertRejects(() => repo.usageLimits.save({
+      principalType: 'key', principalId: 'key-1', window: 'day', maxTokens: null, maxCostUsd: '0.0000001',
+    }), TypeError, 'usage limit cost supports at most six fractional digits');
   });
 
   test(`[${backend.name}] missing output caps reserve remaining token and cost capacity`, async () => {
