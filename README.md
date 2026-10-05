@@ -124,6 +124,33 @@ from the observed `output_index` and matches snapshot items by ID; ambiguous
 positions fail explicitly. The shared Responses collector reads terminal
 snapshots directly, with provider-specific repairs applied before collection.
 
+## Usage Limits
+
+Administrators can set token and USD-cost limits independently for a user or an
+API key over UTC calendar-hour, calendar-day, or calendar-month windows. When a
+request has both a user limit and a key limit, both apply. Total tokens sum the
+recorded input, cache, image, audio-token, and output token metrics; costs sum
+the `UsageRecord` metric quantities multiplied by their stored unit prices.
+
+Admission uses an atomic ledger with multiple in-flight reservations per
+principal. It estimates input tokens from the UTF-8 request-body byte count and
+uses an explicit output-token cap when recognized. Cost reservations use that
+token bound multiplied by the highest configured unit price among the request's
+resolved candidates. After a request finishes, Floway persists its measured
+usage before releasing the reservation. A request without a recognized output
+cap reserves the remaining allowance for its active limits; this can
+intentionally reduce concurrency until the request finishes. The byte-based
+input estimate is a conservative heuristic, not a tokenizer guarantee, so a
+small estimate error can still allow temporary in-flight overshoot before
+actual usage is settled. Abandoned reservations expire after 24 hours.
+
+Cost limits fail closed: earlier requests with no usage metrics or positive
+metrics with no stored unit price block further admission with HTTP 429 until
+the missing historical prices are backfilled or the affected window rolls
+forward. Policy denials use protocol-shaped HTTP 429 responses; a limit-ledger
+storage failure returns HTTP 503. Backup exports use version 21 and include
+configured limits.
+
 ## Other Deployment Options
 
 ### Cloudflare Workers

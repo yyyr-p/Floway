@@ -1,6 +1,7 @@
 import {
   Chat20Color,
   Clipboard20Color,
+  CoinMultiple20Color,
   Cloud20Color,
   Database20Color,
   DataPie20Color,
@@ -72,6 +73,7 @@ export const navGroups: NavGroup[] = [
     adminOnly: true,
     items: [
       { to: '/dashboard/admin/users', labelKey: 'dashboard.nav.users', icon: People20Color },
+      { to: '/dashboard/admin/usage-limits', labelKey: 'dashboard.nav.usageLimits', icon: CoinMultiple20Color },
       { to: '/dashboard/admin/backup-restore', labelKey: 'dashboard.nav.backupRestore', icon: Database20Color },
     ],
   },

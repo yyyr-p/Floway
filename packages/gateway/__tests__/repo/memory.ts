@@ -59,6 +59,12 @@ import type {
   StoredUpstreamRecord,
   UpstreamRepo,
   UsageRecord,
+  UsageLimit,
+  UsageLimitPrincipalType,
+  UsageLimitReservationInput,
+  UsageLimitReservationResult,
+  UsageLimitWindow,
+  UsageLimitsRepo,
   UsageOverviewAxis,
   UsageOverviewQueryOptions,
   UsageOverviewRecord,
@@ -72,7 +78,7 @@ import { usageMetricRows } from '../../src/repo/usage-metrics.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../../src/shared/performance-histogram.ts';
 import { assertWebSearchProviderName, type WebSearchConfig } from '../../src/shared/web-search-providers.ts';
 import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
-import { addDecimalStrings, canonicalPricingSelectorKey, canonicalizePricingSelector, multiplyDecimalStrings, tokenUsageUnattributedUserId, usageUpstreamDimensionValue, type BillingMetric, type DecimalString, type PricingSelector } from '@floway-dev/protocols/common';
+import { addDecimalStrings, canonicalPricingSelectorKey, canonicalizePricingSelector, multiplyDecimalStrings, parseNonNegativeDecimalString, tokenUsageUnattributedUserId, usageUpstreamDimensionValue, type BillingMetric, type DecimalString, type PricingSelector } from '@floway-dev/protocols/common';
 import { UpstreamGoneError, type UpstreamRecord } from '@floway-dev/provider';
 
 const SEED_ADMIN_USER: User = {
@@ -507,6 +513,142 @@ class MemoryUsageRepo implements UsageRepo {
 
   deleteAll(): Promise<void> {
     this.store.clear();
+    return Promise.resolve();
+  }
+}
+
+interface MemoryUsageReservation {
+  principalType: UsageLimitPrincipalType;
+  principalId: number | string;
+  window: UsageLimitWindow;
+  windowStart: string;
+  expiresAt: string;
+  tokens: number;
+  costMicros: number;
+}
+
+const memoryWindowBounds = (value: string): Record<UsageLimitWindow, { start: string; end: string }> => {
+  const date = new Date(value);
+  const hour = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate(), date.getUTCHours()));
+  const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+  const month = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1));
+  const stamp = (d: Date) => d.toISOString().slice(0, 13);
+  return {
+    hour: { start: stamp(hour), end: stamp(new Date(hour.getTime() + 3_600_000)) },
+    day: { start: stamp(day), end: stamp(new Date(day.getTime() + 86_400_000)) },
+    month: { start: stamp(month), end: stamp(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 1))) },
+  };
+};
+
+const microsCeil = (usd: number): number => Math.ceil(usd * 1_000_000);
+
+class MemoryUsageLimitsRepo implements UsageLimitsRepo {
+  private limits = new Map<string, UsageLimit>();
+  private reservations = new Map<string, MemoryUsageReservation[]>();
+  private reservationTail: Promise<void> = Promise.resolve();
+
+  constructor(private readonly usage: UsageRepo, private readonly apiKeys: ApiKeyRepo) {}
+
+  private key(type: UsageLimitPrincipalType, id: number | string, window: UsageLimitWindow): string {
+    return `${type}\0${id}\0${window}`;
+  }
+
+  list(): Promise<UsageLimit[]> {
+    return Promise.resolve([...this.limits.values()].map(limit => ({ ...limit })));
+  }
+
+  save(limit: UsageLimit): Promise<void> {
+    if (limit.principalType === 'user' && (!Number.isSafeInteger(limit.principalId) || Number(limit.principalId) <= 0)) throw new TypeError('usage-limit user id must be a positive safe integer');
+    if (limit.principalType === 'key' && (typeof limit.principalId !== 'string' || limit.principalId.length === 0)) throw new TypeError('usage-limit key id must be a non-empty string');
+    if (!['hour', 'day', 'month'].includes(limit.window)) throw new TypeError(`Invalid usage-limit window: ${limit.window}`);
+    if (limit.maxTokens !== null && (!Number.isSafeInteger(limit.maxTokens) || limit.maxTokens < 0)) throw new TypeError('usage-limit maxTokens must be a non-negative safe integer or null');
+    if (limit.maxCostUsd !== null) {
+      const cost = parseNonNegativeDecimalString(limit.maxCostUsd, 'usage limit cost');
+      if ((cost.split('.')[1]?.length ?? 0) > 6) throw new TypeError('usage limit cost supports at most six fractional digits');
+    }
+    if (limit.maxTokens === null && limit.maxCostUsd === null) throw new TypeError('usage limit must define a token or cost maximum');
+    this.limits.set(this.key(limit.principalType, limit.principalId, limit.window), { ...limit });
+    return Promise.resolve();
+  }
+
+  delete(principalType: UsageLimitPrincipalType, principalId: number | string, window: UsageLimitWindow): Promise<boolean> {
+    return Promise.resolve(this.limits.delete(this.key(principalType, principalId, window)));
+  }
+
+  reserve(input: UsageLimitReservationInput): Promise<UsageLimitReservationResult> {
+    const result = this.reservationTail.then(() => this.reserveNow(input));
+    this.reservationTail = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  private async reserveNow(input: UsageLimitReservationInput): Promise<UsageLimitReservationResult> {
+    const applicable = [...this.limits.values()].filter(limit =>
+      (limit.principalType === 'key' && limit.principalId === input.keyId)
+      || (limit.principalType === 'user' && limit.principalId === input.userId));
+    if (applicable.length === 0) return { ok: true, limited: false };
+    if (applicable.some(limit => limit.maxCostUsd !== null) && input.maxUnitPriceUsd === null) return { ok: false, reason: 'cost' };
+    const bounds = memoryWindowBounds(input.now);
+    const records = await this.usage.listAll();
+    const keyToUser = new Map((await this.apiKeys.listIncludingDeleted()).map(key => [key.id, key.userId]));
+    const provisional: MemoryUsageReservation[] = [];
+
+    for (const limit of applicable) {
+      const { start, end } = bounds[limit.window];
+      const scopedRecords = records.filter(record => record.hour >= start && record.hour < end && (
+        limit.principalType === 'key' ? record.keyId === limit.principalId : keyToUser.get(record.keyId) === limit.principalId
+      ));
+      const tokenMetrics = new Set(['input_tokens', 'input_cache_read_tokens', 'input_cache_write_tokens', 'input_cache_write_1h_tokens', 'input_image_tokens', 'input_audio_tokens', 'output_tokens', 'output_image_tokens']);
+      let usedTokens = 0;
+      let usedCost = 0;
+      for (const record of scopedRecords) {
+        if (record.requests > 0 && record.metrics.length === 0 && limit.maxCostUsd !== null) return { ok: false, reason: 'historical-cost-unpriced' };
+        for (const metric of record.metrics) {
+          const quantity = Number(metric.quantity);
+          if (tokenMetrics.has(metric.metric)) usedTokens += quantity;
+          if (limit.maxCostUsd !== null) {
+            if (quantity > 0 && metric.unitPrice === null) return { ok: false, reason: 'historical-cost-unpriced' };
+            if (metric.unitPrice !== null) usedCost += quantity * Number(metric.unitPrice);
+          }
+        }
+      }
+      const pending = [...this.reservations.values()].flat()
+        .filter(row => row.principalType === limit.principalType && row.principalId === limit.principalId && row.window === limit.window && row.windowStart === start && row.expiresAt > input.now);
+      const pendingTokens = pending.reduce((sum, row) => sum + row.tokens, 0);
+      const pendingCost = pending.reduce((sum, row) => sum + row.costMicros, 0);
+      const tokensRemaining = limit.maxTokens === null ? Number.MAX_SAFE_INTEGER : limit.maxTokens - usedTokens - pendingTokens;
+      const requestedTokenBound = input.outputTokens === null ? tokensRemaining : input.inputTokens + input.outputTokens;
+      if (limit.maxTokens !== null && (requestedTokenBound < 0 || input.inputTokens > tokensRemaining || usedTokens + pendingTokens + requestedTokenBound > limit.maxTokens)) {
+        return { ok: false, reason: 'tokens' };
+      }
+      let reserveTokens = requestedTokenBound;
+      if (limit.maxTokens === null && input.outputTokens === null) reserveTokens = input.inputTokens;
+
+      let reserveCostMicros = 0;
+      if (limit.maxCostUsd !== null) {
+        const maxCostMicros = microsCeil(Number(limit.maxCostUsd));
+        const usedCostMicros = microsCeil(usedCost);
+        const costRemaining = maxCostMicros - usedCostMicros - pendingCost;
+        const inputCost = microsCeil(input.inputTokens * Number(input.maxUnitPriceUsd));
+        reserveCostMicros = input.outputTokens === null
+          ? costRemaining
+          : microsCeil((input.inputTokens + input.outputTokens) * Number(input.maxUnitPriceUsd));
+        if (reserveCostMicros < 0 || inputCost > costRemaining || usedCostMicros + pendingCost + reserveCostMicros > maxCostMicros) return { ok: false, reason: 'cost' };
+      }
+      provisional.push({ principalType: limit.principalType, principalId: limit.principalId, window: limit.window, windowStart: start, expiresAt: input.expiresAt, tokens: reserveTokens, costMicros: reserveCostMicros });
+    }
+
+    this.reservations.set(input.id, provisional);
+    return { ok: true, limited: true };
+  }
+
+  release(id: string): Promise<void> {
+    this.reservations.delete(id);
+    return Promise.resolve();
+  }
+
+  deleteAll(): Promise<void> {
+    this.limits.clear();
+    this.reservations.clear();
     return Promise.resolve();
   }
 }
@@ -1486,6 +1628,7 @@ export class InMemoryRepo implements Repo {
   users: UsersRepo;
   sessions: SessionsRepo;
   usage: UsageRepo;
+  usageLimits: UsageLimitsRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
@@ -1507,6 +1650,7 @@ export class InMemoryRepo implements Repo {
     this.scheduledMaintenance = new MemoryScheduledMaintenanceRepo();
     this.apiKeys = new MemoryApiKeyRepo(this.expirationSweeps);
     this.usage = new MemoryUsageRepo(this.apiKeys);
+    this.usageLimits = new MemoryUsageLimitsRepo(this.usage, this.apiKeys);
     this.webSearchUsage = new MemoryWebSearchUsageRepo();
     this.performance = new MemoryPerformanceRepo(this.apiKeys);
     this.webSearchConfig = new MemoryWebSearchConfigRepo();

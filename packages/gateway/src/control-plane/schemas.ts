@@ -616,6 +616,44 @@ export const webSearchConfigSchema = z.object({
   }
 });
 
+const usageLimitCostSchema = z.string().transform((value, ctx) => {
+  try {
+    const parsed = parseNonNegativeDecimalString(value, 'maxCostUsd');
+    if ((parsed.split('.')[1]?.length ?? 0) > 6) throw new TypeError('maxCostUsd supports at most six fractional digits');
+    return parsed;
+  } catch (cause) {
+    ctx.issues.push({ code: 'custom', message: cause instanceof Error ? cause.message : String(cause), input: value });
+    return z.NEVER;
+  }
+});
+
+export const usageLimitBody = z.object({
+  principalType: z.enum(['user', 'key']),
+  principalId: z.union([
+    z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    z.string().min(1),
+  ]),
+  window: z.enum(['hour', 'day', 'month']),
+  maxTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+  maxCostUsd: usageLimitCostSchema.nullable(),
+}).superRefine((value, ctx) => {
+  if (value.maxTokens === null && value.maxCostUsd === null) {
+    ctx.addIssue({ code: 'custom', path: ['maxTokens'], message: 'at least one of maxTokens or maxCostUsd is required' });
+  }
+  if (value.principalType === 'user' && typeof value.principalId !== 'number') {
+    ctx.addIssue({ code: 'custom', path: ['principalId'], message: 'user principalId must be a number' });
+  }
+  if (value.principalType === 'key' && typeof value.principalId !== 'string') {
+    ctx.addIssue({ code: 'custom', path: ['principalId'], message: 'key principalId must be a string' });
+  }
+});
+
+export const usageLimitDeleteParams = z.object({
+  principalType: z.enum(['user', 'key']),
+  principalId: z.string().min(1),
+  window: z.enum(['hour', 'day', 'month']),
+});
+
 // --- model aliases ---
 
 // Per-target chat rules. Field names mirror the IR slot each value overlays.
@@ -738,7 +776,7 @@ export const updateAliasBody = aliasBodyCore.superRefine(aliasBodyRulesRefinemen
 // --- data transfer ---
 
 export const importBody = z.object({
-  version: z.literal(20, { error: 'version must be 20 — older export formats are not supported; re-export from the current deployment' }),
+  version: z.literal(21, { error: 'version must be 21 — older export formats are not supported; re-export from the current deployment' }),
   mode: z.enum(['merge', 'replace'], { error: "mode must be 'merge' or 'replace'" }),
   data: z.unknown().optional(),
 });

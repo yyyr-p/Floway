@@ -29,6 +29,7 @@ export type UpstreamOption = InferResponseType<typeof api.api['upstream-options'
 
 export type ControlPlaneModel = InferResponseType<typeof api.api.models.$get, 200>['data'][number];
 export type SearchConfig = InferResponseType<typeof api.api['search-config']['$get'], 200>;
+export type UsageLimitsSnapshot = InferResponseType<typeof api.api['usage-limits']['$get'], 200>;
 export type CopilotQuotaSnapshot = InferResponseType<typeof api.api.upstreams.copilot.quota.$post, 200>;
 export type OllamaUsageRefresh = InferResponseType<typeof api.api.upstreams.ollama.usage.$post, 200>;
 export type DeviceFlowStart = InferResponseType<typeof api.api.upstreams.copilot.oauth['device-login']['start']['$post'], 200>;

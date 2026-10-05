@@ -3,8 +3,9 @@ import { openaiChatCompletionsAttempt, openaiChatCompletionsTarget } from './att
 import { renderOpenAIChatCompletionsFailure } from './errors.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
+import { reserveUsageLimit } from '../../shared/usage-limit-admission.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
-import { noViableCandidateFailure } from '../shared/errors.ts';
+import { noViableCandidateFailure, openAiUsageLimitErrorResult } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { OpenAIChatCompletionsPayload, OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
@@ -31,6 +32,9 @@ export const openaiChatCompletionsServe = {
     const selection = selectAffinityCandidates(viable, affinity);
     if ('kind' in selection) return renderOpenAIChatCompletionsFailure(selection);
     if (selection.candidates.length === 0) return renderOpenAIChatCompletionsFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams));
+
+    const admission = await reserveUsageLimit(ctx, selection.candidates);
+    if (!admission.ok) return openAiUsageLimitErrorResult(admission);
 
     // Try each affinity-selected candidate in order. A successful attempt (SSE
     // stream opened) is the final answer; an api-error or internal-error

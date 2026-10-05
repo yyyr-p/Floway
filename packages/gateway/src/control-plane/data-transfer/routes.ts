@@ -15,14 +15,14 @@ import { notifyDisabledBestEffort } from '../../dump/registry.ts';
 import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { DIRECT_FALLBACK_IDS } from '../../repo/proxy-fallback-list.ts';
-import type { ApiKey, PerformanceTelemetryRecord, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
+import type { ApiKey, PerformanceTelemetryRecord, UsageLimit, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
 import { type exportQuery, type importBody } from '../schemas.ts';
 import { saveUpstreams } from '../shared/save-upstreams.ts';
 import { type FullSerializedUpstreamRecord, upstreamRecordToFullJson } from '../upstreams/serialize.ts';
 import type { UpstreamRecord } from '@floway-dev/provider';
 
 interface ExportPayload {
-  version: 20;
+  version: 21;
   exportedAt: string;
   data: {
     users: User[];
@@ -30,6 +30,7 @@ interface ExportPayload {
     upstreams: FullSerializedUpstreamRecord[];
     proxies: SerializedProxy[];
     usage: UsageRecord[];
+    usageLimits: UsageLimit[];
     searchUsage: WebSearchUsageRecord[];
     performance?: PerformanceTelemetryRecord[];
     performanceIncluded: boolean;
@@ -37,7 +38,7 @@ interface ExportPayload {
   };
 }
 
-const EXPORT_VERSION = 20;
+const EXPORT_VERSION = 21;
 
 const validateApiKeyIdentities = (records: readonly ApiKey[], existing: readonly ApiKey[], mode: 'merge' | 'replace'): string | null => {
   const ids = new Map<string, number>();
@@ -100,10 +101,11 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
   const repo = getRepo();
   const includePerformance = c.req.valid('query').include_performance === '1';
 
-  const [users, apiKeys, usage, webSearchUsage, performance, rawWebSearchConfig, upstreams, proxies] = await Promise.all([
+  const [users, apiKeys, usage, usageLimits, webSearchUsage, performance, rawWebSearchConfig, upstreams, proxies] = await Promise.all([
     repo.users.listIncludingDeleted(),
     repo.apiKeys.listIncludingDeleted(),
     repo.usage.listAll(),
+    repo.usageLimits.list(),
     repo.webSearchUsage.listAll(),
     includePerformance ? repo.performance.listAll() : Promise.resolve([]),
     repo.webSearchConfig.get(),
@@ -120,6 +122,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
       upstreams: upstreams.map(upstreamRecordToFullJson),
       proxies: proxies.map(proxy => ({ id: proxy.id, name: proxy.name, url: proxy.url, dial_timeout_seconds: proxy.dialTimeoutSeconds })),
       usage,
+      usageLimits,
       searchUsage: webSearchUsage,
       performanceIncluded: includePerformance,
       searchConfig: rawWebSearchConfig === null ? parseWebSearchConfigDefault() : parseWebSearchConfigStrict(rawWebSearchConfig),
@@ -134,7 +137,7 @@ export const importData = async (c: CtxWithJson<typeof importBody>) => {
   const { mode, data: rawData } = c.req.valid('json');
   const parsed = parseImportData(rawData);
   if (parsed.type === 'invalid') return c.json({ error: parsed.error }, 400);
-  const { users, apiKeys, upstreams, proxies, usage, searchUsage, performance, performanceIncluded, searchConfig } = parsed.data;
+  const { users, apiKeys, upstreams, proxies, usage, usageLimits, searchUsage, performance, performanceIncluded, searchConfig } = parsed.data;
 
   const repo = getRepo();
   // Merge mode needs each key's prior dump policy to identify transitions that
@@ -158,6 +161,7 @@ export const importData = async (c: CtxWithJson<typeof importBody>) => {
       repo.sessions.deleteAll(),
       repo.apiKeys.deleteAll(),
       repo.usage.deleteAll(),
+      repo.usageLimits.deleteAll(),
       repo.webSearchUsage.deleteAll(),
       repo.upstreams.deleteAll(),
       repo.proxies.deleteAll(),
@@ -188,6 +192,7 @@ export const importData = async (c: CtxWithJson<typeof importBody>) => {
     }
   }
   for (const record of usage) await repo.usage.set(record);
+  for (const limit of usageLimits) await repo.usageLimits.save(limit);
   for (const record of searchUsage) await repo.webSearchUsage.set(record);
   await saveUpstreams(await Promise.all(upstreams.map(async next => ({
     previous: await repo.upstreams.getById(next.id),
@@ -204,6 +209,7 @@ export const importData = async (c: CtxWithJson<typeof importBody>) => {
       upstreams: upstreams.length,
       proxies: proxies.length,
       usage: usage.length,
+      usageLimits: usageLimits.length,
       searchUsage: searchUsage.length,
       performance: performance.length,
     },

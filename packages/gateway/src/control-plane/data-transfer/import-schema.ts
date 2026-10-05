@@ -6,7 +6,7 @@ import { parseDisabledPublicModelIdsWire } from '../../repo/disabled-public-mode
 import { isOpenAIResponsesRetentionSeconds, OPENAI_RESPONSES_RETENTION_MAX_SECONDS, OPENAI_RESPONSES_RETENTION_MIN_SECONDS } from '../../repo/openai-responses-retention.ts';
 import { isDirectFallbackId, normalizeProxyFallbackList } from '../../repo/proxy-fallback-list.ts';
 import { SEED_ADMIN_USER_ID } from '../../repo/seed-admin.ts';
-import type { ApiKey, PerformanceMetric, PerformanceTelemetryRecord, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
+import type { ApiKey, PerformanceMetric, PerformanceTelemetryRecord, UsageLimit, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
 import { PASSWORD_HASH_SCHEME } from '../../shared/passwords.ts';
 import { RETENTION_MAX_SECONDS } from '../../shared/retention.ts';
 import { parseServerSecret } from '../../shared/server-secret.ts';
@@ -37,6 +37,7 @@ export interface ParsedImportData {
   upstreams: UpstreamRecord[];
   proxies: SerializedProxy[];
   usage: UsageRecord[];
+  usageLimits: UsageLimit[];
   searchUsage: WebSearchUsageRecord[];
   performance: PerformanceTelemetryRecord[];
   performanceIncluded: boolean;
@@ -337,6 +338,25 @@ const usageSchema = parsedBy((value): UsageRecord => {
   return { ...fields, pricingSelector, metrics };
 });
 
+const usageLimitSchema = parsedBy((value): UsageLimit => {
+  const wire = parseRecord(value, 'record must be an object');
+  const principalType = parseValue(z.enum(['user', 'key']), wire.principalType);
+  const principalId = principalType === 'user'
+    ? parseValue(z.number().int().positive().max(Number.MAX_SAFE_INTEGER), wire.principalId)
+    : parseValue(nonEmptyStringSchema('principalId'), wire.principalId);
+  const window = parseValue(z.enum(['hour', 'day', 'month']), wire.window);
+  const maxTokens = parseValue(z.union([nonNegativeSafeIntegerSchema('maxTokens must be a non-negative safe integer'), z.null()]), wire.maxTokens);
+  let maxCostUsd: string | null;
+  if (wire.maxCostUsd === null) {
+    maxCostUsd = null;
+  } else {
+    maxCostUsd = parseValue(z.string().transform(value => parseNonNegativeDecimalString(value, 'maxCostUsd')), wire.maxCostUsd);
+    if ((maxCostUsd.split('.')[1]?.length ?? 0) > 6) throw new Error('maxCostUsd supports at most six fractional digits');
+  }
+  if (maxTokens === null && maxCostUsd === null) throw new Error('usage limit must define a token or cost maximum');
+  return { principalType, principalId, window, maxTokens, maxCostUsd };
+});
+
 const searchUsageSchema = parsedBy((value): WebSearchUsageRecord => {
   const wire = parseValue(objectIncludingArraySchema('record must be an object'), value);
   if (!isWebSearchProviderName(wire.provider)) throw new Error('invalid provider');
@@ -485,6 +505,31 @@ export const parseImportData = (value: unknown): ImportDataParseResult => {
 
   const usage = parseCollection('usage', usageSchema, value.usage, { arrayError: 'usage must be an array' });
   if (usage.type === 'invalid') return usage;
+  const usageLimits = parseCollection('usageLimits', usageLimitSchema, value.usageLimits, {
+    arrayError: 'usageLimits must be an array',
+    optional: true,
+    validateInput: (input, _index, prior) => {
+      try {
+        const parsed = usageLimitSchema.parse(input);
+        return prior.some(candidate => candidate.principalType === parsed.principalType && candidate.principalId === parsed.principalId && candidate.window === parsed.window)
+          ? `duplicate usage limit: ${parsed.principalType}/${parsed.principalId}/${parsed.window}`
+          : null;
+      } catch (cause) {
+        return messageFor(cause);
+      }
+    },
+  });
+  if (usageLimits.type === 'invalid') return usageLimits;
+  const keyIds = new Set(apiKeys.records.map(key => key.id));
+  for (let index = 0; index < usageLimits.records.length; index++) {
+    const limit = usageLimits.records[index]!;
+    if (limit.principalType === 'user' && !userIds.has(limit.principalId as number)) {
+      return { type: 'invalid', error: `invalid usageLimits at index ${index}: unknown user ${limit.principalId}` };
+    }
+    if (limit.principalType === 'key' && !keyIds.has(limit.principalId as string)) {
+      return { type: 'invalid', error: `invalid usageLimits at index ${index}: unknown api key ${limit.principalId}` };
+    }
+  }
   const upstreams = parseCollection('upstreams', upstreamWireSchema, value.upstreams, { arrayError: 'upstreams must be an array' });
   if (upstreams.type === 'invalid') return upstreams;
   const upstreamIds = new Map<string, number>();
@@ -539,6 +584,7 @@ export const parseImportData = (value: unknown): ImportDataParseResult => {
       upstreams: upstreams.records,
       proxies: proxies.records,
       usage: usage.records,
+      usageLimits: usageLimits.records,
       searchUsage: searchUsage.records,
       performance,
       performanceIncluded: value.performanceIncluded,

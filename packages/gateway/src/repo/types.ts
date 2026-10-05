@@ -67,6 +67,43 @@ export interface UsageRecord {
   metrics: UsageMetricRecord[];
 }
 
+export type UsageLimitPrincipalType = 'user' | 'key';
+export type UsageLimitWindow = 'hour' | 'day' | 'month';
+
+export interface UsageLimit {
+  principalType: UsageLimitPrincipalType;
+  principalId: number | string;
+  window: UsageLimitWindow;
+  maxTokens: number | null;
+  // USD with at most six fractional digits. Reservation accounting rounds
+  // observed and estimated costs up to the nearest micro-dollar.
+  maxCostUsd: DecimalString | null;
+}
+
+export interface UsageLimitReservationInput {
+  id: string;
+  keyId: string;
+  userId: number;
+  now: string;
+  expiresAt: string;
+  inputTokens: number;
+  outputTokens: number | null;
+  maxUnitPriceUsd: DecimalString | null;
+}
+
+export type UsageLimitReservationResult =
+  | { ok: true; limited: boolean }
+  | { ok: false; reason: 'tokens' | 'cost' | 'historical-cost-unpriced' };
+
+export interface UsageLimitsRepo {
+  list(): Promise<UsageLimit[]>;
+  save(limit: UsageLimit): Promise<void>;
+  delete(principalType: UsageLimitPrincipalType, principalId: number | string, window: UsageLimitWindow): Promise<boolean>;
+  reserve(input: UsageLimitReservationInput): Promise<UsageLimitReservationResult>;
+  release(id: string): Promise<void>;
+  deleteAll(): Promise<void>;
+}
+
 export type UsageOverviewGroupBy = 'keyId' | 'userId' | 'model' | 'upstream';
 export type UsageOverviewAxis = UsageOverviewGroupBy | 'none' | 'series';
 
@@ -566,6 +603,7 @@ export interface Repo {
   users: UsersRepo;
   sessions: SessionsRepo;
   usage: UsageRepo;
+  usageLimits: UsageLimitsRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;

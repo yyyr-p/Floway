@@ -6,7 +6,7 @@ import { geminiGenerateContentStatusForHttpStatus } from './errors.ts';
 import type { GatewayCtx } from '../../shared/gateway-ctx.ts';
 import { type StreamCompletion, writeSSEFrames } from '../../shared/sse.ts';
 import { recordFailedRequest } from '../../shared/telemetry/performance.ts';
-import { settle } from '../../shared/telemetry/settle.ts';
+import { settle, settleUnpricedReservation } from '../../shared/telemetry/settle.ts';
 import { tokenUsageFromBillableUsage } from '../../shared/telemetry/usage.ts';
 import { forwardUpstreamHeaders, mergeForwardedUpstreamHeaders } from '../../shared/upstream-response.ts';
 import { affinityEgressOptions } from '../shared/affinity/index.ts';
@@ -27,12 +27,14 @@ export const respondGeminiGenerateContent = async (
   ctx: GatewayCtx,
 ): Promise<Response> => {
   if (result.type === 'api-error') {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     recordFailedRequest(ctx, result.performance);
     ctx.dump?.error(result.source, result.upstreamId);
     return geminiGenerateContentApiErrorResponse(result);
   }
 
   if (result.type === 'internal-error') {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     recordFailedRequest(ctx, result.performance);
     ctx.dump?.failed(result.error.message);
     return geminiGenerateContentErrorResponse(result.status, result.error.message, internalDebugFields(result.error));
@@ -58,6 +60,7 @@ export const respondGeminiGenerateContent = async (
       settle(ctx, metadata.performance, metadata.modelIdentity, usage, state.failed);
       return Response.json(response, { headers: mergeForwardedUpstreamHeaders(undefined, result.headers) });
     } catch (error) {
+      settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
       recordFailedRequest(ctx, result.performance);
       ctx.dump?.failed(error);
       return geminiGenerateContentCollectErrorResponse(error);
@@ -73,7 +76,13 @@ export const respondGeminiGenerateContent = async (
         ...(ctx.downstreamAbortController !== undefined ? { downstreamAbortController: ctx.downstreamAbortController } : {}),
       });
     } finally {
-      const metadata = await eventResultMetadata(result);
+      let metadata;
+      try {
+        metadata = await eventResultMetadata(result);
+      } catch (error) {
+        settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
+        throw error;
+      }
       const failed = state.failedAfter(completion);
       if (failed) {
         ctx.dump?.failed(`gemini stream failed (completion=${completion}, source-failed=${state.failed})`);

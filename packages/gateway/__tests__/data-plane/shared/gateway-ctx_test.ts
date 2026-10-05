@@ -102,6 +102,24 @@ describe('createGatewayCtxFromHono', () => {
     assertEquals(ctx.wantsStream, false);
   });
 
+  test('estimates input tokens from request bytes and recognizes Gemini output caps', async () => {
+    const app = makeApp();
+    let ctx: ReturnType<typeof createGatewayCtxFromHono> | undefined;
+    const bytes = new TextEncoder().encode(JSON.stringify({ generationConfig: { maxOutputTokens: 128 } }));
+    app.post('/test', c => {
+      ctx = createGatewayCtxFromHono(c, {
+        wantsStream: false,
+        requestBody: { bytes, streamError: null },
+        backgroundScheduler: NOOP_SCHEDULER,
+      });
+      return c.text('ok');
+    });
+    await app.request('/test', { method: 'POST' });
+    assertExists(ctx);
+    assertEquals(ctx.estimatedInputTokens, bytes.byteLength);
+    assertEquals(ctx.requestedOutputTokenLimit, 128);
+  });
+
   test('wantsStream=true: downstreamAbortController is defined and abortSignal matches its signal', async () => {
     const app = makeApp();
     let ctx: ReturnType<typeof createGatewayCtxFromHono> | undefined;
