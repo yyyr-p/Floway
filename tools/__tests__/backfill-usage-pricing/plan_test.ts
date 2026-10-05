@@ -6,9 +6,8 @@ import { DatabaseSync } from 'node:sqlite';
 import { test } from 'vitest';
 
 import { renderD1Statement } from '../../src/backfill-usage-pricing/d1-database.ts';
-import type { ToolDatabase } from '../../src/backfill-usage-pricing/database.ts';
 import { openNodeDatabase } from '../../src/backfill-usage-pricing/node-database.ts';
-import { applyPlan, buildPlan, parsePlan } from '../../src/backfill-usage-pricing/plan.ts';
+import { applyPlan, buildPlan, parsePlan, type ToolDatabase } from '@floway-dev/gateway/usage-pricing-backfill';
 import { assertEquals, assertRejects } from '@floway-dev/test-utils';
 
 const createDatabase = async (): Promise<string> => {
@@ -84,8 +83,8 @@ test('apply rejects stale and tampered plans before writing', async () => {
   await read.close();
 
   const tampered = JSON.stringify({ ...built.plan, summary: { ...built.plan.summary, rowsToUpdate: 99 } });
-  await assertRejects(() => Promise.resolve(parsePlan(tampered)));
-  await assertRejects(() => Promise.resolve(parsePlan(JSON.stringify({ ...built.plan, createdAt: '2026-01-03T00:00:00.000Z' }))));
+  await assertRejects(() => parsePlan(tampered));
+  await assertRejects(() => parsePlan(JSON.stringify({ ...built.plan, createdAt: '2026-01-03T00:00:00.000Z' })));
 
   const mutate = new DatabaseSync(path);
   mutate.prepare("UPDATE usage SET unit_price = '0.03' WHERE metric = 'input_tokens'").run();

@@ -1,3 +1,4 @@
+import { databaseIdentityForPath } from './database-identity.ts';
 import { EventTargetChannelBroker } from './event-target-channel-broker.ts';
 import { createNodeExternalResourceFetcher } from './external-resource-fetcher.ts';
 import { nodeFetch } from './fetch.ts';
@@ -24,10 +25,9 @@ import {
   initRuntimeKind,
   initSocketDial,
   initTimingSafeEqual,
-  type SqlDatabase,
 } from '@floway-dev/platform';
 
-export const bootstrapNodePlatform = (): { db: SqlDatabase } => {
+export const bootstrapNodePlatform = () => {
   initEnv(name => process.env[name]);
   initRuntimeKind('node');
   initTimingSafeEqual(timingSafeEqual);
@@ -42,9 +42,10 @@ export const bootstrapNodePlatform = (): { db: SqlDatabase } => {
   initSocketDial(nodeSocketDial);
   addTrustedRootCAs(nodeRuntimeRootCAs);
   const db = createNodeSqliteDatabase(dbPath);
+  const databaseIdentity = databaseIdentityForPath(dbPath);
   initImageCacheStore(new SqliteImageCacheStore(db, IMAGE_CACHE_POLICY));
   initImageProcessor(createSharpImageProcessor());
   initDumpStore(new FileDumpStore(db, files));
   initDumpBroker(new EventTargetChannelBroker<DumpMetadata>(dumpCodec));
-  return { db };
+  return { db, databaseIdentity };
 };

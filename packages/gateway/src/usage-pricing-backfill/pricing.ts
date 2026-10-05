@@ -1,5 +1,5 @@
 import { ToolError } from './errors.ts';
-import { MODEL_CATALOG_REVISION } from '@floway-dev/gateway';
+import { MODEL_CATALOG_REVISION } from '../repo/models-cache-contract.ts';
 import { canonicalPricingSelectorKey, type ModelPricing, type PriceVector, validateModelPricing } from '@floway-dev/protocols/common';
 import { assertUpstreamProviderKind, isRecord, modelsField, pricingField, type UpstreamModelConfig, type UpstreamProviderKind } from '@floway-dev/provider';
 import { pricingForClaudeCodeModelKey } from '@floway-dev/provider-claude-code';

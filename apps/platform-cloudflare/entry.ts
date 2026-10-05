@@ -17,8 +17,8 @@ export { ExecutionDO } from './src/execution-do.ts';
 
 export class ExecutionOperationEntrypoint extends WorkerEntrypoint<CloudflareEnv> {
   async fetch(request: Request): Promise<Response> {
-    const { db } = bootstrapCloudflarePlatform(this.env);
-    initRepo(new SqlRepo(db));
+    const { db, databaseIdentity } = bootstrapCloudflarePlatform(this.env);
+    initRepo(new SqlRepo(db, databaseIdentity));
     return await handleExecutionRequest(request);
   }
 }
@@ -27,13 +27,13 @@ initBackgroundSchedulerResolver(c => promise => c.executionCtx.waitUntil(promise
 
 export default {
   fetch(req: Request, env: CloudflareEnv, ctx: ExecutionContext) {
-    const { db } = bootstrapCloudflarePlatform(env);
-    initRepo(new SqlRepo(db));
+    const { db, databaseIdentity } = bootstrapCloudflarePlatform(env);
+    initRepo(new SqlRepo(db, databaseIdentity));
     return app.fetch(req, env, ctx);
   },
   scheduled(_controller: unknown, env: CloudflareEnv, ctx: ExecutionContext) {
-    const { db } = bootstrapCloudflarePlatform(env);
-    initRepo(new SqlRepo(db));
+    const { db, databaseIdentity } = bootstrapCloudflarePlatform(env);
+    initRepo(new SqlRepo(db, databaseIdentity));
     ctx.waitUntil(runScheduledMaintenance(null, promise => ctx.waitUntil(promise)));
   },
 };
