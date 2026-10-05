@@ -73,6 +73,7 @@ import {
 } from './upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts';
 import { parseUpstreamHue, parseUpstreamKind } from './upstream-parse.ts';
+import { usageLimitWindowBounds } from './usage-limit-windows.ts';
 import { usageMetricRows, usageUnmeteredRequests } from './usage-metrics.ts';
 import { querySqlUsageOverview } from './usage-overview-sql.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogram.ts';
@@ -552,19 +553,6 @@ const usdToMicrosCeil = (value: string): number => {
   const micros = BigInt(whole!) * 1_000_000n + BigInt(head || '0') + (/[1-9]/.test(tail) ? 1n : 0n);
   if (micros > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('usage limit cost exceeds the supported range');
   return Number(micros);
-};
-
-const hourStamp = (date: Date): string => date.toISOString().slice(0, 13);
-
-const usageLimitWindowBounds = (now: Date): Record<UsageLimitWindow, { start: string; end: string }> => {
-  const hourStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
-  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  return {
-    hour: { start: hourStamp(hourStart), end: hourStamp(new Date(hourStart.getTime() + 3_600_000)) },
-    day: { start: hourStamp(dayStart), end: hourStamp(new Date(dayStart.getTime() + 86_400_000)) },
-    month: { start: hourStamp(monthStart), end: hourStamp(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))) },
-  };
 };
 
 const usageLimitTokensSql = `COALESCE((
