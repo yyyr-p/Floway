@@ -188,6 +188,115 @@ describe('assembleCodexCatalog', () => {
     expect(out.models[1]).not.toHaveProperty('aliasedFrom');
   });
 
+  test('aliases keep the primary Codex target default separately from their public maximum', () => {
+    const provider = { ...stubModelCandidate().provider, kind: 'codex' as const };
+    const target = {
+      ...chat('codex/future-model', 'Future', 600000),
+      providerModels: {
+        [provider.upstreamId]: stubProviderModel({
+          limits: { max_context_window_tokens: 600000 },
+          providerData: { contextWindow: 80000, useResponsesLite: false },
+        }),
+      },
+    };
+    const alias: InternalModel = {
+      id: 'future-alias',
+      kind: 'chat',
+      limits: { max_context_window_tokens: 600000 },
+      endpoints: { openaiResponses: {} },
+      aliasedFrom: { selection: 'first-available', targets: [{ target_model_id: target.id, rules: {} }] },
+    };
+    const addressable = [{ ...entry(target), upstreams: [provider] }];
+    const out = assembleCodexCatalog(bundled, addressable, {}, [alias]);
+
+    expect(out.models[0]).toMatchObject({ slug: alias.id, context_window: 80000, max_context_window: 600000 });
+    expect(assembleCodexCatalog(bundled, addressable, {}, [{ ...alias, limits: { max_context_window_tokens: 64000 } }]).models[0])
+      .toMatchObject({ context_window: 64000, max_context_window: 64000 });
+  });
+
+  test('aliases conservatively combine Codex and non-Codex target defaults, including unlisted targets', () => {
+    const provider = { ...stubModelCandidate().provider, kind: 'codex' as const };
+    const codexTarget = {
+      ...chat('codex/hidden-model', 'Hidden', 600000),
+      providerModels: {
+        [provider.upstreamId]: stubProviderModel({
+          limits: { max_context_window_tokens: 600000 },
+          providerData: { contextWindow: 80000, useResponsesLite: false },
+        }),
+      },
+    };
+    const otherTarget = chat('custom/model', 'Custom', 50000);
+    const alias: InternalModel = {
+      id: 'mixed-alias',
+      kind: 'chat',
+      limits: { max_context_window_tokens: 50000 },
+      endpoints: { openaiChatCompletions: {} },
+      aliasedFrom: {
+        selection: 'random',
+        targets: [codexTarget, otherTarget].map(target => ({ target_model_id: target.id, rules: {}, weight: 1 })),
+      },
+    };
+    const out = assembleCodexCatalog(bundled, [
+      { ...entry(codexTarget, true), upstreams: [provider] },
+      entry(otherTarget),
+    ], {}, [alias]);
+
+    expect(out.models).toHaveLength(1);
+    expect(out.models[0]).toMatchObject({ slug: alias.id, context_window: 50000, max_context_window: 50000 });
+  });
+
+  test('an alias collision does not inherit a same-named real Codex model default', () => {
+    const provider = { ...stubModelCandidate().provider, kind: 'codex' as const };
+    const colliding = {
+      ...chat('public-alias', 'Real model', 600000),
+      providerModels: {
+        [provider.upstreamId]: stubProviderModel({
+          limits: { max_context_window_tokens: 600000 },
+          providerData: { contextWindow: 80000, useResponsesLite: false },
+        }),
+      },
+    };
+    const target = chat('custom/target', 'Target', 200000);
+    const alias: InternalModel = {
+      id: colliding.id,
+      kind: 'chat',
+      limits: { max_context_window_tokens: 200000 },
+      endpoints: { openaiChatCompletions: {} },
+      aliasedFrom: { selection: 'first-available', targets: [{ target_model_id: target.id, rules: {} }] },
+    };
+    const out = assembleCodexCatalog(bundled, [
+      { ...entry(colliding), upstreams: [provider] },
+      entry(target),
+    ], {}, [alias]);
+
+    expect(out.models[0]).toMatchObject({ slug: alias.id, context_window: 200000, max_context_window: 200000 });
+  });
+
+  test('alias targets retain the primary-provider policy when Codex is secondary', () => {
+    const primary = stubModelCandidate().provider;
+    const secondary = { ...primary, upstreamId: 'secondary', kind: 'codex' as const };
+    const target = {
+      ...chat('mixed-provider-target', 'Primary', 200000),
+      providerModels: {
+        [primary.upstreamId]: stubProviderModel({ limits: { max_context_window_tokens: 200000 } }),
+        [secondary.upstreamId]: stubProviderModel({
+          limits: { max_context_window_tokens: 600000 },
+          providerData: { contextWindow: 80000, useResponsesLite: false },
+        }),
+      },
+    };
+    const alias: InternalModel = {
+      id: 'primary-alias',
+      kind: 'chat',
+      limits: { max_context_window_tokens: 200000 },
+      endpoints: { openaiChatCompletions: {} },
+      aliasedFrom: { selection: 'first-available', targets: [{ target_model_id: target.id, rules: {} }] },
+    };
+    const out = assembleCodexCatalog(bundled, [{ ...entry(target), upstreams: [primary, secondary] }], {}, [alias]);
+
+    expect(out.models[0]).toMatchObject({ slug: alias.id, context_window: 200000, max_context_window: 200000 });
+  });
+
   test('unlisted addressable entries are dropped', () => {
     // A model reachable only via `modelPrefix.addressable` alternates (not
     // listed on /v1/models) also stays off the codex picker — the operator
