@@ -24,6 +24,7 @@ const copyableRecord = (source: UpstreamRecord, name: string, hue: number): {
   const base = {
     id: '',
     name,
+    user_visible: false,
     enabled: true,
     sort_order: 0,
     created_at: '',
@@ -33,7 +34,9 @@ const copyableRecord = (source: UpstreamRecord, name: string, hue: number): {
     disabled_public_model_ids: [...source.disabled_public_model_ids],
     proxy_fallback_list: structuredClone(source.proxy_fallback_list),
     model_prefix: source.model_prefix === null ? null : structuredClone(source.model_prefix),
+    model_metadata_defaults: structuredClone(source.model_metadata_defaults),
     hue,
+    logo_url: source.logo_url,
     modelsCache: { fetchedAt: null, lastError: null, modelCount: null },
   };
 

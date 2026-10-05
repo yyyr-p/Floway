@@ -20,6 +20,7 @@ const hasSecret = (value: string | undefined | null): boolean => typeof value ==
 const serializeBase = (upstream: UpstreamRecord) => ({
   id: upstream.id,
   name: upstream.name,
+  user_visible: upstream.userVisible ?? false,
   enabled: upstream.enabled,
   sort_order: upstream.sortOrder,
   created_at: upstream.createdAt,
@@ -31,7 +32,9 @@ const serializeBase = (upstream: UpstreamRecord) => ({
     ? { id: entry.id }
     : { id: entry.id, colos: [...entry.colos] }),
   model_prefix: upstream.modelPrefix === null ? null : clone(upstream.modelPrefix),
+  model_metadata_defaults: clone(upstream.modelMetadataDefaults ?? {}),
   hue: upstream.hue,
+  logo_url: upstream.logoUrl ?? null,
 });
 
 const stateless = (upstream: UpstreamRecord): null => {
@@ -183,6 +186,7 @@ export const upstreamRecordToFullJson = (upstream: UpstreamRecord): FullSerializ
 const blueprintBase = (kind: UpstreamProviderKind) => ({
   id: '',
   name: '',
+  user_visible: false,
   enabled: false,
   sort_order: 0,
   created_at: '',
@@ -192,6 +196,8 @@ const blueprintBase = (kind: UpstreamProviderKind) => ({
   disabled_public_model_ids: [] as string[],
   proxy_fallback_list: [] as ProxyFallbackEntry[],
   model_prefix: null,
+  model_metadata_defaults: {},
+  logo_url: null,
 });
 
 export const blueprintUpstreamRecord = (kind: UpstreamProviderKind): BlueprintSerializedUpstreamRecord => {

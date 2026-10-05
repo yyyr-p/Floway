@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { chatField, modelsField, pricingField } from '../src/model-config.ts';
+import { applyModelMetadataDefaults, chatField, modelMetadataDefaultsField, modelsField, pricingField } from '../src/model-config.ts';
 import { assertEquals, assertThrows } from '@floway-dev/test-utils';
 
 test('pricingField parses explicit flat entries', () => {
@@ -88,10 +88,9 @@ describe('chatField', () => {
     expect(chat?.reasoning).toEqual({ adaptive: true });
   });
 
-  test('strips adaptive: false to absent', () => {
+  test('preserves adaptive: false as known metadata', () => {
     const chat = chatField({ reasoning: { adaptive: false, mandatory: true } }, 'm.chat');
-    expect(chat?.reasoning).toEqual({ mandatory: true });
-    expect(chat?.reasoning?.adaptive).toBeUndefined();
+    expect(chat?.reasoning).toEqual({ adaptive: false, mandatory: true });
   });
 
   test('parses reasoning with mandatory: true', () => {
@@ -99,10 +98,9 @@ describe('chatField', () => {
     expect(chat?.reasoning).toEqual({ mandatory: true });
   });
 
-  test('strips mandatory: false to absent', () => {
+  test('preserves mandatory: false as known metadata', () => {
     const chat = chatField({ reasoning: { mandatory: false, adaptive: true } }, 'm.chat');
-    expect(chat?.reasoning).toEqual({ adaptive: true });
-    expect(chat?.reasoning?.mandatory).toBeUndefined();
+    expect(chat?.reasoning).toEqual({ adaptive: true, mandatory: false });
   });
 
   test('parses all four sub-blocks together', () => {
@@ -118,6 +116,7 @@ describe('chatField', () => {
       effort: { supported: ['low', 'high'], default: 'low' },
       budget_tokens: { min: 0, max: 1000 },
       adaptive: true,
+      mandatory: false,
     });
   });
 
@@ -126,9 +125,9 @@ describe('chatField', () => {
       .toThrow(/at least one of effort, budget_tokens, adaptive, mandatory/);
   });
 
-  test('rejects reasoning with only adaptive: false and mandatory: false', () => {
-    expect(() => chatField({ reasoning: { adaptive: false, mandatory: false } }, 'm.chat'))
-      .toThrow(/at least one of effort, budget_tokens, adaptive, mandatory/);
+  test('preserves false-only reasoning metadata as a known negative capability', () => {
+    expect(chatField({ reasoning: { adaptive: false, mandatory: false } }, 'm.chat'))
+      .toEqual({ reasoning: { adaptive: false, mandatory: false } });
   });
 
   test('rejects non-boolean adaptive', () => {
@@ -208,6 +207,64 @@ describe('chatField', () => {
   test('rejects empty output modalities array', () => {
     expect(() => chatField({ modalities: { input: ['text'], output: [] } }, 'm.chat'))
       .toThrow(/at least one modality/);
+  });
+});
+
+describe('model metadata defaults', () => {
+  const defaults = {
+    limits: { max_context_window_tokens: 128_000, max_output_tokens: 4_096 },
+    chat: {
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      image_detail_original: true,
+      reasoning: {
+        effort: { supported: ['low', 'high'], default: 'low' },
+        budget_tokens: { min: 0, max: 8_000 },
+        adaptive: true,
+        mandatory: true,
+      },
+    },
+  } as const;
+
+  test('parses known sparse fields and treats an empty object as unset', () => {
+    expect(modelMetadataDefaultsField(defaults, 'model_metadata_defaults')).toEqual(defaults);
+    expect(modelMetadataDefaultsField({}, 'model_metadata_defaults')).toBeUndefined();
+    expect(() => modelMetadataDefaultsField(null, 'model_metadata_defaults')).toThrow(/must be an object/);
+  });
+
+  test('rejects empty modality and effort lists and unknown default fields', () => {
+    expect(() => modelMetadataDefaultsField({ chat: { modalities: { input: [], output: ['text'] } } }, 'defaults'))
+      .toThrow(/must have at least one modality/);
+    expect(() => modelMetadataDefaultsField({ chat: { reasoning: { effort: { supported: [], default: 'low' } } } }, 'defaults'))
+      .toThrow(/effort\.supported/);
+    expect(() => modelMetadataDefaultsField({ chat: { image: true } }, 'defaults'))
+      .toThrow(/unknown fields: image/);
+  });
+
+  test('fills only missing leaves and preserves false, zero, explicit text-only, and known ranges', () => {
+    const model = {
+      id: 'm',
+      limits: { max_context_window_tokens: 0 },
+      chat: {
+        modalities: { input: ['text'] as const, output: ['text'] as const },
+        image_detail_original: false,
+        reasoning: { adaptive: false, budget_tokens: { min: 0 } },
+      },
+    };
+
+    expect(applyModelMetadataDefaults(model, modelMetadataDefaultsField(defaults, 'defaults'))).toEqual({
+      ...model,
+      limits: { max_context_window_tokens: 0, max_output_tokens: 4_096 },
+      chat: {
+        modalities: { input: ['text'], output: ['text'] },
+        image_detail_original: false,
+        reasoning: {
+          effort: { supported: ['low', 'high'], default: 'low' },
+          budget_tokens: { min: 0, max: 8_000 },
+          adaptive: false,
+          mandatory: true,
+        },
+      },
+    });
   });
 });
 

@@ -8,7 +8,7 @@ import {
   preserveDecodedStoredJsonProperties,
 } from './stored-json.ts';
 import { BILLING_METRICS, MODEL_KINDS, RERANK_PROTOCOLS, parseNonNegativeDecimalString } from '@floway-dev/protocols/common';
-import type { ModelPrefixConfig, ProxyFallbackEntry, UpstreamModelsCache } from '@floway-dev/provider';
+import { modelMetadataDefaultsField, type ModelMetadataDefaults, type ModelPrefixConfig, type ProxyFallbackEntry, type UpstreamModelsCache } from '@floway-dev/provider';
 import { OPTIONAL_FLAG_IDS } from '@floway-dev/provider/flags';
 
 // JSON.parse already establishes the JSON grammar. This schema exists to keep
@@ -168,6 +168,18 @@ export const decodeProxyFallbackList = (raw: string, id: string): ProxyFallbackE
 
 export const decodeModelPrefix = (raw: string, id: string): ModelPrefixConfig =>
   decodeUpstreamJson(raw, modelPrefixSchema, 'model_prefix_json', id);
+
+export const decodeUpstreamModelMetadataDefaults = (raw: string, id: string): ModelMetadataDefaults | undefined => {
+  const value = decodeUpstreamJson(raw, opaqueJsonSchema, 'model_metadata_defaults_json', id);
+  try {
+    return modelMetadataDefaultsField(value, 'model_metadata_defaults');
+  } catch (cause) {
+    throw new Error(`Invalid upstream model metadata defaults for ${id}`, { cause });
+  }
+};
+
+export const encodeUpstreamModelMetadataDefaults = (value: ModelMetadataDefaults | undefined): string =>
+  JSON.stringify(value ?? {});
 
 export const encodeUpstreamModelsCache = (cache: UpstreamModelsCache): string =>
   JSON.stringify(cache, (_key, value) => value instanceof Set ? [...value] : value);

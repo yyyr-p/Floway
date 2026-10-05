@@ -12,11 +12,12 @@
 // a second registry round trip.
 
 import type { ModelsRefreshScheduler } from '../../../execution/models-refresh.ts';
+import { isModelAllowedByUpstreamModelAccess, type UpstreamModelAccessRule } from '../../../repo/model-access.ts';
 import type { StoredUpstreamRecord } from '../../../repo/types.ts';
 import { compareModelIds, getModelsFromProviders, mergeIntoCatalog } from '../../providers/catalog.ts';
 import { MODEL_CATALOG_REVISION } from '../../providers/models-cache.ts';
 import { listModelProviders } from '../../providers/registry.ts';
-import type { InternalModel, Provider } from '@floway-dev/provider';
+import { applyModelMetadataDefaults, type InternalModel, type Provider } from '@floway-dev/provider';
 
 export interface AddressableIdEntry {
   // The inbound model id the data plane will accept verbatim.
@@ -55,16 +56,15 @@ export const enumerateAddressableModelIds = async (
   upstreamFilter: readonly string[] | null,
   scheduleRefresh: ModelsRefreshScheduler,
   preFetchedUpstreams?: readonly StoredUpstreamRecord[],
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): Promise<readonly AddressableIdEntry[]> => {
   // Resolve providers once and thread them into the catalog assembly so
   // the upstreams.list() round-trip and provider-instantiation cost is
-  // paid once per call. `getModelsFromProviders` throws the actionable
-  // "no upstream provider configured" message when the provider list is
-  // empty; surface it the same way here so /v1/models keeps its 502 +
-  // hint behavior on a brand-new gateway. `preFetchedUpstreams` avoids
-  // an additional round-trip when the caller has the list already.
+  // paid once per call. An empty provider list produces an empty catalog.
+  // `preFetchedUpstreams` avoids an additional round-trip when the caller
+  // has the list already.
   const providers = await listModelProviders(upstreamFilter, preFetchedUpstreams);
-  const { models: realModels, upstreamsByPublicId } = getModelsFromProviders(providers, scheduleRefresh);
+  const { models: realModels, upstreamsByPublicId } = getModelsFromProviders(providers, scheduleRefresh, modelAccess);
   const byId = new Map(realModels.map(model => [model.id, model] as const));
 
   const entries: AddressableIdEntry[] = [];
@@ -99,10 +99,12 @@ export const enumerateAddressableModelIds = async (
 
     for (const upstreamModel of upstreamModels) {
       if (!upstreamModel.id || disabled.has(upstreamModel.id)) continue;
+      if (!isModelAllowedByUpstreamModelAccess(modelAccess, provider.upstreamId, upstreamModel.id)) continue;
       if (cfg.listed.length === 0) {
+        const providerModel = applyModelMetadataDefaults(upstreamModel, provider.modelMetadataDefaults);
         for (const form of addressableOnly) {
           const id = form === 'prefixed' ? `${cfg.prefix}${upstreamModel.id}` : upstreamModel.id;
-          mergeIntoCatalog(unlistedOnlyModels, unlistedOnlyUpstreams, provider, upstreamModel, id);
+          mergeIntoCatalog(unlistedOnlyModels, unlistedOnlyUpstreams, provider, providerModel, id);
         }
         continue;
       }

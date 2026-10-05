@@ -4,6 +4,7 @@ import { toPublicModel } from '../../../src/data-plane/models/load.ts';
 import { compareModelIds, getModelsFromProviders } from '../../../src/data-plane/providers/catalog.ts';
 import { listModelProviders } from '../../../src/data-plane/providers/registry.ts';
 import { enumerateModelCandidates } from '../../../src/data-plane/providers/resolution.ts';
+import { enumerateAddressableModelIds } from '../../../src/data-plane/shared/listing/addressable.ts';
 import { createModelsRefreshScheduler } from '../../../src/execution/models-refresh.ts';
 import { saveUpstreamForTest } from '../../repo/upstreams.ts';
 import { buildCustomUpstreamRecord, copilotModels, setupAppTest, warmModelsForTest } from '../../test-utils/app.ts';
@@ -29,6 +30,13 @@ const testScheduler = (promise: Promise<unknown>): void => {
   promise.catch(err => console.error('[background]', err));
 };
 const scheduleRefresh = createModelsRefreshScheduler('TEST', testScheduler);
+
+test('empty provider collections produce an empty model catalog', () => {
+  const result = getModelsFromProviders([], scheduleRefresh);
+  expect(result.models).toEqual([]);
+  expect(result.upstreamsByPublicId.size).toBe(0);
+  expect(result.failedUpstreams).toEqual([]);
+});
 
 test('compareModelIds pushes ids containing "/" to the tail', () => {
   assertEquals(sortedIds(['accounts/msft/x', 'gpt-4o', 'accounts/msft/y', 'claude-opus-4-7']), [
@@ -256,6 +264,66 @@ test('catalog merge preserves unanimous image-detail support on the public row',
   );
 });
 
+test('per-upstream model metadata defaults fill only unknown catalog leaves', async () => {
+  const { repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  const defaults = {
+    limits: { max_context_window_tokens: 256_000, max_prompt_tokens: 240_000, max_output_tokens: 8_000 },
+    chat: {
+      modalities: { input: ['text', 'image'], output: ['text'] },
+      image_detail_original: true,
+      reasoning: {
+        effort: { supported: ['low', 'high'], default: 'high' },
+        budget_tokens: { min: 1, max: 16_000 },
+        adaptive: true,
+        mandatory: true,
+      },
+    },
+  } as const;
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ modelMetadataDefaults: defaults }));
+
+  await withMockedFetch(
+    request => {
+      if (new URL(request.url).pathname === '/v1/models') {
+        return jsonResponse({
+          object: 'list',
+          data: [{
+            id: 'sparse-model',
+            limits: { max_context_window_tokens: 0 },
+            chat: {
+              modalities: { input: ['text'], output: ['text'] },
+              image_detail_original: false,
+              reasoning: { adaptive: false, budget_tokens: { min: 0 } },
+            },
+          }],
+        });
+      }
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const { models } = getModelsFromProviders(await listModelProviders(null), scheduleRefresh);
+      const model = models.find(candidate => candidate.id === 'sparse-model');
+      const providerModel = realProviderModels(model)['up_custom'];
+
+      assertEquals(providerModel?.limits, {
+        max_context_window_tokens: 0,
+        max_prompt_tokens: 240_000,
+        max_output_tokens: 8_000,
+      });
+      assertEquals(providerModel?.chat, {
+        modalities: { input: ['text'], output: ['text'] },
+        image_detail_original: false,
+        reasoning: {
+          effort: { supported: ['low', 'high'], default: 'high' },
+          budget_tokens: { min: 0, max: 16_000 },
+          adaptive: false,
+          mandatory: true,
+        },
+      });
+    },
+  );
+});
+
 test('disabledPublicModelIds hides models from the catalog and routing, per upstream', async () => {
   const { repo } = await setupAppTest();
   await repo.upstreams.deleteAll();
@@ -476,6 +544,32 @@ describe('catalog listing under modelPrefix', () => {
         // upstream, regardless of routing path.
         const bare = await enumerateModelCandidates({ upstreamIds: null, model: 'gpt-4o', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST' });
         assertEquals(bare.candidates.length, 0);
+      },
+    );
+  });
+
+  test('model access filters listed and addressable-only prefix forms by the source catalog ID', async () => {
+    const { repo } = await setupAppTest();
+    await repo.upstreams.deleteAll();
+    await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+      id: 'up_dual_access',
+      config: { baseUrl: 'https://access.example.com', authStyle: 'bearer', apiKey: 'sk-x', endpoints: { openaiChatCompletions: {} }, ingressHeadersRules: [] },
+      modelPrefix: { prefix: 'or/', addressable: ['unprefixed', 'prefixed'], listed: ['prefixed'] },
+    }));
+
+    await withMockedFetch(
+      request => {
+        const url = new URL(request.url);
+        if (url.hostname === 'access.example.com' && url.pathname === '/v1/models') {
+          return jsonResponse({ object: 'list', data: [{ id: 'gpt-4o', supported_endpoints: ['/chat/completions'] }] });
+        }
+        throw new Error(`Unhandled fetch ${request.url}`);
+      },
+      async () => {
+        const providers = await listModelProviders(null);
+        const policy = [{ upstreamId: 'up_dual_access', mode: 'deny' as const, modelIds: ['gpt-4o'] }];
+        assertEquals(getModelsFromProviders(providers, scheduleRefresh, policy).models, []);
+        assertEquals(await enumerateAddressableModelIds(null, scheduleRefresh, undefined, policy), []);
       },
     );
   });

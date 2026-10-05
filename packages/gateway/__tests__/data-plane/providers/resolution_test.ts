@@ -1,8 +1,11 @@
 import { describe, expect, test, vi } from 'vitest';
 
+import { MODEL_CATALOG_REVISION } from '../../../src/data-plane/providers/models-cache.ts';
 import { listModelProviders } from '../../../src/data-plane/providers/registry.ts';
 import { enumerateModelCandidates, enumerateRealModelCandidates } from '../../../src/data-plane/providers/resolution.ts';
 import { createModelsRefreshScheduler, modelsRefreshTarget, refreshModelsExplicit } from '../../../src/execution/models-refresh.ts';
+import { expandAliasTargets, MAX_ALIAS_EXPANSION_STEPS } from '../../../src/model-aliases/graph.ts';
+import type { ModelAliasRecord } from '../../../src/repo/types.ts';
 import { saveUpstreamForTest } from '../../repo/upstreams.ts';
 import { buildCustomUpstreamRecord, copilotModels, setupAppTest, warmModelsForTest } from '../../test-utils/app.ts';
 import { directFetcher, type InternalModel, type ProviderModel } from '@floway-dev/provider';
@@ -25,6 +28,21 @@ const testScheduler = (promise: Promise<unknown>): void => {
   promise.catch(err => console.error('[background]', err));
 };
 const scheduleRefresh = createModelsRefreshScheduler('TEST', testScheduler);
+
+const graphAlias = (name: string, targets: ModelAliasRecord['targets']): ModelAliasRecord => ({
+  id: `alias_${name}`,
+  name,
+  kind: 'chat',
+  selection: 'first-available',
+  enabled: true,
+  displayName: null,
+  visibleInModelsList: true,
+  targets,
+  announcedMetadata: null,
+  sortOrder: 1,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+});
 
 test('a cold candidate read schedules refresh without waiting for upstream I/O', async () => {
   const { repo } = await setupAppTest();
@@ -57,6 +75,52 @@ test('a cold candidate read schedules refresh without waiting for upstream I/O',
     lastError: null,
     models: [{ id: 'eventual-model' }],
   });
+});
+
+test('applies model metadata defaults to addressable-only routing candidates from a warm snapshot', async () => {
+  const { repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    modelMetadataDefaults: {
+      limits: { max_context_window_tokens: 256_000, max_output_tokens: 8_000 },
+      chat: {
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        image_detail_original: true,
+        reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+      },
+    },
+    modelPrefix: { prefix: 'private/', addressable: ['prefixed'], listed: [] },
+  }));
+
+  await withMockedFetch(
+    request => {
+      if (new URL(request.url).pathname === '/v1/models') {
+        return jsonResponse({ object: 'list', data: [{ id: 'hidden-model', supported_endpoints: ['/chat/completions'] }] });
+      }
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const resolved = await enumerateModelCandidates({
+        upstreamIds: null,
+        model: 'private/hidden-model',
+        kind: 'chat',
+        scheduler: testScheduler,
+        runtimeLocation: 'TEST',
+      });
+
+      expect(resolved.candidates).toHaveLength(1);
+      expect(resolved.candidates[0]?.model.limits).toMatchObject({
+        max_context_window_tokens: 256_000,
+        max_output_tokens: 8_000,
+      });
+      expect(resolved.candidates[0]?.model.chat).toEqual({
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        image_detail_original: true,
+        reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+      });
+      expect(realProviderModels(resolved.candidates[0]?.model).up_custom?.limits.max_output_tokens).toBe(8_000);
+    },
+  );
 });
 
 test('scheduler registration failures propagate rather than looking like an upstream model-list failure', async () => {
@@ -122,6 +186,46 @@ test('enumerateModelCandidates strips an -YYYYMMDD suffix when nothing matched a
       // list in configured `sort_order`.
       assertEquals(resolved.candidates.map(m => m.provider.upstreamId).sort(), ['up_copilot', 'up_custom'].sort());
       assertEquals(resolved.candidates.map(m => m.model.id), ['claude-opus-4-7', 'claude-opus-4-7']);
+    },
+  );
+});
+
+test('model access matches the source catalog ID after prefix and dated-suffix normalization', async () => {
+  const { repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_prefixed_access',
+    modelPrefix: { prefix: 'tenant/', addressable: ['prefixed'], listed: ['prefixed'] },
+    config: { baseUrl: 'https://prefixed-access.example.com', authStyle: 'bearer', apiKey: 'sk-x', endpoints: { openaiChatCompletions: {} }, ingressHeadersRules: [] },
+  }));
+
+  await withMockedFetch(
+    request => {
+      const url = new URL(request.url);
+      if (url.hostname === 'prefixed-access.example.com' && url.pathname === '/v1/models') {
+        return jsonResponse({ object: 'list', data: [{ id: 'gpt-4o', supported_endpoints: ['/chat/completions'] }] });
+      }
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const request = {
+        upstreamIds: null,
+        model: 'tenant/gpt-4o-20300101',
+        kind: 'chat' as const,
+        scheduler: testScheduler,
+        runtimeLocation: 'TEST',
+      };
+      const allowed = await enumerateModelCandidates({
+        ...request,
+        upstreamModelAccess: [{ upstreamId: 'up_prefixed_access', mode: 'allow', modelIds: ['gpt-4o'] }],
+      });
+      expect(allowed.candidates.map(candidate => candidate.provider.upstreamId)).toEqual(['up_prefixed_access']);
+
+      const projectedIdOnly = await enumerateModelCandidates({
+        ...request,
+        upstreamModelAccess: [{ upstreamId: 'up_prefixed_access', mode: 'allow', modelIds: ['tenant/gpt-4o'] }],
+      });
+      expect(projectedIdOnly.candidates).toEqual([]);
     },
   );
 });
@@ -505,6 +609,7 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
   const aliasCommon = {
     displayName: null,
     visibleInModelsList: true,
+    enabled: true,
     announcedMetadata: null,
     sortOrder: 1,
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -534,6 +639,89 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
     }));
   };
 
+  test('disabled aliases stop resolving through their configured targets', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert({
+      id: 'alias_disabled',
+      name: 'temporarily-disabled',
+      kind: 'chat',
+      selection: 'first-available',
+      targets: [{ target_model_id: 'gpt-5', rules: {} }],
+      ...aliasCommon,
+      enabled: false,
+    });
+
+    await withMockedFetch(buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }), async () => {
+      const disabled = await enumerateModelCandidates({
+        upstreamIds: null, model: 'temporarily-disabled', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      assertEquals(disabled.candidates, []);
+      assertEquals(disabled.sawModel, false);
+      assertEquals(disabled.failedUpstreams, []);
+
+      const direct = await enumerateModelCandidates({
+        upstreamIds: null, model: 'gpt-5', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      assertEquals(direct.candidates.map(candidate => candidate.model.id), ['gpt-5']);
+    });
+  });
+
+  test('nested disabled aliases stop resolving through their configured targets', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert({
+      id: 'alias_child_disabled', name: 'child-disabled', kind: 'chat', selection: 'first-available',
+      targets: [{ target_model_id: 'gpt-5', rules: {} }], ...aliasCommon, enabled: false,
+    });
+    await repo.modelAliases.insert({
+      id: 'alias_parent_enabled', name: 'parent-enabled', kind: 'chat', selection: 'first-available',
+      targets: [{ target_model_id: 'child-disabled', rules: {} }], ...aliasCommon,
+    });
+    await withMockedFetch(buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }), async () => {
+      const result = await enumerateModelCandidates({
+        upstreamIds: null, model: 'parent-enabled', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      expect(result.candidates).toEqual([]);
+      expect(result.sawModel).toBe(false);
+    });
+  });
+
+  test('disabled alias misses do not expose upstream names or refresh errors', async () => {
+    const { repo } = await setupAppTest();
+    const now = Date.now();
+    await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+      name: 'Private Provider Name',
+      modelsCache: {
+        revision: MODEL_CATALOG_REVISION,
+        fetchedAt: now,
+        models: [],
+        lastError: { message: 'private model catalog error', at: now, failureCount: 1 },
+      },
+    }));
+    await repo.modelAliases.insert({
+      id: 'alias_disabled_private',
+      name: 'disabled-private-alias',
+      kind: 'chat',
+      selection: 'first-available',
+      enabled: false,
+      displayName: null,
+      visibleInModelsList: true,
+      targets: [{ target_model_id: 'private-target-model', rules: {} }],
+      announcedMetadata: null,
+      sortOrder: 1,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    });
+
+    const result = await enumerateModelCandidates({
+      upstreamIds: null, model: 'disabled-private-alias', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+    });
+    assertEquals(result.candidates, []);
+    assertEquals(result.sawModel, false);
+    assertEquals(result.failedUpstreams, []);
+  });
+
   test('flattens across targets in declaration order for first-available', async () => {
     const { repo } = await setupAppTest();
     await seedUpstreams(repo);
@@ -557,6 +745,41 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
           resolved.candidates.map(c => `${c.model.id}@${c.provider.upstreamId}`),
           ['gpt-5@up_a', 'claude@up_b'],
         );
+      },
+    );
+  });
+
+  test('model access checks the alias target model on its upstream, not the alias name', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert({
+      id: 'alias_access',
+      name: 'friendly', kind: 'chat', selection: 'first-available',
+      targets: [{ target_model_id: 'gpt-5', rules: {} }],
+      ...aliasCommon,
+    });
+
+    await withMockedFetch(
+      buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }),
+      async () => {
+        const base = {
+          upstreamIds: null,
+          model: 'friendly',
+          kind: 'chat' as const,
+          scheduler: testScheduler,
+          runtimeLocation: 'TEST',
+        };
+        const aliasNameRule = await enumerateModelCandidates({
+          ...base,
+          upstreamModelAccess: [{ upstreamId: 'up_a', mode: 'deny', modelIds: ['friendly'] }],
+        });
+        assertEquals(aliasNameRule.candidates.map(candidate => candidate.model.id), ['gpt-5']);
+
+        const targetRule = await enumerateModelCandidates({
+          ...base,
+          upstreamModelAccess: [{ upstreamId: 'up_a', mode: 'deny', modelIds: ['gpt-5'] }],
+        });
+        assertEquals(targetRule.candidates, []);
       },
     );
   });
@@ -700,5 +923,82 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
         assertEquals(resolved.candidates[0]!.rules?.verbosity, 'high');
       },
     );
+  });
+
+  test('recursively resolves nested aliases and lets inner rule values override outer values', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert(graphAlias('inner', [
+      { target_model_id: 'gpt-5', rules: { reasoning: { effort: 'high' } } },
+    ]));
+    await repo.modelAliases.insert(graphAlias('outer', [
+      { target_model_id: 'inner', rules: { reasoning: { effort: 'low', summary: 'concise' }, verbosity: 'low' } },
+    ]));
+
+    await withMockedFetch(
+      buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }),
+      async () => {
+        const resolved = await enumerateModelCandidates({
+          upstreamIds: null, model: 'outer', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+        });
+        expect(resolved.candidates).toHaveLength(1);
+        expect(resolved.candidates[0]!.model.id).toBe('gpt-5');
+        expect(resolved.candidates[0]!.rules).toEqual({
+          reasoning: { effort: 'high', summary: 'concise' },
+          verbosity: 'low',
+        });
+      },
+    );
+  });
+
+  test('same-name targets bind real models once without recursively resolving the alias', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert(graphAlias('self', [
+      { target_model_id: 'self', rules: {} },
+    ]));
+    await repo.modelAliases.insert(graphAlias('gpt-5', [
+      { target_model_id: 'gpt-5', rules: { reasoning: { effort: 'low' } } },
+    ]));
+    const missing = await enumerateModelCandidates({
+      upstreamIds: null, model: 'self', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+    });
+    expect(missing.candidates).toEqual([]);
+    expect(missing.sawModel).toBe(false);
+    await withMockedFetch(buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }), async () => {
+      const resolved = await enumerateModelCandidates({
+        upstreamIds: null, model: 'gpt-5', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+      });
+      expect(resolved.candidates.map(candidate => candidate.model.id)).toEqual(['gpt-5']);
+      expect(resolved.candidates[0]?.rules).toEqual({ reasoning: { effort: 'low' } });
+    });
+  });
+
+  test('reports the complete reachable alias cycle chain', async () => {
+    const { repo } = await setupAppTest();
+    await repo.modelAliases.insert(graphAlias('cycle-a', [{ target_model_id: 'cycle-b', rules: {} }]));
+    await repo.modelAliases.insert(graphAlias('cycle-b', [{ target_model_id: 'cycle-c', rules: {} }]));
+    await repo.modelAliases.insert(graphAlias('cycle-c', [{ target_model_id: 'cycle-a', rules: {} }]));
+
+    await expect(enumerateModelCandidates({
+      upstreamIds: null, model: 'cycle-a', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+    })).rejects.toThrow('Model alias cycle detected: cycle-a -> cycle-b -> cycle-c -> cycle-a');
+  });
+
+  test('bounds expansion of a branching alias DAG', () => {
+    let child = graphAlias('leaf-alias', [{ target_model_id: 'real-model', rules: {} }]);
+    const records = [child];
+    for (let index = 0; index < 12; index++) {
+      const parent = graphAlias(`branch-${index}`, [
+        { target_model_id: child.name, rules: {} },
+        { target_model_id: child.name, rules: {} },
+      ]);
+      records.push(parent);
+      child = parent;
+    }
+    const aliasesByName = new Map(records.map(alias => [alias.name, alias]));
+
+    expect(() => expandAliasTargets(child, aliasesByName, alias => alias.targets))
+      .toThrow(`Model alias graph exceeds ${MAX_ALIAS_EXPANSION_STEPS} targets`);
   });
 });

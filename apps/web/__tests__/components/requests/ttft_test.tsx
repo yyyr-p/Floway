@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ApiKey } from '../../../src/api/types';
 import { RequestDetailPanel } from '../../../src/components/requests/detail';
 import { RequestListPanel } from '../../../src/components/requests/list';
+import { setLanguage } from '../../../src/i18n';
 import { renderInApp } from '../../render';
 import type { DumpMetadata, DumpRecord } from '@floway-dev/gateway/dump-types';
 
@@ -22,6 +23,7 @@ const testApiKey: ApiKey = {
   created_at: '2026-01-01T00:00:00.000Z',
   last_used_at: null,
   upstream_ids: null,
+  upstream_model_access: [],
   dump_retention_seconds: 3600,
   responses_retention_seconds: 0,
 };
@@ -80,6 +82,34 @@ describe('requests TTFT UI presentation', () => {
 
     expect(screen.getByText('350ms')).toBeTruthy();
     expect(screen.queryByText('0ms')).toBeNull();
+  });
+
+  it('renders token totals with K suffixes under Chinese locale', async () => {
+    await setLanguage('zh-Hans');
+    try {
+      const record = { ...makeRecordMeta('rec-tokens', null), inputTokens: 12_000, outputTokens: 345 };
+      renderInApp(
+        <MemoryRouter>
+          <RequestListPanel
+            apiKeys={[testApiKey]}
+            selectedKeyId={testApiKey.id}
+            onKeyChange={vi.fn()}
+            records={[record]}
+            selectedRecordId={null}
+            onRecordChange={vi.fn()}
+            hasOlder={false}
+            onLoadOlder={vi.fn()}
+            addressOfRecord={id => `/requests/${id}`}
+            error={null}
+            onDismissError={vi.fn()}
+          />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByText('12.3K tok')).toBeTruthy();
+    } finally {
+      await setLanguage('en');
+    }
   });
 
   it('renders TTFT in the request detail toolbar when present and omits it when null', () => {

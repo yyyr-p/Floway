@@ -140,6 +140,32 @@ Signed-in users manage their own OAuth2 bindings under **Settings → OAuth2
 Accounts**. An account with no password must keep at least one OAuth2 binding;
 it can bind another enabled provider first and then remove the old binding.
 Administrators can inspect and unlink the same identities while editing a user.
+
+### Concurrent Request Backpressure
+
+Soft concurrency control is disabled unless `FLOWAY_SOFT_CONCURRENT_REQUESTS`
+is set to a positive integer (unset, blank, and `0` disable it). Requests above that active-request threshold wait
+in a FIFO queue before entering a data-plane handler. The active slot remains
+occupied until the response body finishes or is cancelled. Defaults are 100
+queued requests and a 30-second wait when their variables are unset or blank; configure these with
+`FLOWAY_CONCURRENCY_QUEUE_MAX_SIZE` (0 through 10,000) and
+`FLOWAY_CONCURRENCY_QUEUE_MAX_WAIT_MS` (1 through 2,147,483,647). A full queue
+or expired wait returns a protocol-shaped `429` with `Retry-After: 1`.
+
+Queued responses expose `X-Floway-Queue-Status`, `X-Floway-Queue-Position`, and
+`X-Floway-Queue-Wait-Ms`; rejected responses also report
+`X-Floway-Queue-Depth`. The queue is FIFO within one gateway app instance.
+With the hard `FLOWAY_MAX_CONCURRENT_REQUESTS` gate enabled, it must run before
+the soft queue: hard-cap excess is rejected immediately, and requests waiting
+in the soft queue count against the hard in-flight cap. Usage admission happens
+inside the data-plane handler, after queue admission, so waiting requests do
+not reserve usage budget.
+
+This is an in-memory queue, not a deployment-wide coordinator. Each Node
+process and each Cloudflare Worker isolate has an independent threshold and
+queue; multiple processes or isolates can therefore exceed the configured
+value in aggregate. Client aborts remove queued waiters, and aborts after
+admission cancel the response body and release the active slot.
 **Upgrade notice:** Floway used to listen on both `0.0.0.0:8788` and
 `0.0.0.0:18088`. As a result of container image merging, Floway only listen on
 one single port now.
@@ -217,6 +243,44 @@ from the observed `output_index` and matches snapshot items by ID; ambiguous
 positions fail explicitly. The shared Responses collector reads terminal
 snapshots directly, with provider-specific repairs applied before collection.
 
+## Usage Limits
+
+Administrators can set token and USD-cost limits independently for a user or an
+API key over UTC calendar-hour, calendar-day, or calendar-month windows. When a
+request has both a user limit and a key limit, both apply. Total tokens sum the
+recorded input, cache, image, audio-token, and output token metrics; costs sum
+the `UsageRecord` metric quantities multiplied by their stored unit prices.
+
+Admission uses an atomic ledger with multiple in-flight reservations per
+principal. It estimates input tokens from the UTF-8 request-body byte count and
+uses an explicit output-token cap when recognized. Cost reservations use that
+token bound multiplied by the highest configured unit price among the request's
+resolved candidates. After a request finishes, Floway persists its measured
+usage before releasing the reservation. A request without a recognized output
+cap reserves the remaining allowance for its active limits; this can
+intentionally reduce concurrency until the request finishes. The byte-based
+input estimate is a conservative heuristic, not a tokenizer guarantee. Across
+requests admitted concurrently, any final or temporary limit overrun caused by
+estimation is bounded by the sum of their positive per-request deltas:
+`sum(max(0, actual tokens - reserved tokens))` for token limits and
+`sum(max(0, actual recorded cost - reserved cost))` for cost limits. This is
+not a fixed numeric ceiling: input-token estimation error, an upstream
+exceeding its requested output cap, or actual prices/metrics exceeding the
+candidate estimate can increase those deltas. After each `UsageRecord` is
+persisted, later admissions see actual usage in place of that request's
+reservation; already-admitted concurrent requests can still preserve an
+overrun. Abandoned reservations expire after 24 hours.
+
+Cost limits fail closed: earlier requests with no usage metrics or positive
+metrics with no stored unit price block further admission with HTTP 429. Missing
+unit prices can be backfilled, but missing metrics cannot. Older metric-bearing
+hourly buckets cannot reveal whether they also contain unmetered requests;
+migration and legacy-snapshot import preserve that count as unknown, which
+blocks cost-limited admission until the affected window rolls forward. New
+records and backup round trips retain exact unmetered request counts. Policy
+denials use protocol-shaped HTTP 429 responses; a limit-ledger storage failure
+returns HTTP 503. Backup exports use version 26 and include configured limits.
+
 ## Other Deployment Options
 
 ### Cloudflare Workers
@@ -239,6 +303,12 @@ production deployment, invoke `$deploy-to-cloudflare`. It uses the established
 update and rollback flow by default. A deployment named as new first runs an
 isolated binding-probe bootstrap and requires its `Hello World` response before
 publishing Floway.
+
+Set `vars.FLOWAY_MAX_CONCURRENT_REQUESTS` in `wrangler.jsonc` to a positive
+integer to cap active HTTP data-plane requests per Worker isolate; unset or
+`0` disables the cap. Streaming responses occupy a slot until the body finishes
+or is cancelled. This is not a Worker-wide limit: traffic handled by multiple
+isolates can exceed the configured value. WebSocket upgrades are not counted.
 
 For a manual production update, configure the admin secret, then apply the
 remote migrations and deploy as one step — publishing the code that reads a
@@ -267,6 +337,12 @@ before starting; deployments that build separately may set
 `FLOWAY_WEB_DIST_DIR` to the bundle directory (default:
 `apps/web/dist/client`). Production Node.js deployments must set both
 `NODE_ENV=production` and a non-empty `ADMIN_KEY`.
+
+Set `FLOWAY_MAX_CONCURRENT_REQUESTS` to a positive integer to cap active HTTP
+data-plane requests in the Node process. Unset or set it to `0` to disable the
+cap. The slot remains occupied until the response body finishes or the client
+cancels it, so streaming responses count for their full lifetime. WebSocket
+upgrades are not counted.
 
 Podman users can instead follow the
 [systemd deployment guide](./docker/systemd/README.md).

@@ -2,8 +2,9 @@ import { unionEndpoints } from './endpoint-union.ts';
 import { readUpstreamModelsSnapshotAndScheduleRefresh, MODEL_CATALOG_REVISION } from './models-cache.ts';
 import type { GatewayProvider } from './registry.ts';
 import type { ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
+import { isModelAllowedByUpstreamModelAccess, type UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import { kindForEndpoints, type OpaqueBlobCompatibilityScope } from '@floway-dev/protocols/common';
-import type { InternalModel, Provider, ProviderModel, UpstreamChatModelConfig, UpstreamRecord } from '@floway-dev/provider';
+import { applyModelMetadataDefaults, type InternalModel, type Provider, type ProviderModel, type UpstreamChatModelConfig, type UpstreamRecord } from '@floway-dev/provider';
 
 interface ProviderModelsResult {
   models: InternalModel[];
@@ -48,7 +49,7 @@ const mergedChatMetadata = (
 // The provider model is stored verbatim under that entry so dispatch hands
 // the same reference back to the provider's `callXxx`.
 export const internalModelFromProviderModel = (providerModel: ProviderModel, upstreamId: string): InternalModel => {
-  const { providerData, upstreamModelId: _upstreamModelId, enabledFlags, flagOverrides, rerankTarget, endpoints, ...metadata } = providerModel;
+  const { catalogModelId: _catalogModelId, providerData, upstreamModelId: _upstreamModelId, enabledFlags, flagOverrides, rerankTarget, endpoints, ...metadata } = providerModel;
   const providerModels = { [upstreamId]: providerModel };
   const chat = mergedChatMetadata(providerModel.chat, providerModels);
   return {
@@ -117,6 +118,7 @@ export const mergeIntoCatalog = (
 const collectProviderModels = (
   providers: readonly GatewayProvider[],
   scheduleRefresh: ModelsRefreshScheduler,
+  modelAccess: readonly UpstreamModelAccessRule[],
 ): ProviderModelsResult => {
   const byId = new Map<string, InternalModel>();
   const upstreamsByPublicId = new Map<string, Provider[]>();
@@ -140,8 +142,10 @@ const collectProviderModels = (
     // listed form — so a disabled `gpt-4o` hides both `gpt-4o` and
     // `<prefix>gpt-4o` from this upstream's contribution.
     const disabled = new Set(instance.disabledPublicModelIds);
-    for (const providerModel of providedModels) {
+    for (const sourceModel of providedModels) {
+      const providerModel = applyModelMetadataDefaults(sourceModel, instance.modelMetadataDefaults);
       if (!providerModel.id) continue;
+      if (!isModelAllowedByUpstreamModelAccess(modelAccess, instance.upstreamId, providerModel.id)) continue;
       if (disabled.has(providerModel.id)) continue;
 
       // Each surface form the upstream chose to list becomes its own catalog
@@ -155,13 +159,16 @@ const collectProviderModels = (
       if (cfg !== null) {
         for (const form of cfg.listed) {
           const publicId = form === 'prefixed' ? `${cfg.prefix}${providerModel.id}` : providerModel.id;
-          const surfacedModel: ProviderModel = form === 'prefixed'
-            ? { ...providerModel, id: publicId, display_name: `${instance.name}: ${providerModel.display_name ?? providerModel.id}` }
-            : providerModel;
+          const surfacedModel: ProviderModel = {
+            ...providerModel,
+            id: publicId,
+            catalogModelId: providerModel.id,
+            ...(form === 'prefixed' ? { display_name: `${instance.name}: ${providerModel.display_name ?? providerModel.id}` } : {}),
+          };
           mergeIntoCatalog(byId, upstreamsByPublicId, instance, surfacedModel, publicId);
         }
       } else {
-        mergeIntoCatalog(byId, upstreamsByPublicId, instance, providerModel, providerModel.id);
+        mergeIntoCatalog(byId, upstreamsByPublicId, instance, { ...providerModel, catalogModelId: providerModel.id }, providerModel.id);
       }
     }
   }
@@ -231,12 +238,9 @@ export const compareModelIds = (a: string, b: string): number => {
 export const getModelsFromProviders = (
   providers: readonly GatewayProvider[],
   scheduleRefresh: ModelsRefreshScheduler,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): { models: InternalModel[]; upstreamsByPublicId: Map<string, Provider[]>; failedUpstreams: readonly string[] } => {
-  if (providers.length === 0) {
-    throw new Error('No upstream provider configured — connect GitHub Copilot or add a Custom/Azure upstream in the dashboard');
-  }
-
-  const { models, upstreamsByPublicId, failedUpstreams } = collectProviderModels(providers, scheduleRefresh);
+  const { models, upstreamsByPublicId, failedUpstreams } = collectProviderModels(providers, scheduleRefresh, modelAccess);
 
   // TODO: surface `failedUpstreams` on each listing endpoint's wire response
   // so partial-listing failures reach clients.

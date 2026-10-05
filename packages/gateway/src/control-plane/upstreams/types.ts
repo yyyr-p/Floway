@@ -3,6 +3,7 @@ import type {
   FlagDefaults,
   FlagOverrides,
   ModelPrefixConfig,
+  ModelMetadataDefaults,
   ProxyFallbackEntry,
   UpstreamModelConfig,
 } from '@floway-dev/provider';
@@ -48,7 +49,7 @@ export type { ProviderModelsFailureResponse } from '@floway-dev/provider';
 
 type CustomConfigFields = Pick<
   StoredCustomUpstreamConfig,
-  'authStyle' | 'baseUrl' | 'endpoints' | 'ingressHeadersRules' | 'models' | 'modelsFetch' | 'pathOverrides'
+  'actions' | 'authStyle' | 'baseUrl' | 'endpoints' | 'ingressHeadersRules' | 'models' | 'modelsFetch' | 'pathOverrides' | 'usageProbe'
 >;
 
 export type CustomUpstreamConfig = CustomConfigFields & {
@@ -132,6 +133,7 @@ export interface ClaudeCodeUpstreamState {
 interface SerializedUpstreamRecordBase {
   id: string;
   name: string;
+  user_visible: boolean;
   enabled: boolean;
   sort_order: number;
   created_at: string;
@@ -141,7 +143,9 @@ interface SerializedUpstreamRecordBase {
   disabled_public_model_ids: string[];
   proxy_fallback_list: ProxyFallbackEntry[];
   model_prefix: ModelPrefixConfig | null;
+  model_metadata_defaults: ModelMetadataDefaults;
   hue: number;
+  logo_url: string | null;
 }
 
 type RedactedCustomConfig = CustomConfigFields & { apiKeySet: boolean };

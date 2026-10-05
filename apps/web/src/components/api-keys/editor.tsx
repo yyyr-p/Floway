@@ -22,7 +22,7 @@ import { UpstreamAccessControl } from '../upstreams/access-control';
 
 const { Button, DialogActions, DialogTitle, Field } = fluentComponents;
 
-interface KeyFormValues { name: string; keySource: KeySource; customKey: string; upstreamOverride: boolean; upstreamIds: string[]; dumpRetention: RetentionValue; openaiResponsesRetention: Exclude<RetentionValue, null> }
+interface KeyFormValues { name: string; keySource: KeySource; customKey: string; upstreamOverride: boolean; upstreamIds: string[]; upstreamModelAccess: NonNullable<ApiKey['upstream_model_access']>; dumpRetention: RetentionValue; openaiResponsesRetention: Exclude<RetentionValue, null> }
 
 const OPENAI_RESPONSES_RETENTION_MAX_SECONDS = 10 * 365 * 86400;
 
@@ -75,6 +75,11 @@ export function KeyDialog(props: KeyDialogProps) {
           ...keySourceFields,
           upstreamOverride: z.boolean(),
           upstreamIds: z.array(z.string()),
+          upstreamModelAccess: z.array(z.object({
+            upstreamId: z.string(),
+            mode: z.enum(['inherit', 'allow', 'deny']),
+            modelIds: z.array(z.string()),
+          })),
           dumpRetention: z.union([z.number(), z.null(), z.literal('invalid')]),
           openaiResponsesRetention: z.union([z.number(), z.literal('invalid')]),
         })
@@ -130,6 +135,7 @@ export function KeyDialog(props: KeyDialogProps) {
       const common = {
         name: values.name.trim(),
         upstream_ids: values.upstreamOverride ? values.upstreamIds : null,
+        upstream_model_access: values.upstreamModelAccess,
         dump_retention_seconds: parsedRetention(values.dumpRetention),
         responses_retention_seconds: parsedRetention(values.openaiResponsesRetention),
       };
@@ -157,7 +163,8 @@ export function KeyDialog(props: KeyDialogProps) {
   };
 
   return (
-    <>{discardConfirmation}<DialogShell
+    <DialogShell
+      nestedDialogs={discardConfirmation}
       width="editor"
       open={props.open}
       onOpenChange={(_, data) => { if (!data.open && !saving) requestClose(); }}
@@ -198,11 +205,13 @@ export function KeyDialog(props: KeyDialogProps) {
         available={visibleUpstreams}
         disabled={saving}
         ids={values.upstreamIds}
+        modelAccess={values.upstreamModelAccess}
         models={models}
         override={values.upstreamOverride}
         onChange={next => {
           setValue('upstreamOverride', next.override);
           setValue('upstreamIds', next.ids);
+          setValue('upstreamModelAccess', next.modelAccess);
         }}
       />
 
@@ -278,7 +287,7 @@ export function KeyDialog(props: KeyDialogProps) {
       {error && (
         <OutcomeMessageBar onDismiss={() => setError(null)}>{error}</OutcomeMessageBar>
       )}
-    </DialogShell></>
+    </DialogShell>
   );
 }
 
@@ -289,6 +298,7 @@ const keyFormDefaults = (apiKey: ApiKey | null): KeyFormValues => {
     customKey: '',
     upstreamOverride: apiKey?.upstream_ids !== null && apiKey?.upstream_ids !== undefined,
     upstreamIds: apiKey?.upstream_ids ?? [],
+    upstreamModelAccess: apiKey?.upstream_model_access ?? [],
     dumpRetention: apiKey?.dump_retention_seconds ?? null,
     openaiResponsesRetention: apiKey?.responses_retention_seconds ?? 0,
   };

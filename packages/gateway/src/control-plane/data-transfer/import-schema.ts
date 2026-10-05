@@ -3,10 +3,11 @@ import { z } from 'zod';
 import { parseWebSearchConfigStrict } from '../../data-plane/tools/web-search/config.ts';
 import type { WebSearchConfig } from '../../data-plane/tools/web-search/types.ts';
 import { parseDisabledPublicModelIdsWire } from '../../repo/disabled-public-models.ts';
+import { parseUpstreamModelAccess } from '../../repo/model-access.ts';
 import { isOpenAIResponsesRetentionSeconds, OPENAI_RESPONSES_RETENTION_MAX_SECONDS, OPENAI_RESPONSES_RETENTION_MIN_SECONDS } from '../../repo/openai-responses-retention.ts';
 import { isDirectFallbackId, normalizeProxyFallbackList } from '../../repo/proxy-fallback-list.ts';
 import { SEED_ADMIN_USER_ID } from '../../repo/seed-admin.ts';
-import type { ApiKey, OAuth2Account, OAuth2Provider, OAuth2Settings, PerformanceMetric, PerformanceTelemetryRecord, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
+import type { ApiKey, OAuth2Account, OAuth2Provider, OAuth2Settings, PerformanceMetric, PerformanceTelemetryRecord, UsageLimit, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
 import { PASSWORD_HASH_SCHEME } from '../../shared/passwords.ts';
 import { RETENTION_MAX_SECONDS } from '../../shared/retention.ts';
 import { parseServerSecret } from '../../shared/server-secret.ts';
@@ -16,7 +17,7 @@ import { USERNAME_PATTERN } from '../schemas.ts';
 import { isRecord } from '../shared/field-validators.ts';
 import { parseUpstreamIdsValue } from '../shared/upstream-ids.ts';
 import { BILLING_METRICS, canonicalizePricingSelector, type BillingMetric, parseNonNegativeDecimalString, type PricingSelector } from '@floway-dev/protocols/common';
-import { ALL_PROVIDER_KINDS, normalizeModelPrefix, normalizeUpstreamHue, parseFlagOverridesWire, parsePerformanceOperation, type ProxyFallbackEntry, type UpstreamProviderKind, type UpstreamRecord } from '@floway-dev/provider';
+import { ALL_PROVIDER_KINDS, modelMetadataDefaultsField, normalizeModelPrefix, normalizeUpstreamHue, normalizeUpstreamLogoUrl, parseFlagOverridesWire, parsePerformanceOperation, type ProxyFallbackEntry, type UpstreamProviderKind, type UpstreamRecord } from '@floway-dev/provider';
 import { assertAzureUpstreamRecord } from '@floway-dev/provider-azure';
 import { assertClaudeCodeUpstreamRecord, assertClaudeCodeUpstreamState } from '@floway-dev/provider-claude-code';
 import { assertCodexUpstreamRecord, assertCodexUpstreamState } from '@floway-dev/provider-codex';
@@ -41,6 +42,7 @@ export interface ParsedImportData {
   upstreams: UpstreamRecord[];
   proxies: SerializedProxy[];
   usage: UsageRecord[];
+  usageLimits: UsageLimit[];
   searchUsage: WebSearchUsageRecord[];
   performance: PerformanceTelemetryRecord[];
   performanceIncluded: boolean;
@@ -154,11 +156,13 @@ const upstreamWireSchema = parsedBy((value): UpstreamRecord => {
   if (isLegacyUpstreamIdentity(id)) {
     throw new Error('id must use a raw upstream id, not a legacy provider-prefixed identity');
   }
+  const modelMetadataDefaults = modelMetadataDefaultsField(wire.model_metadata_defaults, 'model_metadata_defaults');
 
   const record: UpstreamRecord = {
     id,
     kind,
     name: parseValue(nonEmptyStringSchema('name'), wire.name),
+    userVisible: parseValue(z.boolean().optional().default(false), wire.user_visible),
     enabled,
     sortOrder,
     createdAt: parseValue(nonEmptyStringSchema('created_at'), wire.created_at),
@@ -167,7 +171,9 @@ const upstreamWireSchema = parsedBy((value): UpstreamRecord => {
     disabledPublicModelIds: parseValue(parsedBy(parseDisabledPublicModelIdsWire).optional().default([]), wire.disabled_public_model_ids),
     proxyFallbackList: parseValue(proxyFallbackListSchema, wire.proxy_fallback_list),
     modelPrefix: parseValue(parsedBy(normalizeModelPrefix).optional().default(null), wire.model_prefix),
+    ...(modelMetadataDefaults !== undefined ? { modelMetadataDefaults } : {}),
     hue: parseValue(parsedBy(normalizeUpstreamHue), wire.hue),
+    logoUrl: parseValue(parsedBy(normalizeUpstreamLogoUrl).optional().default(null), wire.logo_url),
     config: wire.config,
     state: normalizeUpstreamState(kind, wire.state),
     modelsCache: null,
@@ -210,6 +216,7 @@ const openaiResponsesRetentionSchema = parsedBy((value): number => {
 const apiKeySchema = parsedBy((value): ApiKey => {
   const wire = parseRecord(value, 'record must be an object');
   const upstreamIds = parseValue(upstreamIdsSchema, wire.upstreamIds);
+  const upstreamModelAccess = parseValue(parsedBy(value => parseUpstreamModelAccess(value, 'apiKeys import')).optional().default([]), wire.upstreamModelAccess);
   const userId = parseValue(positiveIntegerSchema('userId'), wire.userId);
   const deletedAt = parseValue(nullableStringSchema('deletedAt'), wire.deletedAt);
   const id = parseValue(nonEmptyStringSchema('id'), wire.id);
@@ -231,6 +238,7 @@ const apiKeySchema = parsedBy((value): ApiKey => {
     createdAt,
     ...lastUsedAt,
     upstreamIds,
+    upstreamModelAccess,
     deletedAt,
     dumpRetentionSeconds,
     openaiResponsesRetentionSeconds,
@@ -255,6 +263,7 @@ const userSchema = z.object({
     if (!result.ok) throw new Error(result.error);
     return result.value;
   }),
+  upstreamModelAccess: parsedBy(value => parseUpstreamModelAccess(value, 'users import')).optional().default([]),
   deletedAt: nullableStringSchema('deletedAt'),
   createdAt: nonEmptyStringSchema('createdAt'),
 });
@@ -357,7 +366,35 @@ const usageSchema = parsedBy((value): UsageRecord => {
     throw new Error(`invalid pricingSelector: ${messageFor(cause)}`);
   }
   const metrics = parseValue(metricsSchema, wire.metrics);
-  return { ...fields, pricingSelector, metrics };
+  const unmeteredRequests = hasOwn(wire, 'unmeteredRequests')
+    ? parseValue(z.union([nonNegativeSafeIntegerSchema('unmeteredRequests must be a non-negative safe integer'), z.null()]), wire.unmeteredRequests)
+    : metrics.length === 0 ? fields.requests : null;
+  if (unmeteredRequests !== null && unmeteredRequests > fields.requests) {
+    throw new Error('unmeteredRequests must not exceed requests');
+  }
+  if (metrics.length === 0 && unmeteredRequests !== null && unmeteredRequests !== fields.requests) {
+    throw new Error('unmeteredRequests must equal requests when metrics are empty');
+  }
+  return { ...fields, pricingSelector, unmeteredRequests, metrics };
+});
+
+const usageLimitSchema = parsedBy((value): UsageLimit => {
+  const wire = parseRecord(value, 'record must be an object');
+  const principalType = parseValue(z.enum(['user', 'key']), wire.principalType);
+  const principalId = principalType === 'user'
+    ? parseValue(z.number().int().positive().max(Number.MAX_SAFE_INTEGER), wire.principalId)
+    : parseValue(nonEmptyStringSchema('principalId'), wire.principalId);
+  const window = parseValue(z.enum(['hour', 'day', 'month']), wire.window);
+  const maxTokens = parseValue(z.union([nonNegativeSafeIntegerSchema('maxTokens must be a non-negative safe integer'), z.null()]), wire.maxTokens);
+  let maxCostUsd: string | null;
+  if (wire.maxCostUsd === null) {
+    maxCostUsd = null;
+  } else {
+    maxCostUsd = parseValue(z.string().transform(value => parseNonNegativeDecimalString(value, 'maxCostUsd')), wire.maxCostUsd);
+    if ((maxCostUsd.split('.')[1]?.length ?? 0) > 6) throw new Error('maxCostUsd supports at most six fractional digits');
+  }
+  if (maxTokens === null && maxCostUsd === null) throw new Error('usage limit must define a token or cost maximum');
+  return { principalType, principalId, window, maxTokens, maxCostUsd };
 });
 
 const searchUsageSchema = parsedBy((value): WebSearchUsageRecord => {
@@ -551,6 +588,31 @@ export const parseImportData = (value: unknown): ImportDataParseResult => {
 
   const usage = parseCollection('usage', usageSchema, value.usage, { arrayError: 'usage must be an array' });
   if (usage.type === 'invalid') return usage;
+  const usageLimits = parseCollection('usageLimits', usageLimitSchema, value.usageLimits, {
+    arrayError: 'usageLimits must be an array',
+    optional: true,
+    validateInput: (input, _index, prior) => {
+      try {
+        const parsed = usageLimitSchema.parse(input);
+        return prior.some(candidate => candidate.principalType === parsed.principalType && candidate.principalId === parsed.principalId && candidate.window === parsed.window)
+          ? `duplicate usage limit: ${parsed.principalType}/${parsed.principalId}/${parsed.window}`
+          : null;
+      } catch (cause) {
+        return messageFor(cause);
+      }
+    },
+  });
+  if (usageLimits.type === 'invalid') return usageLimits;
+  const keyIds = new Set(apiKeys.records.map(key => key.id));
+  for (let index = 0; index < usageLimits.records.length; index++) {
+    const limit = usageLimits.records[index]!;
+    if (limit.principalType === 'user' && !userIds.has(limit.principalId as number)) {
+      return { type: 'invalid', error: `invalid usageLimits at index ${index}: unknown user ${limit.principalId}` };
+    }
+    if (limit.principalType === 'key' && !keyIds.has(limit.principalId as string)) {
+      return { type: 'invalid', error: `invalid usageLimits at index ${index}: unknown api key ${limit.principalId}` };
+    }
+  }
   const upstreams = parseCollection('upstreams', upstreamWireSchema, value.upstreams, { arrayError: 'upstreams must be an array' });
   if (upstreams.type === 'invalid') return upstreams;
   const upstreamIds = new Map<string, number>();
@@ -608,6 +670,7 @@ export const parseImportData = (value: unknown): ImportDataParseResult => {
       upstreams: upstreams.records,
       proxies: proxies.records,
       usage: usage.records,
+      usageLimits: usageLimits.records,
       searchUsage: searchUsage.records,
       performance,
       performanceIncluded: value.performanceIncluded,

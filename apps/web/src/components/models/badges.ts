@@ -1,5 +1,5 @@
 import type { CatalogIndex } from './catalog-index';
-import { reachableTargets } from './reachability';
+import { isModelBindingReachable, reachableTargets, type UpstreamModelAccessRule } from './reachability';
 import type { ControlPlaneModel } from '../../api/types';
 import { ALIAS_RULE_BADGE_FIELDS, formatAliasRuleBadges, type AliasRuleBadge, type AliasRuleBadgeField, type AliasTarget } from '@floway-dev/protocols/common';
 
@@ -11,11 +11,10 @@ export type ModelBadge =
   | { key: string; kind: 'selection'; selection: 'random' | 'first-available' }
   | { key: string; kind: 'rule'; field: AliasRuleBadgeField; value: AliasRuleBadge['value'] | null; varies: boolean };
 
-// Not the app's compact formatter, which renders 128K and 12.8万 under zh-Hans;
-// a spec is quoted as its documentation writes it.
+// Token limit labels use base-1000 suffixes independent of the active locale.
 const formatTokenLimit = (count: number): string => {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(count % 1_000 === 0 ? 0 : 1)}k`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(count % 1_000 === 0 ? 0 : 1)}K`;
   return String(count);
 };
 
@@ -23,13 +22,13 @@ export const effectiveUpstreams = (
   model: ControlPlaneModel,
   catalog: CatalogIndex,
   cap: readonly string[] | null,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): readonly ControlPlaneModel['upstreams'][number][] => {
-  if (model.aliasedFrom === undefined) return cap === null
-    ? model.upstreams
-    : model.upstreams.filter(binding => cap.includes(binding.id));
+  if (model.aliasedFrom === undefined) return model.upstreams.filter(binding =>
+    isModelBindingReachable(binding, cap, modelAccess));
   const seen = new Set<string>();
-  return reachableTargets(model, catalog, cap).flatMap(target => target.upstreams.filter(binding => {
-    if ((cap !== null && !cap.includes(binding.id)) || seen.has(binding.id)) return false;
+  return reachableTargets(model, catalog, cap, modelAccess).flatMap(target => target.upstreams.filter(binding => {
+    if (!isModelBindingReachable(binding, cap, modelAccess) || seen.has(binding.id)) return false;
     seen.add(binding.id);
     return true;
   }));
@@ -65,6 +64,7 @@ export const modelBadges = (
   model: ControlPlaneModel,
   catalog: CatalogIndex,
   cap: readonly string[] | null,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): ModelBadge[] => {
   const badges: ModelBadge[] = ([
     ['context', model.limits.max_context_window_tokens],
@@ -77,7 +77,7 @@ export const modelBadges = (
   const alias = model.aliasedFrom;
   if (alias === undefined) return badges;
 
-  const reachable = reachableTargets(model, catalog, cap);
+  const reachable = reachableTargets(model, catalog, cap, modelAccess);
   const reachableIds = new Set(reachable.map(target => target.id));
   const reachableAliasTargets = alias.targets.filter(target => reachableIds.has(target.target_model_id));
   const sole = reachable.length === 1 ? reachable[0]! : null;

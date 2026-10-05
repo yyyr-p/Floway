@@ -1,0 +1,30 @@
+# Chat Stream Reasoning Order
+
+Status: whole-response reorder approved by the operator on 2026-10-05, including first-output latency and full-response buffering costs.
+
+## Confirmed Behavior
+
+- Empty `reasoning_content: ""` placeholders are ignored before Anthropic block state changes. A fixture with text fragments and a newline retains each fragment in one text block, without empty thinking blocks. This addresses the empty-placeholder form of token-per-line fragmentation.
+- `reasoning_items[]` carriers translated from Chat to Responses are emitted as completed output items as each carrier arrives. Same-ID carriers remain separate; distinct IDs, text, tool calls, and opaque `encrypted_content` are retained. The extension's summary semantics are not established as either delta or cumulative snapshot, so neither concatenation nor replacement is safe to assume.
+- Responses-to-Chat projects readable summary text into the scalar field and retains the item carrier. Empty scalar reasoning is filtered. The carrier round-trip now preserves `encrypted_content`, including opaque-only items.
+- The integrated gateway places all translated reasoning frames before all text by buffering the Chat stream until its terminal frame or upstream exhaustion. This preserves successful-stream payloads, but delays the first output until generation ends. If upstream fails, already-read partial reasoning and content are yielded in that order before rethrowing the original error. No successful terminal frame is fabricated. Regression tests cover the buffering boundary, partial and early failures (including non-Error thrown values), missing terminal frames, and mixed-frame usage/opaque preservation.
+
+## Evidence
+
+- CC Switch v3.20.3 documents that empty `reasoning_content` on every text chunk repeatedly opens empty thinking blocks and splits text; its `streaming.rs` now filters empty strings before that branch ([release](https://github.com/farion1231/cc-switch/releases/tag/v3.20.3#L261-L263), [implementation](https://github.com/farion1231/cc-switch/blob/main/src-tauri/src/proxy/providers/streaming.rs#L2657-L2678)).
+- CC Switch issue [#5692](https://github.com/farion1231/cc-switch/issues/5692) reproduces text/reasoning alternation and proposes dropping reasoning after visible text starts. That policy is lossy and is not implemented here.
+- CC Switch issue [#6317](https://github.com/farion1231/cc-switch/issues/6317) reports overlapping `reasoning_content` and `content` plus inline-think leakage. It demonstrates possible duplication, not a generally safe text-deduplication rule.
+- Anthropic's [Messages streaming contract](https://platform.claude.com/docs/en/build-with-claude/streaming#event-types) specifies a series of indexed content blocks, each with its own start/delta/stop lifecycle; thinking also carries a `signature_delta` before stop. It does not require exactly one thinking block followed by exactly one text block. Chronological multi-block output is wire-valid. However, CC Switch #5692 reports Claude Code renders each text block as a separate assistant fragment/bullet, so the valid sequence can still produce poor client UX.
+- OpenAI's [Responses streaming reference](https://platform.openai.com/docs/api-reference/responses-streaming) identifies reasoning summary deltas by `item_id`, `output_index`, and `summary_index`, and the corresponding `.done` event contains the completed text. That is explicit semantics for Responses events, not for the non-standard Chat `reasoning_items[]` extension; it does not authorize joining repeated same-ID Chat carriers.
+- LiteLLM's [Responses transformation](https://github.com/BerriAI/litellm/blob/main/litellm/completion_extras/litellm_responses_transformation/transformation.py#L2616-L2643) carries `encrypted_content` when constructing and replaying reasoning items. It does not define same-ID fragment semantics. LiteLLM issue [#32357](https://github.com/BerriAI/litellm/issues/32357) separately records malformed Anthropic events, including a `thinking_delta` inside a text block.
+- The Copilot gateway [copilot-api](https://github.com/caozhiyuan/copilot-api/blob/dev/src/routes/messages/stream-translation.ts#L1949-L1978) changes late reasoning into `delta.content` after a content block is open. That avoids a new block by changing the data's classification; Floway must not copy it as a preservation fix.
+
+## Accepted Policy And Alternatives
+
+Chronological blocks are protocol-valid, but clients such as Claude Code may render every text block separately. The operator explicitly chose whole-response reorder for translated Chat upstreams, accepting the first-output latency and full-response memory costs. Arbitrary late reasoning cannot be prepended after text has already been sent.
+
+1. **Whole-response reorder (accepted):** buffer the complete Chat stream, then emit reasoning before text. First output waits for upstream completion, exhaustion, or failure; memory grows with the full response. On failure, flush received partial output in the same order and propagate the original error.
+2. **Arrival-order streaming (not selected):** preserve each text, reasoning, tool, signature, and opaque value in upstream order, closing and opening Anthropic blocks on type changes. First-token latency follows the upstream; memory stays bounded by active translation state. The tradeoff is potentially many alternating blocks and fragmented text in clients such as Claude Code.
+3. **Bounded lookahead (not selected):** delay initial text only up to a time/byte cap. It can reduce common-case splitting with bounded memory and latency, but cannot guarantee one block per channel when reasoning arrives after the cap. Any future adoption needs an approved overflow policy.
+
+For repeated same-ID `reasoning_items[]`, keep current per-carrier completion and byte preservation until the producer contract or live captures establish whether summaries are deltas or cumulative snapshots. No same-ID merge, late-reasoning suppression, opaque/signature loss, or token deduplication is approved by this note.

@@ -20,6 +20,7 @@ const backupFileSchema = z.object({
     upstreams: z.array(z.unknown()),
     proxies: z.array(z.unknown()),
     usage: z.array(z.unknown()),
+    usageLimits: z.array(z.unknown()).optional(),
     searchUsage: z.array(z.unknown()),
     performance: z.array(z.unknown()).optional(),
     performanceIncluded: z.boolean(),

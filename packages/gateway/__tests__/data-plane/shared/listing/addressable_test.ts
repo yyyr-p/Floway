@@ -71,6 +71,14 @@ describe('enumerateAddressableModelIds', () => {
     const { repo } = await setupAppTest();
     await repo.upstreams.deleteAll();
     await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+      modelMetadataDefaults: {
+        limits: { max_context_window_tokens: 256_000 },
+        chat: {
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          image_detail_original: true,
+          reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+        },
+      },
       modelPrefix: { prefix: 'private/', addressable: ['unprefixed', 'prefixed'], listed: [] },
     }));
 
@@ -84,6 +92,12 @@ describe('enumerateAddressableModelIds', () => {
           { id: 'private/hidden-model', unlisted: true },
         ]);
         expect(surface[0]?.model.providerModels).toHaveProperty('up_custom');
+        expect(surface[0]?.model.limits.max_context_window_tokens).toBe(256_000);
+        expect(surface[0]?.model.chat).toEqual({
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          image_detail_original: true,
+          reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+        });
       },
     );
   });
@@ -123,11 +137,10 @@ describe('enumerateAddressableModelIds', () => {
     );
   });
 
-  test('throws "no upstream configured" when the upstream cap is empty — surfacing the same hint /v1/models has always raised', async () => {
+  test('returns an empty addressable surface when the upstream cap is empty', async () => {
     const { repo } = await setupAppTest();
     await repo.upstreams.deleteAll();
 
-    await expect(enumerateAddressableModelIds(null, scheduleRefresh))
-      .rejects.toThrow('No upstream provider configured');
+    await expect(enumerateAddressableModelIds(null, scheduleRefresh)).resolves.toEqual([]);
   });
 });

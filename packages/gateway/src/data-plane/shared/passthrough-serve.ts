@@ -21,8 +21,9 @@ import { iterateCandidates } from './iterate-candidates.ts';
 import { passthroughAttempt } from './passthrough-attempt.ts';
 import { type StreamCompletion, writeSSEFrames } from './sse.ts';
 import { recordFailedRequest } from './telemetry/performance.ts';
-import { settle } from './telemetry/settle.ts';
+import { settle, settleUnpricedReservation } from './telemetry/settle.ts';
 import { forwardUpstreamHeaders, forwardUpstreamResponse } from './upstream-response.ts';
+import { reserveUsageLimit, usageLimitDenialMessage } from './usage-limit-admission.ts';
 import type { AuthedContext } from '../../middleware/auth.ts';
 import type { TokenUsage } from '../../repo/types.ts';
 import { enumerateModelCandidates } from '../providers/resolution.ts';
@@ -110,6 +111,7 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
     // changes which id the gateway addresses upstream.
     const { candidates, sawModel, failedUpstreams } = await enumerateModelCandidates({
       upstreamIds: ctx.upstreamIds,
+      upstreamModelAccess: ctx.upstreamModelAccess,
       model,
       kind,
       scheduler: ctx.backgroundScheduler,
@@ -138,6 +140,16 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
       return passthroughApiError(c, appendFailedUpstreams(`Model ${model} does not support the ${sourceApi} endpoint.`, failedUpstreams), 400);
     }
 
+    const admission = await reserveUsageLimit(ctx, viable);
+    if (!admission.ok) {
+      ctx.dump?.error('gateway');
+      return passthroughApiError(
+        c,
+        admission.reason === 'storage' ? usageLimitDenialMessage(admission.reason, admission.error) : usageLimitDenialMessage(admission.reason),
+        admission.reason === 'storage' ? 503 : 429,
+      );
+    }
+
     // Iterate the viable list. Each candidate's attempt runs the upstream
     // HTTP call and records performance telemetry; the shared
     // iterator returns the first 2xx or, on exhaustion, the last non-2xx
@@ -164,6 +176,7 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
       // still see real upstream telemetry (status, retry-after, request-id,
       // ...) rather than a synthetic gateway envelope.
       recordFailedRequest(ctx, performanceContext);
+      settle(ctx, performanceContext, identity, null, true);
       ctx.dump?.error('upstream', identity.upstream);
       return forwardUpstreamResponse(response);
     }
@@ -192,6 +205,7 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
     if (!upstreamBody) {
       ctx.dump?.failed(`${sourceApi} streaming upstream returned no body`);
       recordFailedRequest(ctx, performanceContext);
+      settleUnpricedReservation(ctx, identity);
       // Preserve upstream correlation headers (x-request-id, cf-ray, ...)
       // on the synthesized 502 so this rare edge case is still traceable.
       forwardUpstreamHeaders(c, response.headers);
@@ -250,6 +264,7 @@ export const passthroughServe = async (input: PassthroughServeContext): Promise<
         return forwarded;
       }
     }
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     // Attributes to whichever candidate iterateCandidates was on (or short-circuits if none started).
     recordFailedRequest(ctx, ctx.attempt.telemetry);
     ctx.dump?.failed(e);

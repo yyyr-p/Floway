@@ -11,7 +11,7 @@ import { inboundHeaders } from '../../shared/inbound-headers.ts';
 import { takeRequestBody } from '../../shared/request-body.ts';
 import { DOWNSTREAM_KEEP_ALIVE_INTERVAL_MS, type StreamCompletion } from '../../shared/sse.ts';
 import { recordFailedRequest } from '../../shared/telemetry/performance.ts';
-import { settle } from '../../shared/telemetry/settle.ts';
+import { settle, settleUnpricedReservation } from '../../shared/telemetry/settle.ts';
 import { tokenUsageFromBillableUsage } from '../../shared/telemetry/usage.ts';
 import { createChatGatewayCtxFromHono, type ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { SourceStreamState, eventResultMetadata } from '../shared/respond.ts';
@@ -342,6 +342,7 @@ const handleClientMessage = async (
       // call would be skipped. Attribute the failure to the last upstream stamped
       // synchronously by `openaiResponsesServe.generate`, matching the HTTP transports.
       recordFailedRequest(ctx, ctx.attempt.telemetry);
+      settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
       ctx.dump?.failed(error);
       ctx.dump?.finalize(500, []);
     }
@@ -380,6 +381,7 @@ const respondOpenAIResponsesWebSocket = async (input: {
 }): Promise<void> => {
   const { socket, eventId, signal, isClosed, result, ctx, payload, turnFailure } = input;
   if (result.type === 'api-error') {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     recordFailedRequest(ctx, result.performance);
     ctx.dump?.error(result.source, result.upstreamId);
     turnFailure.fail(result.status, normalizeErrorBody(parseMaybeJson(result.body, result.headers), result.status));
@@ -388,6 +390,7 @@ const respondOpenAIResponsesWebSocket = async (input: {
   }
 
   if (result.type === 'internal-error') {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     recordFailedRequest(ctx, result.performance);
     ctx.dump?.failed(result.error.message);
     turnFailure.fail(result.status, internalErrorEnvelope(result.error));
@@ -560,7 +563,13 @@ const respondOpenAIResponsesWebSocket = async (input: {
     state.failed = true;
     turnFailure.fail(500, serverErrorEnvelope(error));
   } finally {
-    const metadata = await eventResultMetadata(result);
+    let metadata;
+    try {
+      metadata = await eventResultMetadata(result);
+    } catch (error) {
+      settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
+      throw error;
+    }
     const failed = state.failedAfter(completion);
     if (failed) {
       // `fail` cannot carry the eviction for every failed turn: one that

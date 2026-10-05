@@ -19,6 +19,7 @@ const azureUpstream = (): UpstreamRecord => ({
   modelPrefix: null,
   modelsCache: null,
   hue: 210,
+  logoUrl: 'https://example.com/azure.svg',
   config: {
     endpoint: 'https://example.openai.azure.com',
     apiKey: 'az-key',
@@ -75,9 +76,9 @@ test('/api/models exposes each upstream as { kind, id } so multi-provider models
       assertEquals(response.status, 200);
       const body = (await response.json()) as { data: Array<Record<string, unknown>> };
 
-      assertEquals(body.data.find(model => model.id === 'claude-sonnet-4')?.upstreams, [{ kind: 'copilot', id: 'up_copilot', name: 'GitHub Copilot (tester)', hue: 210 }]);
-      assertEquals(body.data.find(model => model.id === 'custom-model')?.upstreams, [{ kind: 'custom', id: 'up_custom_models', name: 'Custom Provider', hue: 210 }]);
-      assertEquals(body.data.find(model => model.id === 'azure-public')?.upstreams, [{ kind: 'azure', id: 'up_azure_models', name: 'Azure Models', hue: 210 }]);
+      assertEquals(body.data.find(model => model.id === 'claude-sonnet-4')?.upstreams, [{ kind: 'copilot', id: 'up_copilot', modelId: 'claude-sonnet-4', name: 'GitHub Copilot (tester)', hue: 210, logoUrl: null }]);
+      assertEquals(body.data.find(model => model.id === 'custom-model')?.upstreams, [{ kind: 'custom', id: 'up_custom_models', modelId: 'custom-model', name: 'Custom Provider', hue: 210, logoUrl: null }]);
+      assertEquals(body.data.find(model => model.id === 'azure-public')?.upstreams, [{ kind: 'azure', id: 'up_azure_models', modelId: 'azure-public', name: 'Azure Models', hue: 210, logoUrl: 'https://example.com/azure.svg' }]);
       for (const model of body.data) {
         // Legacy split fields must not reappear.
         assertEquals(Object.hasOwn(model, 'provider'), false);
@@ -189,6 +190,7 @@ test('/api/models — admin sees raw alias.targets; non-admin sees the caller-na
     name: 'mix',
     kind: 'chat',
     selection: 'first-available',
+    enabled: true,
     displayName: null,
     visibleInModelsList: true,
     targets: [
@@ -279,6 +281,7 @@ test('/api/models — admin self-restriction does NOT leak per-alias metadata va
     name: 'shared-alias',
     kind: 'chat',
     selection: 'first-available',
+    enabled: true,
     displayName: null,
     visibleInModelsList: true,
     targets: [{ target_model_id: 'shared', rules: {} }],

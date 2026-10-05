@@ -13,6 +13,7 @@ const record: StoredUpstreamRecord = {
   id: 'up_refresh',
   kind: 'custom',
   name: 'Refresh',
+  userVisible: false,
   enabled: true,
   sortOrder: 0,
   createdAt: '2026-08-01T00:00:00.000Z',

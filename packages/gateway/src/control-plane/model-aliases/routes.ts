@@ -6,7 +6,9 @@ import type { Context } from 'hono';
 
 import { recordToWire, wireToRecord } from './serialize.ts';
 import { type CtxWithJson } from '../../middleware/zod-validator.ts';
+import { findAliasGraphError } from '../../model-aliases/graph.ts';
 import { getRepo } from '../../repo/index.ts';
+import type { ModelAliasRecord } from '../../repo/types.ts';
 import { shortId } from '../../shared/short-id.ts';
 import type { createAliasBody, updateAliasBody } from '../schemas.ts';
 import { nextSortOrder } from '../shared/sort-order.ts';
@@ -17,6 +19,12 @@ import { nextSortOrder } from '../shared/sort-order.ts';
 const isAliasNameCollision = (err: unknown): boolean =>
   err instanceof Error &&
   err.message.includes('UNIQUE constraint failed: model_aliases.name');
+
+const aliasGraphError = (records: readonly ModelAliasRecord[], candidate: ModelAliasRecord) => {
+  const aliasesByName = new Map(records.filter(record => record.id !== candidate.id).map(record => [record.name, record]));
+  aliasesByName.set(candidate.name, candidate);
+  return findAliasGraphError(candidate, aliasesByName);
+};
 
 export const listAliases = async (c: Context) => {
   const records = await getRepo().modelAliases.list();
@@ -35,6 +43,8 @@ export const createAlias = async (c: CtxWithJson<typeof createAliasBody>) => {
     createdAt: now,
     updatedAt: now,
   });
+  const graphError = aliasGraphError(existing, record);
+  if (graphError) return c.json({ error: graphError.message }, 400);
   try {
     await repo.modelAliases.insert(record);
   } catch (err) {
@@ -60,6 +70,9 @@ export const updateAlias = async (c: CtxWithJson<typeof updateAliasBody>) => {
     createdAt: existing.createdAt,
     updatedAt: new Date().toISOString(),
   });
+  const graphError = aliasGraphError(await repo.modelAliases.list(), next);
+  if (graphError) return c.json({ error: graphError.message }, 400);
+  next.enabled = body.enabled ?? existing.enabled;
   try {
     await repo.modelAliases.update(next);
   } catch (err) {

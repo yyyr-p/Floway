@@ -12,13 +12,19 @@ import { stubModelCandidate } from '@floway-dev/test-utils';
 // into the overrides.
 export const mockGatewayCtx = (overrides: Partial<GatewayCtx> = {}): GatewayCtx => ({
   apiKeyId: 'key_test',
+  apiKeyUserId: 1,
+  estimatedInputTokens: 0,
+  requestedOutputTokenLimit: null,
+  usageLimitReservationId: null,
+  usageLimitSettlementScheduled: false,
   requestStartedAt: 0,
   upstreamIds: null,
+  upstreamModelAccess: [],
   wantsStream: false,
   runtimeLocation: 'TEST',
   dump: null,
   backgroundScheduler: promise => { void promise; },
-  attempt: { timing: { firstOutputTokenAt: null, upstreamCallStartedAt: null }, telemetry: undefined },
+  attempt: { timing: { firstOutputTokenAt: null, upstreamCallStartedAt: null }, telemetry: undefined, modelIdentity: undefined },
   ...overrides,
 });
 

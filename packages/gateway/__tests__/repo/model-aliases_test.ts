@@ -22,6 +22,7 @@ const aliasFixture = (overrides: Partial<ModelAliasRecord> = {}): ModelAliasReco
   name: 'gpt-fast',
   kind: 'chat',
   selection: 'first-available',
+  enabled: true,
   displayName: null,
   visibleInModelsList: true,
   targets: [
@@ -154,6 +155,13 @@ for (const [backend, makeRepo] of REPO_BACKENDS) {
     assertEquals(row?.visibleInModelsList, false);
   });
 
+  test(`[${backend}] enabled=false round-trips`, async () => {
+    const repo = await freshRepo();
+    await repo.modelAliases.insert(aliasFixture({ enabled: false }));
+    const row = await repo.modelAliases.getByName('gpt-fast');
+    assertEquals(row?.enabled, false);
+  });
+
   test(`[${backend}] announcedMetadata round-trips through JSON column`, async () => {
     const repo = await freshRepo();
     await repo.modelAliases.insert(aliasFixture({
@@ -190,6 +198,7 @@ test('[sql] migration 0046 seeds the codex-auto-review alias with its two-target
   assertExists(seed);
   assertEquals(seed.displayName, 'Codex Auto Review');
   assertEquals(seed.visibleInModelsList, true);
+  assertEquals(seed.enabled, true);
   assertEquals(seed.selection, 'first-available');
   assertEquals(seed.kind, 'chat');
   assertEquals(seed.targets, [

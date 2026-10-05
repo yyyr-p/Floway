@@ -61,7 +61,7 @@ export function OllamaUsageCard({ probeRecord, record }: { probeRecord: Upstream
 
   return <section className={SECTION_STACK_CLASS}>
     {accountName !== null && <div className="flex items-center gap-3 min-w-0">
-      <ProviderIcon kind="ollama" className="h-8 w-8 shrink-0" />
+      <ProviderIcon kind="ollama" logoUrl={record.logo_url} className="h-8 w-8 shrink-0" />
       <div className="grid gap-0.5 min-w-0 flex-1">
         <Text block weight="semibold" truncate wrap={false}>{accountName}</Text>
         {account?.email && account.name && <Text block size={200} className="text-fui-fg2" truncate wrap={false}>{account.email}</Text>}

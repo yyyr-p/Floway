@@ -107,20 +107,20 @@ describe('upstreamModelSchema chat', () => {
     expect(createUpstreamBody.safeParse(body).success).toBe(true);
   });
 
-  test('rejects reasoning with adaptive: false', () => {
+  test('accepts reasoning with adaptive: false as an explicit capability value', () => {
     const body = structuredClone(baseAzure);
     (body.config.models[0] as Record<string, unknown>).chat = {
       reasoning: { adaptive: false },
     };
-    expect(createUpstreamBody.safeParse(body).success).toBe(false);
+    expect(createUpstreamBody.safeParse(body).success).toBe(true);
   });
 
-  test('rejects reasoning with adaptive: false even alongside mandatory: true', () => {
+  test('accepts reasoning with adaptive: false alongside mandatory: true', () => {
     const body = structuredClone(baseAzure);
     (body.config.models[0] as Record<string, unknown>).chat = {
       reasoning: { adaptive: false, mandatory: true },
     };
-    expect(createUpstreamBody.safeParse(body).success).toBe(false);
+    expect(createUpstreamBody.safeParse(body).success).toBe(true);
   });
 
   test('rejects empty reasoning (no sub-block)', () => {

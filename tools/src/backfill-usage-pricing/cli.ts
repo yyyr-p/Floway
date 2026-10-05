@@ -4,9 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
 import { openD1Database } from './d1-database.ts';
-import type { DatabaseIdentity, ToolDatabase } from './database.ts';
-import { inputError, ToolError } from './errors.ts';
-import { applyPlan, buildPlan, inspectDatabase, normalizeIntent, parsePlan, type BackfillIntent } from './plan.ts';
+import { inputError, ToolError, type DatabaseIdentity, type ToolDatabase, applyPlan, buildPlan, inspectDatabase, normalizeIntent, parsePlan, type BackfillIntent } from '@floway-dev/gateway/usage-pricing-backfill';
 
 const ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 const DEFAULT_WRANGLER_CONFIG = resolve(ROOT, 'wrangler.jsonc');
@@ -136,6 +134,7 @@ const openPlanDatabase = async (identity: DatabaseIdentity): Promise<ToolDatabas
     const { openNodeDatabase } = await import('./node-database.ts');
     return await openNodeDatabase(identity.path, 'write');
   }
+  if (identity.kind === 'runtime') throw inputError('runtime-plan', 'Plans created by the Floway dashboard must be applied through the dashboard');
   return await openD1Database({
     binding: identity.binding,
     configPath: identity.configPath,
@@ -199,7 +198,7 @@ const plan = async (args: readonly string[]): Promise<unknown> => {
 const apply = async (args: readonly string[]): Promise<unknown> => {
   const parsed = parseArgs({ args: [...args], strict: true, options: { plan: { type: 'string' } } });
   const path = invocationPath(requiredString(parsed.values.plan, 'plan'));
-  const saved = parsePlan(await readFile(path, 'utf8').catch(cause => {
+  const saved = await parsePlan(await readFile(path, 'utf8').catch(cause => {
     throw new ToolError('plan-read', `Cannot read plan file ${path}`, 1, { cause });
   }));
   const database = await openPlanDatabase(saved.database);

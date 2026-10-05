@@ -1,6 +1,7 @@
 import type { OpenAIAudioTranscriptionRequest } from './audio.ts';
 import type { FlagDefaults } from './flags.ts';
 import type { OpenAIImagesEditsRequest } from './images.ts';
+import type { ModelMetadataDefaults } from './model-config.ts';
 import type { ModelPrefixConfig } from './model-prefix.ts';
 import type { ProviderModel, UpstreamModelsCache, UpstreamProviderKind, UpstreamRecord } from './model.ts';
 import type { Fetcher } from './options.ts';
@@ -38,6 +39,9 @@ export interface Provider {
   // record so registry helpers — routing and listing — read it from the
   // instance instead of re-fetching the row. `null` keeps the bare-id behavior.
   modelPrefix: ModelPrefixConfig | null;
+  // Sparse catalog metadata supplied by the operator for fields the upstream
+  // does not report. Catalog assembly applies it without replacing known data.
+  modelMetadataDefaults?: ModelMetadataDefaults;
   // The row's persisted catalog snapshot, mirrored so resolution does not pay
   // a second round trip after the row has already been loaded.
   modelsCache: UpstreamModelsCache | null;

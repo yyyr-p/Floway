@@ -1,6 +1,8 @@
 import {
+  AppsListDetail20Color,
   Chat20Color,
   Clipboard20Color,
+  CoinMultiple20Color,
   Cloud20Color,
   Database20Color,
   DataPie20Color,
@@ -41,12 +43,13 @@ export const navGroups: NavGroup[] = [
   {
     items: [
       { to: '/dashboard/playground', labelKey: 'dashboard.nav.playground', icon: Chat20Color },
+      { to: '/dashboard/models', labelKey: 'dashboard.nav.models', icon: AppsListDetail20Color },
     ],
   },
   {
     labelKey: 'dashboard.groups.providers',
     items: [
-      { to: '/dashboard/providers/upstreams', labelKey: 'dashboard.nav.upstreams', icon: Cloud20Color, adminOnly: true },
+      { to: '/dashboard/providers/upstreams', labelKey: 'dashboard.nav.upstreams', icon: Cloud20Color },
       { to: '/dashboard/providers/search', labelKey: 'dashboard.nav.search', icon: SearchSparkle20Color, adminOnly: true },
       { to: '/dashboard/providers/proxy', labelKey: 'dashboard.nav.proxy', icon: ShareAndroid20Color, adminOnly: true },
       { to: '/dashboard/providers/model-aliases', labelKey: 'dashboard.nav.modelAliases', icon: TextEditStyle20Color, adminOnly: true },
@@ -73,7 +76,9 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: '/dashboard/admin/users', labelKey: 'dashboard.nav.users', icon: People20Color },
       { to: '/dashboard/admin/oauth2', labelKey: 'dashboard.nav.oauth2', icon: PersonKey20Color },
+      { to: '/dashboard/admin/usage-limits', labelKey: 'dashboard.nav.usageLimits', icon: CoinMultiple20Color },
       { to: '/dashboard/admin/backup-restore', labelKey: 'dashboard.nav.backupRestore', icon: Database20Color },
+      { to: '/dashboard/admin/usage-pricing', labelKey: 'dashboard.nav.usagePricing', icon: DataPie20Color },
     ],
   },
 ];

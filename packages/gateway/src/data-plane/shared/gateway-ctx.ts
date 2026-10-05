@@ -1,10 +1,11 @@
 import type { AttemptTiming } from './attempt-timing.ts';
 import type { RequestBody } from './request-body.ts';
 import { type DumpAccumulator, openDumpAccumulator } from '../../dump/accumulator.ts';
-import { apiKeyFromContext, type AuthedContext, effectiveUpstreamIdsFromContext } from '../../middleware/auth.ts';
+import { apiKeyFromContext, type AuthedContext, effectiveUpstreamIdsFromContext, effectiveUpstreamModelAccessFromContext } from '../../middleware/auth.ts';
+import type { UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import { getRuntimeLocation } from '../../runtime/runtime-info.ts';
 import type { BackgroundScheduler } from '@floway-dev/platform';
-import type { PerformanceTelemetryContext } from '@floway-dev/provider';
+import type { PerformanceTelemetryContext, TelemetryModelIdentity } from '@floway-dev/provider';
 
 // Per-attempt timing and performance attribution. `timing` keeps its identity
 // across candidate resets because the dump accumulator reads the same object.
@@ -12,12 +13,19 @@ import type { PerformanceTelemetryContext } from '@floway-dev/provider';
 export interface AttemptState {
   readonly timing: AttemptTiming;
   telemetry: PerformanceTelemetryContext | undefined;
+  modelIdentity?: TelemetryModelIdentity;
 }
 
 export interface GatewayCtx {
   readonly apiKeyId: string;
+  readonly apiKeyUserId: number;
+  readonly estimatedInputTokens: number;
+  readonly requestedOutputTokenLimit: number | null;
+  usageLimitReservationId: string | null;
+  usageLimitSettlementScheduled: boolean;
   readonly requestStartedAt: number;
   readonly upstreamIds: readonly string[] | null;
+  readonly upstreamModelAccess: readonly UpstreamModelAccessRule[];
   readonly abortSignal?: AbortSignal;
   readonly wantsStream: boolean;
   readonly downstreamAbortController?: AbortController;
@@ -71,13 +79,23 @@ export const createGatewayCtxFromHono = (c: AuthedContext, opts: CreateGatewayCt
   const controller = opts.downstreamAbortController ?? (opts.wantsStream ? new AbortController() : undefined);
   const apiKey = apiKeyFromContext(c);
   const upstreamIds = effectiveUpstreamIdsFromContext(c);
-  const attempt: AttemptState = { timing: { firstOutputTokenAt: null, upstreamCallStartedAt: null }, telemetry: undefined };
+  const upstreamModelAccess = effectiveUpstreamModelAccessFromContext(c);
+  const attempt: AttemptState = { timing: { firstOutputTokenAt: null, upstreamCallStartedAt: null }, telemetry: undefined, modelIdentity: undefined };
+  const requestedOutputTokenLimit = outputTokenLimitFromBody(opts.requestBody.bytes);
   const dump = openDumpAccumulator(c, opts.method ?? c.req.method, apiKey, opts.requestBody, opts.backgroundScheduler, opts.wantsStream, attempt.timing);
   if (opts.model !== undefined) dump?.requestedModel(opts.model);
   return {
     apiKeyId: apiKey.id,
+    apiKeyUserId: apiKey.userId,
+    // UTF-8 request bytes are a conservative upper bound for tokenizers that
+    // can emit one token per byte; the ledger corrects this with reported use.
+    estimatedInputTokens: opts.requestBody.bytes.byteLength,
+    requestedOutputTokenLimit,
+    usageLimitReservationId: null,
+    usageLimitSettlementScheduled: false,
     requestStartedAt: Date.now(),
     upstreamIds,
+    upstreamModelAccess,
     abortSignal: controller?.signal,
     wantsStream: opts.wantsStream,
     downstreamAbortController: controller,
@@ -86,6 +104,27 @@ export const createGatewayCtxFromHono = (c: AuthedContext, opts: CreateGatewayCt
     runtimeLocation: getRuntimeLocation(c.req.raw),
     dump,
   };
+};
+
+const outputTokenLimitFromBody = (bytes: Uint8Array): number | null => {
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder().decode(bytes)) as unknown;
+  } catch {
+    return null;
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  for (const key of ['max_output_tokens', 'max_completion_tokens', 'max_tokens', 'maxOutputTokens']) {
+    const limit = body[key];
+    if (typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 0) return limit;
+  }
+  const generationConfig = body.generationConfig;
+  if (generationConfig && typeof generationConfig === 'object' && !Array.isArray(generationConfig)) {
+    const limit = (generationConfig as Record<string, unknown>).maxOutputTokens;
+    if (typeof limit === 'number' && Number.isSafeInteger(limit) && limit >= 0) return limit;
+  }
+  return null;
 };
 
 // Run the dump-accumulator's finalize tee on the outgoing Response. Every

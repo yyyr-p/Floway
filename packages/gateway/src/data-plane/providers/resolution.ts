@@ -5,11 +5,13 @@ import { readUpstreamModelsSnapshotAndScheduleRefresh } from './models-cache.ts'
 import { listModelProviders, type GatewayProvider } from './registry.ts';
 import { createPerRequestFetcher } from '../../dial/per-request.ts';
 import { createModelsRefreshScheduler, type ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
+import { expandAliasTargets } from '../../model-aliases/graph.ts';
 import { getRepo } from '../../repo/index.ts';
+import { isModelAllowedByUpstreamModelAccess, type UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import type { ModelAliasRecord } from '../../repo/types.ts';
 import type { BackgroundScheduler } from '@floway-dev/platform';
 import type { ModelKind } from '@floway-dev/protocols/common';
-import type { Fetcher, ModelCandidate } from '@floway-dev/provider';
+import { applyModelMetadataDefaults, type Fetcher, type ModelCandidate } from '@floway-dev/provider';
 
 // Resolve one inbound id against one upstream. The upstream's
 // `modelPrefix.addressable` configuration decides which lookup branches
@@ -32,9 +34,10 @@ const enumerateOneUpstreamCandidates = (
   context: {
     fetcher: Fetcher;
     scheduleRefresh: ModelsRefreshScheduler;
+    modelAccess: readonly UpstreamModelAccessRule[];
   },
 ): { candidates: ModelCandidate[]; sawAnyId: boolean; modelsError: boolean } => {
-  const { fetcher, scheduleRefresh } = context;
+  const { fetcher, scheduleRefresh, modelAccess } = context;
   const cfg = provider.modelPrefix;
   const lookupIds: string[] = [];
   if (cfg === null) {
@@ -54,9 +57,11 @@ const enumerateOneUpstreamCandidates = (
   for (const lookupId of lookupIds) {
     const match = snapshot.models.find(m => m.id === lookupId && !disabled.has(m.id));
     if (!match) continue;
+    if (!isModelAllowedByUpstreamModelAccess(modelAccess, provider.upstreamId, match.id)) continue;
     sawAnyId = true;
     if (match.kind === kind) {
-      candidates.push({ provider, model: internalModelFromProviderModel(match, provider.upstreamId), fetcher });
+      const providerModel = applyModelMetadataDefaults(match, provider.modelMetadataDefaults);
+      candidates.push({ provider, model: internalModelFromProviderModel(providerModel, provider.upstreamId), fetcher });
     }
   }
   return { candidates, sawAnyId, modelsError: snapshot.lastError !== null };
@@ -79,13 +84,14 @@ export const enumerateRealModelCandidates = (
   context: {
     fetcherForUpstream: (upstreamId: string) => Fetcher;
     scheduleRefresh: ModelsRefreshScheduler;
+    modelAccess?: readonly UpstreamModelAccessRule[];
   },
 ): {
   readonly candidates: readonly ModelCandidate[];
   readonly sawAnyId: boolean;
   readonly failedUpstreams: readonly string[];
 } => {
-  const { fetcherForUpstream, scheduleRefresh } = context;
+  const { fetcherForUpstream, scheduleRefresh, modelAccess = [] } = context;
   const failedUpstreams: string[] = [];
   const candidates: ModelCandidate[] = [];
   let sawAnyId = false;
@@ -93,6 +99,7 @@ export const enumerateRealModelCandidates = (
     const result = enumerateOneUpstreamCandidates(provider, modelId, kind, {
       fetcher: fetcherForUpstream(provider.upstreamId),
       scheduleRefresh,
+      modelAccess,
     });
     candidates.push(...result.candidates);
     sawAnyId = sawAnyId || result.sawAnyId;
@@ -112,7 +119,7 @@ const DATED_SUFFIX = /-\d{8}$/;
 // Real-catalog resolution with the dated-suffix retry baked in. Used both
 // directly (when we already hold the provider list) and by
 // `enumerateModelCandidates` below, which lists providers and then delegates
-// here — once for each alias target when the inbound id names an alias.
+// here — once for each terminal model target when the inbound id names an alias.
 const resolveRealCandidates = (
   modelId: string,
   kind: ModelKind,
@@ -154,15 +161,11 @@ const orderAliasTargets = (alias: ModelAliasRecord): readonly ModelAliasRecord['
 // Per-request model resolution. Two-branch chain:
 //
 //   1. Look the inbound id up in the alias repo. When the id names an
-//      alias, walk every target in `selection`-mode order, delegate to the
-//      real-catalog resolver for each one, tag each returned candidate
-//      with that target's rule overlay, flatten across targets, and dedup
-//      by (modelId, upstreamId, rules) — same (model, upstream) with
-//      differing rules stays as distinct candidates so both variants can
-//      be dispatched. `iterateCandidates` at the serve layer then cascades
-//      across every kept candidate: a target's upstreams all failing over
-//      falls through into the next target's candidates instead of hard-
-//      failing at the first target.
+//      alias, recursively flatten targets in each alias's `selection` order,
+//      merge outer-to-inner rule overlays, resolve terminal model ids
+//      against the real catalog, and dedup by (modelId, upstreamId, rules).
+//      `iterateCandidates` at the serve layer then cascades across every
+//      kept candidate as a failover pool.
 //   2. Otherwise (no alias match at all) run the real-catalog resolver
 //      directly on the inbound id.
 //
@@ -181,15 +184,14 @@ const orderAliasTargets = (alias: ModelAliasRecord): readonly ModelAliasRecord['
 // OpenAI Embeddings, OpenAI Images Generations/Edits, rerank, OpenAI Audio
 // Transcriptions, and OpenAI Completions.
 //
-// The alias walk is a natural top-of-chain check: by construction an
-// alias's target id is a real model id, so the shadow pattern (an alias
-// whose first target matches its own name) resolves to the real model on
-// the first pass; alias names never re-enter the alias layer.
+// Alias graph traversal rejects reachable cycles and bounds depth and target
+// expansion, including malformed rows introduced outside normal CRUD.
 export const enumerateModelCandidates = async ({
-  upstreamIds, model, kind, scheduler, runtimeLocation,
+  upstreamIds, upstreamModelAccess = [], model, kind, scheduler, runtimeLocation,
 }: {
   // null = unrestricted; empty list = no providers visible.
   upstreamIds: readonly string[] | null;
+  upstreamModelAccess?: readonly UpstreamModelAccessRule[];
   model: string;
   kind: ModelKind;
   scheduler: BackgroundScheduler;
@@ -207,23 +209,30 @@ export const enumerateModelCandidates = async ({
   const resolutionContext = {
     fetcherForUpstream: createFetcherForUpstream,
     scheduleRefresh: createModelsRefreshScheduler(runtimeLocation, scheduler),
+    modelAccess: upstreamModelAccess,
   };
 
-  const alias = await getRepo().modelAliases.getByName(model);
+  const modelAliases = getRepo().modelAliases;
+  const alias = await modelAliases.getByName(model);
   if (alias === null) {
     return resolveRealCandidates(model, kind, providers, resolutionContext);
   }
+  if (!alias.enabled) {
+    const direct = resolveRealCandidates(model, kind, providers, resolutionContext);
+    return { ...direct, failedUpstreams: [] };
+  }
 
-  // Walk every target, tag each returned candidate with the target's rule
-  // overlay, then flatten (target order preserved), and dedup by
-  // (modelId, upstreamId, rules). Different rules against the same
-  // (model, upstream) stay as distinct entries so the operator can pin the
-  // same physical binding under two rule variants.
+  const aliasesByName = new Map((await modelAliases.list()).map(record => [record.name, record]));
+  aliasesByName.set(alias.name, alias);
+  const terminalTargets = expandAliasTargets(alias, aliasesByName, orderAliasTargets);
+
+  // Different effective rules against the same (model, upstream) stay as
+  // distinct entries so operators can pin the same binding under variants.
   const aggregatedFailed = new Set<string>();
   let sawAny = false;
   const flat: ModelCandidate[] = [];
-  for (const target of orderAliasTargets(alias)) {
-    const result = resolveRealCandidates(target.target_model_id, kind, providers, resolutionContext);
+  for (const target of terminalTargets) {
+    const result = resolveRealCandidates(target.targetModelId, kind, providers, resolutionContext);
     for (const name of result.failedUpstreams) aggregatedFailed.add(name);
     if (result.sawModel) sawAny = true;
     for (const candidate of result.candidates) {

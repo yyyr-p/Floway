@@ -474,6 +474,45 @@ test('translateOpenAIChatCompletionsChunkToOpenAIResponsesEvents prefers reasoni
   ]);
 });
 
+test('translateOpenAIChatCompletionsChunkToOpenAIResponsesEvents retains every reasoning carrier and opaque payload', () => {
+  const carriers = [
+    { type: 'reasoning' as const, id: 'rs_repeated', summary: [{ type: 'summary_text' as const, text: 'think' }] },
+    { type: 'reasoning' as const, id: 'rs_repeated', summary: [{ type: 'summary_text' as const, text: 'ing' }] },
+    { type: 'reasoning' as const, id: 'rs_distinct', summary: [{ type: 'summary_text' as const, text: 'independent' }] },
+    { type: 'reasoning' as const, id: 'rs_opaque', summary: [], encrypted_content: 'opaque-upstream-payload' },
+  ];
+  const events = translate([
+    chunk({ role: 'assistant' }),
+    ...carriers.map(item => chunk({ reasoning_items: [item] })),
+    chunk({ content: 'answer' }),
+    chunk({
+      tool_calls: [
+        {
+          index: 0,
+          id: 'call_1',
+          type: 'function',
+          function: { name: 'lookup', arguments: '{"q":"x"}' },
+        },
+      ],
+    }),
+    chunk({}, 'tool_calls'),
+  ]);
+  const reasoningDoneEvents = events.filter(event => event.type === 'response.output_item.done' && (event as OpenAIResponsesOutputItemDoneEvent).item.type === 'reasoning') as OpenAIResponsesOutputItemDoneEvent[];
+  const completed = events.find(event => event.type === 'response.completed') as OpenAIResponsesCompletedEvent | undefined;
+
+  assertEveryAddedOutputItemIsDone(events);
+  assertEquals(reasoningDoneEvents.map(event => event.item), [
+    { type: 'reasoning', id: 'rs_repeated', summary: [{ type: 'summary_text', text: 'think' }] },
+    { type: 'reasoning', id: 'rs_repeated', summary: [{ type: 'summary_text', text: 'ing' }] },
+    { type: 'reasoning', id: 'rs_distinct', summary: [{ type: 'summary_text', text: 'independent' }] },
+    { type: 'reasoning', id: 'rs_opaque', summary: [], encrypted_content: 'opaque-upstream-payload' },
+  ]);
+  assertEquals(completed?.response.output_text, 'answer');
+  assertEquals(completed?.response.output.map(item => item.type), [
+    'reasoning', 'reasoning', 'reasoning', 'reasoning', 'message', 'function_call',
+  ]);
+});
+
 test('translateOpenAIChatCompletionsChunkToOpenAIResponsesEvents keeps terminal output ordered by output_index', () => {
   const state = createOpenAIChatCompletionsToOpenAIResponsesStreamState();
   const events = [

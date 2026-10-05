@@ -1,5 +1,6 @@
 import type { GatewayCtx } from './gateway-ctx.ts';
-import { upstreamPerformanceContext } from './telemetry/attribution.ts';
+import { telemetryModelIdentity, upstreamPerformanceContext } from './telemetry/attribution.ts';
+import { settleUnpricedReservation } from './telemetry/settle.ts';
 import type { ModelCandidate, PerformanceOperation } from '@floway-dev/provider';
 
 // A serve-layer attempt result counts as success when:
@@ -67,7 +68,14 @@ export const iterateCandidates = async <T extends IterableAttemptResult>(
     ctx.attempt.timing.upstreamCallStartedAt = null;
     ctx.attempt.timing.firstOutputTokenAt = null;
     ctx.attempt.telemetry = upstreamPerformanceContext(ctx, candidate, operation);
-    const result = await run(candidate);
+    ctx.attempt.modelIdentity = telemetryModelIdentity(candidate, candidate.model.providerModels?.[candidate.provider.upstreamId]?.upstreamModelId ?? candidate.model.id);
+    let result: T;
+    try {
+      result = await run(candidate);
+    } catch (error) {
+      settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
+      throw error;
+    }
     if (isAttemptSuccess(result)) return result;
     lastFailure = result;
   }

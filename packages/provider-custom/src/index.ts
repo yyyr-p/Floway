@@ -7,6 +7,18 @@ export const customProviderModule: ProviderModule = {
   defaultFlags: CUSTOM_DEFAULT_FLAGS,
 };
 
-export { assertCustomUpstreamRecord, type CustomIngressHeaderRule, type CustomModelsFetch, type CustomUpstreamConfig } from './config.ts';
+export {
+  assertCustomUpstreamRecord,
+  customManagementUrl,
+  type CustomIngressHeaderRule,
+  type CustomModelsFetch,
+  type CustomOperationalAction,
+  type CustomUpstreamConfig,
+  type CustomUsageProbe,
+  type CustomUsageProbeWindow,
+} from './config.ts';
 export { fetchCustomModels, type CustomModelsResponse, type CustomRawModel } from './fetch-models.ts';
+export { customFetchManagement } from './fetch.ts';
+export { executeCustomOperationalAction, type CustomActionResult } from './actions.ts';
+export { fetchCustomUsageProbe, type CustomUsageProbeObservation, type CustomUsageWindowReading } from './usage-probe.ts';
 export { projectCustomModels, projectCustomDiscoveredModels } from './provider.ts';

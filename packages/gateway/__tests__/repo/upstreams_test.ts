@@ -12,6 +12,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from '@floway-dev/t
 
 const upstream = (overrides: Partial<UpstreamRecord> & Pick<UpstreamRecord, 'id' | 'kind' | 'createdAt' | 'sortOrder'>): UpstreamRecord => ({
   name: overrides.id,
+  userVisible: false,
   enabled: true,
   updatedAt: overrides.createdAt,
   config: { nested: { value: overrides.id }, endpoints: { openaiChatCompletions: {} } },
@@ -166,6 +167,10 @@ const exerciseSqlUpstreamRepo = async (repo: UpstreamRepo) => {
     createdAt: '2026-05-21T10:00:02.000Z',
     updatedAt: '2026-05-21T10:00:02.000Z',
     config: { baseUrl: 'https://custom.example/v1', authStyle: 'bearer', apiKey: 'sk-custom', endpoints: { openaiChatCompletions: {} } },
+    modelMetadataDefaults: {
+      limits: { max_context_window_tokens: 128_000, max_output_tokens: 0 },
+      chat: { image_detail_original: false },
+    },
     flagOverrides: { 'vendor-deepseek': true, 'rewrite-developer-to-system': true },
     disabledPublicModelIds: [],
   });
@@ -197,6 +202,7 @@ const exerciseSqlUpstreamRepo = async (repo: UpstreamRepo) => {
     ['up_azure_sql', 'up_copilot_sql', 'up_custom_sql'],
   );
   assertEquals((await repo.getById('up_custom_sql'))?.flagOverrides, { 'rewrite-developer-to-system': true, 'vendor-deepseek': true });
+  assertEquals((await repo.getById('up_custom_sql'))?.modelMetadataDefaults, custom.modelMetadataDefaults);
   assertEquals(await repo.getById('missing'), null);
 
   await saveUpstreamForTest(repo, {
@@ -209,6 +215,10 @@ const exerciseSqlUpstreamRepo = async (repo: UpstreamRepo) => {
     config: { baseUrl: 'https://updated.example/v1', authStyle: 'bearer', apiKey: 'sk-updated', endpoints: { openaiResponses: {} } },
     flagOverrides: { 'anthropic-messages-web-search-shim': true, 'rewrite-developer-to-system': true },
     disabledPublicModelIds: [],
+    modelMetadataDefaults: { chat: { modalities: { input: ['text'], output: ['text'] } } },
+  });
+  assertEquals((await repo.getById('up_custom_sql'))?.modelMetadataDefaults, {
+    chat: { modalities: { input: ['text'], output: ['text'] } },
   });
   assertEquals(
     (await repo.list()).map(row => [row.id, row.name, row.enabled]),
@@ -361,6 +371,35 @@ test('SQL upstream repo rejects malformed stored model_prefix_json', async () =>
   });
 
   await assertRejects(() => new SqlRepo(db).upstreams.getById('up_bad_prefix_json'), Error, 'Malformed upstream model_prefix_json for up_bad_prefix_json');
+});
+
+test('SQL upstream repo rejects malformed stored model_metadata_defaults_json', async () => {
+  const db = new FakeUpstreamsSqlDatabase();
+  db.rows.push({
+    id: 'up_bad_metadata_defaults',
+    provider: 'custom',
+    name: 'Bad Metadata Defaults',
+    enabled: 1,
+    sort_order: 0,
+    created_at: '2026-05-21T10:00:00.000Z',
+    updated_at: '2026-05-21T10:00:00.000Z',
+    config_version: 1,
+    config_json: '{}',
+    state_json: null,
+    models_cache_json: null,
+    flag_overrides: '{}',
+    disabled_public_model_ids: '[]',
+    proxy_fallback_list_json: '[]',
+    model_prefix_json: null,
+    model_metadata_defaults_json: '{"chat":{"modalities":{"input":[],"output":["text"]}}}',
+    hue: 210,
+  });
+
+  await assertRejects(
+    () => new SqlRepo(db).upstreams.getById('up_bad_metadata_defaults'),
+    Error,
+    'Invalid upstream model metadata defaults for up_bad_metadata_defaults',
+  );
 });
 
 test('SQL upstream repo rejects shape-invalid model_prefix_json', async () => {
@@ -968,6 +1007,7 @@ type FakeUpstreamRow = {
   disabled_public_model_ids: string;
   proxy_fallback_list_json: string;
   model_prefix_json: string | null;
+  model_metadata_defaults_json?: string;
   hue: number;
 };
 
@@ -1025,7 +1065,10 @@ class FakeUpstreamsSqlDatabase implements SqlDatabase {
   }
 }
 
-const cloneFakeUpstreamRow = (row: FakeUpstreamRow): FakeUpstreamRow => ({ ...row });
+const cloneFakeUpstreamRow = (row: FakeUpstreamRow): FakeUpstreamRow => ({
+  ...row,
+  model_metadata_defaults_json: row.model_metadata_defaults_json ?? '{}',
+});
 
 const compareFakeUpstreamRows = (a: FakeUpstreamRow, b: FakeUpstreamRow): number => a.sort_order - b.sort_order || a.created_at.localeCompare(b.created_at);
 

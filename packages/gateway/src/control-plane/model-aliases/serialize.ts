@@ -9,6 +9,7 @@ export const recordToWire = (record: ModelAliasRecord): ModelAlias => ({
   name: record.name,
   kind: record.kind,
   selection: record.selection,
+  enabled: record.enabled,
   display_name: record.displayName,
   visible_in_models_list: record.visibleInModelsList,
   targets: record.targets,
@@ -25,7 +26,8 @@ export const recordToWire = (record: ModelAliasRecord): ModelAlias => ({
 // entirely on `ModelAlias` — a new column in the wire DTO only requires
 // editing one place.
 export type ModelAliasWireInput =
-  & Omit<ModelAlias, 'id' | 'sort_order' | 'created_at' | 'updated_at'>
+  & Omit<ModelAlias, 'id' | 'enabled' | 'sort_order' | 'created_at' | 'updated_at'>
+  & { enabled?: boolean }
   & { sort_order?: number };
 
 export const wireToRecord = (
@@ -36,6 +38,7 @@ export const wireToRecord = (
   name: wire.name,
   kind: wire.kind,
   selection: wire.selection,
+  enabled: wire.enabled ?? true,
   displayName: wire.display_name,
   visibleInModelsList: wire.visible_in_models_list,
   targets: wire.targets,

@@ -2,7 +2,7 @@ import { toPublicModel } from '../../data-plane/models/load.ts';
 import { type AddressableIdEntry, enumerateAddressableModelIds, listedRealModels } from '../../data-plane/shared/listing/addressable.ts';
 import { mergeAliasesIntoModels } from '../../data-plane/shared/listing/alias.ts';
 import { createModelsRefreshScheduler } from '../../execution/models-refresh.ts';
-import { effectiveUpstreamIdsFromContext, userFromContext } from '../../middleware/auth.ts';
+import { effectiveUpstreamIdsFromContext, effectiveUpstreamModelAccessFromContext, userFromContext } from '../../middleware/auth.ts';
 import type { CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { backgroundSchedulerFromContext } from '../../runtime/background.ts';
@@ -20,7 +20,7 @@ import type { InternalModel, Provider, UpstreamProviderKind } from '@floway-dev/
 // targets live under `aliasedFrom`. `hue` is the upstream's badge hue, which
 // the dashboard paints each chip from.
 interface ControlPlaneModel extends PublicModel {
-  upstreams: { kind: UpstreamProviderKind; id: string; name: string; hue: number }[];
+  upstreams: { kind: UpstreamProviderKind; id: string; name: string; hue: number; modelId: string; logoUrl: string | null }[];
 }
 
 interface ControlPlaneModelsResponse extends Omit<PublicModelsResponse, 'data'> {
@@ -36,10 +36,17 @@ const upstreamHue = (hueByUpstream: ReadonlyMap<string, number>, upstreamId: str
   return hue;
 };
 
+const upstreamLogoUrl = (logoUrlByUpstream: ReadonlyMap<string, string | null>, upstreamId: string): string | null => {
+  const logoUrl = logoUrlByUpstream.get(upstreamId);
+  if (logoUrl === undefined) throw new Error(`No upstream row backs provider instance ${upstreamId}`);
+  return logoUrl;
+};
+
 const toControlPlaneModel = (
   model: InternalModel,
   instances: readonly Provider[],
   hueByUpstream: ReadonlyMap<string, number>,
+  logoUrlByUpstream: ReadonlyMap<string, string | null>,
 ): ControlPlaneModel => ({
   ...toPublicModel(model),
   upstreams: instances.map(instance => ({
@@ -47,6 +54,8 @@ const toControlPlaneModel = (
     id: instance.upstreamId,
     name: instance.name,
     hue: upstreamHue(hueByUpstream, instance.upstreamId),
+    modelId: model.providerModels?.[instance.upstreamId]?.catalogModelId ?? model.id,
+    logoUrl: upstreamLogoUrl(logoUrlByUpstream, instance.upstreamId),
   })),
 });
 
@@ -60,8 +69,9 @@ const toControlPlaneModel = (
 const toUnlistedControlPlaneModel = (
   entry: AddressableIdEntry,
   hueByUpstream: ReadonlyMap<string, number>,
+  logoUrlByUpstream: ReadonlyMap<string, string | null>,
 ): ControlPlaneModel => ({
-  ...toControlPlaneModel(entry.model, entry.upstreams, hueByUpstream),
+  ...toControlPlaneModel(entry.model, entry.upstreams, hueByUpstream, logoUrlByUpstream),
   id: entry.id,
   display_name: entry.model.display_name ?? entry.id,
   unlisted: true,
@@ -82,6 +92,7 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     // data-plane access to.
     const isAdmin = userFromContext(c).isAdmin;
     const upstreamScope = isAdmin ? null : effectiveUpstreamIdsFromContext(c);
+    const modelAccess = isAdmin ? [] : effectiveUpstreamModelAccessFromContext(c);
     // Fetch the upstream list once at the request boundary and thread it into
     // catalog enumeration and the hue join.
     const upstreamRows = await getRepo().upstreams.list();
@@ -93,13 +104,14 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     // sees the same numbers for the same alias). For admin the two are
     // the same, so skip the second fetch.
     const [callerAddressable, gatewayAddressable, aliases] = await Promise.all([
-      enumerateAddressableModelIds(upstreamScope, scheduleRefresh, upstreamRows),
+      enumerateAddressableModelIds(upstreamScope, scheduleRefresh, upstreamRows, modelAccess),
       isAdmin
         ? Promise.resolve(null)
         : enumerateAddressableModelIds(null, scheduleRefresh, upstreamRows),
       includeAliases ? getRepo().modelAliases.list() : Promise.resolve([]),
     ]);
     const hueByUpstream = new Map<string, number>(upstreamRows.map(row => [row.id, row.hue]));
+    const logoUrlByUpstream = new Map<string, string | null>(upstreamRows.map(row => [row.id, row.logoUrl ?? null]));
     const gatewayAddressableModelIds = gatewayAddressable ?? callerAddressable;
     const upstreamsByListedId = new Map(callerAddressable.map(entry => [entry.id, entry.upstreams] as const));
     const realModels = listedRealModels(callerAddressable);
@@ -120,7 +132,7 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     const listedRows = merged.map(model => {
       const upstreams = model.aliasedFrom !== undefined ? [] : upstreamsByListedId.get(model.id);
       if (upstreams === undefined) throw new Error(`Missing upstream index for listed model ${model.id}`);
-      return toControlPlaneModel(model, upstreams, hueByUpstream);
+      return toControlPlaneModel(model, upstreams, hueByUpstream, logoUrlByUpstream);
     });
     // Dedupe the unlisted half against the listed half on `id` — an alias
     // whose name coincides with an addressable-but-not-listed id (e.g. a
@@ -131,7 +143,7 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     const unlistedRows = includeUnlisted
       ? callerAddressable
           .filter(entry => entry.unlisted === true && !listedIds.has(entry.id))
-          .map(entry => toUnlistedControlPlaneModel(entry, hueByUpstream))
+          .map(entry => toUnlistedControlPlaneModel(entry, hueByUpstream, logoUrlByUpstream))
       : [];
     const data = [...listedRows, ...unlistedRows];
     const response: ControlPlaneModelsResponse = {
@@ -143,13 +155,6 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     };
     return c.json(response);
   } catch (e: unknown) {
-    // Empty-upstreams is a domain state, not an error, on the dashboard:
-    // /v1/models still surfaces it as a 502 (remote clients need to know
-    // the gateway is unconfigured), but the Models tab renders an empty
-    // grid inline.
-    if (e instanceof Error && e.message.startsWith('No upstream provider configured')) {
-      return c.json({ object: 'list', has_more: false, first_id: null, last_id: null, data: [] });
-    }
     return c.json({ error: { message: e instanceof Error ? e.message : String(e), type: 'api_error' } }, 502);
   }
 };

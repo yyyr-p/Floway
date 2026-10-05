@@ -20,8 +20,8 @@ import { z } from 'zod';
 import { normalizeDisabledPublicModelIds } from '../repo/disabled-public-models.ts';
 import { CUSTOM_API_KEY_MAX_LENGTH, KEY_SOURCES } from '../shared/api-key-tokens.ts';
 import { RETENTION_MAX_SECONDS, SECONDS_PER_DAY } from '../shared/retention.ts';
-import { kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
-import { type FlagOverrides, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
+import { BILLING_METRICS, kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
+import { type FlagOverrides, modelMetadataDefaultsField, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, normalizeUpstreamLogoUrl, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
 
 // --- shared atoms ---
 
@@ -42,6 +42,24 @@ const flagOverridesSchema = z.unknown().transform((value, ctx): FlagOverrides =>
 // There is no id allowlist to enforce — any string is a legal public model id —
 // so this only trims and de-dupes rather than rejecting unknown ids.
 const disabledPublicModelIdsSchema = z.array(z.string()).transform(normalizeDisabledPublicModelIds);
+
+const modelMetadataDefaultsSchema = z.unknown().transform((value, ctx) => {
+  try {
+    return modelMetadataDefaultsField(value, 'model_metadata_defaults') ?? {};
+  } catch (error) {
+    ctx.issues.push({ code: 'custom', message: error instanceof Error ? error.message : String(error), input: value });
+    return z.NEVER;
+  }
+});
+
+const upstreamLogoUrlSchema = z.union([z.string(), z.null()]).transform((value, ctx): string | null => {
+  try {
+    return normalizeUpstreamLogoUrl(value);
+  } catch (cause) {
+    ctx.issues.push({ code: 'custom', message: cause instanceof Error ? cause.message : String(cause), input: value });
+    return z.NEVER;
+  }
+});
 
 // The structured endpoint capability map, shared by per-model config and the
 // custom upstream-level fallback. A present key declares the endpoint is served.
@@ -67,6 +85,23 @@ const priceSchema = z.string().transform((value, ctx) => {
     return z.NEVER;
   }
 });
+
+export const usagePricingBackfillPlanBody = z.object({
+  upstream: z.string().min(1),
+  model: z.string().min(1),
+  modelKey: z.string().min(1),
+  startHour: z.string().min(1),
+  endHour: z.string().min(1),
+  timezone: z.string().min(1),
+  mode: z.enum(['fill', 'overwrite']),
+  metrics: z.array(z.enum(BILLING_METRICS)).min(1),
+});
+
+export const usagePricingBackfillApplyBody = z.object({
+  plan: z.unknown(),
+  confirmationPlanId: z.string().min(1),
+});
+
 const pricingMetricShape = {
   input_tokens: priceSchema.optional(),
   output_tokens: priceSchema.optional(),
@@ -117,8 +152,8 @@ const budgetTokensSchema = z.object({
 const reasoningSchema = z.object({
   effort: effortSchema.optional(),
   budget_tokens: budgetTokensSchema.optional(),
-  adaptive: z.literal(true).optional(),
-  mandatory: z.literal(true).optional(),
+  adaptive: z.boolean().optional(),
+  mandatory: z.boolean().optional(),
 }).refine(
   r => r.effort !== undefined || r.budget_tokens !== undefined || r.adaptive !== undefined || r.mandatory !== undefined,
   { message: 'reasoning must have at least one of effort, budget_tokens, adaptive, mandatory' },
@@ -126,9 +161,7 @@ const reasoningSchema = z.object({
 
 const chatSchema = z.object({
   modalities: modalitiesSchema.optional(),
-  // A real boolean, unlike reasoning.adaptive / reasoning.mandatory: false is
-  // the upstream stating it rejects detail 'original', not the absence of a
-  // statement.
+  // False is an explicit upstream capability answer, not an absent value.
   image_detail_original: z.boolean().optional(),
   reasoning: reasoningSchema.optional(),
 });
@@ -200,6 +233,9 @@ const customConfigSchema = z.object({
   modelsFetch: z.object({ enabled: z.boolean(), endpoint: z.string().optional() }).optional(),
   // Statically configured per-model overrides merged with the live fetch.
   models: z.array(upstreamModelSchema).optional(),
+  // Provider-owned runtime validation interprets these advanced control-plane capabilities.
+  usageProbe: z.unknown().optional(),
+  actions: z.unknown().optional(),
 });
 
 const azureConfigSchema = z.object({
@@ -252,11 +288,26 @@ const upstreamIdsValueSchema = z.array(z.string().min(1))
   .refine(arr => new Set(arr).size === arr.length, { message: 'upstreamIds contains duplicates' })
   .nullable();
 
+const upstreamModelAccessRuleSchema = z.object({
+  upstreamId: z.string().min(1),
+  mode: z.enum(['inherit', 'allow', 'deny']),
+  modelIds: z.array(z.string().min(1).max(1024))
+    .refine(ids => new Set(ids).size === ids.length, { message: 'modelIds contains duplicates' }),
+}).superRefine((rule, ctx) => {
+  if (rule.mode === 'inherit' && rule.modelIds.length > 0) {
+    ctx.addIssue({ code: 'custom', message: 'inherit rules must not include modelIds', path: ['modelIds'] });
+  }
+});
+
+const upstreamModelAccessValueSchema = z.array(upstreamModelAccessRuleSchema)
+  .refine(rules => new Set(rules.map(rule => rule.upstreamId)).size === rules.length, { message: 'upstreamModelAccess contains duplicate upstreams' });
+
 export const createUserBody = z.object({
   username: usernameSchema,
   password: passwordSchema,
   isAdmin: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
+  upstreamModelAccess: upstreamModelAccessValueSchema.optional(),
 });
 
 export const updateUserBody = z.object({
@@ -264,6 +315,7 @@ export const updateUserBody = z.object({
   password: passwordSchema.optional(),
   isAdmin: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
+  upstreamModelAccess: upstreamModelAccessValueSchema.optional(),
 });
 
 export const changeOwnPasswordBody = z.object({
@@ -299,6 +351,7 @@ const keySourceShape = {
 export const createKeyBody = z.object({
   name: z.string().min(1),
   upstream_ids: upstreamIdsValueSchema.optional(),
+  upstream_model_access: upstreamModelAccessValueSchema.optional(),
   dump_retention_seconds: dumpRetentionSecondsSchema.optional(),
   responses_retention_seconds: openaiResponsesRetentionSecondsSchema.optional(),
   ...keySourceShape,
@@ -309,6 +362,7 @@ export const rotateKeyBody = z.object(keySourceShape);
 export const updateKeyBody = z.object({
   name: z.string().min(1).optional(),
   upstream_ids: upstreamIdsValueSchema.optional(),
+  upstream_model_access: upstreamModelAccessValueSchema.optional(),
   dump_retention_seconds: dumpRetentionSecondsSchema.optional(),
   responses_retention_seconds: openaiResponsesRetentionSecondsSchema.optional(),
 });
@@ -348,13 +402,16 @@ const upstreamHueSchema = z.number().int().min(0).max(UPSTREAM_HUE_DEGREES - 1);
 
 const upstreamBaseFields = {
   name: z.string().min(1),
+  user_visible: z.boolean().optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
   flag_overrides: flagOverridesSchema.optional(),
   disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
   model_prefix: modelPrefixSchema.optional(),
+  model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   hue: upstreamHueSchema,
+  logo_url: upstreamLogoUrlSchema.optional(),
 };
 
 // Create accepts a discriminated union on `kind` for per-provider config
@@ -387,13 +444,16 @@ export const createUpstreamBody = z.discriminatedUnion('kind', [
 export const updateUpstreamBody = z.object({
   kind: z.enum(['custom', 'azure', 'copilot', 'codex', 'claude-code', 'ollama']).optional(),
   name: z.string().min(1).optional(),
+  user_visible: z.boolean().optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
   flag_overrides: flagOverridesSchema.optional(),
   disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
   model_prefix: modelPrefixSchema.optional(),
+  model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   hue: upstreamHueSchema.optional(),
+  logo_url: upstreamLogoUrlSchema.optional(),
   // Patches only carry field diffs, not per-kind shape validation — the
   // handler dispatches on the existing row's kind and enforces the shape
   // there (Copilot/Codex/Claude Code reject a config patch outright, since
@@ -416,6 +476,7 @@ export const upstreamRecordEnvelope = z.object({
   config: z.unknown(),
   state: z.unknown(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
+  logo_url: upstreamLogoUrlSchema.optional(),
 }).passthrough();
 
 const recordOnlyBody = z.object({ record: upstreamRecordEnvelope });
@@ -531,11 +592,20 @@ export const previewModelsBody = z.object({
     flag_overrides: flagOverridesSchema.optional(),
     disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
     model_prefix: modelPrefixSchema.optional(),
+    model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
+    logo_url: upstreamLogoUrlSchema.optional(),
   }),
 });
 // --- ollama ---
 
 export const ollamaUsageBody = recordOnlyBody;
+
+export const customUsageProbeBody = recordOnlyBody;
+export const customActionExecuteBody = z.object({
+  upstreamId: z.string().min(1),
+  actionId: z.string().min(1),
+  confirmed: z.literal(true),
+});
 
 // --- agent setup ---
 //
@@ -616,6 +686,44 @@ export const webSearchConfigSchema = z.object({
   }
 });
 
+const usageLimitCostSchema = z.string().transform((value, ctx) => {
+  try {
+    const parsed = parseNonNegativeDecimalString(value, 'maxCostUsd');
+    if ((parsed.split('.')[1]?.length ?? 0) > 6) throw new TypeError('maxCostUsd supports at most six fractional digits');
+    return parsed;
+  } catch (cause) {
+    ctx.issues.push({ code: 'custom', message: cause instanceof Error ? cause.message : String(cause), input: value });
+    return z.NEVER;
+  }
+});
+
+export const usageLimitBody = z.object({
+  principalType: z.enum(['user', 'key']),
+  principalId: z.union([
+    z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    z.string().min(1),
+  ]),
+  window: z.enum(['hour', 'day', 'month']),
+  maxTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+  maxCostUsd: usageLimitCostSchema.nullable(),
+}).superRefine((value, ctx) => {
+  if (value.maxTokens === null && value.maxCostUsd === null) {
+    ctx.addIssue({ code: 'custom', path: ['maxTokens'], message: 'at least one of maxTokens or maxCostUsd is required' });
+  }
+  if (value.principalType === 'user' && typeof value.principalId !== 'number') {
+    ctx.addIssue({ code: 'custom', path: ['principalId'], message: 'user principalId must be a number' });
+  }
+  if (value.principalType === 'key' && typeof value.principalId !== 'string') {
+    ctx.addIssue({ code: 'custom', path: ['principalId'], message: 'key principalId must be a string' });
+  }
+});
+
+export const usageLimitDeleteParams = z.object({
+  principalType: z.enum(['user', 'key']),
+  principalId: z.string().min(1),
+  window: z.enum(['hour', 'day', 'month']),
+});
+
 // --- model aliases ---
 
 // Per-target chat rules. Field names mirror the IR slot each value overlays.
@@ -674,6 +782,7 @@ const aliasBaseShape = {
   name: z.string().min(1),
   kind: z.enum(MODEL_KINDS),
   selection: z.enum(['random', 'first-available']),
+  enabled: z.boolean().optional(),
   display_name: z.string().min(1).nullable(),
   visible_in_models_list: z.boolean(),
   targets: z.array(aliasTargetSchema).min(1),
@@ -738,7 +847,7 @@ export const updateAliasBody = aliasBodyCore.superRefine(aliasBodyRulesRefinemen
 // --- data transfer ---
 
 export const importBody = z.object({
-  version: z.literal(20, { error: 'version must be 20 — older export formats are not supported; re-export from the current deployment' }),
+  version: z.literal(21, { error: 'version must be 21 — older export formats are not supported; re-export from the current deployment' }),
   mode: z.enum(['merge', 'replace'], { error: "mode must be 'merge' or 'replace'" }),
   data: z.unknown().optional(),
 });

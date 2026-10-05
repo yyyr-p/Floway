@@ -10,6 +10,7 @@ const aliasFixture = (overrides: Partial<ModelAliasRecord> = {}): ModelAliasReco
   name: 'gpt-fast',
   kind: 'chat',
   selection: 'first-available',
+  enabled: true,
   displayName: null,
   visibleInModelsList: true,
   targets: [{ target_model_id: 'gpt-5.4', rules: {} }],
@@ -41,6 +42,48 @@ const listed = (models: readonly InternalModel[]): AddressableIdEntry[] =>
 const unlisted = (id: string, model: InternalModel): AddressableIdEntry => ({ id, unlisted: true, model, upstreams: [] });
 
 describe('synthesizeListedAliases', () => {
+  test('nested aliases inherit terminal metadata and narrow terminal targets to the caller', () => {
+    const child = aliasFixture({
+      name: 'child', visibleInModelsList: false,
+      targets: [
+        { target_model_id: 'a', rules: { reasoning: { effort: 'low' } } },
+        { target_model_id: 'b', rules: {} },
+      ],
+    });
+    const parent = aliasFixture({
+      name: 'parent',
+      targets: [{ target_model_id: 'child', rules: { verbosity: 'low' } }],
+    });
+    const models = [
+      realModel({ id: 'a', limits: { max_context_window_tokens: 8192 } }),
+      realModel({ id: 'b', limits: { max_context_window_tokens: 4096 } }),
+    ];
+    const input = {
+      aliases: [parent, child],
+      gatewayAddressableModelIds: listed(models),
+      callerAddressableModelIds: listed([models[0]]),
+    };
+    const [entry] = synthesizeListedAliases({ ...input, narrowTargets: true });
+    expect(entry?.id).toBe('parent');
+    expect(entry?.limits.max_context_window_tokens).toBe(4096);
+    expect(entry?.aliasedFrom?.targets).toEqual([
+      { target_model_id: 'a', rules: { verbosity: 'low', reasoning: { effort: 'low' } } },
+    ]);
+    const [admin] = synthesizeListedAliases({ ...input, narrowTargets: false });
+    expect(admin?.aliasedFrom?.targets).toEqual(parent.targets);
+  });
+
+  test('nested disabled aliases do not contribute their configured targets', () => {
+    const aliases = [
+      aliasFixture({ name: 'parent', targets: [{ target_model_id: 'child', rules: {} }] }),
+      aliasFixture({ name: 'child', enabled: false }),
+    ];
+    const models = listed([realModel({ id: 'gpt-5.4' })]);
+    expect(synthesizeListedAliases({
+      aliases, gatewayAddressableModelIds: models, callerAddressableModelIds: models, narrowTargets: true,
+    })).toEqual([]);
+  });
+
   test('publishes a common opaque-blob scope and falls back for mixed targets', () => {
     const aliases = [aliasFixture({
       targets: [
@@ -241,6 +284,12 @@ describe('synthesizeListedAliases', () => {
 
   test('hidden alias is not emitted', () => {
     const aliases = [aliasFixture({ visibleInModelsList: false })];
+    const realModels = [realModel({ id: 'gpt-5.4' })];
+    expect(synthesizeListedAliases({ aliases, gatewayAddressableModelIds: listed(realModels), callerAddressableModelIds: listed(realModels), narrowTargets: false })).toEqual([]);
+  });
+
+  test('disabled alias is not emitted', () => {
+    const aliases = [aliasFixture({ enabled: false })];
     const realModels = [realModel({ id: 'gpt-5.4' })];
     expect(synthesizeListedAliases({ aliases, gatewayAddressableModelIds: listed(realModels), callerAddressableModelIds: listed(realModels), narrowTargets: false })).toEqual([]);
   });

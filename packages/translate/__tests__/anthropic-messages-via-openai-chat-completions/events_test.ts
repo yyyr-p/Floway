@@ -1,6 +1,7 @@
 import { expect, test } from 'vitest';
 
 import { createOpenAIChatCompletionsToAnthropicMessagesStreamState, flushOpenAIChatCompletionsToAnthropicMessagesEvents, mapOpenAIChatCompletionsUsageToAnthropicMessagesUsage, translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents } from '../../src/anthropic-messages-via-openai-chat-completions/events.ts';
+import type { AnthropicMessagesStreamEvent } from '@floway-dev/protocols/anthropic-messages';
 import type { OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
 import { assertEquals, assertExists, assertFalse } from '@floway-dev/test-utils';
 
@@ -200,6 +201,26 @@ test('translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents keeps reasoni
     },
     { type: 'content_block_stop', index: 0 },
   ]);
+});
+
+test('translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents ignores empty reasoning placeholders between text chunks', () => {
+  const state = createOpenAIChatCompletionsToAnthropicMessagesStreamState();
+  const textChunks = ['One', ' token', ' per', '\n', ' line.'];
+  const events = [
+    ...translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents(chunk({ role: 'assistant' }), state),
+    ...textChunks.flatMap(content => translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents(chunk({ content, reasoning_content: '' }), state)),
+    ...translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents(chunk({}, 'stop'), state),
+    ...flushOpenAIChatCompletionsToAnthropicMessagesEvents(state),
+  ];
+  const contentBlockStarts = events.filter(event => event.type === 'content_block_start');
+  const contentBlockDeltas = events.filter((event): event is Extract<AnthropicMessagesStreamEvent, { type: 'content_block_delta' }> => event.type === 'content_block_delta');
+  const textDeltas = contentBlockDeltas.filter(event => event.delta.type === 'text_delta');
+  const thinkingDeltas = contentBlockDeltas.filter(event => event.delta.type === 'thinking_delta');
+
+  assertEquals(contentBlockStarts.map(event => event.content_block.type), ['text']);
+  assertEquals(textDeltas.map(event => event.delta.type === 'text_delta' ? event.delta.text : ''), textChunks);
+  assertEquals(textDeltas.map(event => event.index), textChunks.map(() => 0));
+  assertEquals(thinkingDeltas, []);
 });
 
 test('translateOpenAIChatCompletionsChunkToAnthropicMessagesEvents emits early opaque after later thinking text', () => {

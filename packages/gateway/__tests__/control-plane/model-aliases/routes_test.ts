@@ -42,13 +42,13 @@ test('GET /api/aliases lists every row in sort order', async () => {
   const { repo, adminSession } = await setupAppTest();
   await repo.modelAliases.deleteAll();
   await repo.modelAliases.insert({
-    id: 'alias_b', name: 'b', kind: 'chat', selection: 'random', displayName: null, visibleInModelsList: true,
+    id: 'alias_b', name: 'b', kind: 'chat', selection: 'random', enabled: false, displayName: null, visibleInModelsList: true,
     targets: [{ target_model_id: 'm1', rules: {} }],
     announcedMetadata: null,
     sortOrder: 1, createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
   });
   await repo.modelAliases.insert({
-    id: 'alias_a', name: 'a', kind: 'chat', selection: 'random', displayName: null, visibleInModelsList: true,
+    id: 'alias_a', name: 'a', kind: 'chat', selection: 'random', enabled: true, displayName: null, visibleInModelsList: true,
     targets: [{ target_model_id: 'm2', rules: {} }],
     announcedMetadata: null,
     sortOrder: 0, createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z',
@@ -58,6 +58,7 @@ test('GET /api/aliases lists every row in sort order', async () => {
   assertEquals(resp.status, 200);
   const list = (await resp.json()) as ModelAlias[];
   assertEquals(list.map(r => r.name), ['a', 'b']);
+  assertEquals(list.find(r => r.name === 'b')?.enabled, false);
 });
 
 test('POST /api/aliases creates an alias and returns the snake_case wire shape', async () => {
@@ -69,12 +70,14 @@ test('POST /api/aliases creates an alias and returns the snake_case wire shape',
   const created = (await resp.json()) as ModelAlias;
   assertEquals(created.id.startsWith('alias_'), true);
   assertEquals(created.name, 'gpt-fast');
+  assertEquals(created.enabled, true);
   assertEquals(created.visible_in_models_list, true);
   assertEquals(created.targets[0].target_model_id, 'gpt-5.4');
 
   const stored = await repo.modelAliases.getByName('gpt-fast');
   assertExists(stored);
   assertEquals(stored.visibleInModelsList, true);
+  assertEquals(stored.enabled, true);
 });
 
 test('POST /api/aliases rejects a name collision with 409', async () => {
@@ -106,6 +109,27 @@ test('PUT /api/aliases/:id updates rules and refreshes updated_at', async () => 
   // created_at is preserved; updated_at is fresh.
   assertEquals(updated.created_at, before.created_at);
   if (updated.updated_at === before.updated_at) throw new Error('updated_at did not refresh');
+});
+
+test('PUT /api/aliases/:id can disable an alias and legacy updates preserve that state', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+  const created = await createAlias(adminSession);
+
+  const disabledResponse = await requestApp(
+    `/api/aliases/${created.id}`,
+    putAuthed(adminSession, baseBody({ enabled: false })),
+  );
+  assertEquals(disabledResponse.status, 200);
+  assertEquals(((await disabledResponse.json()) as ModelAlias).enabled, false);
+
+  const legacyResponse = await requestApp(
+    `/api/aliases/${created.id}`,
+    putAuthed(adminSession, baseBody({ display_name: 'Edited while disabled' })),
+  );
+  assertEquals(legacyResponse.status, 200);
+  assertEquals(((await legacyResponse.json()) as ModelAlias).enabled, false);
+  assertEquals((await repo.modelAliases.getById(created.id))?.enabled, false);
 });
 
 test('PUT /api/aliases/:id with a different body.name renames the row in place', async () => {
@@ -200,6 +224,35 @@ test('POST /api/aliases rejects an empty target_model_id with 400', async () => 
     authed(adminSession, baseBody({ targets: [{ target_model_id: '', rules: {} }] })),
   );
   assertEquals(resp.status, 400);
+});
+
+test('POST /api/aliases preserves a same-name real-model target', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+
+  const resp = await requestApp('/api/aliases', authed(adminSession, baseBody({
+    name: 'self',
+    targets: [{ target_model_id: 'self', rules: {} }],
+  })));
+  assertEquals(resp.status, 201);
+  const body = (await resp.json()) as { targets: { target_model_id: string }[] };
+  assertEquals(body.targets[0]?.target_model_id, 'self');
+});
+
+test('PUT /api/aliases/:id rejects an update that closes a nested alias cycle', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+  const outer = await createAlias(adminSession, { name: 'outer' });
+  await createAlias(adminSession, { name: 'inner', targets: [{ target_model_id: 'outer', rules: {} }] });
+
+  const resp = await requestApp(`/api/aliases/${outer.id}`, putAuthed(adminSession, baseBody({
+    name: 'outer',
+    targets: [{ target_model_id: 'inner', rules: {} }],
+  })));
+  assertEquals(resp.status, 400);
+  const body = (await resp.json()) as { error?: string };
+  assertEquals(body.error, 'Model alias cycle detected: outer -> inner -> outer');
+  assertEquals((await repo.modelAliases.getByName('outer'))?.targets[0]?.target_model_id, 'gpt-5.4');
 });
 
 test('POST /api/aliases rejects non-empty rules on kind=embedding with 400', async () => {

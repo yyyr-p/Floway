@@ -60,6 +60,43 @@ test('POST /api/users preserves an empty upstream restriction with an inheriting
   assertEquals(defaultKey.upstreamIds, null);
 });
 
+test('POST /api/users creates upstream model rules and leaves its Default key inheriting', async () => {
+  const { adminSession, repo } = await setupAppTest();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));
+  const rules = [{ upstreamId: 'up_x', mode: 'allow' as const, modelIds: ['gpt-4o'] }];
+  const response = await adminPost(adminSession, {
+    username: 'alice',
+    password: 'hunter22',
+    upstreamModelAccess: rules,
+  });
+
+  assertEquals(response.status, 201);
+  const body = (await response.json()) as { user: { id: number; upstreamModelAccess: typeof rules } };
+  assertEquals(body.user.upstreamModelAccess, rules);
+  assertEquals((await repo.users.getById(body.user.id))?.upstreamModelAccess, rules);
+  const [defaultKey] = await repo.apiKeys.listByUserId(body.user.id);
+  assertEquals(defaultKey.upstreamModelAccess, []);
+});
+
+test('PATCH /api/users/:id replaces model rules and rejects unknown upstreams without echoing IDs', async () => {
+  const { adminSession, repo, apiKey } = await setupAppTest();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));
+  const rules = [{ upstreamId: 'up_x', mode: 'deny' as const, modelIds: ['model-a'] }];
+  const saved = await adminPatch(adminSession, apiKey.userId, { upstreamModelAccess: rules });
+  assertEquals(saved.status, 200);
+  assertEquals((await saved.json()).upstreamModelAccess, rules);
+  assertEquals((await repo.users.getById(apiKey.userId))?.upstreamModelAccess, rules);
+
+  const unknown = await adminPatch(adminSession, apiKey.userId, {
+    upstreamModelAccess: [{ upstreamId: 'up_ghost', mode: 'deny', modelIds: ['private-model'] }],
+  });
+  assertEquals(unknown.status, 400);
+  const body = (await unknown.json()) as { error?: string };
+  assertEquals(body.error, 'Model access refers to an unknown upstream.');
+  assertEquals(body.error?.includes('up_ghost'), false);
+  assertEquals(body.error?.includes('private-model'), false);
+});
+
 test('PATCH /api/users/:id saves an empty upstream restriction and can disable it', async () => {
   const { adminSession, repo, apiKey } = await setupAppTest();
   const response = await adminPatch(adminSession, apiKey.userId, { upstreamIds: [] });

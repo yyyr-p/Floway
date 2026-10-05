@@ -1347,3 +1347,17 @@ test('buildTargetRequest leaves thinking absent when reasoning_effort is not non
   assertFalse('thinking' in result);
   assertEquals(result.output_config, { effort: 'high' });
 });
+
+test('buildTargetRequest forwards OpenAI effort strings to Anthropic output_config without clamping', async () => {
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max', 'future_effort']) {
+    const result = await buildTargetRequest(
+      mkPayload({
+        messages: [{ role: 'user', content: 'Hi' }],
+        reasoning_effort: effort,
+      }),
+    );
+
+    assertEquals(result.output_config, { effort });
+    assertFalse('thinking' in result);
+  }
+});

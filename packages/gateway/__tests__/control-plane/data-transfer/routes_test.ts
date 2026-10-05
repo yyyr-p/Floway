@@ -28,6 +28,7 @@ const KEY_A: ApiKey = {
   createdAt: '2026-01-01T00:00:00.000Z',
   lastUsedAt: '2026-01-02T00:00:00.000Z',
   upstreamIds: null,
+  upstreamModelAccess: [],
   deletedAt: null,
   dumpRetentionSeconds: null,
   openaiResponsesRetentionSeconds: 0,
@@ -41,6 +42,7 @@ const KEY_B: ApiKey = {
   serverSecret: '22'.repeat(32),
   createdAt: '2026-02-01T00:00:00.000Z',
   upstreamIds: null,
+  upstreamModelAccess: [],
   deletedAt: null,
   dumpRetentionSeconds: null,
   openaiResponsesRetentionSeconds: 0,
@@ -53,6 +55,7 @@ const SEED_ADMIN: User = {
   isAdmin: true,
   canViewGlobalUsage: false,
   upstreamIds: null,
+  upstreamModelAccess: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   deletedAt: null,
 };
@@ -64,6 +67,7 @@ const USER_BOB: User = {
   isAdmin: false,
   canViewGlobalUsage: false,
   upstreamIds: null,
+  upstreamModelAccess: [],
   createdAt: '2026-02-01T00:00:00.000Z',
   deletedAt: null,
 };
@@ -107,6 +111,7 @@ const CUSTOM_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_custom_a',
   kind: 'custom',
   name: 'Custom A',
+  userVisible: false,
   enabled: true,
   sortOrder: 10,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -118,6 +123,7 @@ const CUSTOM_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: 'https://custom.example.com/logo.svg',
   config: {
     baseUrl: 'https://custom.example.com',
     authStyle: 'bearer',
@@ -136,6 +142,7 @@ const COPILOT_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_copilot_a',
   kind: 'copilot',
   name: 'GitHub Copilot (alice)',
+  userVisible: false,
   enabled: true,
   sortOrder: 0,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -147,6 +154,7 @@ const COPILOT_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     githubHost: 'github.com',
     githubToken: 'ghu-alice',
@@ -164,6 +172,7 @@ const AZURE_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_azure_a',
   kind: 'azure',
   name: 'Azure A',
+  userVisible: false,
   enabled: true,
   sortOrder: 20,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -175,6 +184,7 @@ const AZURE_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     endpoint: 'https://example.openai.azure.com',
     apiKey: 'az-key',
@@ -199,6 +209,7 @@ const OLLAMA_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_ollama_a',
   kind: 'ollama',
   name: 'Ollama A',
+  userVisible: false,
   enabled: true,
   sortOrder: 25,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -210,6 +221,7 @@ const OLLAMA_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     baseUrl: 'https://ollama.com',
     apiKey: 'ollama-key',
@@ -229,6 +241,7 @@ const CODEX_UPSTREAM: StoredUpstreamRecord = {
   id: 'up_codex_a',
   kind: 'codex',
   name: 'ChatGPT Codex (alice)',
+  userVisible: false,
   enabled: true,
   sortOrder: 30,
   createdAt: '2026-01-01T00:00:00.000Z',
@@ -240,6 +253,7 @@ const CODEX_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     accounts: [{
       email: 'alice@example.com',
@@ -267,6 +281,7 @@ const USAGE_1: UsageRecord = {
   hour: '2026-01-01T10',
   pricingSelector: { serviceTier: 'fast' },
   requests: 5,
+  unmeteredRequests: 0,
   metrics: tokenUsageMetrics({ input: 1000, output: 500, input_cache_read: 120, input_cache_write: 80 }, null),
 };
 
@@ -278,6 +293,7 @@ const USAGE_2: UsageRecord = {
   hour: '2026-01-01T11',
   pricingSelector: {},
   requests: 3,
+  unmeteredRequests: 0,
   metrics: tokenUsageMetrics({ input: 2000, output: 800, input_cache_read: 200, input_cache_write: 50 }, null),
 };
 
@@ -379,20 +395,31 @@ const latestImportData = (overrides: Record<string, unknown> = {}) => ({
   apiKeys: [],
   upstreams: [],
   usage: [],
+  usageLimits: [],
   searchUsage: [],
   performanceIncluded: false,
   searchConfig: DEFAULT_WEB_SEARCH_CONFIG,
   ...overrides,
 });
 
-test('export and import preserve empty upstream restrictions separately from unrestricted access', async () => {
+test('export and import preserve empty upstream and model restrictions separately from unrestricted access', async () => {
   const { app, repo } = setup();
-  const restrictedUser = { ...USER_BOB, upstreamIds: [] };
-  const restrictedKey = { ...KEY_B, userId: USER_BOB.id, upstreamIds: [] };
+  const restrictedUser = {
+    ...USER_BOB,
+    upstreamIds: [],
+    upstreamModelAccess: [{ upstreamId: CUSTOM_UPSTREAM.id, mode: 'allow' as const, modelIds: ['model-a'] }],
+  };
+  const restrictedKey = {
+    ...KEY_B,
+    userId: USER_BOB.id,
+    upstreamIds: [],
+    upstreamModelAccess: [{ upstreamId: CUSTOM_UPSTREAM.id, mode: 'deny' as const, modelIds: ['model-b'] }],
+  };
   await repo.users.save(SEED_ADMIN);
   await repo.users.save(restrictedUser);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save(restrictedKey);
+  await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
 
   const exported = await doExport(app);
   await repo.users.save(USER_BOB);
@@ -402,9 +429,25 @@ test('export and import preserve empty upstream restrictions separately from unr
   assertEquals(imported.status, 200);
   assertEquals((await repo.users.getById(SEED_ADMIN.id))?.upstreamIds, null);
   assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamIds, []);
+  assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamModelAccess, restrictedUser.upstreamModelAccess);
   assertEquals((await repo.apiKeys.getById(KEY_A.id))?.upstreamIds, null);
   assertEquals((await repo.apiKeys.getById(KEY_B.id))?.upstreamIds, []);
+  assertEquals((await repo.apiKeys.getById(KEY_B.id))?.upstreamModelAccess, restrictedKey.upstreamModelAccess);
   assertEquals((await doExport(app)).data, exported.data);
+});
+
+test('imports default absent model restrictions to unrestricted', async () => {
+  const { app, repo } = setup();
+  const legacyUser = { ...USER_BOB };
+  const legacyKey = { ...KEY_A, userId: USER_BOB.id };
+  delete legacyUser.upstreamModelAccess;
+  delete legacyKey.upstreamModelAccess;
+
+  const result = await doImport(app, 'replace', latestImportData({ users: [SEED_ADMIN, legacyUser], apiKeys: [legacyKey] }));
+
+  assertEquals(result.status, 200, String(result.body.error ?? ''));
+  assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamModelAccess, []);
+  assertEquals((await repo.apiKeys.getById(KEY_A.id))?.upstreamModelAccess, []);
 });
 
 test('import round-trips a usage record carrying a positive input-length coordinate', async () => {
@@ -442,12 +485,60 @@ test('export emits the v26 envelope with users, OAuth2 configuration, and upstre
   assertEquals(result.data.upstreams, []);
   assertEquals(result.data.proxies, []);
   assertEquals(result.data.usage, []);
+  assertEquals(result.data.usageLimits, []);
   assertEquals(result.data.searchUsage, []);
   assertEquals(result.data.performanceIncluded, false);
   assertEquals(hasOwn(result.data, 'performance'), false);
   assertEquals(result.data.searchConfig, DEFAULT_WEB_SEARCH_CONFIG);
   assertEquals(hasOwn(result.data, 'githubAccounts'), false);
   assertEquals(hasOwn(result.data, 'upstreamConfigs'), false);
+});
+
+test('usage export/import preserves exact unmetered counts and marks legacy mixed counts unknown', async () => {
+  const { app, repo } = setup();
+  const upstreamId = 'opaque/upstream:variant';
+  await repo.usage.record({ ...USAGE_2, upstream: upstreamId, requests: 1, metrics: [{ metric: 'input_tokens', quantity: '10', unitPrice: '0.000001' }] });
+  await repo.usage.record({ ...USAGE_2, upstream: upstreamId, requests: 1, unmeteredRequests: undefined, metrics: [] });
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.usage, [{
+    ...USAGE_2,
+    upstream: upstreamId,
+    requests: 2,
+    unmeteredRequests: 1,
+    metrics: [{ metric: 'input_tokens', quantity: '10', unitPrice: '0.000001' }],
+  }]);
+  assertEquals((await doImport(app, 'replace', exported.data)).status, 200);
+  assertEquals(await repo.usage.listAll(), exported.data.usage);
+
+  await repo.usageLimits.save({ principalType: 'key', principalId: USAGE_2.keyId, window: 'day', maxTokens: null, maxCostUsd: '1' });
+  assertEquals(await repo.usageLimits.reserve({
+    id: 'round-tripped-unmetered',
+    keyId: USAGE_2.keyId,
+    userId: 1,
+    now: '2026-01-01T11:30:00.000Z',
+    expiresAt: '2026-01-01T12:30:00.000Z',
+    inputTokens: 1,
+    outputTokens: 1,
+    maxUnitPriceUsd: '0.000001',
+  }), { ok: false, reason: 'historical-cost-unpriced' });
+
+  const legacy = await doImport(app, 'replace', latestImportData({
+    usage: [
+      { ...USAGE_2, model: 'legacy-mixed', unmeteredRequests: undefined },
+      { ...USAGE_2, model: 'legacy-no-metrics', unmeteredRequests: undefined, metrics: [] },
+    ],
+  }));
+  assertEquals(legacy.status, 200);
+  const [legacyMixed, legacyNoMetrics] = await repo.usage.listAll();
+  assertEquals(legacyMixed?.unmeteredRequests, null);
+  assertEquals(legacyNoMetrics?.unmeteredRequests, USAGE_2.requests);
+
+  const invalidCount = await doImport(app, 'replace', latestImportData({
+    usage: [{ ...USAGE_2, unmeteredRequests: USAGE_2.requests + 1 }],
+  }));
+  assertEquals(invalidCount.status, 400);
+  assertEquals(invalidCount.body.error, 'invalid usage at index 0: unmeteredRequests must not exceed requests');
 });
 
 test('export includes full upstream configs and omits performance by default', async () => {
@@ -499,7 +590,7 @@ test('export includes performance only when requested', async () => {
   assertEquals(fullExport.data.performance, [PERFORMANCE_1, PERFORMANCE_2]);
 });
 
-test('import rejects any version other than the current one before deleting data', async () => {
+test('import rejects older versions before deleting data', async () => {
   const { app, repo } = setup();
   await repo.apiKeys.save(KEY_A);
   await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
@@ -563,7 +654,7 @@ test('import replace writes upstreams and clears replaced collections', async ()
   });
 
   assertEquals(result.status, 200);
-  assertEquals(result.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 1, upstreams: 1, proxies: 0, usage: 1, searchUsage: 1, performance: 0 });
+  assertEquals(result.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 1, upstreams: 1, proxies: 0, usage: 1, usageLimits: 0, searchUsage: 1, performance: 0 });
   const restoredKey = await repo.apiKeys.findByRawKey(KEY_B.key);
   if (restoredKey === null) throw new Error('restored key missing');
   assertEquals(restoredKey, KEY_B);
@@ -580,6 +671,24 @@ test('import replace writes upstreams and clears replaced collections', async ()
     jina: { apiKey: '' },
     passthroughOpenAiSearch: { enabled: false, upstreamId: '', model: '' },
   });
+});
+
+test('upstream visibility survives current backups and older backups default to private', async () => {
+  const { app, repo } = setup();
+  await repo.users.save(SEED_ADMIN);
+  await saveUpstreamForTest(repo.upstreams, { ...CUSTOM_UPSTREAM, userVisible: true });
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.upstreams[0].user_visible, true);
+  const currentImport = await doImport(app, 'replace', exported.data);
+  assertEquals(currentImport.status, 200);
+  assertEquals((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))?.userVisible, true);
+
+  const olderData = structuredClone(exported.data);
+  delete olderData.upstreams[0].user_visible;
+  const olderImport = await doImport(app, 'replace', olderData);
+  assertEquals(olderImport.status, 200);
+  assertEquals((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))?.userVisible, false);
 });
 
 test('replace import preserves API-key IDs and imported references', async () => {
@@ -1080,7 +1189,12 @@ test('import trims every formerly normalized non-empty string field', async () =
 
 test('import retains optional defaults from the v26 wire contract', async () => {
   const { app, repo } = setup();
-  const { disabled_public_model_ids: _disabled, model_prefix: _prefix, ...upstream } = upstreamRecordToFullJson(CUSTOM_UPSTREAM);
+  const {
+    disabled_public_model_ids: _disabled,
+    model_prefix: _prefix,
+    model_metadata_defaults: _metadataDefaults,
+    ...upstream
+  } = upstreamRecordToFullJson(CUSTOM_UPSTREAM);
   const result = await doImport(app, 'replace', latestImportData({
     apiKeys: [{ ...KEY_A, dumpRetentionSeconds: undefined }],
     upstreams: [upstream],
@@ -1090,6 +1204,27 @@ test('import retains optional defaults from the v26 wire contract', async () => 
   assertEquals((await repo.apiKeys.listIncludingDeleted())[0].dumpRetentionSeconds, null);
   assertEquals((await repo.upstreams.list())[0].disabledPublicModelIds, []);
   assertEquals((await repo.upstreams.list())[0].modelPrefix, null);
+  assertEquals((await repo.upstreams.list())[0].modelMetadataDefaults, undefined);
+});
+
+test('upstream metadata defaults round-trip through full backup import', async () => {
+  const { app, repo } = setup();
+  const metadataDefaults = {
+    limits: { max_context_window_tokens: 0 },
+    chat: { image_detail_original: false, reasoning: { mandatory: false } },
+  };
+  const upstream = {
+    ...upstreamRecordToFullJson(CUSTOM_UPSTREAM),
+    model_metadata_defaults: metadataDefaults,
+  };
+  const result = await doImport(app, 'replace', latestImportData({ upstreams: [upstream] }));
+
+  assertEquals(result.status, 200);
+  assertEquals((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))?.modelMetadataDefaults, metadataDefaults);
+  assertEquals(upstreamRecordToFullJson((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))!), {
+    ...upstreamRecordToFullJson(CUSTOM_UPSTREAM),
+    model_metadata_defaults: metadataDefaults,
+  });
 });
 
 test('positive-integer import fields preserve Number.isInteger semantics', async () => {
@@ -1413,7 +1548,7 @@ test('import validates mode and data before mutating', async () => {
   assertEquals(missingUpstreams.status, 400);
   assertEquals(missingUpstreams.body.error, 'invalid apiKeys: apiKeys must be an array');
   assertEquals(emptyMerge.status, 200);
-  assertEquals(emptyMerge.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 0, upstreams: 0, proxies: 0, usage: 0, searchUsage: 0, performance: 0 });
+  assertEquals(emptyMerge.body.imported, { users: 1, oauth2Accounts: 0, oauth2Providers: 0, apiKeys: 0, upstreams: 0, proxies: 0, usage: 0, usageLimits: 0, searchUsage: 0, performance: 0 });
 });
 
 const HTTP_PROXY_URL = 'http://198.51.100.20:3128';
@@ -1562,15 +1697,19 @@ test('v26 export/import round-trips users and per-key user_id', async () => {
   await repo.users.save(USER_BOB);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save({ ...KEY_B, userId: USER_BOB.id });
+  await repo.usageLimits.save({ principalType: 'user', principalId: USER_BOB.id, window: 'day', maxTokens: 1_000, maxCostUsd: '0.25' });
 
   const exportResult = await doExport(app);
   assertEquals(exportResult.version, 26);
   assertEquals(exportResult.data.users.map((u: any) => u.id).sort(), [SEED_ADMIN.id, USER_BOB.id]);
+  assertEquals(exportResult.data.usageLimits, [{ principalType: 'user', principalId: USER_BOB.id, window: 'day', maxTokens: 1_000, maxCostUsd: '0.25' }]);
 
   const result = await doImport(app, 'replace', exportResult.data, 26);
   assertEquals(result.status, 200);
   assertEquals(result.body.imported.users, 2);
   assertEquals(result.body.imported.apiKeys, 2);
+  assertEquals(result.body.imported.usageLimits, 1);
+  assertEquals(await repo.usageLimits.list(), [{ principalType: 'user', principalId: USER_BOB.id, window: 'day', maxTokens: 1_000, maxCostUsd: '0.25' }]);
 
   const restoredUsers = await repo.users.listIncludingDeleted();
   assertEquals(restoredUsers.find(u => u.id === USER_BOB.id)?.passwordHash, USER_BOB.passwordHash);
@@ -1775,6 +1914,7 @@ test('a full v26 export re-imports verbatim — the export→import round trip i
   await repo.oauth2Config.saveProvider(OAUTH2_PROVIDER);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save({ ...KEY_B, userId: USER_BOB.id });
+  await repo.usageLimits.save({ principalType: 'key', principalId: KEY_A.id, window: 'month', maxTokens: 50_000, maxCostUsd: null });
   await saveUpstreamForTest(repo.upstreams, COPILOT_UPSTREAM);
   await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
   await saveUpstreamForTest(repo.upstreams, AZURE_UPSTREAM);
@@ -1802,10 +1942,12 @@ test('a full v26 export re-imports verbatim — the export→import round trip i
   // invariant, so this test fails the moment the two sides drift.
   const result = await doImport(app, 'replace', exported.data, 26);
   assertEquals(result.status, 200);
-  assertEquals(result.body.imported, { users: 2, oauth2Accounts: 1, oauth2Providers: 1, apiKeys: 2, upstreams: 4, proxies: 0, usage: 2, searchUsage: 2, performance: 2 });
+  assertEquals(result.body.imported, { users: 2, oauth2Accounts: 1, oauth2Providers: 1, apiKeys: 2, upstreams: 4, proxies: 0, usage: 2, usageLimits: 1, searchUsage: 2, performance: 2 });
+  assertEquals(await repo.usageLimits.list(), [{ principalType: 'key', principalId: KEY_A.id, window: 'month', maxTokens: 50_000, maxCostUsd: null }]);
 
   // Spot-check fidelity across collection types (order-independent).
   assertEquals((await repo.upstreams.list()).find(u => u.id === 'up_codex_a')?.state, CODEX_UPSTREAM.state);
+  assertEquals((await repo.upstreams.getById('up_custom_a'))?.logoUrl, 'https://custom.example.com/logo.svg');
   assertEquals((await repo.users.listIncludingDeleted()).find(u => u.id === USER_BOB.id), USER_BOB);
   assertEquals((await repo.oauth2.listAccounts()).find(account => account.userId === USER_BOB.id), OAUTH2_BOB);
   assertEquals(await repo.oauth2Config.getSettings(), OAUTH2_SETTINGS);

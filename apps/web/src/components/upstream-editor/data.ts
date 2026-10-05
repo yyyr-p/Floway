@@ -8,8 +8,8 @@ import type {
   UpstreamRecord,
   UpstreamRecordEnvelope,
 } from '../../api/types';
-import type { UpstreamProviderKind } from '@floway-dev/provider/model';
-import type { UpstreamModelConfig } from '@floway-dev/provider/model-config';
+import { normalizeUpstreamLogoUrl, type UpstreamProviderKind } from '@floway-dev/provider/model';
+import { modelMetadataDefaultsField, type ModelMetadataDefaults, type UpstreamModelConfig } from '@floway-dev/provider/model-config';
 import { MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX } from '@floway-dev/provider/model-prefix';
 
 type CreateUpstreamBody = InferRequestType<typeof api.api.upstreams.$post>['json'];
@@ -65,8 +65,10 @@ export interface UpstreamEditorValues {
   name: string;
   enabled: boolean;
   hue: UpstreamRecord['hue'];
+  logoUrl: string;
   proxyFallbackList: UpstreamRecord['proxy_fallback_list'];
   modelPrefix: UpstreamRecord['model_prefix'];
+  modelMetadataDefaults: string;
   disabledPublicModelIds: string[];
   flagOverrides: UpstreamRecord['flag_overrides'];
   config: UpstreamRecord['config'];
@@ -186,6 +188,8 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
     ? {
         ...structuredClone(record.config),
         apiKey: '',
+        usageProbeJson: record.config.usageProbe === undefined ? '' : JSON.stringify(record.config.usageProbe, null, 2),
+        actionsJson: record.config.actions === undefined ? '' : JSON.stringify(record.config.actions, null, 2),
         // The override fields register the whole map, so the edited value
         // carries every listed path whether or not the stored config does.
         // Seeding the blanks keeps the saved state and the edited state the
@@ -197,7 +201,7 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
           { key: '', value: null },
         ],
         modelsFetch: withRegisteredKey('endpoint', structuredClone(record.config.modelsFetch)),
-      }
+      } as unknown as UpstreamRecord['config']
     : record.kind === 'azure'
       ? { ...structuredClone(record.config), apiKey: '' }
       : record.kind === 'ollama'
@@ -208,14 +212,21 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
     name: record.name,
     enabled: record.enabled,
     hue: record.hue,
+    logoUrl: record.logo_url ?? '',
     proxyFallbackList: structuredClone(record.proxy_fallback_list).map(entry => withRegisteredKey('colos', entry)),
     modelPrefix: structuredClone(record.model_prefix),
+    modelMetadataDefaults: JSON.stringify(record.model_metadata_defaults ?? {}, null, 2),
     disabledPublicModelIds: [...record.disabled_public_model_ids],
     flagOverrides: record.flag_overrides,
     config,
     state: structuredClone(record.state),
     manualModels,
   };
+};
+
+export const parseModelMetadataDefaults = (value: string): ModelMetadataDefaults => {
+  const parsed: unknown = value.trim() === '' ? {} : JSON.parse(value);
+  return modelMetadataDefaultsField(parsed, 'model_metadata_defaults') ?? {};
 };
 
 // The editor holds one flat form model for every provider kind, so the config
@@ -236,6 +247,20 @@ const configFromValues = (
   }
   if (record.kind === 'custom') {
     const custom = config as Record<string, unknown>;
+    for (const [textKey, configKey] of [['usageProbeJson', 'usageProbe'], ['actionsJson', 'actions']] as const) {
+      const raw = custom[textKey];
+      delete custom[textKey];
+      if (typeof raw !== 'string' || raw.trim() === '') {
+        delete custom[configKey];
+        continue;
+      }
+      try {
+        custom[configKey] = JSON.parse(raw);
+      } catch {
+        // The editor's schema prevents saving invalid JSON; draft previews keep
+        // the last parsed provider value until the field becomes valid.
+      }
+    }
     if (custom.authStyle === 'none') delete custom.apiKey;
     const ingressHeadersRules = custom.ingressHeadersRules as { key: string; value: string | null }[];
     custom.ingressHeadersRules = ingressHeadersRules.flatMap(rule => {
@@ -259,10 +284,12 @@ export const previewRecord = (record: UpstreamRecord, values: UpstreamEditorValu
     name: values.name.trim(),
     enabled: values.enabled,
     hue: values.hue,
+    logo_url: normalizeUpstreamLogoUrl(values.logoUrl),
     config: configFromValues(record, values, { preserveStoredSecret: true }),
     state: values.state,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
+    model_metadata_defaults: parseModelMetadataDefaults(values.modelMetadataDefaults),
     disabled_public_model_ids: values.disabledPublicModelIds,
     flag_overrides: values.flagOverrides,
   };
@@ -276,10 +303,12 @@ export const createBody = (record: UpstreamRecord, values: UpstreamEditorValues,
     name: values.name.trim(),
     enabled: values.enabled,
     hue: values.hue,
+    logo_url: normalizeUpstreamLogoUrl(values.logoUrl),
     flag_overrides: values.flagOverrides,
     disabled_public_model_ids: values.disabledPublicModelIds,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
+    model_metadata_defaults: parseModelMetadataDefaults(values.modelMetadataDefaults),
     config: configFromValues(record, values, options),
     ...((record.kind === 'copilot' || record.kind === 'codex' || record.kind === 'claude-code')
       ? { state: values.state }
@@ -292,10 +321,12 @@ export const updateBody = (record: UpstreamRecord, values: UpstreamEditorValues)
     name: values.name.trim(),
     enabled: values.enabled,
     hue: values.hue,
+    logo_url: normalizeUpstreamLogoUrl(values.logoUrl),
     flag_overrides: values.flagOverrides,
     disabled_public_model_ids: values.disabledPublicModelIds,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
+    model_metadata_defaults: parseModelMetadataDefaults(values.modelMetadataDefaults),
     ...(manualModelsSupported(record) ? { config: configFromValues(record, values) } : {}),
   } as UpdateUpstreamBody;
 };

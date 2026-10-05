@@ -1,6 +1,7 @@
 import { normalizeDisabledPublicModelIds } from './disabled-public-models.ts';
 import { SqlExpirationSweepsRepo } from './expiration-sweeps-sql.ts';
 import { normalizeFlagOverrides } from './flag-overrides.ts';
+import { parseUpstreamModelAccess } from './model-access.ts';
 import { decodeAliasTargets, decodeAnnouncedMetadata, encodeAliasTargets, encodeAnnouncedMetadata } from './model-alias-codecs.ts';
 import { MODEL_CATALOG_REVISION, storedModelErrorMessage } from './models-cache-contract.ts';
 import { matchesModelsRefreshInputs } from './models-refresh-inputs.ts';
@@ -59,9 +60,16 @@ import type {
   SessionsRepo,
   UpstreamRepo,
   UsageRecord,
+  UsageLimit,
+  UsageLimitPrincipalType,
+  UsageLimitReservationInput,
+  UsageLimitReservationResult,
+  UsageLimitWindow,
+  UsageLimitsRepo,
   UsageOverviewQueryOptions,
   UsageOverviewResult,
   UsageRepo,
+  UsagePricingBackfillRepo,
   User,
   UsersRepo,
 } from './types.ts';
@@ -69,22 +77,27 @@ import {
   decodeDisabledPublicModelIds,
   decodeModelPrefix,
   decodeProxyFallbackList,
+  decodeUpstreamModelMetadataDefaults,
   decodeUpstreamConfig,
   decodeUpstreamFlagOverrides,
   decodeUpstreamModelsCache,
   decodeUpstreamState,
+  encodeUpstreamModelMetadataDefaults,
   encodeUpstreamModelsCache,
 } from './upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts';
-import { parseUpstreamHue, parseUpstreamKind } from './upstream-parse.ts';
-import { usageMetricRows } from './usage-metrics.ts';
+import { parseUpstreamHue, parseUpstreamKind, parseUpstreamLogoUrl } from './upstream-parse.ts';
+import { usageLimitWindowBounds } from './usage-limit-windows.ts';
+import { usageMetricRows, usageUnmeteredRequests } from './usage-metrics.ts';
 import { querySqlUsageOverview } from './usage-overview-sql.ts';
+import { SqlUsagePricingBackfillRepo } from './usage-pricing-backfill-sql.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogram.ts';
 import { parseServerSecret } from '../shared/server-secret.ts';
 import { assertWebSearchProviderName, type WebSearchConfig } from '../shared/web-search-providers.ts';
+import type { DatabaseIdentity } from '../usage-pricing-backfill/index.ts';
 import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
 import type { SqlBindValue, SqlDatabase, SqlPreparedStatement, SqlResult } from '@floway-dev/platform';
-import { addDecimalStrings, canonicalPricingSelectorKey, parseBillingMetric, parseModelKind, parseNonNegativeDecimalString, parsePricingSelectorKey, type AliasSelection, type AnnouncedMetadata } from '@floway-dev/protocols/common';
+import { addDecimalStrings, canonicalPricingSelectorKey, multiplyDecimalStrings, parseBillingMetric, parseModelKind, parseNonNegativeDecimalString, parsePricingSelectorKey, type AliasSelection, type AnnouncedMetadata } from '@floway-dev/protocols/common';
 import type { ProxyFallbackEntry, ModelPrefixConfig, UpstreamModelsCache, UpstreamRecord } from '@floway-dev/provider';
 import { normalizeModelPrefix, parsePerformanceOperation, UpstreamGoneError } from '@floway-dev/provider';
 
@@ -97,12 +110,13 @@ interface ApiKeyRow {
   created_at: string;
   last_used_at: string | null;
   upstream_ids: string | null;
+  upstream_model_access: string | null;
   deleted_at: string | null;
   dump_retention_seconds: number | null;
   responses_retention_seconds: number;
 }
 
-const API_KEY_COLUMNS = 'id, user_id, name, key, server_secret, created_at, last_used_at, upstream_ids, deleted_at, dump_retention_seconds, responses_retention_seconds';
+const API_KEY_COLUMNS = 'id, user_id, name, key, server_secret, created_at, last_used_at, upstream_ids, upstream_model_access, deleted_at, dump_retention_seconds, responses_retention_seconds';
 
 const serializeUpstreamIds = (value: readonly string[] | null): string | null => (value === null ? null : JSON.stringify(value));
 
@@ -125,6 +139,17 @@ const parseUpstreamIds = (raw: string | null, label: string): string[] | null =>
   return parsed as string[];
 };
 
+const parseStoredUpstreamModelAccess = (raw: string | null, label: string) => {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    throw new Error(`upstream_model_access JSON is malformed for ${label}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
+  return parseUpstreamModelAccess(parsed, label);
+};
+
 const toApiKey = (row: ApiKeyRow): ApiKey => ({
   id: row.id,
   userId: row.user_id,
@@ -134,6 +159,7 @@ const toApiKey = (row: ApiKeyRow): ApiKey => ({
   createdAt: row.created_at,
   lastUsedAt: row.last_used_at ?? undefined,
   upstreamIds: parseUpstreamIds(row.upstream_ids, `api_keys.id=${row.id}`),
+  upstreamModelAccess: parseStoredUpstreamModelAccess(row.upstream_model_access, `api_keys.id=${row.id}`),
   deletedAt: row.deleted_at,
   dumpRetentionSeconds: row.dump_retention_seconds,
   openaiResponsesRetentionSeconds: row.responses_retention_seconds,
@@ -191,7 +217,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
   async save(key: ApiKey): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO api_keys (${API_KEY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO api_keys (${API_KEY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            user_id = excluded.user_id,
            name = excluded.name,
@@ -199,6 +225,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
            server_secret = excluded.server_secret,
            last_used_at = excluded.last_used_at,
            upstream_ids = excluded.upstream_ids,
+           upstream_model_access = excluded.upstream_model_access,
            deleted_at = excluded.deleted_at,
            dump_retention_seconds = excluded.dump_retention_seconds,
            responses_retention_seconds = excluded.responses_retention_seconds`,
@@ -212,6 +239,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
         key.createdAt,
         key.lastUsedAt ?? null,
         serializeUpstreamIds(key.upstreamIds),
+        JSON.stringify(key.upstreamModelAccess ?? []),
         key.deletedAt,
         key.dumpRetentionSeconds,
         key.openaiResponsesRetentionSeconds,
@@ -224,6 +252,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
     const hasKey = sqliteBoolean(patch.key !== undefined);
     const hasLastUsedAt = sqliteBoolean(patch.lastUsedAt !== undefined);
     const hasUpstreamIds = sqliteBoolean(patch.upstreamIds !== undefined);
+    const hasUpstreamModelAccess = sqliteBoolean(patch.upstreamModelAccess !== undefined);
     const hasDumpRetention = sqliteBoolean(patch.dumpRetentionSeconds !== undefined);
     const hasOpenAIResponsesRetention = sqliteBoolean(patch.openaiResponsesRetentionSeconds !== undefined);
     const row = await this.db
@@ -233,6 +262,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
              key = CASE WHEN ? THEN ? ELSE key END,
              last_used_at = CASE WHEN ? THEN ? ELSE last_used_at END,
              upstream_ids = CASE WHEN ? THEN ? ELSE upstream_ids END,
+             upstream_model_access = CASE WHEN ? THEN ? ELSE upstream_model_access END,
              dump_retention_seconds = CASE WHEN ? THEN ? ELSE dump_retention_seconds END,
              responses_retention_seconds = CASE WHEN ? THEN ? ELSE responses_retention_seconds END
          WHERE id = ? AND deleted_at IS NULL
@@ -243,6 +273,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
         hasKey ? 1 : 0, patch.key ?? null,
         hasLastUsedAt ? 1 : 0, patch.lastUsedAt ?? null,
         hasUpstreamIds ? 1 : 0, hasUpstreamIds ? serializeUpstreamIds(patch.upstreamIds!) : null,
+        hasUpstreamModelAccess ? 1 : 0, hasUpstreamModelAccess ? JSON.stringify(patch.upstreamModelAccess!) : null,
         hasDumpRetention ? 1 : 0, patch.dumpRetentionSeconds ?? null,
         hasOpenAIResponsesRetention ? 1 : 0, patch.openaiResponsesRetentionSeconds ?? null,
         id,
@@ -279,11 +310,12 @@ interface UserRow {
   is_admin: number;
   can_view_global_usage: number;
   upstream_ids: string | null;
+  upstream_model_access: string | null;
   created_at: string;
   deleted_at: string | null;
 }
 
-const USER_COLUMNS = 'id, username, password_hash, is_admin, can_view_global_usage, upstream_ids, created_at, deleted_at';
+const USER_COLUMNS = 'id, username, password_hash, is_admin, can_view_global_usage, upstream_ids, upstream_model_access, created_at, deleted_at';
 
 const toUser = (row: UserRow): User => ({
   id: row.id,
@@ -292,6 +324,7 @@ const toUser = (row: UserRow): User => ({
   isAdmin: row.is_admin === 1,
   canViewGlobalUsage: row.can_view_global_usage === 1,
   upstreamIds: parseUpstreamIds(row.upstream_ids, `users.id=${row.id}`),
+  upstreamModelAccess: parseStoredUpstreamModelAccess(row.upstream_model_access, `users.id=${row.id}`),
   createdAt: row.created_at,
   deletedAt: row.deleted_at,
 });
@@ -336,7 +369,7 @@ class SqlUsersRepo implements UsersRepo {
     const row = await this.db
       .prepare(
         `INSERT INTO users (${USER_COLUMNS})
-         SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM users
+         SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ? FROM users
          RETURNING id`,
       )
       .bind(
@@ -345,6 +378,7 @@ class SqlUsersRepo implements UsersRepo {
         template.isAdmin ? 1 : 0,
         template.canViewGlobalUsage ? 1 : 0,
         serializeUpstreamIds(template.upstreamIds),
+        JSON.stringify(template.upstreamModelAccess ?? []),
         template.createdAt,
         template.deletedAt,
       )
@@ -356,13 +390,14 @@ class SqlUsersRepo implements UsersRepo {
   async save(user: User): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            username = excluded.username,
            password_hash = excluded.password_hash,
            is_admin = excluded.is_admin,
            can_view_global_usage = excluded.can_view_global_usage,
            upstream_ids = excluded.upstream_ids,
+           upstream_model_access = excluded.upstream_model_access,
            deleted_at = excluded.deleted_at`,
       )
       .bind(
@@ -372,6 +407,7 @@ class SqlUsersRepo implements UsersRepo {
         user.isAdmin ? 1 : 0,
         user.canViewGlobalUsage ? 1 : 0,
         serializeUpstreamIds(user.upstreamIds),
+        JSON.stringify(user.upstreamModelAccess ?? []),
         user.createdAt,
         user.deletedAt,
       )
@@ -643,7 +679,7 @@ class SqlOAuth2Repo implements OAuth2Repo {
         ).bind(input.createdAt, input.createdAt, input.username, input.tokenHash, input.now),
         this.db.prepare(
           `INSERT INTO api_keys (${API_KEY_COLUMNS})
-           SELECT ?, u.id, ?, ?, ?, ?, ?, ?, ?, ?, ?
+           SELECT ?, u.id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
            FROM oauth2_handoffs h
            JOIN users u ON u.username = ? AND u.deleted_at IS NULL
            WHERE h.token_hash = ? AND h.user_id IS NULL AND h.expires_at > ?`,
@@ -655,6 +691,7 @@ class SqlOAuth2Repo implements OAuth2Repo {
           input.defaultKey.createdAt,
           input.defaultKey.lastUsedAt ?? null,
           serializeUpstreamIds(input.defaultKey.upstreamIds),
+          JSON.stringify(input.defaultKey.upstreamModelAccess ?? []),
           input.defaultKey.deletedAt,
           input.defaultKey.dumpRetentionSeconds,
           input.defaultKey.openaiResponsesRetentionSeconds,
@@ -1102,10 +1139,16 @@ class SqlUsageRepo implements UsageRepo {
   async record(record: UsageRecord): Promise<void> {
     const upstream = record.upstream ?? null;
     const selector = canonicalPricingSelectorKey(record.pricingSelector);
+    const unmeteredRequests = usageUnmeteredRequests(record);
     await this.db.prepare(
-      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT DO UPDATE SET requests = requests + excluded.requests`,
-    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests).run();
+      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO UPDATE SET
+         requests = requests + excluded.requests,
+         unmetered_requests = CASE
+           WHEN usage_requests.unmetered_requests IS NULL OR excluded.unmetered_requests IS NULL THEN NULL
+           ELSE usage_requests.unmetered_requests + excluded.unmetered_requests
+         END`,
+    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests, unmeteredRequests).run();
     await Promise.all(usageMetricRows(record).map(row => this.addMetric(record, upstream, selector, row)));
   }
 
@@ -1119,7 +1162,7 @@ class SqlUsageRepo implements UsageRepo {
       : [JSON.stringify(keyIds), opts.start, opts.end];
     const [{ results: metrics }, { results: requests }] = await Promise.all([
       this.db.prepare(`SELECT key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price FROM usage WHERE ${where} ORDER BY rowid`).bind(...binds).all<UsageMetricRow>(),
-      this.db.prepare(`SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests FROM usage_requests WHERE ${where}`).bind(...binds).all<UsageRequestRow>(),
+      this.db.prepare(`SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests FROM usage_requests WHERE ${where}`).bind(...binds).all<UsageRequestRow>(),
     ]);
     return assembleUsageRecords(metrics, requests);
   }
@@ -1131,7 +1174,7 @@ class SqlUsageRepo implements UsageRepo {
   async listAll(): Promise<UsageRecord[]> {
     const [{ results: metrics }, { results: requests }] = await Promise.all([
       this.db.prepare('SELECT key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price FROM usage ORDER BY rowid').all<UsageMetricRow>(),
-      this.db.prepare('SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests FROM usage_requests').all<UsageRequestRow>(),
+      this.db.prepare('SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests FROM usage_requests').all<UsageRequestRow>(),
     ]);
     return assembleUsageRecords(metrics, requests);
   }
@@ -1139,22 +1182,232 @@ class SqlUsageRepo implements UsageRepo {
   async set(record: UsageRecord): Promise<void> {
     const upstream = record.upstream ?? null;
     const selector = canonicalPricingSelectorKey(record.pricingSelector);
+    const metricRows = usageMetricRows(record);
+    const unmeteredRequests = usageUnmeteredRequests(record);
     const statements: SqlPreparedStatement[] = [
       this.db.prepare("DELETE FROM usage WHERE key_id = ? AND model = ? AND COALESCE(upstream, '') = COALESCE(?, '') AND model_key = ? AND hour = ? AND pricing_selector = ?")
         .bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector),
-      ...usageMetricRows(record).map(row => this.db.prepare(
+      ...metricRows.map(row => this.db.prepare(
         'INSERT INTO usage (key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, row.metric, row.quantity, row.unitPrice)),
     ];
     statements.push(this.db.prepare(
-      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT DO UPDATE SET requests = excluded.requests`,
-    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests));
+      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO UPDATE SET requests = excluded.requests, unmetered_requests = excluded.unmetered_requests`,
+    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests, unmeteredRequests));
     await runStatements(this.db, statements);
   }
 
   async deleteAll(): Promise<void> {
     await runStatements(this.db, [this.db.prepare('DELETE FROM usage'), this.db.prepare('DELETE FROM usage_requests')]);
+  }
+}
+
+const microUsdToString = (value: number): string => {
+  const whole = Math.floor(value / 1_000_000);
+  const fraction = String(value % 1_000_000).padStart(6, '0').replace(/0+$/, '');
+  return fraction.length === 0 ? String(whole) : `${whole}.${fraction}`;
+};
+
+const usdToMicrosCeil = (value: string): number => {
+  const canonical = parseNonNegativeDecimalString(value, 'usage limit cost');
+  const [whole, fraction = ''] = canonical.split('.');
+  const head = fraction.slice(0, 6).padEnd(6, '0');
+  const tail = fraction.slice(6);
+  const micros = BigInt(whole!) * 1_000_000n + BigInt(head || '0') + (/[1-9]/.test(tail) ? 1n : 0n);
+  if (micros > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('usage limit cost exceeds the supported range');
+  return Number(micros);
+};
+
+const usageLimitTokensSql = `COALESCE((
+  SELECT SUM(CAST(u.quantity AS REAL))
+  FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
+  WHERE u.hour >= b.window_start AND u.hour < b.window_end
+    AND u.metric IN ('input_tokens','input_cache_read_tokens','input_cache_write_tokens','input_cache_write_1h_tokens','input_image_tokens','input_audio_tokens','output_tokens','output_image_tokens')
+    AND ((c.principal_type = 'key' AND u.key_id = c.principal_id)
+      OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+), 0)`;
+
+const usageLimitPendingTokensSql = `COALESCE((
+  SELECT SUM(r.tokens) FROM usage_limit_reservations r
+  WHERE r.principal_type = c.principal_type AND r.principal_id = c.principal_id
+    AND r.window = c.window AND r.window_start = b.window_start AND r.expires_at > p.now
+), 0)`;
+
+const usageLimitCostSql = `COALESCE((
+  SELECT SUM(CAST(u.quantity AS REAL) * CAST(u.unit_price AS REAL) * 1000000.0)
+  FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
+  WHERE u.hour >= b.window_start AND u.hour < b.window_end AND u.unit_price IS NOT NULL
+    AND ((c.principal_type = 'key' AND u.key_id = c.principal_id)
+      OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+), 0)`;
+
+const usageLimitHasUnpricedSql = `(
+  EXISTS (
+    SELECT 1 FROM usage_requests ur LEFT JOIN api_keys k ON k.id = ur.key_id
+    WHERE ur.hour >= b.window_start AND ur.hour < b.window_end
+      AND ((c.principal_type = 'key' AND ur.key_id = c.principal_id)
+        OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+      AND ur.requests > 0 AND (ur.unmetered_requests IS NULL OR ur.unmetered_requests > 0)
+  ) OR EXISTS (
+    SELECT 1 FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
+    WHERE u.hour >= b.window_start AND u.hour < b.window_end AND u.unit_price IS NULL
+      AND CAST(u.quantity AS REAL) > 0
+      AND ((c.principal_type = 'key' AND u.key_id = c.principal_id)
+        OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+  )
+)`;
+
+class SqlUsageLimitsRepo implements UsageLimitsRepo {
+  constructor(private db: SqlDatabase) {}
+
+  async list(): Promise<UsageLimit[]> {
+    const { results } = await this.db.prepare(
+      'SELECT principal_type, principal_id, window, max_tokens, max_cost_micros FROM usage_limits ORDER BY principal_type, principal_id, window',
+    ).all<{ principal_type: string; principal_id: string; window: string; max_tokens: number | null; max_cost_micros: number | null }>();
+    return results.map(row => {
+      if (row.principal_type !== 'user' && row.principal_type !== 'key') throw new TypeError(`Invalid usage-limit principal type: ${row.principal_type}`);
+      if (row.window !== 'hour' && row.window !== 'day' && row.window !== 'month') throw new TypeError(`Invalid usage-limit window: ${row.window}`);
+      return {
+        principalType: row.principal_type,
+        principalId: row.principal_type === 'user' ? Number(row.principal_id) : row.principal_id,
+        window: row.window,
+        maxTokens: row.max_tokens,
+        maxCostUsd: row.max_cost_micros === null ? null : microUsdToString(row.max_cost_micros),
+      };
+    });
+  }
+
+  async save(limit: UsageLimit): Promise<void> {
+    const principalId = String(limit.principalId);
+    if (limit.principalType === 'user' && (!Number.isSafeInteger(limit.principalId) || Number(limit.principalId) <= 0)) throw new TypeError('usage-limit user id must be a positive safe integer');
+    if (limit.principalType === 'key' && (typeof limit.principalId !== 'string' || principalId.length === 0)) throw new TypeError('usage-limit key id must be a non-empty string');
+    if (!['hour', 'day', 'month'].includes(limit.window)) throw new TypeError(`Invalid usage-limit window: ${limit.window}`);
+    if (limit.maxTokens !== null && (!Number.isSafeInteger(limit.maxTokens) || limit.maxTokens < 0)) throw new TypeError('usage-limit maxTokens must be a non-negative safe integer or null');
+    let maxCostMicros: number | null = null;
+    if (limit.maxCostUsd !== null) {
+      const cost = parseNonNegativeDecimalString(limit.maxCostUsd, 'usage limit cost');
+      if ((cost.split('.')[1]?.length ?? 0) > 6) throw new TypeError('usage limit cost supports at most six fractional digits');
+      maxCostMicros = usdToMicrosCeil(cost);
+    }
+    if (limit.maxTokens === null && maxCostMicros === null) throw new TypeError('usage limit must define a token or cost maximum');
+    await this.db.prepare(
+      `INSERT INTO usage_limits (principal_type, principal_id, window, max_tokens, max_cost_micros)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT (principal_type, principal_id, window)
+       DO UPDATE SET max_tokens = excluded.max_tokens, max_cost_micros = excluded.max_cost_micros`,
+    ).bind(limit.principalType, principalId, limit.window, limit.maxTokens, maxCostMicros).run();
+  }
+
+  async delete(principalType: UsageLimitPrincipalType, principalId: number | string, window: UsageLimitWindow): Promise<boolean> {
+    const result = await this.db.prepare(
+      'DELETE FROM usage_limits WHERE principal_type = ? AND principal_id = ? AND window = ?',
+    ).bind(principalType, String(principalId), window).run();
+    if (result.meta.changes === undefined) throw new Error('SQL runtime did not report deleted usage-limit row count');
+    return result.meta.changes > 0;
+  }
+
+  async reserve(input: UsageLimitReservationInput): Promise<UsageLimitReservationResult> {
+    const limits = await this.list();
+    const applicable = limits.filter(limit =>
+      (limit.principalType === 'key' && limit.principalId === input.keyId)
+      || (limit.principalType === 'user' && limit.principalId === input.userId));
+    if (applicable.length === 0) return { ok: true, limited: false };
+    if (applicable.some(limit => limit.maxCostUsd !== null) && input.maxUnitPriceUsd === null) return { ok: false, reason: 'cost' };
+
+    const now = new Date(input.now);
+    if (!Number.isFinite(now.getTime())) throw new TypeError('usage-limit reservation time must be an ISO date');
+    const bounds = usageLimitWindowBounds(now);
+    const capTokens = input.outputTokens === null ? null : input.inputTokens + input.outputTokens;
+    if (capTokens !== null && (!Number.isSafeInteger(capTokens) || capTokens < 0)) throw new RangeError('usage token reservation exceeds the supported range');
+    const inputCostMicros = input.maxUnitPriceUsd === null ? 0 : usdToMicrosCeil(multiplyDecimalStrings(String(input.inputTokens), input.maxUnitPriceUsd));
+    const fixedCostMicros = input.maxUnitPriceUsd === null || capTokens === null
+      ? 0
+      : usdToMicrosCeil(multiplyDecimalStrings(String(capTokens), input.maxUnitPriceUsd));
+    const ctes = `WITH p AS (
+      SELECT ? AS reservation_id, ? AS now, ? AS expires_at, ? AS key_id, ? AS user_id,
+        ? AS input_tokens, ? AS output_tokens, ? AS input_cost_micros,
+        ? AS fixed_cost_micros, ? AS price_available
+    ), bounds(window, window_start, window_end) AS (
+      SELECT 'hour', ?, ? UNION ALL SELECT 'day', ?, ? UNION ALL SELECT 'month', ?, ?
+    ), current_limits AS (
+      SELECT c.principal_type, c.principal_id, c.window, c.max_tokens, c.max_cost_micros,
+        b.window_start, b.window_end,
+        ${usageLimitTokensSql} AS used_tokens,
+        ${usageLimitPendingTokensSql} AS pending_tokens,
+        ${usageLimitCostSql} AS used_cost_raw,
+        COALESCE((SELECT SUM(r.cost_micros) FROM usage_limit_reservations r
+          WHERE r.principal_type = c.principal_type AND r.principal_id = c.principal_id
+            AND r.window = c.window AND r.window_start = b.window_start AND r.expires_at > p.now), 0) AS pending_cost_micros,
+        ${usageLimitHasUnpricedSql} AS has_unpriced
+      FROM usage_limits c CROSS JOIN p JOIN bounds b ON b.window = c.window
+      WHERE (c.principal_type = 'key' AND c.principal_id = p.key_id)
+        OR (c.principal_type = 'user' AND c.principal_id = CAST(p.user_id AS TEXT))
+    ), normalized AS (
+      SELECT c.*,
+        CAST(used_cost_raw AS INTEGER) + CASE WHEN CAST(used_cost_raw AS INTEGER) < used_cost_raw THEN 1 ELSE 0 END AS used_cost_micros
+      FROM current_limits c
+    ), ready AS (
+      SELECT c.*,
+        CASE WHEN c.max_tokens IS NULL THEN p.input_tokens + COALESCE(p.output_tokens, 0)
+          WHEN p.output_tokens IS NULL THEN c.max_tokens - c.used_tokens - c.pending_tokens
+          ELSE p.input_tokens + p.output_tokens END AS reserve_tokens,
+        CASE WHEN c.max_cost_micros IS NULL THEN 0
+          WHEN p.output_tokens IS NULL THEN c.max_cost_micros - c.used_cost_micros - c.pending_cost_micros
+          ELSE p.fixed_cost_micros END AS reserve_cost_micros,
+        p.input_tokens, p.output_tokens, p.input_cost_micros, p.price_available, p.reservation_id, p.expires_at
+      FROM normalized c CROSS JOIN p
+    )`;
+    const tokenDenial = `(r.max_tokens IS NOT NULL AND (
+      r.reserve_tokens < 0 OR r.used_tokens + r.pending_tokens + r.reserve_tokens > r.max_tokens
+      OR (r.output_tokens IS NULL AND r.input_tokens > r.max_tokens - r.used_tokens - r.pending_tokens)
+    ))`;
+    const costDenial = `(r.max_cost_micros IS NOT NULL AND (
+      r.has_unpriced OR r.price_available = 0 OR r.reserve_cost_micros < 0
+      OR r.used_cost_micros + r.pending_cost_micros + r.reserve_cost_micros > r.max_cost_micros
+      OR (r.output_tokens IS NULL AND r.input_cost_micros > r.max_cost_micros - r.used_cost_micros - r.pending_cost_micros)
+    ))`;
+    const query = `${ctes}
+    INSERT INTO usage_limit_reservations (reservation_id, principal_type, principal_id, window, window_start, expires_at, tokens, cost_micros)
+    SELECT reservation_id, principal_type, principal_id, window, window_start, expires_at, reserve_tokens, reserve_cost_micros
+    FROM ready
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ready r WHERE ${tokenDenial} OR ${costDenial}
+    )`;
+    const binds = [
+      input.id, input.now, input.expiresAt, input.keyId, input.userId,
+      input.inputTokens, input.outputTokens, inputCostMicros, fixedCostMicros, input.maxUnitPriceUsd === null ? 0 : 1,
+      bounds.hour.start, bounds.hour.end, bounds.day.start, bounds.day.end, bounds.month.start, bounds.month.end,
+    ] as const;
+    const result = await this.db.prepare(query).bind(...binds).run();
+    if (result.meta.changes === undefined) throw new Error('SQL runtime did not report usage-limit reservation row count');
+    if (result.meta.changes === applicable.length) return { ok: true, limited: true };
+    if (result.meta.changes !== 0) {
+      await this.release(input.id);
+      throw new Error('Usage-limit reservation insert was only partially applied');
+    }
+
+    const denial = await this.db.prepare(`${ctes}
+      SELECT
+        MAX(CASE WHEN ${tokenDenial} THEN 1 ELSE 0 END) AS token_denied,
+        MAX(CASE WHEN ${costDenial} THEN 1 ELSE 0 END) AS cost_denied,
+        MAX(CASE WHEN r.max_cost_micros IS NOT NULL AND r.has_unpriced THEN 1 ELSE 0 END) AS history_unpriced
+      FROM ready r`).bind(...binds).first<{ token_denied: number; cost_denied: number; history_unpriced: number }>();
+    if (denial === null) throw new Error('Usage-limit admission did not return a denial reason');
+    if (denial.history_unpriced === 1) return { ok: false, reason: 'historical-cost-unpriced' };
+    if (denial.token_denied === 1) return { ok: false, reason: 'tokens' };
+    if (denial.cost_denied === 1) return { ok: false, reason: 'cost' };
+    throw new Error('Usage-limit admission rejected without a matching policy denial');
+  }
+
+  async release(id: string): Promise<void> {
+    await this.db.prepare('DELETE FROM usage_limit_reservations WHERE reservation_id = ?').bind(id).run();
+  }
+
+  async deleteAll(): Promise<void> {
+    await runStatements(this.db, [
+      this.db.prepare('DELETE FROM usage_limits'),
+      this.db.prepare('DELETE FROM usage_limit_reservations'),
+    ]);
   }
 }
 
@@ -1164,7 +1417,7 @@ interface UsageMetricRow {
 }
 interface UsageRequestRow {
   key_id: string; model: string; upstream: string | null; model_key: string; hour: string;
-  pricing_selector: string; requests: number;
+  pricing_selector: string; requests: number; unmetered_requests: number | null;
 }
 
 type UsageIdentityRow = Pick<UsageMetricRow, 'key_id' | 'model' | 'upstream' | 'model_key' | 'hour' | 'pricing_selector'>;
@@ -1193,7 +1446,11 @@ const assembleUsageRecords = (metrics: readonly UsageMetricRow[], requests: read
     if (existing) throw new Error(`Duplicate stored usage metric: ${metric}`);
     record.metrics.push({ metric, quantity, unitPrice });
   }
-  for (const row of requests) ensureRecord(row).requests = row.requests;
+  for (const row of requests) {
+    const record = ensureRecord(row);
+    record.requests = row.requests;
+    record.unmeteredRequests = row.unmetered_requests;
+  }
   return [...byBucket.values()].sort((a, b) => a.hour.localeCompare(b.hour));
 };
 
@@ -1516,7 +1773,7 @@ const MODELS_CACHE_EPOCH_SQL = `CASE
   ELSE 0
 END`;
 
-const UPSTREAM_COLUMNS = 'id, provider, name, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, models_cache_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, hue';
+const UPSTREAM_COLUMNS = 'id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, models_cache_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue, logo_url';
 
 class SqlUpstreamRepo implements UpstreamRepo {
   constructor(private db: SqlDatabase) {}
@@ -1538,12 +1795,13 @@ class SqlUpstreamRepo implements UpstreamRepo {
 
   async insertForModels(upstream: UpstreamRecord): Promise<StoredUpstreamRecord | null> {
     const row = await this.db
-      .prepare(`INSERT INTO upstreams (id, provider, name, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, hue) VALUES (?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING
+      .prepare(`INSERT INTO upstreams (id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING
         RETURNING ${UPSTREAM_COLUMNS}`)
       .bind(
         upstream.id,
         upstream.kind,
         upstream.name,
+        sqliteBoolean(upstream.userVisible ?? false),
         upstream.enabled ? 1 : 0,
         upstream.sortOrder,
         upstream.createdAt,
@@ -1554,7 +1812,9 @@ class SqlUpstreamRepo implements UpstreamRepo {
         JSON.stringify(normalizeDisabledPublicModelIds(upstream.disabledPublicModelIds)),
         JSON.stringify(normalizeProxyFallbackList(upstream.proxyFallbackList)),
         upstream.modelPrefix === null ? null : JSON.stringify(upstream.modelPrefix),
+        encodeUpstreamModelMetadataDefaults(upstream.modelMetadataDefaults),
         upstream.hue,
+        upstream.logoUrl ?? null,
       )
       .first<UpstreamRow>();
     return row === null ? null : toUpstreamRecord(row);
@@ -1580,6 +1840,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
     const stored = toUpstreamRecord(storedRow);
     const comparable = (record: StoredUpstreamRecord): StoredUpstreamRecord => ({
       ...record,
+      logoUrl: record.logoUrl ?? null,
       modelsCache: null,
       state: replaceState ? record.state : null,
     });
@@ -1595,6 +1856,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         `UPDATE upstreams SET
            provider = ?,
            name = ?,
+           user_visible = ?,
            enabled = ?,
            sort_order = ?,
            updated_at = ?,
@@ -1605,10 +1867,13 @@ class SqlUpstreamRepo implements UpstreamRepo {
            disabled_public_model_ids = ?,
            proxy_fallback_list_json = ?,
            model_prefix_json = ?,
-           hue = ?${modelsCacheUpdate}
+           model_metadata_defaults_json = ?,
+           hue = ?,
+           logo_url = ?${modelsCacheUpdate}
          WHERE id = ?
            AND provider = ?
            AND name = ?
+           AND user_visible = ?
            AND enabled = ?
            AND sort_order = ?
            AND updated_at = ?
@@ -1619,12 +1884,15 @@ class SqlUpstreamRepo implements UpstreamRepo {
            AND disabled_public_model_ids = ?
            AND proxy_fallback_list_json = ?
            AND model_prefix_json IS ?
+           AND model_metadata_defaults_json = ?
            AND hue = ?
+           AND logo_url IS ?
          RETURNING ${UPSTREAM_COLUMNS}`,
       )
       .bind(
         upstream.kind,
         upstream.name,
+        sqliteBoolean(upstream.userVisible ?? false),
         upstream.enabled ? 1 : 0,
         upstream.sortOrder,
         upstream.updatedAt,
@@ -1636,10 +1904,13 @@ class SqlUpstreamRepo implements UpstreamRepo {
         JSON.stringify(normalizeDisabledPublicModelIds(upstream.disabledPublicModelIds)),
         JSON.stringify(normalizeProxyFallbackList(upstream.proxyFallbackList)),
         upstream.modelPrefix === null ? null : JSON.stringify(upstream.modelPrefix),
+        encodeUpstreamModelMetadataDefaults(upstream.modelMetadataDefaults),
         upstream.hue,
+        upstream.logoUrl ?? null,
         upstream.id,
         previous.kind,
         previous.name,
+        sqliteBoolean(previous.userVisible),
         previous.enabled ? 1 : 0,
         previous.sortOrder,
         previous.updatedAt,
@@ -1651,7 +1922,9 @@ class SqlUpstreamRepo implements UpstreamRepo {
         storedRow.disabled_public_model_ids,
         storedRow.proxy_fallback_list_json,
         storedRow.model_prefix_json,
+        storedRow.model_metadata_defaults_json,
         previous.hue,
+        previous.logoUrl ?? null,
       )
       .first<UpstreamRow>();
     return row === null ? null : toUpstreamRecord(row);
@@ -1764,6 +2037,7 @@ interface UpstreamRow {
   id: string;
   provider: string;
   name: string;
+  user_visible: number;
   enabled: number;
   sort_order: number;
   created_at: string;
@@ -1776,12 +2050,15 @@ interface UpstreamRow {
   disabled_public_model_ids: string;
   proxy_fallback_list_json: string;
   model_prefix_json: string | null;
+  model_metadata_defaults_json: string;
   hue: number;
+  logo_url: string | null;
 }
 
 const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
   const config = decodeUpstreamConfig(row.config_json, row.id);
   const state = row.state_json === null ? null : decodeUpstreamState(row.state_json, row.id);
+  const modelMetadataDefaults = decodeUpstreamModelMetadataDefaults(row.model_metadata_defaults_json, row.id);
   if (!Number.isSafeInteger(row.config_version) || row.config_version < 1) {
     throw new Error(`Invalid upstream config version for ${row.id}`);
   }
@@ -1791,6 +2068,7 @@ const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
     kind: parseUpstreamKind(row.id, row.provider),
     modelsCache: parseModelsCache(row),
     name: row.name,
+    userVisible: row.user_visible !== 0,
     enabled: row.enabled !== 0,
     sortOrder: row.sort_order,
     createdAt: row.created_at,
@@ -1802,7 +2080,9 @@ const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
     disabledPublicModelIds: parseDisabledPublicModelIds(row.id, row.disabled_public_model_ids),
     proxyFallbackList: parseProxyFallbackList(row.id, row.proxy_fallback_list_json),
     modelPrefix: parseModelPrefix(row.id, row.model_prefix_json),
+    ...(modelMetadataDefaults !== undefined ? { modelMetadataDefaults } : {}),
     hue: parseUpstreamHue(row.id, row.hue),
+    logoUrl: parseUpstreamLogoUrl(row.id, row.logo_url),
   };
 };
 
@@ -2076,6 +2356,7 @@ interface ModelAliasRow {
   name: string;
   kind: string;
   selection: string;
+  enabled: number;
   display_name: string | null;
   visible_in_models_list: number;
   targets: string;
@@ -2085,13 +2366,14 @@ interface ModelAliasRow {
   updated_at: string;
 }
 
-const MODEL_ALIAS_COLUMNS = 'id, name, kind, selection, display_name, visible_in_models_list, targets, announced_metadata_json, sort_order, created_at, updated_at';
+const MODEL_ALIAS_COLUMNS = 'id, name, kind, selection, enabled, display_name, visible_in_models_list, targets, announced_metadata_json, sort_order, created_at, updated_at';
 
 const toModelAliasRecord = (row: ModelAliasRow): ModelAliasRecord => ({
   id: row.id,
   name: row.name,
   kind: parseModelKind(row.kind, `model_aliases.kind for ${row.name}`),
   selection: row.selection as AliasSelection,
+  enabled: row.enabled !== 0,
   displayName: row.display_name,
   visibleInModelsList: row.visible_in_models_list !== 0,
   targets: decodeAliasTargets(row.targets, row.id),
@@ -2133,13 +2415,14 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
   async insert(record: ModelAliasRecord): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO model_aliases (${MODEL_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO model_aliases (${MODEL_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         record.id,
         record.name,
         record.kind,
         record.selection,
+        record.enabled ? 1 : 0,
         record.displayName,
         record.visibleInModelsList ? 1 : 0,
         encodeAliasTargets(record.targets),
@@ -2158,6 +2441,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
            name = ?,
            kind = ?,
            selection = ?,
+           enabled = ?,
            display_name = ?,
            visible_in_models_list = ?,
            targets = ?,
@@ -2171,6 +2455,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
         record.name,
         record.kind,
         record.selection,
+        record.enabled ? 1 : 0,
         record.displayName,
         record.visibleInModelsList ? 1 : 0,
         encodeAliasTargets(record.targets),
@@ -2324,6 +2609,8 @@ export class SqlRepo implements Repo {
   oauth2Config: OAuth2ConfigRepo;
   apiKeys: ApiKeyRepo;
   usage: UsageRepo;
+  usageLimits: UsageLimitsRepo;
+  usagePricingBackfill: UsagePricingBackfillRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
@@ -2338,13 +2625,15 @@ export class SqlRepo implements Repo {
   scheduledMaintenance: ScheduledMaintenanceRepo;
   agentSetup: AgentSetupRepository;
 
-  constructor(db: SqlDatabase) {
+  constructor(db: SqlDatabase, databaseIdentity: DatabaseIdentity = { kind: 'runtime', target: 'unspecified', stable: false }) {
     this.users = new SqlUsersRepo(db);
     this.sessions = new SqlSessionsRepo(db);
     this.oauth2 = new SqlOAuth2Repo(db);
     this.oauth2Config = new SqlOAuth2ConfigRepo(db);
     this.apiKeys = new SqlApiKeyRepo(db);
     this.usage = new SqlUsageRepo(db);
+    this.usageLimits = new SqlUsageLimitsRepo(db);
+    this.usagePricingBackfill = new SqlUsagePricingBackfillRepo(db, databaseIdentity);
     this.webSearchUsage = new SqlWebSearchUsageRepo(db);
     this.performance = new SqlPerformanceRepo(db);
     this.webSearchConfig = new SqlWebSearchConfigRepo(db);

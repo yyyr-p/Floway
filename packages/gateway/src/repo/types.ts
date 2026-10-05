@@ -1,11 +1,13 @@
+import type { UpstreamModelAccessRule } from './model-access.ts';
 import type { WebSearchConfig, WebSearchProviderName } from '../shared/web-search-providers.ts';
+import type { ApplyResult, BackfillIntent, BackfillPlan, DatabaseIdentity, InspectionResult } from '../usage-pricing-backfill/index.ts';
 import type { AgentSetupRepository } from '@floway-dev/agent-setup';
 import type { AliasSelection, AliasTarget, AnnouncedMetadata, BillingMetric, DecimalString, ModelKind, PricingSelector } from '@floway-dev/protocols/common';
 import type { PerformanceTelemetryContext, UpstreamModelsCache, UpstreamRecord } from '@floway-dev/provider';
 
 // Provider config, flag overrides, and catalog transport advance this version;
 // runtime state and non-model metadata do not.
-export type StoredUpstreamRecord = UpstreamRecord & { configVersion: number };
+export type StoredUpstreamRecord = UpstreamRecord & { configVersion: number; userVisible: boolean };
 
 export interface ApiKey {
   id: string;
@@ -21,6 +23,9 @@ export interface ApiKey {
   // When both levels carry a list the effective list is their intersection
   // taken in this order, so a key that sets one also decides the priority.
   upstreamIds: string[] | null;
+  // Per-upstream model constraints add to the user-level policy; absent rules
+  // inherit. Legacy rows and backups default to no key-level constraint.
+  upstreamModelAccess?: UpstreamModelAccessRule[];
   deletedAt: string | null;
   // null = dump capture disabled; positive integer = seconds of retention.
   dumpRetentionSeconds: number | null;
@@ -42,6 +47,8 @@ export interface User {
   // order carries the intersection, so this order applies only to requests
   // whose key sets no list of its own.
   upstreamIds: string[] | null;
+  // Per-upstream model rules. No rule means inherit the unrestricted default.
+  upstreamModelAccess?: UpstreamModelAccessRule[];
   createdAt: string;
   deletedAt: string | null;
 }
@@ -64,7 +71,47 @@ export interface UsageRecord {
   // object. `{}` is the base coordinate.
   pricingSelector: PricingSelector;
   requests: number;
+  // Exact count of requests in this bucket whose upstream supplied no usage
+  // metrics. `null` means the count cannot be recovered from legacy history.
+  unmeteredRequests?: number | null;
   metrics: UsageMetricRecord[];
+}
+
+export type UsageLimitPrincipalType = 'user' | 'key';
+export type UsageLimitWindow = 'hour' | 'day' | 'month';
+
+export interface UsageLimit {
+  principalType: UsageLimitPrincipalType;
+  principalId: number | string;
+  window: UsageLimitWindow;
+  maxTokens: number | null;
+  // USD with at most six fractional digits. Reservation accounting rounds
+  // observed and estimated costs up to the nearest micro-dollar.
+  maxCostUsd: DecimalString | null;
+}
+
+export interface UsageLimitReservationInput {
+  id: string;
+  keyId: string;
+  userId: number;
+  now: string;
+  expiresAt: string;
+  inputTokens: number;
+  outputTokens: number | null;
+  maxUnitPriceUsd: DecimalString | null;
+}
+
+export type UsageLimitReservationResult =
+  | { ok: true; limited: boolean }
+  | { ok: false; reason: 'tokens' | 'cost' | 'historical-cost-unpriced' };
+
+export interface UsageLimitsRepo {
+  list(): Promise<UsageLimit[]>;
+  save(limit: UsageLimit): Promise<void>;
+  delete(principalType: UsageLimitPrincipalType, principalId: number | string, window: UsageLimitWindow): Promise<boolean>;
+  reserve(input: UsageLimitReservationInput): Promise<UsageLimitReservationResult>;
+  release(id: string): Promise<void>;
+  deleteAll(): Promise<void>;
 }
 
 export type UsageOverviewGroupBy = 'keyId' | 'userId' | 'model' | 'upstream';
@@ -265,7 +312,7 @@ export interface ApiKeyRepo {
 
 export type ApiKeyUpdate = Partial<Pick<
   ApiKey,
-  'name' | 'key' | 'lastUsedAt' | 'upstreamIds' | 'dumpRetentionSeconds' | 'openaiResponsesRetentionSeconds'
+  'name' | 'key' | 'lastUsedAt' | 'upstreamIds' | 'upstreamModelAccess' | 'dumpRetentionSeconds' | 'openaiResponsesRetentionSeconds'
 >>;
 
 export interface UsersRepo {
@@ -305,6 +352,13 @@ export interface UsageRepo {
   // Replacement upsert: quantities and unit prices are overwritten from the record.
   set(record: UsageRecord): Promise<void>;
   deleteAll(): Promise<void>;
+}
+
+export interface UsagePricingBackfillRepo {
+  inspect(): Promise<InspectionResult>;
+  plan(intent: BackfillIntent): Promise<BackfillPlan>;
+  apply(plan: BackfillPlan): Promise<ApplyResult>;
+  readonly databaseIdentity: DatabaseIdentity;
 }
 
 export interface WebSearchUsageRepo {
@@ -446,6 +500,8 @@ export interface ModelAliasRecord {
   name: string;
   kind: ModelKind;
   selection: AliasSelection;
+  // A disabled alias keeps its configuration but does not resolve its targets.
+  enabled: boolean;
   // null = derive at render time from targets + rules.
   displayName: string | null;
   // Listing-only visibility: filtered by `synthesizeListedAliases` before
@@ -566,6 +622,8 @@ export interface Repo {
   users: UsersRepo;
   sessions: SessionsRepo;
   usage: UsageRepo;
+  usageLimits: UsageLimitsRepo;
+  usagePricingBackfill: UsagePricingBackfillRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;

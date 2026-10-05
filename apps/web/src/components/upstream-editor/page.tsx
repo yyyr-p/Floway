@@ -13,6 +13,7 @@ import {
   hasUnsavedDiscoveryInputs,
   isPersisted,
   modelPrefixIsValid,
+  parseModelMetadataDefaults,
   previewDraftModelCatalog,
   updateBody,
   valuesFromRecord,
@@ -36,6 +37,7 @@ import { useOutcomeToasts } from '../ui/outcome-toast';
 import { Panel } from '../ui/panel';
 import { useDialogInvocation } from '../ui/use-dialog-invocation';
 import { useRefresh } from '../ui/use-refresh';
+import { normalizeUpstreamLogoUrl } from '@floway-dev/provider/model';
 
 const { Button, Spinner, Text } = fluentComponents;
 
@@ -76,8 +78,23 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     name: z.string().trim().min(1, 'dashboard.upstreamEditor.validation.name'),
     enabled: z.boolean(),
     hue: z.number(),
+    logoUrl: z.string().trim().refine(value => {
+      try {
+        normalizeUpstreamLogoUrl(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'dashboard.upstreamEditor.validation.logoUrl'),
     proxyFallbackList: z.any(),
     modelPrefix: z.any(),
+    modelMetadataDefaults: z.string().superRefine((value, ctx) => {
+      try {
+        parseModelMetadataDefaults(value);
+      } catch {
+        ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.validation.metadataDefaults' });
+      }
+    }),
     disabledPublicModelIds: z.array(z.string()),
     flagOverrides: z.any(),
     config: z.any(),
@@ -90,6 +107,16 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     if (record.kind === 'custom') {
       const config = values.config as Extract<UpstreamRecord, { kind: 'custom' }>['config'];
       refineCustomIngressHeaderRules(config.ingressHeadersRules, ctx);
+      const customDraft = values.config as unknown as Record<string, unknown>;
+      for (const field of ['usageProbeJson', 'actionsJson']) {
+        const json = customDraft[field];
+        if (typeof json !== 'string' || json.trim() === '') continue;
+        try {
+          JSON.parse(json);
+        } catch {
+          ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.management.invalidJson', path: ['config', field] });
+        }
+      }
     }
     // An upstream that already exists keeps the credential it was created
     // with, and the editor never sends it back.

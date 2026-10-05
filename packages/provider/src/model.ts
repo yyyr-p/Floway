@@ -1,5 +1,5 @@
 import type { FlagId, FlagOverrides } from './flags.ts';
-import type { UpstreamChatModelConfig, UpstreamModelConfig } from './model-config.ts';
+import type { ModelMetadataDefaults, UpstreamChatModelConfig, UpstreamModelConfig } from './model-config.ts';
 import type { ModelPrefixConfig } from './model-prefix.ts';
 import type { AliasSelection, AliasTarget, ModelKind, ModelEndpoints, ModelPricing, OpaqueBlobCompatibilityScope, PublicModelLimits, RerankTarget } from '@floway-dev/protocols/common';
 
@@ -32,6 +32,28 @@ export const normalizeUpstreamHue = (value: unknown): number => {
     throw new Error(`upstreamHue must be an integer in [0, ${UPSTREAM_HUE_DEGREES}), got ${value}`);
   }
   return value;
+};
+
+// Custom upstream marks are loaded by the operator's browser, so they must be
+// absolute HTTPS URLs. In particular, data/blob/javascript URLs never reach an
+// image element. Credentials are rejected to keep secrets out of rendered URLs.
+export const normalizeUpstreamLogoUrl = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('logoUrl must be a string or null');
+  const input = value.trim();
+  if (input === '') return null;
+  if (input.length > 2048 || /\s/.test(input)) throw new Error('logoUrl must be at most 2048 characters and contain no whitespace');
+
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch (cause) {
+    throw new Error('logoUrl must be an absolute HTTPS URL', { cause });
+  }
+  if (url.protocol !== 'https:' || url.hostname === '' || url.username !== '' || url.password !== '') {
+    throw new Error('logoUrl must be an absolute HTTPS URL without embedded credentials');
+  }
+  return url.href;
 };
 
 // One entry in `UpstreamRecord.proxyFallbackList`. `id` is the proxy id from
@@ -67,11 +89,18 @@ export interface UpstreamRecord {
   id: string;
   kind: UpstreamProviderKind;
   name: string;
+  // Controls discovery in the non-admin upstream directory and picker only;
+  // model publication and request routing remain governed by `enabled` and
+  // the caller's upstream access policy.
+  userVisible?: boolean;
   enabled: boolean;
   sortOrder: number;
   createdAt: string;
   updatedAt: string;
   config: unknown;
+  // Operator-provided fallback facts for incomplete model catalogs. Missing
+  // leaves are filled at catalog assembly; explicit provider values win.
+  modelMetadataDefaults?: ModelMetadataDefaults;
   // Gateway-written state that can change without an operator editing config;
   // null when a provider has no runtime state.
   state: unknown;
@@ -97,6 +126,9 @@ export interface UpstreamRecord {
   // upstream carries its own; the dashboard derives the whole badge from it.
   // Wire validation lives in the control-plane Zod schema.
   hue: number;
+  // Optional only for in-memory fixtures and records built by older callers;
+  // persisted rows and control-plane responses always hydrate this as null.
+  logoUrl?: string | null;
 }
 
 // Public identity + capability surface shared by `InternalModel` (the merged,
@@ -180,6 +212,9 @@ export interface InternalAliasedFrom {
 // ever see their own emission — the surrounding `InternalModel` map is
 // assembled by the registry.
 export interface ProviderModel extends ModelMetadata {
+  // Original public catalog id before Floway's optional upstream prefix
+  // projects another inbound id onto this model.
+  catalogModelId?: string;
   // The provider-neutral upstream catalog id shown on auto rows and used when
   // an opaque-blob scope omits its key. A provider that selects a request-time
   // wire variant still keeps that invocation detail in providerData.

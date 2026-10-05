@@ -110,6 +110,65 @@ test('POST /api/upstreams creates custom upstreams and redacts bearer tokens', a
   assertEquals(items[0].config.apiKey, undefined);
 });
 
+test('upstream metadata defaults are validated, persisted, patchable, and clearable', async () => {
+  const { adminSession, repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  const modelMetadataDefaults = {
+    limits: { max_context_window_tokens: 0, max_output_tokens: 4_096 },
+    chat: {
+      modalities: { input: ['text'], output: ['text'] },
+      image_detail_original: false,
+      reasoning: { adaptive: false, budget_tokens: { min: 0, max: 8_000 } },
+    },
+  };
+
+  const invalid = await requestApp('/api/upstreams', authed(adminSession, createBody({
+    model_metadata_defaults: { chat: { modalities: { input: [], output: ['text'] } } },
+  })));
+  assertEquals(invalid.status, 400);
+
+  const createdResponse = await requestApp('/api/upstreams', authed(adminSession, createBody({ model_metadata_defaults: modelMetadataDefaults })));
+  assertEquals(createdResponse.status, 201);
+  const created = await createdResponse.json() as JsonObject;
+  assertEquals(created.model_metadata_defaults, modelMetadataDefaults);
+  assertEquals((await repo.upstreams.getById(created.id))?.modelMetadataDefaults, modelMetadataDefaults);
+
+  const updatedResponse = await requestApp(`/api/upstreams/${created.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
+    body: JSON.stringify({ model_metadata_defaults: {} }),
+  });
+  assertEquals(updatedResponse.status, 200);
+  const updated = await updatedResponse.json() as JsonObject;
+  assertEquals(updated.model_metadata_defaults, {});
+  assertEquals((await repo.upstreams.getById(created.id))?.modelMetadataDefaults, undefined);
+});
+
+test('upstream logos persist through create and patch, while unsafe schemes are rejected', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+
+  const create = await requestApp('/api/upstreams', authed(adminSession, createBody({ logo_url: ' https://EXAMPLE.com/brand.svg ' })));
+  assertEquals(create.status, 201);
+  const created = await create.json() as JsonObject;
+  assertEquals(created.logo_url, 'https://example.com/brand.svg');
+  assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, 'https://example.com/brand.svg');
+
+  const patchLogo = (logoUrl: string | null) => requestApp(`/api/upstreams/${created.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
+    body: JSON.stringify({ logo_url: logoUrl }),
+  });
+  assertEquals((await patchLogo('data:image/svg+xml,<svg/>')).status, 400);
+  assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, 'https://example.com/brand.svg');
+
+  const update = await patchLogo('https://cdn.example.com/new.svg');
+  assertEquals(update.status, 200);
+  assertEquals((await update.json() as JsonObject).logo_url, 'https://cdn.example.com/new.svg');
+  assertEquals((await patchLogo(null)).status, 200);
+  assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, null);
+});
+
 // `openaiCompletions` must survive request validation as a complete endpoint map;
 // stripping it would make this otherwise valid model fail provider validation.
 test('POST /api/upstreams accepts a custom model whose only endpoint is /completions', async () => {
@@ -530,6 +589,7 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
     sortOrder: 5,
     createdAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:00.000Z',
+    userVisible: true,
     flagOverrides: {},
     disabledPublicModelIds: [],
     proxyFallbackList: [],
@@ -551,8 +611,8 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
   });
 
   const expected = [
-    { id: 'up_copilot', name: 'GitHub Copilot (tester)', kind: 'copilot', enabled: true, hue: 210, cachedModelCount: null },
-    { id: 'up_disabled_custom', name: 'Disabled Custom', kind: 'custom', enabled: false, hue: 210, cachedModelCount: 2 },
+    { id: 'up_copilot', name: 'GitHub Copilot (tester)', kind: 'copilot', enabled: true, hue: 210, logoUrl: null, cachedModelCount: null },
+    { id: 'up_disabled_custom', name: 'Disabled Custom', kind: 'custom', enabled: false, hue: 210, logoUrl: null, cachedModelCount: 2 },
   ];
 
   const adminResp = await requestApp('/api/upstream-options', { headers: { 'x-floway-session': adminSession } });
@@ -562,11 +622,75 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
   const userResp = await requestApp('/api/upstream-options', { headers: { 'x-api-key': apiKey.key } });
   assertEquals(userResp.status, 200);
   const userBody = await userResp.json() as Array<Record<string, unknown>>;
-  assertEquals(userBody, expected);
+  assertEquals(userBody, [expected[1]]);
   // No secret-bearing or operator-only fields leak through this endpoint.
   for (const row of userBody) {
-    assertEquals(Object.keys(row).sort(), ['cachedModelCount', 'enabled', 'hue', 'id', 'kind', 'name']);
+    assertEquals(Object.keys(row).sort(), ['cachedModelCount', 'enabled', 'hue', 'id', 'kind', 'logoUrl', 'name']);
   }
+});
+
+test('GET /api/upstream-directory returns only opted-in identity fields while admin management stays full', async () => {
+  const { repo, adminSession, apiKey } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_visible',
+    name: 'Shared endpoint',
+    userVisible: true,
+    config: {
+      baseUrl: 'https://sensitive.internal.example',
+      authStyle: 'bearer',
+      apiKey: 'sk-internal-secret',
+      ingressHeadersRules: [],
+      endpoints: { openaiChatCompletions: {} },
+    },
+  }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_hidden',
+    name: 'Private endpoint',
+    userVisible: false,
+    config: {
+      baseUrl: 'https://hidden.internal.example',
+      authStyle: 'bearer',
+      apiKey: 'sk-hidden-secret',
+      ingressHeadersRules: [],
+      endpoints: { openaiChatCompletions: {} },
+    },
+  }));
+
+  const adminList = await requestApp('/api/upstreams', { headers: { 'x-floway-session': adminSession } });
+  assertEquals(adminList.status, 200);
+  const adminRows = await adminList.json() as Array<Record<string, any>>;
+  assertEquals(adminRows.map(row => [row.id, row.user_visible]), [['up_visible', true], ['up_hidden', false]]);
+  assertEquals(adminRows[0].config.baseUrl, 'https://sensitive.internal.example');
+
+  const deniedList = await requestApp('/api/upstreams', { headers: { 'x-api-key': apiKey.key } });
+  assertEquals(deniedList.status, 403);
+
+  const directory = await requestApp('/api/upstream-directory', { headers: { 'x-api-key': apiKey.key } });
+  assertEquals(directory.status, 200);
+  const rows = await directory.json() as Array<Record<string, unknown>>;
+  assertEquals(rows, [{ id: 'up_visible', name: 'Shared endpoint', kind: 'custom', hue: 210 }]);
+  assertEquals(Object.keys(rows[0]).sort(), ['hue', 'id', 'kind', 'name']);
+  const bodyText = JSON.stringify(rows);
+  for (const secret of ['sensitive.internal.example', 'sk-internal-secret', 'hidden.internal.example', 'sk-hidden-secret']) {
+    assertEquals(bodyText.includes(secret), false);
+  }
+
+  const deniedEdit = await requestApp('/api/upstreams/up_hidden', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey.key },
+    body: JSON.stringify({ user_visible: true }),
+  });
+  assertEquals(deniedEdit.status, 403);
+
+  const adminEdit = await requestApp('/api/upstreams/up_hidden', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
+    body: JSON.stringify({ user_visible: true }),
+  });
+  assertEquals(adminEdit.status, 200);
+  assertEquals((await adminEdit.json() as Record<string, unknown>).user_visible, true);
+  assertEquals((await repo.upstreams.getById('up_hidden'))?.userVisible, true);
 });
 
 test('POST /api/upstreams/preview-models fetches a draft custom upstream model list', async () => {

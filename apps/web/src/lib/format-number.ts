@@ -15,6 +15,36 @@ export const formatBytes = (value: number, locale: string): string => {
 export const formatCompactCount = (value: number, locale: string): string =>
   new Intl.NumberFormat(locale, { notation: 'compact', maximumFractionDigits: 1 }).format(value);
 
+const tokenScales = [
+  { factor: 1_000, suffix: 'K' },
+  { factor: 1_000_000, suffix: 'M' },
+  { factor: 1_000_000_000, suffix: 'B' },
+  { factor: 1_000_000_000_000, suffix: 'T' },
+] as const;
+const compactPromotionThreshold = 1_000 - 0.5 / 10;
+
+// The scale is fixed to base 1000; only the mantissa follows the active locale.
+export const formatCompactTokenCount = (value: number, locale: string): string => {
+  const magnitude = Math.abs(value);
+  let scaleIndex = -1;
+  for (let index = tokenScales.length - 1; index >= 0; index -= 1) {
+    if (magnitude >= tokenScales[index]!.factor) {
+      scaleIndex = index;
+      break;
+    }
+  }
+  if (scaleIndex < 0) {
+    if (magnitude < compactPromotionThreshold) return decimals(value, 1, locale);
+    scaleIndex = 0;
+  }
+
+  while (scaleIndex < tokenScales.length - 1 && magnitude / tokenScales[scaleIndex]!.factor >= compactPromotionThreshold) {
+    scaleIndex += 1;
+  }
+  const scale = tokenScales[scaleIndex]!;
+  return `${decimals(value / scale.factor, 1, locale)}${scale.suffix}`;
+};
+
 export const formatNumber = (value: number, locale: string): string =>
   new Intl.NumberFormat(locale).format(value);
 

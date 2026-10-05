@@ -1,9 +1,15 @@
 import type { ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
+import type { UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import type { ModelAliasesRepo } from '../../repo/types.ts';
-import { enumerateAddressableModelIds, listedRealModels } from '../shared/listing/addressable.ts';
+import { enumerateAddressableModelIds, listedRealModels, type AddressableIdEntry } from '../shared/listing/addressable.ts';
 import { mergeAliasesIntoModels } from '../shared/listing/alias.ts';
 import type { PublicModel, PublicModelsResponse } from '@floway-dev/protocols/common';
 import type { InternalModel } from '@floway-dev/provider';
+
+export interface ListedModelSet {
+  readonly addressable: readonly AddressableIdEntry[];
+  readonly models: readonly InternalModel[];
+}
 
 // Project an `InternalModel` onto the public-facing `/v1/models` wire DTO.
 // `endpoints` rides through as the merged upstream wire surface — the
@@ -41,18 +47,19 @@ export const toPublicModel = (model: InternalModel): PublicModel => {
   return info;
 };
 
-export const loadModels = async (
+export const loadListedModels = async (
   upstreamFilter: readonly string[] | null,
   scheduleRefresh: ModelsRefreshScheduler,
   aliasRepo: ModelAliasesRepo,
-): Promise<PublicModelsResponse> => {
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
+): Promise<ListedModelSet> => {
   // Data-plane responses always narrow `aliasedFrom.targets` to the
   // caller's reachable set (and never expose typo'd / removed target
   // ids), but the alias's metadata is still computed gateway-wide so
   // every caller sees the same numbers.
   const [callerAddressable, gatewayAddressable, aliases] = await Promise.all([
-    enumerateAddressableModelIds(upstreamFilter, scheduleRefresh),
-    upstreamFilter === null
+    enumerateAddressableModelIds(upstreamFilter, scheduleRefresh, undefined, modelAccess),
+    upstreamFilter === null && modelAccess.length === 0
       ? Promise.resolve(null)
       : enumerateAddressableModelIds(null, scheduleRefresh),
     aliasRepo.list(),
@@ -66,7 +73,17 @@ export const loadModels = async (
     aliases,
     narrowTargets: true,
   });
-  const data = merged.map(toPublicModel);
+  return { addressable: callerAddressable, models: merged };
+};
+
+export const loadModels = async (
+  upstreamFilter: readonly string[] | null,
+  scheduleRefresh: ModelsRefreshScheduler,
+  aliasRepo: ModelAliasesRepo,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
+): Promise<PublicModelsResponse> => {
+  const { models } = await loadListedModels(upstreamFilter, scheduleRefresh, aliasRepo, modelAccess);
+  const data = models.map(toPublicModel);
   return {
     object: 'list',
     has_more: false,

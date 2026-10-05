@@ -38,7 +38,7 @@ export type {
   UpstreamProviderKind,
   UpstreamRecord,
 } from './model.ts';
-export { ALL_PROVIDER_KINDS, assertUpstreamProviderKind, normalizeUpstreamHue, UPSTREAM_HUE_DEGREES } from './model.ts';
+export { ALL_PROVIDER_KINDS, assertUpstreamProviderKind, normalizeUpstreamHue, normalizeUpstreamLogoUrl, UPSTREAM_HUE_DEGREES } from './model.ts';
 export type { PerformanceOperation, PerformanceTelemetryContext, TelemetryModelIdentity } from './telemetry.ts';
 export { parsePerformanceOperation, PERFORMANCE_OPERATIONS } from './telemetry.ts';
 
@@ -84,13 +84,16 @@ export {
 } from './flags.ts';
 
 export type {
+  ModelMetadataDefaults,
   UpstreamModelConfig,
   UpstreamChatModelConfig,
 } from './model-config.ts';
 export {
+  applyModelMetadataDefaults,
   chatField,
   endpointsField,
   isRecord,
+  modelMetadataDefaultsField,
   modelsField,
   nonEmptyStringField,
   optionalStringField,

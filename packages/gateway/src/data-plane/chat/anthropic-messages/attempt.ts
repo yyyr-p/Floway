@@ -3,6 +3,7 @@ import type { AnthropicMessagesInvocation } from './interceptors/types.ts';
 import { createAnthropicMessagesBillableUsageReader } from './usage.ts';
 import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { openaiChatCompletionsAttempt } from '../openai-chat-completions/attempt.ts';
+import { withOpenAIChatCompletionsReasoningBeforeContent } from '../openai-chat-completions/reasoning-order.ts';
 import { openaiResponsesAttempt } from '../openai-responses/attempt.ts';
 import { applyRulesToUpstreamAnthropicMessages } from '../shared/alias-rules.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
@@ -82,9 +83,9 @@ export const anthropicMessagesAttempt = {
         return await traverseTranslation(
           invocation.payload,
           p => translateAnthropicMessagesViaOpenAIChatCompletions(p, { model: candidate.model.id }),
-          translated => openaiChatCompletionsAttempt.generate({
+          async translated => withOpenAIChatCompletionsReasoningBeforeContent(await openaiChatCompletionsAttempt.generate({
             payload: translated, ctx, candidate, headers: invocation.headers,
-          }),
+          })),
           captureFromDump(ctx.dump, targetApi),
         );
       }
