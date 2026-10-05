@@ -280,13 +280,12 @@ test('generates an image from an additional_tools declaration without moving the
 for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
   test(`executes a dynamically declared image tool through Chat Completions beside a namespace from ${carrier}`, async () => {
     stub.nextGenerations = [jsonResponse('R0VO')];
-    const invocation = makeCtx([
+    const invocation: OpenAIResponsesInvocation = { ...makeCtx([
       carrier === 'additional_tools'
         ? { type: carrier, role: 'developer', tools: [{ type: 'image_generation', quality: 'low' }] }
         : { type: carrier, tools: [{ type: 'image_generation', quality: 'low' }] },
       { type: 'message', role: 'user', content: 'draw an image' },
-    ]);
-    invocation.targetApi = 'openaiChatCompletions';
+    ]), targetApi: 'openaiChatCompletions' };
     invocation.payload.tools = [{
       type: 'namespace', name: 'images', description: '', tools: [{ type: 'function', name: 'image_generation' }],
     }];
@@ -330,7 +329,7 @@ for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
     assertEquals(stub.generationsCalls, [{ prompt: 'an image', n: 1, quality: 'low' }]);
     assert(events.some(event => event.type === 'response.output_item.done'
       && event.item.type === 'image_generation_call' && event.item.result === 'R0VO'));
-    assert(events.some(event => event.type === 'response.completed' && event.response.status === 'completed'));
+    assert(events.some(event => event.type === 'response.completed' && event.response.status === 'completed'), JSON.stringify(events));
   });
 }
 
