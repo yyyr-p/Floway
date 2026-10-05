@@ -1,5 +1,6 @@
 import type { UpstreamModelAccessRule } from './model-access.ts';
 import type { WebSearchConfig, WebSearchProviderName } from '../shared/web-search-providers.ts';
+import type { ApplyResult, BackfillIntent, BackfillPlan, DatabaseIdentity, InspectionResult } from '../usage-pricing-backfill/index.ts';
 import type { AgentSetupRepository } from '@floway-dev/agent-setup';
 import type { AliasSelection, AliasTarget, AnnouncedMetadata, BillingMetric, DecimalString, ModelKind, PricingSelector } from '@floway-dev/protocols/common';
 import type { PerformanceTelemetryContext, UpstreamModelsCache, UpstreamRecord } from '@floway-dev/provider';
@@ -350,6 +351,13 @@ export interface UsageRepo {
   deleteAll(): Promise<void>;
 }
 
+export interface UsagePricingBackfillRepo {
+  inspect(): Promise<InspectionResult>;
+  plan(intent: BackfillIntent): Promise<BackfillPlan>;
+  apply(plan: BackfillPlan): Promise<ApplyResult>;
+  readonly databaseIdentity: DatabaseIdentity;
+}
+
 export interface WebSearchUsageRepo {
   record(args: { provider: WebSearchProviderName; keyId: string; action: WebSearchUsageAction; hour: string; requests: number }): Promise<void>;
   query(opts: { provider?: WebSearchProviderName; keyId?: string; action?: WebSearchUsageAction; start: string; end: string }): Promise<WebSearchUsageRecord[]>;
@@ -612,6 +620,7 @@ export interface Repo {
   sessions: SessionsRepo;
   usage: UsageRepo;
   usageLimits: UsageLimitsRepo;
+  usagePricingBackfill: UsagePricingBackfillRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;

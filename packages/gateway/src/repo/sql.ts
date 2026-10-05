@@ -69,6 +69,7 @@ import type {
   UsageOverviewQueryOptions,
   UsageOverviewResult,
   UsageRepo,
+  UsagePricingBackfillRepo,
   User,
   UsersRepo,
 } from './types.ts';
@@ -88,9 +89,11 @@ import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts'
 import { parseUpstreamHue, parseUpstreamKind, parseUpstreamLogoUrl } from './upstream-parse.ts';
 import { usageMetricRows } from './usage-metrics.ts';
 import { querySqlUsageOverview } from './usage-overview-sql.ts';
+import { SqlUsagePricingBackfillRepo } from './usage-pricing-backfill-sql.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogram.ts';
 import { parseServerSecret } from '../shared/server-secret.ts';
 import { assertWebSearchProviderName, type WebSearchConfig } from '../shared/web-search-providers.ts';
+import type { DatabaseIdentity } from '../usage-pricing-backfill/index.ts';
 import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
 import type { SqlBindValue, SqlDatabase, SqlPreparedStatement, SqlResult } from '@floway-dev/platform';
 import { addDecimalStrings, canonicalPricingSelectorKey, multiplyDecimalStrings, parseBillingMetric, parseModelKind, parseNonNegativeDecimalString, parsePricingSelectorKey, type AliasSelection, type AnnouncedMetadata } from '@floway-dev/protocols/common';
@@ -2611,6 +2614,7 @@ export class SqlRepo implements Repo {
   apiKeys: ApiKeyRepo;
   usage: UsageRepo;
   usageLimits: UsageLimitsRepo;
+  usagePricingBackfill: UsagePricingBackfillRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
@@ -2625,7 +2629,7 @@ export class SqlRepo implements Repo {
   scheduledMaintenance: ScheduledMaintenanceRepo;
   agentSetup: AgentSetupRepository;
 
-  constructor(db: SqlDatabase) {
+  constructor(db: SqlDatabase, databaseIdentity: DatabaseIdentity = { kind: 'runtime', target: 'unspecified', stable: false }) {
     this.users = new SqlUsersRepo(db);
     this.sessions = new SqlSessionsRepo(db);
     this.oauth2 = new SqlOAuth2Repo(db);
@@ -2633,6 +2637,7 @@ export class SqlRepo implements Repo {
     this.apiKeys = new SqlApiKeyRepo(db);
     this.usage = new SqlUsageRepo(db);
     this.usageLimits = new SqlUsageLimitsRepo(db);
+    this.usagePricingBackfill = new SqlUsagePricingBackfillRepo(db, databaseIdentity);
     this.webSearchUsage = new SqlWebSearchUsageRepo(db);
     this.performance = new SqlPerformanceRepo(db);
     this.webSearchConfig = new SqlWebSearchConfigRepo(db);

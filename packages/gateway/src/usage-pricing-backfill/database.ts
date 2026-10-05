@@ -17,7 +17,13 @@ export interface DatabaseIdentityD1 {
   persistTo?: string;
 }
 
-export type DatabaseIdentity = DatabaseIdentityNode | DatabaseIdentityD1;
+export interface DatabaseIdentityRuntime {
+  kind: 'runtime';
+  target: string;
+  stable: boolean;
+}
+
+export type DatabaseIdentity = DatabaseIdentityNode | DatabaseIdentityD1 | DatabaseIdentityRuntime;
 
 export interface SqlStatement {
   sql: string;
