@@ -280,12 +280,14 @@ test('generates an image from an additional_tools declaration without moving the
 for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
   test(`executes a dynamically declared image tool through Chat Completions beside a namespace from ${carrier}`, async () => {
     stub.nextGenerations = [jsonResponse('R0VO')];
-    const invocation: OpenAIResponsesInvocation = { ...makeCtx([
-      carrier === 'additional_tools'
-        ? { type: carrier, role: 'developer', tools: [{ type: 'image_generation', quality: 'low' }] }
-        : { type: carrier, tools: [{ type: 'image_generation', quality: 'low' }] },
-      { type: 'message', role: 'user', content: 'draw an image' },
-    ]), targetApi: 'openaiChatCompletions' };
+    const invocation: OpenAIResponsesInvocation = {
+      ...makeCtx([
+        carrier === 'additional_tools'
+          ? { type: carrier, role: 'developer', tools: [{ type: 'image_generation', quality: 'low' }] }
+          : { type: carrier, tools: [{ type: 'image_generation', quality: 'low' }] },
+        { type: 'message', role: 'user', content: 'draw an image' },
+      ]), targetApi: 'openaiChatCompletions',
+    };
     invocation.payload.tools = [{
       type: 'namespace', name: 'images', description: '', tools: [{ type: 'function', name: 'image_generation' }],
     }];
@@ -309,10 +311,14 @@ for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
       const chunks: OpenAIChatCompletionsStreamEvent[] = turns === 1 ? [
         {
           id: 'chat', object: 'chat.completion.chunk', created: 0, model: 'm',
-          choices: [{ index: 0, delta: { tool_calls: [{
-            index: 0, id: 'image_call', type: 'function',
-            function: { name: 'image_generation_2', arguments: JSON.stringify({ prompt: 'an image' }) },
-          }] }, finish_reason: null }],
+          choices: [{
+            index: 0, delta: {
+              tool_calls: [{
+                index: 0, id: 'image_call', type: 'function',
+                function: { name: 'image_generation_2', arguments: JSON.stringify({ prompt: 'an image' }) },
+              }],
+            }, finish_reason: null,
+          }],
         },
         {
           id: 'chat', object: 'chat.completion.chunk', created: 0, model: 'm',
