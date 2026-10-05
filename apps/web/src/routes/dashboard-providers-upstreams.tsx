@@ -12,10 +12,10 @@ import { useLocation, useNavigate } from 'react-router';
 
 import { type TFunction, useTranslation } from '../i18n/translation';
 import type { Route } from './+types/dashboard-providers-upstreams';
-import { requireDashboardAdmin } from './guards';
+import { requireDashboardUser } from './guards';
 import { revalidateOnPathnameChange } from './revalidation';
 import { api, callApi } from '../api/client';
-import type { ControlPlaneModel, UpstreamRecord } from '../api/types';
+import type { ControlPlaneModel, UpstreamRecord, VisibleUpstream } from '../api/types';
 import { ConfirmDialog } from '../components/ui/confirm-dialog';
 import { DashboardPageHeader } from '../components/ui/dashboard-page-header';
 import { OutcomeMessageBar } from '../components/ui/outcome-message-bar';
@@ -36,6 +36,8 @@ import { planLabel } from '../components/upstreams/codex-account';
 import { MODEL_ERROR_TOOLTIP_LENGTH, modelErrorExcerpt } from '../components/upstreams/model-error';
 import { ProviderBadge, ProviderIcon } from '../components/upstreams/provider-badge';
 import { UpstreamSignals } from '../components/upstreams/signals';
+import { UserUpstreamDirectory } from '../components/upstreams/user-directory';
+import { UpstreamVisibilitySwitch } from '../components/upstreams/visibility-switch';
 import { fluentComponents } from '../fluent';
 import { dateTime } from '../lib/format-time';
 import { useEntryRewrite } from '../lib/page-navigation';
@@ -60,7 +62,8 @@ const {
   Tooltip,
 } = fluentComponents;
 
-interface LoaderData {
+interface AdminLoaderData {
+  role: 'admin';
   /** `null` when the fetch failed, not the same as none configured. */
   upstreams: UpstreamRecord[] | null;
   models: ControlPlaneModel[] | null;
@@ -68,8 +71,18 @@ interface LoaderData {
   modelsError: string | null;
 }
 
+interface UserLoaderData {
+  role: 'user';
+  upstreams: VisibleUpstream[] | null;
+  loadFailed: boolean;
+}
+
+type LoaderData = AdminLoaderData | UserLoaderData;
+type AdminPageData = Omit<AdminLoaderData, 'role'>;
+
 type Mutation =
   | { kind: 'toggle'; id: string }
+  | { kind: 'visibility'; id: string }
   | { kind: 'reorder'; id: string }
   | { kind: 'delete'; id: string };
 
@@ -102,7 +115,7 @@ const providers = ALL_PROVIDER_KINDS.toSorted((a, b) => menuRank(a) - menuRank(b
 const upstreamEditorPath = (record: UpstreamRecord) => `/dashboard/providers/upstreams/${encodeURIComponent(record.id)}`;
 const upstreamCopyPath = (record: UpstreamRecord) => `/dashboard/providers/upstreams/${encodeURIComponent(record.id)}/copy`;
 
-const loadPageData = async (signal?: AbortSignal): Promise<LoaderData> => {
+const loadPageData = async (signal?: AbortSignal): Promise<AdminPageData> => {
   const [upstreamsResult, modelsResult] = await Promise.all([
     callApi(() => api.api.upstreams.$get(undefined, { init: { signal } })),
     callApi(() => api.api.models.$get(
@@ -119,8 +132,12 @@ const loadPageData = async (signal?: AbortSignal): Promise<LoaderData> => {
 };
 
 export async function clientLoader(): Promise<LoaderData> {
-  await requireDashboardAdmin();
-  return await loadPageData();
+  const user = await requireDashboardUser();
+  if (!user.isAdmin) {
+    const result = await callApi(() => api.api['upstream-directory'].$get());
+    return { role: 'user', upstreams: result.data ?? null, loadFailed: result.error !== null };
+  }
+  return { role: 'admin', ...await loadPageData() };
 }
 
 // The page strips the missing-upstream flag from the search after announcing
@@ -128,6 +145,13 @@ export async function clientLoader(): Promise<LoaderData> {
 export const shouldRevalidate = revalidateOnPathnameChange;
 
 export default function DashboardProvidersUpstreams({ loaderData }: Route.ComponentProps) {
+  if (loaderData.role === 'user') {
+    return <UserUpstreamDirectory loadFailed={loaderData.loadFailed} upstreams={loaderData.upstreams} />;
+  }
+  return <AdminUpstreamsPage loaderData={loaderData} />;
+}
+
+function AdminUpstreamsPage({ loaderData }: { loaderData: AdminLoaderData }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
@@ -147,6 +171,7 @@ export default function DashboardProvidersUpstreams({ loaderData }: Route.Compon
   // column derive a live count for an upstream the listing has not been told
   // about yet -- a warning beside a zero, for as long as the round trip takes.
   const [pendingEnabled, setPendingEnabled] = useState<{ id: string; enabled: boolean } | null>(null);
+  const [pendingUserVisible, setPendingUserVisible] = useState<{ id: string; userVisible: boolean } | null>(null);
   const deleteDialog = useDialogInvocation<UpstreamRecord>();
   const [deleteError, setDeleteError] = useState<string | null>(null);
   // `move` words its own failure differently when the resync behind it also
@@ -192,6 +217,7 @@ export default function DashboardProvidersUpstreams({ loaderData }: Route.Compon
     // empty a table nobody is watching -- the two other polling pages hold their
     // data the same way.
     setData(current => ({
+      ...current,
       // A poll cannot replace the index space an in-flight gesture was measured
       // against. Success commits its plan; failure clears it before resyncing.
       upstreams: pendingReorder.current === null ? next.upstreams ?? current.upstreams : current.upstreams,
@@ -236,6 +262,25 @@ export default function DashboardProvidersUpstreams({ loaderData }: Route.Compon
 
     await reload();
     setPendingEnabled(null);
+    setMutation(null);
+  };
+
+  const setUserVisible = async (record: UpstreamRecord, userVisible: boolean) => {
+    if (data.upstreams === null) return;
+    setMutation({ kind: 'visibility', id: record.id });
+    setPageError(null);
+    setPendingUserVisible({ id: record.id, userVisible });
+
+    const result = await patchUpstream(record.id, { user_visible: userVisible });
+    if (result.error) {
+      setPageError(t('dashboard.upstreams.errors.visibility'));
+      setPendingUserVisible(null);
+      setMutation(null);
+      return;
+    }
+
+    await reload();
+    setPendingUserVisible(null);
     setMutation(null);
   };
 
@@ -395,6 +440,8 @@ export default function DashboardProvidersUpstreams({ loaderData }: Route.Compon
           onMove={commitDroppedMove}
           reorderBusy={reorderBusy}
           onToggle={(record, enabled) => void setEnabled(record, enabled)}
+          onVisibilityChange={(record, visible) => void setUserVisible(record, visible)}
+          pendingUserVisible={pendingUserVisible}
           pendingEnabled={pendingEnabled}
         />
       </ResourceListPanel>
@@ -451,17 +498,21 @@ function UpstreamsTable({
   onDropError,
   onMove,
   onToggle,
+  onVisibilityChange,
+  pendingUserVisible,
   pendingEnabled,
   reorderBusy,
 }: {
   busy: boolean;
-  data: LoaderData;
+  data: AdminLoaderData;
   mutation: Mutation | null;
   onDelete: (record: UpstreamRecord) => void;
   onDrop: (from: number, to: number) => Promise<void>;
   onDropError: (error: unknown, from: number, to: number) => void | Promise<void>;
   onMove: (from: number, to: number) => void;
   onToggle: (record: UpstreamRecord, enabled: boolean) => void;
+  onVisibilityChange: (record: UpstreamRecord, visible: boolean) => void;
+  pendingUserVisible: { id: string; userVisible: boolean } | null;
   pendingEnabled: { id: string; enabled: boolean } | null;
   reorderBusy: boolean;
 }) {
@@ -478,8 +529,8 @@ function UpstreamsTable({
 
   return (
     <ScrollArea axes="horizontal" className="min-w-0">
-      <Table aria-label={t('dashboard.upstreams.table.title')} className="min-w-[900px]">
-        <TableColumns widths={['96px', '200px', null, '140px', '90px', TABLE_ACTIONS_WIDTH]} />
+      <Table aria-label={t('dashboard.upstreams.table.title')} className="min-w-[1040px]">
+        <TableColumns widths={['96px', '200px', null, '140px', '90px', '140px', TABLE_ACTIONS_WIDTH]} />
         <TableHeader>
           <TableRow>
             <TableHeaderCell>{t('dashboard.upstreams.table.priority')}</TableHeaderCell>
@@ -487,6 +538,7 @@ function UpstreamsTable({
             <TableHeaderCell>{t('dashboard.upstreams.table.details')}</TableHeaderCell>
             <TableHeaderCell>{t('dashboard.upstreams.table.models')}</TableHeaderCell>
             <TableCentredHeader>{t('dashboard.upstreams.table.enabled')}</TableCentredHeader>
+            <TableCentredHeader>{t('dashboard.upstreams.table.visibleToUsers')}</TableCentredHeader>
             <TableTrailingHeader>{t('dashboard.upstreams.table.actions')}</TableTrailingHeader>
           </TableRow>
         </TableHeader>
@@ -522,6 +574,14 @@ function UpstreamsTable({
                   checked={pendingEnabled?.id === record.id ? pendingEnabled.enabled : record.enabled}
                   disabled={busy}
                   onChange={(_, detail) => onToggle(record, detail.checked)}
+                />
+              </TableCentredCell>
+              <TableCentredCell>
+                <UpstreamVisibilitySwitch
+                  checked={pendingUserVisible?.id === record.id ? pendingUserVisible.userVisible : record.user_visible}
+                  disabled={busy}
+                  name={record.name}
+                  onChange={visible => onVisibilityChange(record, visible)}
                 />
               </TableCentredCell>
               <TableCell>
@@ -599,7 +659,7 @@ function ModelStatus({
   );
 }
 
-const patchUpstream = (id: string, body: { enabled?: boolean; sort_order?: number }) =>
+const patchUpstream = (id: string, body: { enabled?: boolean; sort_order?: number; user_visible?: boolean }) =>
   callApi(() => api.api.upstreams[':id'].$patch({ param: { id }, json: body }));
 
 const compareUpstreams = (a: UpstreamRecord, b: UpstreamRecord) =>

@@ -530,6 +530,7 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
     sortOrder: 5,
     createdAt: '2026-05-01T00:00:00.000Z',
     updatedAt: '2026-05-01T00:00:00.000Z',
+    userVisible: true,
     flagOverrides: {},
     disabledPublicModelIds: [],
     proxyFallbackList: [],
@@ -562,11 +563,75 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
   const userResp = await requestApp('/api/upstream-options', { headers: { 'x-api-key': apiKey.key } });
   assertEquals(userResp.status, 200);
   const userBody = await userResp.json() as Array<Record<string, unknown>>;
-  assertEquals(userBody, expected);
+  assertEquals(userBody, [expected[1]]);
   // No secret-bearing or operator-only fields leak through this endpoint.
   for (const row of userBody) {
     assertEquals(Object.keys(row).sort(), ['cachedModelCount', 'enabled', 'hue', 'id', 'kind', 'name']);
   }
+});
+
+test('GET /api/upstream-directory returns only opted-in identity fields while admin management stays full', async () => {
+  const { repo, adminSession, apiKey } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_visible',
+    name: 'Shared endpoint',
+    userVisible: true,
+    config: {
+      baseUrl: 'https://sensitive.internal.example',
+      authStyle: 'bearer',
+      apiKey: 'sk-internal-secret',
+      ingressHeadersRules: [],
+      endpoints: { openaiChatCompletions: {} },
+    },
+  }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    id: 'up_hidden',
+    name: 'Private endpoint',
+    userVisible: false,
+    config: {
+      baseUrl: 'https://hidden.internal.example',
+      authStyle: 'bearer',
+      apiKey: 'sk-hidden-secret',
+      ingressHeadersRules: [],
+      endpoints: { openaiChatCompletions: {} },
+    },
+  }));
+
+  const adminList = await requestApp('/api/upstreams', { headers: { 'x-floway-session': adminSession } });
+  assertEquals(adminList.status, 200);
+  const adminRows = await adminList.json() as Array<Record<string, any>>;
+  assertEquals(adminRows.map(row => [row.id, row.user_visible]), [['up_visible', true], ['up_hidden', false]]);
+  assertEquals(adminRows[0].config.baseUrl, 'https://sensitive.internal.example');
+
+  const deniedList = await requestApp('/api/upstreams', { headers: { 'x-api-key': apiKey.key } });
+  assertEquals(deniedList.status, 403);
+
+  const directory = await requestApp('/api/upstream-directory', { headers: { 'x-api-key': apiKey.key } });
+  assertEquals(directory.status, 200);
+  const rows = await directory.json() as Array<Record<string, unknown>>;
+  assertEquals(rows, [{ id: 'up_visible', name: 'Shared endpoint', kind: 'custom', hue: 210 }]);
+  assertEquals(Object.keys(rows[0]).sort(), ['hue', 'id', 'kind', 'name']);
+  const bodyText = JSON.stringify(rows);
+  for (const secret of ['sensitive.internal.example', 'sk-internal-secret', 'hidden.internal.example', 'sk-hidden-secret']) {
+    assertEquals(bodyText.includes(secret), false);
+  }
+
+  const deniedEdit = await requestApp('/api/upstreams/up_hidden', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey.key },
+    body: JSON.stringify({ user_visible: true }),
+  });
+  assertEquals(deniedEdit.status, 403);
+
+  const adminEdit = await requestApp('/api/upstreams/up_hidden', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
+    body: JSON.stringify({ user_visible: true }),
+  });
+  assertEquals(adminEdit.status, 200);
+  assertEquals((await adminEdit.json() as Record<string, unknown>).user_visible, true);
+  assertEquals((await repo.upstreams.getById('up_hidden'))?.userVisible, true);
 });
 
 test('POST /api/upstreams/preview-models fetches a draft custom upstream model list', async () => {

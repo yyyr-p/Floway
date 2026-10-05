@@ -11,6 +11,7 @@ const flagDefaults = Object.fromEntries(OPTIONAL_FLAG_IDS.map(id => [id, false])
 // one edit here rather than one per suite.
 const commonFields = {
   name: 'Upstream',
+  user_visible: false,
   enabled: true,
   sort_order: 1,
   created_at: '',

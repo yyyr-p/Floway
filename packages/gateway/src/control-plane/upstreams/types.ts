@@ -132,6 +132,7 @@ export interface ClaudeCodeUpstreamState {
 interface SerializedUpstreamRecordBase {
   id: string;
   name: string;
+  user_visible: boolean;
   enabled: boolean;
   sort_order: number;
   created_at: string;

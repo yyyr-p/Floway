@@ -12,6 +12,7 @@ import { assert, assertEquals, assertRejects, assertThrows } from '@floway-dev/t
 
 const upstream = (overrides: Partial<UpstreamRecord> & Pick<UpstreamRecord, 'id' | 'kind' | 'createdAt' | 'sortOrder'>): UpstreamRecord => ({
   name: overrides.id,
+  userVisible: false,
   enabled: true,
   updatedAt: overrides.createdAt,
   config: { nested: { value: overrides.id }, endpoints: { openaiChatCompletions: {} } },

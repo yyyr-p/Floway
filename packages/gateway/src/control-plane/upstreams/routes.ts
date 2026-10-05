@@ -5,7 +5,7 @@ import { blueprintUpstreamRecord, upstreamRecordToFullJson, upstreamRecordToJson
 import { isValidProviderKind, upstreamErrorMessage as errorMessage } from './shared.ts';
 import type { FullSerializedUpstreamRecord, ModelsCacheStatus, RedactedSerializedUpstreamRecord } from './types.ts';
 import { storedCatalogSize } from '../../data-plane/providers/catalog.ts';
-import { type AuthedContext } from '../../middleware/auth.ts';
+import { type AuthedContext, userFromContext } from '../../middleware/auth.ts';
 import { type CtxWithJson } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { isDirectFallbackId, normalizeProxyFallbackList } from '../../repo/proxy-fallback-list.ts';
@@ -158,19 +158,26 @@ const validateProxyFallbackList = (
   return { ok: true };
 };
 
-export const listUpstreams = async (c: Context) => {
+export const listUpstreams = async (c: AuthedContext) => {
   const [items, knownProxyIds] = await Promise.all([getRepo().upstreams.list(), loadKnownProxyIds()]);
   return c.json(await Promise.all(items.map(record => serializeForResponse(record, knownProxyIds))));
 };
 
-// Picker dataset for the per-key upstream whitelist editor. Non-admin users
-// need to know which upstreams exist to scope their keys, but they must not
-// see operator-tuned config (model lists, flag overrides, copilot user info,
-// etc.). This minimal projection is the only upstream surface mounted outside
-// the admin zone.
-export const listUpstreamOptions = async (c: Context) => {
+export const listVisibleUpstreams = async (c: AuthedContext) => {
   const items = await getRepo().upstreams.list();
   return c.json(items
+    .filter(upstream => upstream.userVisible)
+    .map(({ id, name, kind, hue }) => ({ id, name, kind, hue })));
+};
+
+// Picker dataset for per-key scoping and telemetry labels. Ordinary accounts
+// receive only explicitly visible upstreams; admins retain the full picker.
+// The projection omits provider config, model details, and subscription state.
+export const listUpstreamOptions = async (c: AuthedContext) => {
+  const user = userFromContext(c);
+  const items = await getRepo().upstreams.list();
+  return c.json(items
+    .filter(upstream => user.isAdmin || upstream.userVisible)
     .slice()
     .sort((a, b) => a.sortOrder - b.sortOrder)
     .map(upstream => ({
@@ -242,6 +249,7 @@ export const createUpstream = async (c: CtxWithJson<typeof createUpstreamBody>) 
     id: shortId('up'),
     kind: body.kind,
     name: body.name,
+    userVisible: body.user_visible ?? false,
     enabled: body.enabled ?? true,
     sortOrder: body.sort_order ?? nextSortOrder(existing),
     createdAt: now,
@@ -320,6 +328,7 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
   const knownProxyIds = await loadKnownProxyIds();
   let next: UpstreamRecord = { ...existing, updatedAt: new Date().toISOString() };
   if (body.name !== undefined) next = { ...next, name: body.name };
+  if (body.user_visible !== undefined) next = { ...next, userVisible: body.user_visible };
   if (body.enabled !== undefined) next = { ...next, enabled: body.enabled };
   if (body.sort_order !== undefined) next = { ...next, sortOrder: body.sort_order };
   if (body.flag_overrides !== undefined) next = { ...next, flagOverrides: body.flag_overrides };
