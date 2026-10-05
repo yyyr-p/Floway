@@ -1,13 +1,13 @@
 # Chat Stream Reasoning Order
 
-Status: decision required for arbitrary late or interleaved reasoning.
+Status: whole-response reorder approved by the operator on 2026-10-05, including first-output latency and full-response buffering costs.
 
 ## Confirmed Behavior
 
 - Empty `reasoning_content: ""` placeholders are ignored before Anthropic block state changes. A fixture with text fragments and a newline retains each fragment in one text block, without empty thinking blocks. This addresses the empty-placeholder form of token-per-line fragmentation.
 - `reasoning_items[]` carriers translated from Chat to Responses are emitted as completed output items as each carrier arrives. Same-ID carriers remain separate; distinct IDs, text, tool calls, and opaque `encrypted_content` are retained. The extension's summary semantics are not established as either delta or cumulative snapshot, so neither concatenation nor replacement is safe to assume.
 - Responses-to-Chat projects readable summary text into the scalar field and retains the item carrier. Empty scalar reasoning is filtered. The carrier round-trip now preserves `encrypted_content`, including opaque-only items.
-- The integrated gateway change `5d5348eb6` places all translated reasoning frames before all text by buffering the Chat stream until its terminal frame. This preserves successful-stream payloads, but delays the first output until generation ends. If upstream fails before the terminal frame, already-read buffered partial output is not yielded. It is not an unqualified streaming fix.
+- The integrated gateway places all translated reasoning frames before all text by buffering the Chat stream until its terminal frame or upstream exhaustion. This preserves successful-stream payloads, but delays the first output until generation ends. If upstream fails, already-read partial reasoning and content are yielded in that order before rethrowing the original error. No successful terminal frame is fabricated. Regression tests cover the buffering boundary, partial and early failures (including non-Error thrown values), missing terminal frames, and mixed-frame usage/opaque preservation. The gateway ordering helper is delivered separately from the carrier translation fixes described here.
 
 ## Evidence
 
@@ -19,12 +19,12 @@ Status: decision required for arbitrary late or interleaved reasoning.
 - LiteLLM's [Responses transformation](https://github.com/BerriAI/litellm/blob/main/litellm/completion_extras/litellm_responses_transformation/transformation.py#L2616-L2643) carries `encrypted_content` when constructing and replaying reasoning items. It does not define same-ID fragment semantics. LiteLLM issue [#32357](https://github.com/BerriAI/litellm/issues/32357) separately records malformed Anthropic events, including a `thinking_delta` inside a text block.
 - The Copilot gateway [copilot-api](https://github.com/caozhiyuan/copilot-api/blob/dev/src/routes/messages/stream-translation.ts#L1949-L1978) changes late reasoning into `delta.content` after a content block is open. That avoids a new block by changing the data's classification; Floway must not copy it as a preservation fix.
 
-## Decision Needed
+## Accepted Policy And Alternatives
 
-Chronological blocks do not need opt-in for protocol validity, but clients such as Claude Code may render every text block separately. Approval is needed only if Floway promises a coalesced one-thinking/one-text presentation, because arbitrary late reasoning cannot be prepended after text has already been sent.
+Chronological blocks are protocol-valid, but clients such as Claude Code may render every text block separately. The operator explicitly chose whole-response reorder for translated Chat upstreams, accepting the first-output latency and full-response memory costs. Arbitrary late reasoning cannot be prepended after text has already been sent.
 
-1. **Arrival-order streaming (recommended default):** preserve each text, reasoning, tool, signature, and opaque value in upstream order, closing and opening Anthropic blocks on type changes. First-token latency follows the upstream; memory stays bounded by active translation state; partial output already yielded remains visible if upstream later errors. The tradeoff is potentially many alternating blocks and fragmented text in clients such as Claude Code.
-2. **Whole-response reorder (current integrated helper):** buffer the complete Chat stream, then emit reasoning before text. First output waits for generation to finish; memory grows with the full response; an upstream error before the terminal frame yields none of the already-buffered partial output. This should be opt-in unless the human explicitly accepts those costs.
-3. **Bounded lookahead:** delay initial text only up to an approved time/byte cap. It can reduce common-case splitting with bounded memory and latency, but cannot guarantee one block per channel when reasoning arrives after the cap. The overflow rule must be approved: keep later reasoning in arrival order (preserving data but allowing more blocks), or suppress/reclassify it (lossy and not recommended).
+1. **Whole-response reorder (accepted):** buffer the complete Chat stream, then emit reasoning before text. First output waits for upstream completion, exhaustion, or failure; memory grows with the full response. On failure, flush received partial output in the same order and propagate the original error.
+2. **Arrival-order streaming (not selected):** preserve each text, reasoning, tool, signature, and opaque value in upstream order, closing and opening Anthropic blocks on type changes. First-token latency follows the upstream; memory stays bounded by active translation state. The tradeoff is potentially many alternating blocks and fragmented text in clients such as Claude Code.
+3. **Bounded lookahead (not selected):** delay initial text only up to a time/byte cap. It can reduce common-case splitting with bounded memory and latency, but cannot guarantee one block per channel when reasoning arrives after the cap. Any future adoption needs an approved overflow policy.
 
 For repeated same-ID `reasoning_items[]`, keep current per-carrier completion and byte preservation until the producer contract or live captures establish whether summaries are deltas or cumulative snapshots. No same-ID merge, late-reasoning suppression, opaque/signature loss, or token deduplication is approved by this note.
