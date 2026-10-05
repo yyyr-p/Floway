@@ -216,6 +216,9 @@ const customConfigSchema = z.object({
   modelsFetch: z.object({ enabled: z.boolean(), endpoint: z.string().optional() }).optional(),
   // Statically configured per-model overrides merged with the live fetch.
   models: z.array(upstreamModelSchema).optional(),
+  // Provider-owned runtime validation interprets these advanced control-plane capabilities.
+  usageProbe: z.unknown().optional(),
+  actions: z.unknown().optional(),
 });
 
 const azureConfigSchema = z.object({
@@ -579,6 +582,13 @@ export const previewModelsBody = z.object({
 // --- ollama ---
 
 export const ollamaUsageBody = recordOnlyBody;
+
+export const customUsageProbeBody = recordOnlyBody;
+export const customActionExecuteBody = z.object({
+  upstreamId: z.string().min(1),
+  actionId: z.string().min(1),
+  confirmed: z.literal(true),
+});
 
 // --- agent setup ---
 //

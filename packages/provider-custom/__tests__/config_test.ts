@@ -1,6 +1,6 @@
 import { test } from 'vitest';
 
-import { assertCustomUpstreamRecord } from '../src/index.ts';
+import { assertCustomUpstreamRecord, customManagementUrl } from '../src/index.ts';
 import type { UpstreamRecord } from '@floway-dev/provider';
 import { assertEquals, assertThrows } from '@floway-dev/test-utils';
 
@@ -44,6 +44,70 @@ test('assertCustomUpstreamRecord parses modelsFetch and models', () => {
   assertEquals(config.models.length, 1);
   assertEquals(config.models[0].upstreamModelId, 'pinned');
   assertEquals(config.models[0].display_name, 'Pinned');
+});
+
+test('assertCustomUpstreamRecord parses opt-in usage probe windows and operator-defined actions', () => {
+  const { config } = assertCustomUpstreamRecord({
+    ...baseRecord,
+    config: {
+      ...(baseRecord.config as Record<string, unknown>),
+      usageProbe: {
+        path: '/account/usage',
+        windows: [{ id: 'week', label: 'Weekly', used: '/usage/used', limit: '/usage/limit', resetAt: '/usage/reset_at' }],
+      },
+      actions: [{ id: 'reset', label: 'Reset quota', path: '/account/reset', method: 'POST', body: { scope: 'weekly' } }],
+    },
+  });
+
+  assertEquals(config.usageProbe, {
+    path: '/account/usage',
+    windows: [{ id: 'week', label: 'Weekly', used: '/usage/used', limit: '/usage/limit', resetAt: '/usage/reset_at' }],
+  });
+  assertEquals(config.actions, [{ id: 'reset', label: 'Reset quota', path: '/account/reset', method: 'POST', body: { scope: 'weekly' } }]);
+});
+
+test('assertCustomUpstreamRecord rejects unsafe management paths, pointers, and action methods', () => {
+  const unsafePaths = ['/\u002fother-host', '/usage?token=leak', '/usage#fragment', '/usage/../admin', '/usage/%2e%2e/admin', 'https://other.example/action'];
+  for (const path of unsafePaths) {
+    assertThrows(
+      () => assertCustomUpstreamRecord({ ...baseRecord, config: { ...(baseRecord.config as Record<string, unknown>), usageProbe: { path, windows: [{ id: 'day', label: 'Day', used: '/used', limit: '/limit' }] } } }),
+      Error,
+      'same-origin absolute path',
+    );
+  }
+
+  for (const config of [
+    { usageProbe: { path: '/usage', windows: [{ id: 'day', label: 'Day', used: '/constructor', limit: '/limit' }] } },
+    { actions: [{ id: 'reset', label: 'Reset', path: '//evil.example/action', method: 'POST' }] },
+    { actions: [{ id: 'reset', label: 'Reset', path: '/reset', method: 'GET' }] },
+    { actions: [{ id: 'reset', label: 'Reset', path: '/reset', method: 'POST', body: ['not', 'an object'] }] },
+  ]) {
+    assertThrows(
+      () => assertCustomUpstreamRecord({ ...baseRecord, config: { ...(baseRecord.config as Record<string, unknown>), ...config } }),
+      Error,
+      'Malformed custom upstream config',
+    );
+  }
+});
+
+test('customManagementUrl retains the configured base path and rejects base URL contamination', () => {
+  const config = assertCustomUpstreamRecord({
+    ...baseRecord,
+    config: { ...(baseRecord.config as Record<string, unknown>), baseUrl: 'https://custom.example.com/prefix/' },
+  }).config;
+  assertEquals(customManagementUrl(config, '/account/usage'), 'https://custom.example.com/prefix/account/usage');
+
+  for (const baseUrl of [
+    'https://user:password@custom.example.com',
+    'https://custom.example.com?token=secret',
+    'https://custom.example.com/#fragment',
+  ]) {
+    const tainted = assertCustomUpstreamRecord({
+      ...baseRecord,
+      config: { ...(baseRecord.config as Record<string, unknown>), baseUrl },
+    }).config;
+    assertThrows(() => customManagementUrl(tainted, '/account/usage'), Error, 'baseUrl without credentials, query, or fragment');
+  }
 });
 
 test('assertCustomUpstreamRecord canonicalizes ingress header rules without collapsing empty values', () => {

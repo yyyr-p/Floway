@@ -13,6 +13,7 @@ import { CodexAccountCard } from './codex-account-card';
 import { CodexImportForm } from './codex-import';
 import { CopilotQuotaCard } from './copilot-quota-card';
 import { CustomIngressHeaderRules } from './custom-ingress-header-rules';
+import { CustomManagementEditor } from './custom-management-editor';
 import type { UpstreamEditorValues } from './data';
 import { isPersisted, previewRecord } from './data';
 import { CHAT_ENDPOINT_KEYS, endpointOptionsFor, PATH_OVERRIDE_PATHS } from './endpoints';
@@ -144,6 +145,7 @@ function CustomConfig({ onRefreshModels, record }: { onRefreshModels: () => void
         </Field>
       )}
       <CustomIngressHeaderRules />
+      <CustomManagementEditor record={record} />
     </div>
   );
 }
