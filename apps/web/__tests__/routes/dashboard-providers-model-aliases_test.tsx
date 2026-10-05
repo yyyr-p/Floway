@@ -28,6 +28,7 @@ const aliases: ModelAlias[] = ['alpha', 'bravo', 'charlie'].map((name, index) =>
   id: `alias_${name}`,
   name,
   kind: 'chat',
+  enabled: true,
   selection: 'first-available',
   display_name: name[0].toUpperCase() + name.slice(1),
   visible_in_models_list: true,

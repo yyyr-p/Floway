@@ -118,7 +118,7 @@ describe('alias copy naming', () => {
   it('uses a stable ASCII suffix and skips occupied IDs', () => {
     const aliases: ModelAlias[] = ['old-copy', 'old-copy-2'].map((name, index) => ({
       id: `alias-${index}`, name, kind: 'chat', selection: 'first-available', display_name: null,
-      visible_in_models_list: true, targets: [target('a')], announced_metadata: null,
+      enabled: true, visible_in_models_list: true, targets: [target('a')], announced_metadata: null,
       sort_order: index, created_at: '2026-01-01', updated_at: '2026-01-01',
     }));
     const copiedName = copiedAliasName('old', aliases);

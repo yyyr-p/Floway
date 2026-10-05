@@ -262,7 +262,7 @@ describe('usage dimension controls', () => {
 it.each([false, true])('uses the ordinary user’s global usage grant (%s) for grouping and Search scope', async canViewGlobalUsage => {
   useAuthStore.getState().primeFromLogin({
     token: 'reader-session',
-    user: { id: 2, username: 'reader', isAdmin: false, canViewGlobalUsage, upstreamIds: null },
+    user: { id: 2, username: 'reader', isAdmin: false, canViewGlobalUsage, upstreamIds: null, upstreamModelAccess: [] },
   });
   const requests: URL[] = [];
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
