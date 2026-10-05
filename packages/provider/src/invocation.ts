@@ -7,7 +7,10 @@ import type { GeminiGenerateContentPayload } from '@floway-dev/protocols/gemini-
 import type { OpenAIChatCompletionsPayload } from '@floway-dev/protocols/openai-chat-completions';
 import type { CanonicalOpenAIResponsesPayload } from '@floway-dev/protocols/openai-responses';
 
-export type ChatTargetApi = 'anthropicMessages' | 'openaiResponses' | 'openaiChatCompletions';
+// `geminiGenerateContent` is the native Gemini wire — the direct upstream
+// target of the gemini / antigravity providers and a translation target of
+// every chat-source protocol.
+export type ChatTargetApi = 'anthropicMessages' | 'openaiResponses' | 'openaiChatCompletions' | 'geminiGenerateContent';
 
 // One (provider, model) pair the resolver produced for an inbound id,
 // plus the per-request `Fetcher` minted for the provider's upstream. The

@@ -29,7 +29,7 @@ export const stubProviderModel = (overrides: Partial<ProviderModel> = {}): Provi
   upstreamModelId: 'test-model',
   limits: {},
   kind: 'chat',
-  endpoints: { openaiChatCompletions: {}, openaiResponses: {}, anthropicMessages: {} },
+  endpoints: { openaiChatCompletions: {}, openaiResponses: {}, anthropicMessages: {}, geminiGenerateContent: {} },
   opaqueBlobCompatibilityScope: { bindToUpstream: true },
   enabledFlags: new Set<FlagId>(),
   ...overrides,
@@ -51,7 +51,7 @@ export const stubInternalModel = (
     id: overrides.id ?? 'test-model',
     limits: overrides.limits ?? {},
     kind: overrides.kind ?? 'chat',
-    endpoints: overrides.endpoints ?? { openaiChatCompletions: {}, openaiResponses: {}, anthropicMessages: {} },
+    endpoints: overrides.endpoints ?? { openaiChatCompletions: {}, openaiResponses: {}, anthropicMessages: {}, geminiGenerateContent: {} },
   } as const;
   return {
     ...base,
@@ -84,6 +84,8 @@ export const stubProvider = (overrides: Partial<ProviderInstance> = {}): Provide
   callOpenAIResponses: overrides.callOpenAIResponses ?? (() => Promise.reject(new Error('stubProvider.callOpenAIResponses was called'))),
   callAnthropicMessages: overrides.callAnthropicMessages ?? (() => Promise.reject(new Error('stubProvider.callAnthropicMessages was called'))),
   callAnthropicMessagesCountTokens: overrides.callAnthropicMessagesCountTokens ?? (() => Promise.reject(new Error('stubProvider.callAnthropicMessagesCountTokens was called'))),
+  callGeminiGenerateContent: overrides.callGeminiGenerateContent ?? (() => Promise.reject(new Error('stubProvider.callGeminiGenerateContent was called'))),
+  callGeminiGenerateContentCountTokens: overrides.callGeminiGenerateContentCountTokens ?? (() => Promise.reject(new Error('stubProvider.callGeminiGenerateContentCountTokens was called'))),
   callOpenAIEmbeddings: overrides.callOpenAIEmbeddings ?? (() => Promise.reject(new Error('stubProvider.callOpenAIEmbeddings was called'))),
   callOpenAIImagesGenerations: overrides.callOpenAIImagesGenerations ?? (() => Promise.reject(new Error('stubProvider.callOpenAIImagesGenerations was called'))),
   callOpenAIImagesEdits: overrides.callOpenAIImagesEdits ?? (() => Promise.reject(new Error('stubProvider.callOpenAIImagesEdits was called'))),
@@ -120,7 +122,7 @@ export const stubModelCandidate = (overrides: {
     id: modelOverrides.id ?? 'test-model',
     limits: modelOverrides.limits ?? {},
     kind: modelOverrides.kind ?? 'chat',
-    endpoints: modelOverrides.endpoints ?? { openaiChatCompletions: {}, openaiResponses: {}, anthropicMessages: {} },
+    endpoints: modelOverrides.endpoints ?? { openaiChatCompletions: {}, openaiResponses: {}, anthropicMessages: {}, geminiGenerateContent: {} },
   } as const;
   const providerModel = stubProviderModel({
     id: outerMeta.id,

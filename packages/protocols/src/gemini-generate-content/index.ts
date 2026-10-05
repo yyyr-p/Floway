@@ -120,3 +120,4 @@ export { GEMINI_GENERATE_CONTENT_CANDIDATE_KEYS, GEMINI_GENERATE_CONTENT_RESULT_
 export { GEMINI_GENERATE_CONTENT_MISSING_TERMINAL_MESSAGE, isGeminiGenerateContentErrorEvent, isGeminiGenerateContentTerminalEvent, collectGeminiGenerateContentProtocolEventsToResult } from './to-result.ts';
 export { reassembleGeminiGenerateContentEvents } from './reassemble.ts';
 export { geminiGenerateContentProtocolFrameToSSEFrame } from './to-sse.ts';
+export { parseGeminiGenerateContentStream, type ParseGeminiGenerateContentStreamOptions } from './stream.ts';

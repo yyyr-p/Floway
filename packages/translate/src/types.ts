@@ -72,8 +72,14 @@ export interface TranslateTripResult<TgtPayload, SrcEvent, TgtEvent> {
  * `TExtras` is the pair-declared context surface: each pair lists exactly the
  * capabilities and injected runtime adapters it reads. Pairs that need no
  * extra context leave it as `unknown` (default).
+ *
+ * The target payload carries the model inline when its wire does (Anthropic
+ * Messages, OpenAI Chat Completions, OpenAI Responses); the Gemini
+ * generateContent wire names the model in the URL path instead, so its
+ * payload omits the field and the provider resolves it from the dispatch
+ * model.
  */
-export type TranslateTrip<SrcPayload, SrcEvent, TgtPayload extends { model: string }, TgtEvent, TExtras = unknown> = (
+export type TranslateTrip<SrcPayload, SrcEvent, TgtPayload, TgtEvent, TExtras = unknown> = (
   src: SrcPayload,
   ctx: TranslationContext<TExtras>,
 ) => Promise<TranslateTripResult<TgtPayload, SrcEvent, TgtEvent>>;

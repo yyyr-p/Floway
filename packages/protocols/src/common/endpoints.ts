@@ -36,6 +36,11 @@ export interface ModelEndpoints {
   openaiChatCompletions?: {};
   openaiResponses?: {};
   anthropicMessages?: {};
+  // Gemini generateContent (`/v1beta/models/{id}:generateContent` and the
+  // stream/countTokens variants). Native target of the gemini / antigravity
+  // providers; the antigravity wire wraps this same shape in its CloudCode
+  // envelope.
+  geminiGenerateContent?: {};
   openaiEmbeddings?: {};
   openaiImagesGenerations?: {};
   openaiImagesEdits?: {};
