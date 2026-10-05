@@ -2,7 +2,8 @@ import { Hono } from 'hono';
 import { expect, test } from 'vitest';
 
 import { exportData, importData } from '../../../src/control-plane/data-transfer/routes.ts';
-import { exportQuery, importBody } from '../../../src/control-plane/schemas.ts';
+import { exportQuery } from '../../../src/control-plane/schemas.ts';
+import { importBodyExtended } from '../../../src/control-plane/data-transfer/schema.ts';
 import { upstreamRecordToFullJson } from '../../../src/control-plane/upstreams/serialize.ts';
 import { DEFAULT_WEB_SEARCH_CONFIG } from '../../../src/data-plane/tools/web-search/config.ts';
 import { initDumpBroker, initDumpStore } from '../../../src/dump/registry.ts';
@@ -351,7 +352,7 @@ const setup = () => {
   initRepo(repo);
   const app = new Hono();
   app.get('/export', zValidator('query', exportQuery), exportData);
-  app.post('/import', zValidator('json', importBody), importData);
+  app.post('/import', zValidator('json', importBodyExtended), importData);
   return { repo, app };
 };
 
@@ -1435,7 +1436,7 @@ test('export includes proxies with full credential URIs and round-trips through 
   const fresh = new InMemoryRepo();
   initRepo(fresh);
   const importApp = new Hono();
-  importApp.post('/import', zValidator('json', importBody), importData);
+  importApp.post('/import', zValidator('json', importBodyExtended), importData);
   const result = await doImport(importApp, 'replace', exported.data);
   assertEquals(result.status, 200);
   assertEquals(result.body.imported.proxies, 2);

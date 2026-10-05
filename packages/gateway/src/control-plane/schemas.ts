@@ -247,9 +247,7 @@ export const USERNAME_PATTERN = /^[a-zA-Z0-9_.\-]{1,64}$/;
 
 const usernameSchema = z.string().regex(USERNAME_PATTERN, 'username must be 1-64 chars of [A-Za-z0-9_.-]');
 
-// null leaves this level unrestricted; an empty list grants no upstreams. The
-// same shape applies to users and API keys so either can deliberately restrict
-// to zero upstreams.
+// null leaves this level unrestricted; an empty list grants no upstreams.
 const upstreamIdsValueSchema = z.array(z.string().min(1))
   .refine(arr => new Set(arr).size === arr.length, { message: 'upstreamIds contains duplicates' })
   .nullable();
@@ -258,7 +256,6 @@ export const createUserBody = z.object({
   username: usernameSchema,
   password: passwordSchema,
   isAdmin: z.boolean().optional(),
-  canViewGlobalUsage: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
 });
 
@@ -266,7 +263,6 @@ export const updateUserBody = z.object({
   username: usernameSchema.optional(),
   password: passwordSchema.optional(),
   isAdmin: z.boolean().optional(),
-  canViewGlobalUsage: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
 });
 
@@ -742,7 +738,7 @@ export const updateAliasBody = aliasBodyCore.superRefine(aliasBodyRulesRefinemen
 // --- data transfer ---
 
 export const importBody = z.object({
-  version: z.literal(26, { error: 'version must be 26 — older export formats are not supported; re-export from the current deployment' }),
+  version: z.literal(20, { error: 'version must be 20 — older export formats are not supported; re-export from the current deployment' }),
   mode: z.enum(['merge', 'replace'], { error: "mode must be 'merge' or 'replace'" }),
   data: z.unknown().optional(),
 });

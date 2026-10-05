@@ -16,7 +16,8 @@ import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-valida
 import { getRepo } from '../../repo/index.ts';
 import { DIRECT_FALLBACK_IDS } from '../../repo/proxy-fallback-list.ts';
 import type { ApiKey, OAuth2Account, OAuth2Provider, OAuth2Settings, PerformanceTelemetryRecord, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
-import { type exportQuery, type importBody } from '../schemas.ts';
+import { type exportQuery } from '../schemas.ts';
+import { type importBodyExtended } from './schema.ts';
 import { saveUpstreams } from '../shared/save-upstreams.ts';
 import { type FullSerializedUpstreamRecord, upstreamRecordToFullJson } from '../upstreams/serialize.ts';
 import type { UpstreamRecord } from '@floway-dev/provider';
@@ -139,7 +140,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
   return c.json(payload);
 };
 
-export const importData = async (c: CtxWithJson<typeof importBody>) => {
+export const importData = async (c: CtxWithJson<typeof importBodyExtended>) => {
   const { mode, data: rawData } = c.req.valid('json');
   const parsed = parseImportData(rawData);
   if (parsed.type === 'invalid') return c.json({ error: parsed.error }, 400);

@@ -9,7 +9,8 @@ import type { ApiKey, OAuth2Account, OAuth2Provider, User } from '../../repo/typ
 import { generateApiKeyToken } from '../../shared/api-key-tokens.ts';
 import { hashPassword, verifyPassword } from '../../shared/passwords.ts';
 import { generateServerSecret } from '../../shared/server-secret.ts';
-import type { changeOwnPasswordBody, createUserBody, updateUserBody } from '../schemas.ts';
+import type { changeOwnPasswordBody } from '../schemas.ts';
+import type { createUserBodyExtended, updateUserBodyExtended } from './schema.ts';
 import type { updateUsersUpstreamAccessBody } from './upstream-access-schemas.ts';
 import { loadKnownUpstreamIds, unknownUpstreamIdsError } from '../shared/upstream-ids.ts';
 
@@ -112,7 +113,7 @@ export const updateUsersUpstreamAccess = async (c: CtxWithJson<typeof updateUser
   });
 };
 
-export const createUser = async (c: CtxWithJson<typeof createUserBody>) => {
+export const createUser = async (c: CtxWithJson<typeof createUserBodyExtended>) => {
   const body = c.req.valid('json');
   const repo = getRepo();
 
@@ -152,7 +153,7 @@ export const createUser = async (c: CtxWithJson<typeof createUserBody>) => {
   return c.json({ user: userToAdminWire(user, knownUpstreamIds) }, 201);
 };
 
-export const updateUser = async (c: CtxWithJson<typeof updateUserBody>) => {
+export const updateUser = async (c: CtxWithJson<typeof updateUserBodyExtended>) => {
   const id = parseUserId(c.req.param('id')!);
   if (id === null) return c.json({ error: 'invalid user id' }, 400);
   const body = c.req.valid('json');
