@@ -1,4 +1,5 @@
 import {
+  AppsListDetail20Color,
   Chat20Color,
   Clipboard20Color,
   Cloud20Color,
@@ -41,6 +42,7 @@ export const navGroups: NavGroup[] = [
   {
     items: [
       { to: '/dashboard/playground', labelKey: 'dashboard.nav.playground', icon: Chat20Color },
+      { to: '/dashboard/models', labelKey: 'dashboard.nav.models', icon: AppsListDetail20Color },
     ],
   },
   {

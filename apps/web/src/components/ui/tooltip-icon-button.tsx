@@ -7,6 +7,7 @@ import { fluentComponents } from '../../fluent';
 const { Button, Tooltip, mergeClasses } = fluentComponents;
 
 interface IconButtonProps {
+  ariaExpanded?: boolean;
   className?: string;
   danger?: boolean;
   disabled?: boolean;
@@ -43,7 +44,7 @@ function AddressedIconButton({ to, ...props }: IconButtonProps & { to: string })
   return <IconButton {...props} {...address} />;
 }
 
-function IconButton({ className, danger = false, disabled = false, disabledFocusable = false, href, icon, label, onClick }: IconButtonProps & {
+function IconButton({ ariaExpanded, className, danger = false, disabled = false, disabledFocusable = false, href, icon, label, onClick }: IconButtonProps & {
   href?: string;
   onClick?: (event: MouseEvent<HTMLElement>) => void;
 }) {
@@ -51,6 +52,7 @@ function IconButton({ className, danger = false, disabled = false, disabledFocus
   const shared = {
     appearance: 'subtle',
     'aria-label': label,
+    'aria-expanded': ariaExpanded,
     className: mergeClasses(danger && dangerClasses.button, className),
     disabled,
     disabledFocusable,
