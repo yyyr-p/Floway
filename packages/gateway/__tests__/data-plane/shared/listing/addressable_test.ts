@@ -71,6 +71,14 @@ describe('enumerateAddressableModelIds', () => {
     const { repo } = await setupAppTest();
     await repo.upstreams.deleteAll();
     await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+      modelMetadataDefaults: {
+        limits: { max_context_window_tokens: 256_000 },
+        chat: {
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          image_detail_original: true,
+          reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+        },
+      },
       modelPrefix: { prefix: 'private/', addressable: ['unprefixed', 'prefixed'], listed: [] },
     }));
 
@@ -84,6 +92,12 @@ describe('enumerateAddressableModelIds', () => {
           { id: 'private/hidden-model', unlisted: true },
         ]);
         expect(surface[0]?.model.providerModels).toHaveProperty('up_custom');
+        expect(surface[0]?.model.limits.max_context_window_tokens).toBe(256_000);
+        expect(surface[0]?.model.chat).toEqual({
+          modalities: { input: ['text', 'image'], output: ['text'] },
+          image_detail_original: true,
+          reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+        });
       },
     );
   });
