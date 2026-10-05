@@ -15,6 +15,7 @@ const baseRecord = (overrides: Partial<StoredUpstreamRecord> = {}): StoredUpstre
   id: 'up_test',
   kind: 'codex',
   name: 'Codex Test',
+  userVisible: false,
   enabled: true,
   sortOrder: 0,
   createdAt: '2026-06-05T00:00:00.000Z',
