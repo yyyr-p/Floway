@@ -125,6 +125,8 @@ export interface ModelAlias {
   name: string;
   kind: ModelKind;
   selection: AliasSelection;
+  // A disabled alias keeps its configuration but does not resolve its targets.
+  enabled: boolean;
   display_name: string | null;
   visible_in_models_list: boolean;
   targets: AliasTarget[];

@@ -1377,8 +1377,8 @@ const zhHansCN = {
       },
       modelAliases: {
         description: '创建虚拟模型 ID，将请求路由到一个或多个目标模型，并可锁定请求规则', listTitle: '别名', empty: '尚未配置别名。创建别名以公开虚拟模型 ID。',
-        columns: { alias: '别名', kind: '类型', targets: '目标', selection: '选择策略', visibility: '模型列表', actions: '操作' },
-        actions: { create: '新建别名', refresh: '刷新别名', save: '保存', delete: '删除', addTarget: '添加目标', reorder: '拖动排序别名 {{name}}', editNamed: '编辑别名 {{name}}', copyNamed: '复制别名 {{name}}', deleteNamed: '删除别名 {{name}}' },
+        columns: { alias: '别名', kind: '类型', targets: '目标', selection: '选择策略', visibility: '模型列表', enabled: '启用', actions: '操作' },
+        actions: { create: '新建别名', refresh: '刷新别名', save: '保存', delete: '删除', addTarget: '添加目标', reorder: '拖动排序别名 {{name}}', editNamed: '编辑别名 {{name}}', copyNamed: '复制别名 {{name}}', deleteNamed: '删除别名 {{name}}', enableNamed: '启用别名 {{name}}', disableNamed: '禁用别名 {{name}}' },
         dialog: { createTitle: '创建别名', editTitle: '编辑别名：{{name}}', copyTitle: '复制别名：{{name}}' },
         form: { name: '别名 ID', namePlaceholder: 'my-alias-id', displayName: '显示名称', displayPlaceholder: '可选显示名称', kind: '类型', selection: '选择策略', visible: '在 /v1/models 中可见', visibleHint: '关闭只是不在列表中展示，别名仍然可以按名称请求' },
         kind: { 'chat': '对话', 'embedding': '嵌入', 'image': '图像', 'rerank': '重排', 'transcription': '转录' }, selection: { first: '首个可用', random: '随机' }, visibility: { visible: '可见', hidden: '隐藏' },
@@ -1388,7 +1388,7 @@ const zhHansCN = {
         warnings: { label: '别名警告', shadow: '别名 ID 会遮蔽真实模型 {{id}} {{display}}。', noTarget: '当前没有目标可解析到此 gateway 上的模型。', unknownTarget: '{{id}} 当前无法解析到已启用模型。', wrongKind: '{{id}} 是 {{actual}} 模型，但此别名类型为 {{expected}}。', notAdvertisedEffort: '目标未声明思考强度能力。', unsupportedEffort: '目标声明的强度为：{{values}}。', adaptiveBudgetConflict: '自适应思考不能与固定预算同时使用。', notAdvertisedBudget: '目标未声明思考预算能力。', budgetBelow: '低于目标最小值（{{value, number}}）。', budgetAbove: '高于目标最大值（{{value, number}}）。', notAdvertisedAdaptive: '目标未声明自适应思考能力。', ruleAdvisory: '一项或多项规则可能不受此目标支持。' },
         validation: { nameRequired: '请输入别名 ID。', duplicate: '已存在使用此 ID 的别名。', targetRequired: '请输入目标模型 ID。', budget: '思考预算必须是非负整数。', adaptiveBudget: '自适应思考不能与固定预算同时使用。', metadataNumber: '请输入 0 或更大的整数 token 数。', metadataRange: '最大预算必须大于或等于最小预算。' },
         delete: { title: '删除别名', message: '删除别名 {{name}}？此操作无法撤销。' },
-        toast: { save: { pending: '正在保存别名 {{name}}', success: '已保存别名 {{name}}' }, delete: { pending: '正在删除别名 {{name}}', success: '已删除别名 {{name}}' } },
+        toast: { save: { pending: '正在保存别名 {{name}}', success: '已保存别名 {{name}}' }, delete: { pending: '正在删除别名 {{name}}', success: '已删除别名 {{name}}' }, enable: { pending: '正在启用别名 {{name}}', success: '已启用别名 {{name}}' }, disable: { pending: '正在禁用别名 {{name}}', success: '已禁用别名 {{name}}' } },
         errors: { message: '无法完成别名操作：{{message}}', models: '模型目录不可用：{{message}}' },
       },
       proxy: {

@@ -209,6 +209,10 @@ export const enumerateModelCandidates = async ({
   if (alias === null) {
     return resolveRealCandidates(model, kind, providers, resolutionContext);
   }
+  if (!alias.enabled) {
+    const direct = resolveRealCandidates(model, kind, providers, resolutionContext);
+    return { ...direct, failedUpstreams: [] };
+  }
 
   const aliasesByName = new Map((await modelAliases.list()).map(record => [record.name, record]));
   aliasesByName.set(alias.name, alias);

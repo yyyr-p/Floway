@@ -253,6 +253,7 @@ test('passthrough-serve: alias whose targets have no kind-matching binding surfa
     name: 'embed-fast',
     kind: 'embedding',
     selection: 'first-available',
+    enabled: true,
     displayName: null,
     visibleInModelsList: true,
     targets: [{ target_model_id: 'unknown-embed', rules: {} }],
