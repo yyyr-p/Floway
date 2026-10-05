@@ -576,8 +576,8 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
   });
 
   const expected = [
-    { id: 'up_copilot', name: 'GitHub Copilot (tester)', kind: 'copilot', enabled: true, hue: 210, cachedModelCount: null },
-    { id: 'up_disabled_custom', name: 'Disabled Custom', kind: 'custom', enabled: false, hue: 210, cachedModelCount: 2 },
+    { id: 'up_copilot', name: 'GitHub Copilot (tester)', kind: 'copilot', enabled: true, hue: 210, logoUrl: null, cachedModelCount: null },
+    { id: 'up_disabled_custom', name: 'Disabled Custom', kind: 'custom', enabled: false, hue: 210, logoUrl: null, cachedModelCount: 2 },
   ];
 
   const adminResp = await requestApp('/api/upstream-options', { headers: { 'x-floway-session': adminSession } });
@@ -590,7 +590,7 @@ test('GET /api/upstream-options returns the minimal picker shape to admin and no
   assertEquals(userBody, expected);
   // No secret-bearing or operator-only fields leak through this endpoint.
   for (const row of userBody) {
-    assertEquals(Object.keys(row).sort(), ['cachedModelCount', 'enabled', 'hue', 'id', 'kind', 'name']);
+    assertEquals(Object.keys(row).sort(), ['cachedModelCount', 'enabled', 'hue', 'id', 'kind', 'logoUrl', 'name']);
   }
 });
 
