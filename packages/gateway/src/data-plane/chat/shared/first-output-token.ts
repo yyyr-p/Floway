@@ -12,7 +12,27 @@ export const isFirstOutputTokenFrame = <T>(frame: ProtocolFrame<T>, targetApi: C
 
   if (targetApi === 'anthropicMessages') return isAnthropicMessagesOutputEvent(event);
   if (targetApi === 'openaiResponses') return isOpenAIResponsesOutputEvent(event);
+  if (targetApi === 'geminiGenerateContent') return isGeminiGenerateContentOutputEvent(event);
   return isOpenAIChatCompletionsOutputEvent(event);
+};
+
+// Gemini generateContent streams whole parts on result chunks; any part that
+// carries model output — visible text, a thought, or a complete function call
+// — is the first token. Envelope-only chunks (bare usage or modelVersion
+// updates, empty candidates) are not.
+const isGeminiGenerateContentOutputEvent = (event: Record<string, unknown>): boolean => {
+  const candidates = event.candidates;
+  if (!Array.isArray(candidates)) return false;
+  return candidates.some(candidate => {
+    if (typeof candidate !== 'object' || candidate === null) return false;
+    const content = (candidate as { content?: { parts?: unknown } }).content;
+    const parts = content?.parts;
+    if (!Array.isArray(parts)) return false;
+    return parts.some(part => typeof part === 'object' && part !== null && (
+      (typeof (part as { text?: unknown }).text === 'string' && (part as { text?: unknown }).text !== '')
+      || (part as { functionCall?: unknown }).functionCall !== undefined
+    ));
+  });
 };
 
 const nonEmptyString = (value: unknown): value is string => typeof value === 'string' && value.length > 0;

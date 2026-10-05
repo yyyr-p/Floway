@@ -4,6 +4,7 @@ import { billableUsageFromOpenAIChatCompletionsEvent } from './usage.ts';
 import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { anthropicMessagesAttempt } from '../anthropic-messages/attempt.ts';
 import { openaiResponsesAttempt } from '../openai-responses/attempt.ts';
+import { geminiGenerateContentAttempt } from '../gemini-generate-content/attempt.ts';
 import { applyRulesToUpstreamOpenAIChatCompletions } from '../shared/alias-rules.ts';
 import { createExternalImageLoader } from '../shared/external-image-loader.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
@@ -14,11 +15,12 @@ import { runInterceptors } from '@floway-dev/interceptor';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { OpenAIChatCompletionsPayload, OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
 import { type ModelCandidate, type ExecuteResult, providerModelOf } from '@floway-dev/provider';
-import { translateOpenAIChatCompletionsViaAnthropicMessages, translateOpenAIChatCompletionsViaOpenAIResponses } from '@floway-dev/translate';
+import { translateOpenAIChatCompletionsViaAnthropicMessages, translateOpenAIChatCompletionsViaOpenAIResponses, translateOpenAIChatCompletionsViaGeminiGenerateContent } from '@floway-dev/translate';
 
 // `/v1/chat/completions` generate prefers a native OpenAI Chat Completions target,
-// then the translated Anthropic Messages path, then the translated OpenAI Responses path.
-export const openaiChatCompletionsTarget = chatTargetPicker(['openaiChatCompletions', 'anthropicMessages', 'openaiResponses']);
+// then the translated Anthropic Messages path, then the translated Gemini
+// generateContent path, then the translated OpenAI Responses path.
+export const openaiChatCompletionsTarget = chatTargetPicker(['openaiChatCompletions', 'anthropicMessages', 'geminiGenerateContent', 'openaiResponses']);
 
 export interface OpenAIChatCompletionsAttemptArgs {
   readonly payload: OpenAIChatCompletionsPayload;
@@ -61,6 +63,16 @@ export const openaiChatCompletionsAttempt = {
           }),
           translated => anthropicMessagesAttempt.generate({
             payload: translated, ctx, candidate, headers: invocation.headers, anthropicBeta: [],
+          }),
+          captureFromDump(ctx.dump, targetApi),
+        );
+      }
+      if (targetApi === 'geminiGenerateContent') {
+        return await traverseTranslation(
+          invocation.payload,
+          p => translateOpenAIChatCompletionsViaGeminiGenerateContent(p, { model: candidate.model.id }),
+          translated => geminiGenerateContentAttempt.generate({
+            payload: translated, ctx, candidate, headers: invocation.headers,
           }),
           captureFromDump(ctx.dump, targetApi),
         );

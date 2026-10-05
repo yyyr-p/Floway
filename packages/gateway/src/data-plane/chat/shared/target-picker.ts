@@ -25,6 +25,9 @@ export const chatTargetPicker = (preference: readonly ChatTargetApi[]): {
       case 'openaiChatCompletions':
         if (endpoints.openaiChatCompletions) return 'openaiChatCompletions';
         break;
+      case 'geminiGenerateContent':
+        if (endpoints.geminiGenerateContent) return 'geminiGenerateContent';
+        break;
       }
     }
     return null;

@@ -121,3 +121,4 @@ export { GEMINI_GENERATE_CONTENT_MISSING_TERMINAL_MESSAGE, isGeminiGenerateConte
 export { reassembleGeminiGenerateContentEvents } from './reassemble.ts';
 export { geminiGenerateContentProtocolFrameToSSEFrame } from './to-sse.ts';
 export { parseGeminiGenerateContentStream, type ParseGeminiGenerateContentStreamOptions } from './stream.ts';
+export { billableUsageFromGeminiGenerateContentUsageMetadata } from './usage.ts';

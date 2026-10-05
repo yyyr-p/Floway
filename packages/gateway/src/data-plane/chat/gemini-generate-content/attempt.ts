@@ -2,23 +2,28 @@ import { geminiGenerateContentStatusForHttpStatus } from './errors.ts';
 import { geminiGenerateContentCountTokensInterceptors, geminiGenerateContentInterceptors } from './interceptors/index.ts';
 import { stripUnsupportedPartFieldsFromPayload } from './interceptors/strip-unsupported-part-fields.ts';
 import { stripUnsupportedToolsFromPayload } from './interceptors/strip-unsupported-tools.ts';
+import { createGeminiGenerateContentBillableUsageReader } from './usage.ts';
 import { anthropicMessagesAttempt } from '../anthropic-messages/attempt.ts';
 import { openaiChatCompletionsAttempt } from '../openai-chat-completions/attempt.ts';
 import { openaiResponsesAttempt } from '../openai-responses/attempt.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
+import { providerStreamResultToExecuteResult } from '../shared/provider-stream-result.ts';
+import { plainResultFromResponse } from '../shared/respond.ts';
 import { chatTargetPicker } from '../shared/target-picker.ts';
 import { captureFromDump, traverseTranslation } from '../shared/translate-traverse.ts';
+import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { GeminiGenerateContentPayload, GeminiGenerateContentStreamEvent } from '@floway-dev/protocols/gemini-generate-content';
-import { type ModelCandidate, plainResult, type ExecuteResult, type GeminiGenerateContentInvocation, type PlainResult } from '@floway-dev/provider';
+import { type ModelCandidate, plainResult, type ExecuteResult, type GeminiGenerateContentInvocation, type PlainResult, providerModelOf, type ProviderCallResult } from '@floway-dev/provider';
 import { translateGeminiGenerateContentViaOpenAIChatCompletions, translateGeminiGenerateContentViaAnthropicMessages, translateGeminiGenerateContentViaOpenAIResponses } from '@floway-dev/translate';
 
-// Gemini generateContent has no native upstream target in the provider API; prefer OpenAI Chat Completions
-// Completions, then Anthropic Messages, then OpenAI Responses for generate. countTokens has
-// no translation path beyond native Anthropic Messages count_tokens.
-export const geminiGenerateContentGenerateTarget = chatTargetPicker(['openaiChatCompletions', 'anthropicMessages', 'openaiResponses']);
-export const geminiGenerateContentCountTokensTarget = chatTargetPicker(['anthropicMessages']);
+// `/v1beta/models/{id}:generateContent` prefers a native Gemini generateContent
+// target — the gemini / antigravity providers speak it directly — then falls
+// back to the translated OpenAI Chat Completions, Anthropic Messages, and
+// OpenAI Responses paths.
+export const geminiGenerateContentGenerateTarget = chatTargetPicker(['geminiGenerateContent', 'openaiChatCompletions', 'anthropicMessages', 'openaiResponses']);
+export const geminiGenerateContentCountTokensTarget = chatTargetPicker(['geminiGenerateContent', 'anthropicMessages']);
 
 export interface GeminiGenerateContentAttemptGenerateArgs {
   readonly payload: GeminiGenerateContentPayload;
@@ -42,10 +47,18 @@ export const geminiGenerateContentAttempt = {
     const targetApi = geminiGenerateContentGenerateTarget.pick(candidate.model.endpoints);
     const invocation: GeminiGenerateContentInvocation = { payload, candidate, targetApi, headers };
     return await runInterceptors(invocation, ctx, geminiGenerateContentInterceptors, async () => {
-      // Gemini generateContent has no native upstream target today — every targetApi we
-      // pick is reached via translation. The dispatch threads each branch
-      // through `traverseTranslation` so each inner attempt owns its own
-      // interceptor chain and rewrite.
+      // The dispatch threads each branch through `traverseTranslation` (or the
+      // native call) so each inner attempt owns its own interceptor chain and
+      // rewrite.
+      if (targetApi === 'geminiGenerateContent') {
+        const providerResult = await candidate.provider.instance.callGeminiGenerateContent(
+          providerModelOf(candidate),
+          invocation.payload,
+          ctx.abortSignal,
+          buildUpstreamCallOptions(candidate, ctx, invocation.headers),
+        );
+        return await providerStreamResultToExecuteResult(providerResult, candidate, targetApi, ctx, createGeminiGenerateContentBillableUsageReader());
+      }
       const transCtx = {
         model: candidate.model.id,
         fallbackMaxOutputTokens: candidate.model.limits.max_output_tokens,
@@ -91,22 +104,32 @@ export const geminiGenerateContentAttempt = {
     const targetApi = geminiGenerateContentCountTokensTarget.pick(candidate.model.endpoints);
     const invocation: GeminiGenerateContentInvocation = { payload, candidate, targetApi, headers };
     return await runInterceptors(invocation, ctx, geminiGenerateContentCountTokensInterceptors, async () => {
-      // Gemini generateContent countTokens has no native upstream; translate to Anthropic Messages and
-      // delegate to `anthropicMessagesAttempt.countTokens`, then reshape the Anthropic Messages
-      // count_tokens reply into the Gemini generateContent `{ totalTokens }` envelope. The
-      // shipped Gemini generateContent interceptors that mutate the payload pre-dispatch
-      // cannot run via the countTokens interceptor list — the post-`run()`
-      // ones inspect event streams the result type cannot carry — so the
-      // payload-mutators are applied inline here before translation; the
-      // attempt-owned payload clone keeps the caller's source intact.
-      const transCtx = {
-        model: candidate.model.id,
-        fallbackMaxOutputTokens: candidate.model.limits.max_output_tokens,
-      };
+      // A native geminiGenerateContent target relays the upstream countTokens
+      // Response verbatim — the envelope is already `{ totalTokens }` on that
+      // wire. A translated Anthropic Messages target reshapes the count_tokens
+      // reply instead. The shipped Gemini generateContent interceptors that
+      // mutate the payload pre-dispatch cannot run via the countTokens
+      // interceptor list — the post-`run()` ones inspect event streams the
+      // result type cannot carry — so the payload-mutators are applied inline
+      // here before dispatch; the attempt-owned payload clone keeps the
+      // caller's source intact.
       const cleaned = invocation.payload;
       stripUnsupportedPartFieldsFromPayload(cleaned);
       stripUnsupportedToolsFromPayload(cleaned);
       delete cleaned.safetySettings;
+      if (targetApi === 'geminiGenerateContent') {
+        const { response } = await candidate.provider.instance.callGeminiGenerateContentCountTokens(
+          providerModelOf(candidate),
+          cleaned,
+          ctx.abortSignal,
+          buildUpstreamCallOptions(candidate, ctx, invocation.headers),
+        );
+        return await relayGeminiGenerateContentCountResult(response, candidate.provider.upstreamId);
+      }
+      const transCtx = {
+        model: candidate.model.id,
+        fallbackMaxOutputTokens: candidate.model.limits.max_output_tokens,
+      };
       const trip = await translateGeminiGenerateContentViaAnthropicMessages(cleaned, transCtx);
       const { stream: _stream, ...target } = trip.target;
       const anthropicMessagesResult = await anthropicMessagesAttempt.countTokens({
@@ -115,6 +138,15 @@ export const geminiGenerateContentAttempt = {
       return reshapeAnthropicMessagesCountAsGeminiGenerateContent(anthropicMessagesResult);
     });
   },
+};
+
+// Native countTokens dispatch: a 2xx relays the upstream body verbatim (it is
+// already the Gemini `{ totalTokens }` envelope); anything else is surfaced as
+// the Google-RPC envelope so the caller sees a typed Gemini failure.
+const relayGeminiGenerateContentCountResult = async (response: Response, upstreamId: string): Promise<PlainResult> => {
+  const relayed = await plainResultFromResponse(response, upstreamId);
+  if (relayed.status >= 200 && relayed.status < 300) return relayed;
+  return geminiGenerateContentErrorPlainResult(relayed.status, new TextDecoder().decode(relayed.body) || 'Upstream token counting request failed.', upstreamId);
 };
 
 // Reshape the Anthropic Messages count_tokens body into the Gemini generateContent `{ totalTokens }`

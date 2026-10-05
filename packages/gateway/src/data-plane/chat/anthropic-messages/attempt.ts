@@ -4,6 +4,7 @@ import { createAnthropicMessagesBillableUsageReader } from './usage.ts';
 import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { openaiChatCompletionsAttempt } from '../openai-chat-completions/attempt.ts';
 import { openaiResponsesAttempt } from '../openai-responses/attempt.ts';
+import { geminiGenerateContentAttempt } from '../gemini-generate-content/attempt.ts';
 import { applyRulesToUpstreamAnthropicMessages } from '../shared/alias-rules.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { providerStreamResultToExecuteResult } from '../shared/provider-stream-result.ts';
@@ -15,11 +16,12 @@ import type { AnthropicMessagesPayload, AnthropicMessagesStreamEvent } from '@fl
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { ModelCandidate, ExecuteResult, AnthropicMessagesUpstreamCallOptions, PlainResult } from '@floway-dev/provider';
 import { providerModelOf } from '@floway-dev/provider';
-import { translateAnthropicMessagesViaOpenAIChatCompletions, translateAnthropicMessagesViaOpenAIResponses } from '@floway-dev/translate';
+import { translateAnthropicMessagesViaOpenAIChatCompletions, translateAnthropicMessagesViaOpenAIResponses, translateAnthropicMessagesViaGeminiGenerateContent } from '@floway-dev/translate';
 
 // `/v1/messages` generate prefers a native Anthropic Messages target, then the
-// translated OpenAI Responses path, then the translated OpenAI Chat Completions path.
-export const anthropicMessagesGenerateTarget = chatTargetPicker(['anthropicMessages', 'openaiResponses', 'openaiChatCompletions']);
+// translated OpenAI Responses path, then the translated Gemini generateContent
+// path, then the translated OpenAI Chat Completions path.
+export const anthropicMessagesGenerateTarget = chatTargetPicker(['anthropicMessages', 'openaiResponses', 'geminiGenerateContent', 'openaiChatCompletions']);
 
 // `count_tokens` has no translation path — only a native Anthropic Messages target
 // satisfies the operation.
@@ -73,6 +75,16 @@ export const anthropicMessagesAttempt = {
           invocation.payload,
           p => translateAnthropicMessagesViaOpenAIResponses(p, { model: candidate.model.id }),
           translated => openaiResponsesAttempt.generate({
+            payload: translated, ctx, candidate, headers: invocation.headers,
+          }),
+          captureFromDump(ctx.dump, targetApi),
+        );
+      }
+      if (targetApi === 'geminiGenerateContent') {
+        return await traverseTranslation(
+          invocation.payload,
+          p => translateAnthropicMessagesViaGeminiGenerateContent(p, { model: candidate.model.id }),
+          translated => geminiGenerateContentAttempt.generate({
             payload: translated, ctx, candidate, headers: invocation.headers,
           }),
           captureFromDump(ctx.dump, targetApi),

@@ -490,6 +490,8 @@ export const createCopilotProvider = (record: UpstreamRecord): Provider => {
     callOpenAIImagesEdits: rejectUnsupported('callOpenAIImagesEdits'),
     callOpenAIAudioTranscriptions: rejectUnsupported('callOpenAIAudioTranscriptions'),
     callRerank: rejectUnsupported('callRerank'),
+    callGeminiGenerateContent: rejectUnsupported('callGeminiGenerateContent'),
+    callGeminiGenerateContentCountTokens: rejectUnsupported('callGeminiGenerateContentCountTokens'),
   };
 
   return {
