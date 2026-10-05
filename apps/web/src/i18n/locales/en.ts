@@ -1450,8 +1450,8 @@ const en = {
       modelAliases: {
         description: 'Create virtual model IDs that route to one or more target models with optional locked request rules',
         listTitle: 'Aliases', empty: 'No aliases configured. Create one to expose a virtual model ID.',
-        columns: { alias: 'Alias', kind: 'Kind', targets: 'Targets', selection: 'Selection', visibility: 'Models list', actions: 'Actions' },
-        actions: { create: 'New alias', refresh: 'Refresh aliases', save: 'Save', delete: 'Delete', addTarget: 'Add target', reorder: 'Reorder alias {{name}}', editNamed: 'Edit alias {{name}}', copyNamed: 'Copy alias {{name}}', deleteNamed: 'Delete alias {{name}}' },
+        columns: { alias: 'Alias', kind: 'Kind', targets: 'Targets', selection: 'Selection', visibility: 'Models list', enabled: 'Enabled', actions: 'Actions' },
+        actions: { create: 'New alias', refresh: 'Refresh aliases', save: 'Save', delete: 'Delete', addTarget: 'Add target', reorder: 'Reorder alias {{name}}', editNamed: 'Edit alias {{name}}', copyNamed: 'Copy alias {{name}}', deleteNamed: 'Delete alias {{name}}', enableNamed: 'Enable alias {{name}}', disableNamed: 'Disable alias {{name}}' },
         dialog: { createTitle: 'Create alias', editTitle: 'Edit alias: {{name}}', copyTitle: 'Copy alias: {{name}}' },
         form: { name: 'Alias ID', namePlaceholder: 'my-alias-id', displayName: 'Display name', displayPlaceholder: 'Optional display name', kind: 'Kind', selection: 'Selection', visible: 'Visible in /v1/models', visibleHint: 'A hidden alias stays out of the listing but can still be requested by name' },
         kind: { chat: 'Chat', embedding: 'Embedding', image: 'Image', rerank: 'Rerank', transcription: 'Transcription' },
@@ -1463,7 +1463,7 @@ const en = {
         warnings: { label: 'Alias warning', shadow: 'Alias ID shadows the real model {{id}} {{display}}.', noTarget: 'No target currently resolves to a model on this gateway.', unknownTarget: '{{id}} does not currently resolve to an enabled model.', wrongKind: '{{id}} is a {{actual}} model, but this alias is {{expected}}.', notAdvertisedEffort: 'Target does not advertise reasoning effort.', unsupportedEffort: 'Target advertises effort levels: {{values}}.', adaptiveBudgetConflict: 'Adaptive reasoning cannot be combined with a fixed budget.', notAdvertisedBudget: 'Target does not advertise a reasoning budget.', budgetBelow: 'Below target minimum ({{value, number}}).', budgetAbove: 'Above target maximum ({{value, number}}).', notAdvertisedAdaptive: 'Target does not advertise adaptive reasoning.', ruleAdvisory: 'One or more rules may not be supported by this target.' },
         validation: { nameRequired: 'Enter an alias ID.', duplicate: 'An alias with this ID already exists.', targetRequired: 'Enter a target model ID.', budget: 'Reasoning budget must be a non-negative integer.', adaptiveBudget: 'Adaptive reasoning cannot be combined with a fixed budget.', metadataNumber: 'Enter a whole number of tokens, zero or greater.', metadataRange: 'Maximum budget must be greater than or equal to minimum budget.' },
         delete: { title: 'Delete alias', message: 'Delete alias {{name}}? This cannot be undone.' },
-        toast: { save: { pending: 'Saving alias {{name}}', success: 'Saved alias {{name}}' }, delete: { pending: 'Deleting alias {{name}}', success: 'Deleted alias {{name}}' } },
+        toast: { save: { pending: 'Saving alias {{name}}', success: 'Saved alias {{name}}' }, delete: { pending: 'Deleting alias {{name}}', success: 'Deleted alias {{name}}' }, enable: { pending: 'Enabling alias {{name}}', success: 'Enabled alias {{name}}' }, disable: { pending: 'Disabling alias {{name}}', success: 'Disabled alias {{name}}' } },
         errors: { message: 'Could not complete the alias operation: {{message}}', models: 'Model catalog unavailable: {{message}}' },
       },
       proxy: {

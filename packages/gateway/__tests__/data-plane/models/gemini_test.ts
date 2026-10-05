@@ -423,6 +423,7 @@ test('/v1beta/models emits visible aliases as models/<alias-name> entries with d
     name: 'gpt-fast',
     kind: 'chat',
     selection: 'first-available',
+    enabled: true,
     displayName: 'Operator Fast Alias',
     visibleInModelsList: true,
     targets: [{ target_model_id: 'custom-llm-target', rules: {} }],

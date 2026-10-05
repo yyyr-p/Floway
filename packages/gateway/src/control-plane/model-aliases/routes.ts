@@ -72,6 +72,7 @@ export const updateAlias = async (c: CtxWithJson<typeof updateAliasBody>) => {
   });
   const graphError = aliasGraphError(await repo.modelAliases.list(), next);
   if (graphError) return c.json({ error: graphError.message }, 400);
+  next.enabled = body.enabled ?? existing.enabled;
   try {
     await repo.modelAliases.update(next);
   } catch (err) {
