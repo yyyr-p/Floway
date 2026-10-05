@@ -34,6 +34,28 @@ export const normalizeUpstreamHue = (value: unknown): number => {
   return value;
 };
 
+// Custom upstream marks are loaded by the operator's browser, so they must be
+// absolute HTTPS URLs. In particular, data/blob/javascript URLs never reach an
+// image element. Credentials are rejected to keep secrets out of rendered URLs.
+export const normalizeUpstreamLogoUrl = (value: unknown): string | null => {
+  if (value === null || value === undefined) return null;
+  if (typeof value !== 'string') throw new Error('logoUrl must be a string or null');
+  const input = value.trim();
+  if (input === '') return null;
+  if (input.length > 2048 || /\s/.test(input)) throw new Error('logoUrl must be at most 2048 characters and contain no whitespace');
+
+  let url: URL;
+  try {
+    url = new URL(input);
+  } catch (cause) {
+    throw new Error('logoUrl must be an absolute HTTPS URL', { cause });
+  }
+  if (url.protocol !== 'https:' || url.hostname === '' || url.username !== '' || url.password !== '') {
+    throw new Error('logoUrl must be an absolute HTTPS URL without embedded credentials');
+  }
+  return url.href;
+};
+
 // One entry in `UpstreamRecord.proxyFallbackList`. `id` is the proxy id from
 // the proxies catalog or a built-in transport (`direct_fetch`,
 // `direct_connect`). `colos` is an
@@ -97,6 +119,9 @@ export interface UpstreamRecord {
   // upstream carries its own; the dashboard derives the whole badge from it.
   // Wire validation lives in the control-plane Zod schema.
   hue: number;
+  // Optional only for in-memory fixtures and records built by older callers;
+  // persisted rows and control-plane responses always hydrate this as null.
+  logoUrl?: string | null;
 }
 
 // Public identity + capability surface shared by `InternalModel` (the merged,

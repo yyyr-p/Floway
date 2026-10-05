@@ -521,6 +521,7 @@ const zhHansCN = {
         sections: {
           connection: '连接与认证',
           hue: '徽章颜色',
+          logo: '上游标志',
           proxy: '代理路由',
           apiPaths: 'API 路径',
           prefix: '模型名称前缀',
@@ -530,8 +531,12 @@ const zhHansCN = {
           description: '选择在控制台中区分此上游的颜色。',
           label: '徽章颜色',
         },
+        logo: {
+          description: '使用 HTTPS 图片链接显示在上游徽章中。留空则使用服务商标志。',
+        },
         fields: {
           name: '上游名称',
+          logoUrl: '标志链接',
           baseUrl: 'Base URL',
           endpoint: 'Endpoint',
           authStyle: '认证方式',
@@ -969,6 +974,7 @@ const zhHansCN = {
         },
         validation: {
           name: '上游名称不能为空。',
+          logoUrl: '请输入不含嵌入凭据的 HTTPS 绝对链接（最多 2048 个字符）。',
           prefix: '至少保留一种可路由的模型前缀形式。',
           models: '一个或多个模型配置无效。',
           copilot: '请先完成 GitHub 设备授权。',

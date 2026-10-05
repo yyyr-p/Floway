@@ -45,6 +45,17 @@ test('Custom editor values add one blank ingress row and never serialize it', ()
   expect((previewRecord(record, values).config as CustomRecord['config']).ingressHeadersRules).toEqual(expected);
 });
 
+test('custom logo values round-trip through create, preview, and update records', () => {
+  const values = valuesFromRecord(record);
+  values.logoUrl = 'https://cdn.example.com/brand.svg';
+  expect(createBody(record, values).logo_url).toBe('https://cdn.example.com/brand.svg');
+  expect(updateBody(record, values).logo_url).toBe('https://cdn.example.com/brand.svg');
+  expect(previewRecord(record, values).logo_url).toBe('https://cdn.example.com/brand.svg');
+
+  values.logoUrl = '';
+  expect(updateBody(record, values).logo_url).toBeNull();
+});
+
 test('discovery input edits exclude metadata-only changes', () => {
   expect(hasUnsavedDiscoveryInputs({})).toBe(false);
   expect(hasUnsavedDiscoveryInputs({ config: true })).toBe(true);

@@ -8,7 +8,7 @@ import { i18n } from '../../../src/i18n';
 import { renderInApp } from '../../render';
 
 const available: UpstreamOption[] = [
-  { id: 'up_a', name: 'Alpha', kind: 'custom', enabled: true, hue: 210, cachedModelCount: 1 },
+  { id: 'up_a', name: 'Alpha', kind: 'custom', enabled: true, hue: 210, logoUrl: null, cachedModelCount: 1 },
 ];
 
 const Control = ({ initialIds, initialOverride = true }: { initialIds: string[]; initialOverride?: boolean }) => {

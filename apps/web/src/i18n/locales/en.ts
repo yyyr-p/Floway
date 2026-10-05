@@ -550,6 +550,7 @@ const en = {
         sections: {
           connection: 'Connection and authentication',
           hue: 'Badge color',
+          logo: 'Upstream logo',
           proxy: 'Proxy routing',
           apiPaths: 'API paths',
           prefix: 'Model name prefix',
@@ -559,8 +560,12 @@ const en = {
           description: 'Choose how this upstream is distinguished across the console.',
           label: 'Badge color',
         },
+        logo: {
+          description: 'Use an HTTPS image URL across upstream badges. Leave it blank to use the provider logo.',
+        },
         fields: {
           name: 'Upstream name',
+          logoUrl: 'Logo URL',
           baseUrl: 'Base URL',
           endpoint: 'Endpoint',
           authStyle: 'Authentication',
@@ -1017,6 +1022,7 @@ const en = {
         },
         validation: {
           name: 'Upstream name is required.',
+          logoUrl: 'Enter an absolute HTTPS URL without embedded credentials (2048 characters max).',
           prefix: 'At least one model prefix form must remain addressable.',
           models: 'One or more models have an invalid configuration.',
           copilot: 'Complete GitHub device authorization before saving.',

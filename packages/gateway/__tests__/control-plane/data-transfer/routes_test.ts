@@ -80,6 +80,7 @@ const CUSTOM_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: 'https://custom.example.com/logo.svg',
   config: {
     baseUrl: 'https://custom.example.com',
     authStyle: 'bearer',
@@ -1657,6 +1658,7 @@ test('a full v20 export re-imports verbatim — the export→import round trip i
 
   // Spot-check fidelity across collection types (order-independent).
   assertEquals((await repo.upstreams.list()).find(u => u.id === 'up_codex_a')?.state, CODEX_UPSTREAM.state);
+  assertEquals((await repo.upstreams.getById('up_custom_a'))?.logoUrl, 'https://custom.example.com/logo.svg');
   assertEquals((await repo.users.listIncludingDeleted()).find(u => u.id === USER_BOB.id), USER_BOB);
   assertEquals((await repo.apiKeys.findByRawKey(KEY_B.key))?.userId, USER_BOB.id);
   const restoredKeyA = await repo.apiKeys.findByRawKey(KEY_A.key);

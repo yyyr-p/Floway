@@ -27,6 +27,7 @@ import { api, callApi } from '../../api/client';
 import type { UpstreamRecord } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
+import { normalizeUpstreamLogoUrl } from '@floway-dev/provider/model';
 import { useEntryRewrite } from '../../lib/page-navigation';
 import { BackNavigationButton } from '../ui/back-navigation-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
@@ -76,6 +77,14 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     name: z.string().trim().min(1, 'dashboard.upstreamEditor.validation.name'),
     enabled: z.boolean(),
     hue: z.number(),
+    logoUrl: z.string().trim().refine(value => {
+      try {
+        normalizeUpstreamLogoUrl(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'dashboard.upstreamEditor.validation.logoUrl'),
     proxyFallbackList: z.any(),
     modelPrefix: z.any(),
     disabledPublicModelIds: z.array(z.string()),

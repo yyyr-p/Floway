@@ -15,7 +15,7 @@ import { USERNAME_PATTERN } from '../schemas.ts';
 import { isRecord } from '../shared/field-validators.ts';
 import { parseUpstreamIdsValue } from '../shared/upstream-ids.ts';
 import { BILLING_METRICS, canonicalizePricingSelector, type BillingMetric, parseNonNegativeDecimalString, type PricingSelector } from '@floway-dev/protocols/common';
-import { ALL_PROVIDER_KINDS, normalizeModelPrefix, normalizeUpstreamHue, parseFlagOverridesWire, parsePerformanceOperation, type ProxyFallbackEntry, type UpstreamProviderKind, type UpstreamRecord } from '@floway-dev/provider';
+import { ALL_PROVIDER_KINDS, normalizeModelPrefix, normalizeUpstreamHue, normalizeUpstreamLogoUrl, parseFlagOverridesWire, parsePerformanceOperation, type ProxyFallbackEntry, type UpstreamProviderKind, type UpstreamRecord } from '@floway-dev/provider';
 import { assertAzureUpstreamRecord } from '@floway-dev/provider-azure';
 import { assertClaudeCodeUpstreamRecord, assertClaudeCodeUpstreamState } from '@floway-dev/provider-claude-code';
 import { assertCodexUpstreamRecord, assertCodexUpstreamState } from '@floway-dev/provider-codex';
@@ -164,6 +164,7 @@ const upstreamWireSchema = parsedBy((value): UpstreamRecord => {
     proxyFallbackList: parseValue(proxyFallbackListSchema, wire.proxy_fallback_list),
     modelPrefix: parseValue(parsedBy(normalizeModelPrefix).optional().default(null), wire.model_prefix),
     hue: parseValue(parsedBy(normalizeUpstreamHue), wire.hue),
+    logoUrl: parseValue(parsedBy(normalizeUpstreamLogoUrl).optional().default(null), wire.logo_url),
     config: wire.config,
     state: normalizeUpstreamState(kind, wire.state),
     modelsCache: null,

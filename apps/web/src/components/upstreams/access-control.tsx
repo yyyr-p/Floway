@@ -30,6 +30,7 @@ interface UpstreamAccessRow {
   name: string;
   selected: boolean;
   upstream: { hue: number; kind: UpstreamOption['kind'] };
+  logoUrl: string | null;
   upstreamEnabled: boolean;
 }
 
@@ -130,7 +131,7 @@ function AccessRow({ disabled, index, onToggle, reorder, row }: {
       />
       <ReorderHandle {...reorder.handleProps(index)} label={t('dashboard.upstreams.actions.reorder', { name: row.name })} />
     </div></TableCell>
-    <TableCell><ProviderBadge label={row.name} upstream={row.upstream} /></TableCell>
+    <TableCell><ProviderBadge label={row.name} logoUrl={row.logoUrl} upstream={row.upstream} /></TableCell>
     <TableCell><span className="inline-flex items-center gap-1.5 min-w-0">
       {!row.upstreamEnabled && <ProhibitedRegular className="block flex-none text-fui-fg2" aria-label={t('dashboard.upstreamAccess.upstreamDisabled')} />}
       {row.modelCount === null
@@ -159,6 +160,7 @@ const accessRows = (
     id: upstream.id,
     modelCount: upstream.enabled ? (modelCounts.get(upstream.id) ?? 0) : upstream.cachedModelCount,
     name: upstream.name,
+    logoUrl: upstream.logoUrl,
     selected: isSelected,
     upstream: { hue: upstream.hue, kind: upstream.kind },
     upstreamEnabled: upstream.enabled,

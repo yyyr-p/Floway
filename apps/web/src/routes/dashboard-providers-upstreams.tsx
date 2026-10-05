@@ -508,6 +508,7 @@ function UpstreamsTable({
               <TableCell className="overflow-hidden">
                 <ProviderBadge
                   label={record.name}
+                  logoUrl={record.logo_url}
                   to={upstreamEditorPath(record)}
                   upstream={record}
                 />

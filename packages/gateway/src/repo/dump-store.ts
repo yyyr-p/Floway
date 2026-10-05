@@ -1,5 +1,5 @@
 import { DUMP_FILE_PREFIX, SPILLED_FILE_STAGE_GRACE_MS } from './spilled-files-policy.ts';
-import { parseUpstreamHue, parseUpstreamKind } from './upstream-parse.ts';
+import { parseUpstreamHue, parseUpstreamKind, parseUpstreamLogoUrl } from './upstream-parse.ts';
 import { dumpCaptureEnvelopeSchema } from '../dump/schemas.ts';
 import {
   decodeDumpBodyDescriptor,
@@ -42,6 +42,7 @@ interface DumpRow {
   upstream_name: string | null;
   upstream_kind: string | null;
   upstream_hue: number | null;
+  upstream_logo_url: string | null;
   meta_json: string;
   request_headers_json: string;
   response_headers_json: string | null;
@@ -58,13 +59,14 @@ interface DumpRow {
 // `upstream-parse.ts` helpers — the write path already rejects bad values, but
 // a manual DB edit / migration slip would otherwise poison every read that
 // renders the badge. Same policy the SQL repo's own hydrator uses.
-const hydrateUpstream = (row: Pick<DumpRow, 'upstream_id' | 'upstream_name' | 'upstream_kind' | 'upstream_hue'>): DumpUpstreamRef | null => {
+const hydrateUpstream = (row: Pick<DumpRow, 'upstream_id' | 'upstream_name' | 'upstream_kind' | 'upstream_hue' | 'upstream_logo_url'>): DumpUpstreamRef | null => {
   if (row.upstream_id === null || row.upstream_name === null) return null;
   return {
     id: row.upstream_id,
     name: row.upstream_name,
     kind: parseUpstreamKind(row.upstream_id, row.upstream_kind),
     hue: parseUpstreamHue(row.upstream_id, row.upstream_hue),
+    logoUrl: parseUpstreamLogoUrl(row.upstream_id, row.upstream_logo_url),
   };
 };
 
@@ -241,7 +243,7 @@ export class FileDumpStore implements DumpStore {
     // millisecond still page deterministically — ULID lex order matches
     // creation order within the ms.
     const select
-      = 'SELECT d.id, d.meta_json, d.upstream_id, u.name AS upstream_name, u.provider AS upstream_kind, u.hue AS upstream_hue '
+      = 'SELECT d.id, d.meta_json, d.upstream_id, u.name AS upstream_name, u.provider AS upstream_kind, u.hue AS upstream_hue, u.logo_url AS upstream_logo_url '
       + 'FROM dump_records d LEFT JOIN upstreams u ON u.id = d.upstream_id '
       + 'JOIN api_keys k ON k.id = d.key_id AND k.deleted_at IS NULL AND k.dump_retention_seconds IS NOT NULL ';
     const conditions = ['d.key_id = ?', 'd.created_at >= ? - k.dump_retention_seconds * 1000'];
@@ -256,7 +258,7 @@ export class FileDumpStore implements DumpStore {
       parameters.push(opts.q);
     }
     const stmt = this.db.prepare(`${select} WHERE ${conditions.join(' AND ')} ORDER BY d.created_at DESC, d.id DESC LIMIT ?`).bind(...parameters, opts.limit);
-    const { results } = await stmt.all<Pick<DumpRow, 'id' | 'meta_json' | 'upstream_id' | 'upstream_name' | 'upstream_kind' | 'upstream_hue'>>();
+    const { results } = await stmt.all<Pick<DumpRow, 'id' | 'meta_json' | 'upstream_id' | 'upstream_name' | 'upstream_kind' | 'upstream_hue' | 'upstream_logo_url'>>();
     return results.map(row => ({
       ...decodePersistedDumpMetadata(row.meta_json, `dump record ${row.id} metadata`),
       upstream: hydrateUpstream(row),
@@ -265,7 +267,7 @@ export class FileDumpStore implements DumpStore {
 
   async get(keyId: string, recordId: DumpRecordId): Promise<StoredDumpRecord | null> {
     const row = await this.db.prepare(
-      'SELECT d.id, d.upstream_id, u.name AS upstream_name, u.provider AS upstream_kind, u.hue AS upstream_hue, '
+      'SELECT d.id, d.upstream_id, u.name AS upstream_name, u.provider AS upstream_kind, u.hue AS upstream_hue, u.logo_url AS upstream_logo_url, '
       + 'd.meta_json, d.request_headers_json, d.response_headers_json, d.request_body_descriptor, d.response_body_descriptor, d.response_upstream_body_descriptor '
       + 'FROM dump_records d LEFT JOIN upstreams u ON u.id = d.upstream_id '
       + 'JOIN api_keys k ON k.id = d.key_id AND k.deleted_at IS NULL AND k.dump_retention_seconds IS NOT NULL '

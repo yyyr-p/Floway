@@ -21,7 +21,7 @@ import { normalizeDisabledPublicModelIds } from '../repo/disabled-public-models.
 import { CUSTOM_API_KEY_MAX_LENGTH, KEY_SOURCES } from '../shared/api-key-tokens.ts';
 import { RETENTION_MAX_SECONDS, SECONDS_PER_DAY } from '../shared/retention.ts';
 import { kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
-import { type FlagOverrides, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
+import { type FlagOverrides, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, normalizeUpstreamLogoUrl, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
 
 // --- shared atoms ---
 
@@ -42,6 +42,15 @@ const flagOverridesSchema = z.unknown().transform((value, ctx): FlagOverrides =>
 // There is no id allowlist to enforce — any string is a legal public model id —
 // so this only trims and de-dupes rather than rejecting unknown ids.
 const disabledPublicModelIdsSchema = z.array(z.string()).transform(normalizeDisabledPublicModelIds);
+
+const upstreamLogoUrlSchema = z.union([z.string(), z.null()]).transform((value, ctx): string | null => {
+  try {
+    return normalizeUpstreamLogoUrl(value);
+  } catch (cause) {
+    ctx.issues.push({ code: 'custom', message: cause instanceof Error ? cause.message : String(cause), input: value });
+    return z.NEVER;
+  }
+});
 
 // The structured endpoint capability map, shared by per-model config and the
 // custom upstream-level fallback. A present key declares the endpoint is served.
@@ -355,6 +364,7 @@ const upstreamBaseFields = {
   proxy_fallback_list: proxyFallbackListSchema.optional(),
   model_prefix: modelPrefixSchema.optional(),
   hue: upstreamHueSchema,
+  logo_url: upstreamLogoUrlSchema.optional(),
 };
 
 // Create accepts a discriminated union on `kind` for per-provider config
@@ -394,6 +404,7 @@ export const updateUpstreamBody = z.object({
   proxy_fallback_list: proxyFallbackListSchema.optional(),
   model_prefix: modelPrefixSchema.optional(),
   hue: upstreamHueSchema.optional(),
+  logo_url: upstreamLogoUrlSchema.optional(),
   // Patches only carry field diffs, not per-kind shape validation — the
   // handler dispatches on the existing row's kind and enforces the shape
   // there (Copilot/Codex/Claude Code reject a config patch outright, since
@@ -416,6 +427,7 @@ export const upstreamRecordEnvelope = z.object({
   config: z.unknown(),
   state: z.unknown(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
+  logo_url: upstreamLogoUrlSchema.optional(),
 }).passthrough();
 
 const recordOnlyBody = z.object({ record: upstreamRecordEnvelope });
@@ -531,6 +543,7 @@ export const previewModelsBody = z.object({
     flag_overrides: flagOverridesSchema.optional(),
     disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
     model_prefix: modelPrefixSchema.optional(),
+    logo_url: upstreamLogoUrlSchema.optional(),
   }),
 });
 // --- ollama ---

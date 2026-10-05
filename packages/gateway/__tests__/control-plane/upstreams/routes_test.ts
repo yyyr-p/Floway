@@ -110,6 +110,31 @@ test('POST /api/upstreams creates custom upstreams and redacts bearer tokens', a
   assertEquals(items[0].config.apiKey, undefined);
 });
 
+test('upstream logos persist through create and patch, while unsafe schemes are rejected', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+
+  const create = await requestApp('/api/upstreams', authed(adminSession, createBody({ logo_url: ' https://EXAMPLE.com/brand.svg ' })));
+  assertEquals(create.status, 201);
+  const created = await create.json() as JsonObject;
+  assertEquals(created.logo_url, 'https://example.com/brand.svg');
+  assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, 'https://example.com/brand.svg');
+
+  const patchLogo = async (logoUrl: string | null) => requestApp(`/api/upstreams/${created.id}`, {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
+    body: JSON.stringify({ logo_url: logoUrl }),
+  });
+  assertEquals((await patchLogo('data:image/svg+xml,<svg/>')).status, 400);
+  assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, 'https://example.com/brand.svg');
+
+  const update = await patchLogo('https://cdn.example.com/new.svg');
+  assertEquals(update.status, 200);
+  assertEquals((await update.json() as JsonObject).logo_url, 'https://cdn.example.com/new.svg');
+  assertEquals((await patchLogo(null)).status, 200);
+  assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, null);
+});
+
 // `openaiCompletions` must survive request validation as a complete endpoint map;
 // stripping it would make this otherwise valid model fail provider validation.
 test('POST /api/upstreams accepts a custom model whose only endpoint is /completions', async () => {

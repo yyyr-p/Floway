@@ -262,6 +262,7 @@ function RequestRowContent({ exportIds, onToggleExport, addressOfRecord, index, 
           </Tooltip>
           {record.upstream && <ProviderBadge
             upstream={record.upstream}
+            logoUrl={record.upstream.logoUrl}
             label={record.upstream.name}
             title={`${record.upstream.kind}, ${record.upstream.id}`}
           />}

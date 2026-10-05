@@ -4,7 +4,7 @@
 // shapes.
 
 import type { UpstreamProviderKind } from '@floway-dev/provider';
-import { assertUpstreamProviderKind, normalizeUpstreamHue } from '@floway-dev/provider';
+import { assertUpstreamProviderKind, normalizeUpstreamHue, normalizeUpstreamLogoUrl } from '@floway-dev/provider';
 
 export const parseUpstreamKind = (id: string, value: string | null): UpstreamProviderKind => {
   try {
@@ -19,5 +19,13 @@ export const parseUpstreamHue = (id: string, value: unknown): number => {
     return normalizeUpstreamHue(value);
   } catch (cause) {
     throw new Error(`Invalid upstream hue for ${id}`, { cause });
+  }
+};
+
+export const parseUpstreamLogoUrl = (id: string, value: unknown): string | null => {
+  try {
+    return normalizeUpstreamLogoUrl(value);
+  } catch (cause) {
+    throw new Error(`Invalid upstream logo URL for ${id}`, { cause });
   }
 };
