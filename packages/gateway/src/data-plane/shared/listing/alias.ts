@@ -344,7 +344,7 @@ export const synthesizeListedAliases = (input: ListedAliasInputs): InternalModel
     // alias stays reachable at dispatch. This lets an operator ship a
     // gateway id (e.g. a legacy client hardcodes it) without cluttering
     // the public catalog.
-    .filter(alias => alias.visibleInModelsList)
+    .filter(alias => alias.enabled && alias.visibleInModelsList)
     .map(alias => synthesizeOne(alias, input.gatewayAddressableModelIds, input.callerAddressableModelIds, input.narrowTargets))
     .filter((entry): entry is InternalModel => entry !== null);
 

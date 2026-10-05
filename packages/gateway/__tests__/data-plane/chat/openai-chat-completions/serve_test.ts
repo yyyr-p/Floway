@@ -396,3 +396,22 @@ test('alias whose targets have no kind-matching binding surfaces as the regular 
   assertEquals(body.error.type, 'invalid_request_error');
   assertEquals(body.error.message, 'Model gpt-fast is not available on any configured upstream.');
 });
+
+test('a disabled alias uses the regular model-missing response without exposing alias configuration', async () => {
+  installRepo();
+  queueResolution([], { sawModel: false });
+
+  const result = await openaiChatCompletionsServe.generate({
+    payload: makePayload({ model: 'gpt-fast' }),
+    ctx: makeGatewayCtx(),
+    headers: new Headers(),
+  });
+
+  assertEquals(result.type, 'api-error');
+  if (result.type !== 'api-error') throw new Error('unreachable');
+  assertEquals(result.status, 404);
+  const body = JSON.parse(new TextDecoder().decode(result.body));
+  assertEquals(body.error.message, 'Model gpt-fast is not available on any configured upstream.');
+  assertEquals(JSON.stringify(body).includes('disabled'), false);
+  assertEquals(JSON.stringify(body).includes('gpt-5.4'), false);
+});

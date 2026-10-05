@@ -9,6 +9,7 @@ const record: ModelAliasRecord = {
   name: 'codex-auto-review',
   kind: 'chat',
   selection: 'first-available',
+  enabled: true,
   displayName: 'Codex Auto Review',
   visibleInModelsList: true,
   targets: [
@@ -27,6 +28,7 @@ test('recordToWire flips camelCase fields to snake_case', () => {
   assertEquals(wire.name, 'codex-auto-review');
   assertEquals(wire.kind, 'chat');
   assertEquals(wire.selection, 'first-available');
+  assertEquals(wire.enabled, true);
   assertEquals(wire.display_name, 'Codex Auto Review');
   assertEquals(wire.visible_in_models_list, true);
   assertEquals(wire.sort_order, 3);
@@ -64,6 +66,15 @@ test('wireToRecord preserves a null display_name', () => {
     { id: record.id, sortOrder: 0, createdAt: 'x', updatedAt: 'y' },
   );
   assertEquals(built.displayName, null);
+});
+
+test('wireToRecord defaults legacy payloads to enabled and preserves explicit disabled state', () => {
+  const { enabled: _omit, ...legacyWire } = recordToWire(record);
+  const legacy = wireToRecord(legacyWire, { id: record.id, sortOrder: 0, createdAt: 'x', updatedAt: 'y' });
+  assertEquals(legacy.enabled, true);
+
+  const disabled = wireToRecord({ ...recordToWire(record), enabled: false }, { id: record.id, sortOrder: 0, createdAt: 'x', updatedAt: 'y' });
+  assertEquals(disabled.enabled, false);
 });
 
 test('announced_metadata round-trips a populated override', () => {

@@ -189,6 +189,7 @@ test('/api/models — admin sees raw alias.targets; non-admin sees the caller-na
     name: 'mix',
     kind: 'chat',
     selection: 'first-available',
+    enabled: true,
     displayName: null,
     visibleInModelsList: true,
     targets: [
@@ -279,6 +280,7 @@ test('/api/models — admin self-restriction does NOT leak per-alias metadata va
     name: 'shared-alias',
     kind: 'chat',
     selection: 'first-available',
+    enabled: true,
     displayName: null,
     visibleInModelsList: true,
     targets: [{ target_model_id: 'shared', rules: {} }],
