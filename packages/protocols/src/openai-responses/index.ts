@@ -214,7 +214,17 @@ export interface OpenAIResponsesInputFile {
 
 export interface OpenAIResponsesInputReasoning {
   type: 'reasoning';
-  id: string;
+  // The name an upstream filed this reasoning under when it signed
+  // `encrypted_content` against `(account, id)`. Input-side the id is
+  // optional: an upstream that never stored the item (Codex always sends
+  // `store: false`) resolves an id-bearing item by server-side lookup and
+  // rejects the whole turn when no row answers, while an id-less item is
+  // taken as plain history content. Official Codex itself strips ids from
+  // every input item in exactly that stateless case, so a synthesized id
+  // (one no upstream ever issued) must never ride input back to a native
+  // upstream.
+  // https://github.com/openai/codex/blob/8c41ed33ce3e39460e7b13b14c35e0c39bb5980d/codex-rs/core/src/client.rs#L911-L921
+  id?: string;
   summary: { type: 'summary_text'; text: string }[];
   // Opaque reasoning blob the upstream signs against `(account, id)`. Never
   // auto-requested via `include: ['reasoning.encrypted_content']` (forcing it

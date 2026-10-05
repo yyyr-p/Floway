@@ -1,4 +1,4 @@
-import { expect, test } from 'vitest';
+import { test } from 'vitest';
 
 import { buildTargetRequest } from '../../src/anthropic-messages-via-openai-responses/request.ts';
 import { packReasoningSignature } from '../../src/shared/anthropic-messages-and-openai-responses/reasoning.ts';
@@ -6,7 +6,7 @@ import type { AnthropicMessagesAssistantContentBlock, AnthropicMessagesUserConte
 import type { OpenAIResponsesFunctionTool, OpenAIResponsesInputReasoning } from '@floway-dev/protocols/openai-responses';
 import { assertEquals, assertFalse, assertThrows } from '@floway-dev/test-utils';
 
-test('buildTargetRequest preserves a native thinking signature as encrypted_content with a synthesized id', () => {
+test('buildTargetRequest preserves a native thinking signature as encrypted_content with no id', () => {
   const result = buildTargetRequest({
     model: 'gpt-test',
     max_tokens: 256,
@@ -20,9 +20,12 @@ test('buildTargetRequest preserves a native thinking signature as encrypted_cont
 
   if (!Array.isArray(result.input)) throw new Error('expected input array');
   const reasoning = result.input[0] as OpenAIResponsesInputReasoning;
+  // A genuine Anthropic signature names no OpenAI Responses row, so the item
+  // crosses id-less rather than under a minted id no upstream ever stored —
+  // a native Responses upstream resolves an id-bearing input item by
+  // server-side lookup and rejects the whole turn.
   assertEquals(reasoning, {
     type: 'reasoning',
-    id: expect.stringMatching(/^rs_[0-9a-f]{32}$/),
     summary: [{ type: 'summary_text', text: 'trace' }],
     encrypted_content: 'sig',
   });
@@ -324,7 +327,6 @@ test('buildTargetRequest preserves redacted_thinking as a native-signature reaso
   assertEquals(result.input, [
     {
       type: 'reasoning',
-      id: expect.stringMatching(/^rs_[0-9a-f]{32}$/),
       summary: [],
       encrypted_content: 'opaque_sig',
     },
@@ -370,7 +372,6 @@ test('buildTargetRequest preserves text-only thinking input', () => {
   const reasoning = result.input[0] as OpenAIResponsesInputReasoning;
   assertEquals(reasoning, {
     type: 'reasoning',
-    id: expect.stringMatching(/^rs_[0-9a-f]{32}$/),
     summary: [{ type: 'summary_text', text: 'trace' }],
   });
 });

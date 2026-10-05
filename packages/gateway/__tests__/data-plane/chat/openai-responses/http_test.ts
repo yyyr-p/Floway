@@ -322,6 +322,61 @@ test('POST /v1/responses makes a done reasoning item reusable before terminal', 
   }
 });
 
+test('POST /v1/responses strips the id from an unbacked reasoning item before a native upstream', async () => {
+  installRepo();
+  // Reproduces the captured cross-protocol switch: a session previously served
+  // through /chat/completions carries reasoning items whose ids were
+  // synthesized by the translation (no upstream ever issued them), and Codex
+  // replays them into a native Responses turn with `store: false`. The
+  // upstream resolves each id-bearing item by server-side lookup and rejects
+  // the whole turn: "Item with id 'rs_...' not found. Items are not persisted
+  // when `store` is set to false."
+  let observedBody: Omit<CanonicalOpenAIResponsesPayload, 'model'> | undefined;
+  const callOpenAIResponses = vi.fn(async (_model, body): Promise<ProviderOpenAIResponsesResult> => {
+    observedBody = body as Omit<CanonicalOpenAIResponsesPayload, 'model'>;
+    return {
+      action: 'generate',
+      ok: true,
+      events: makeProviderEvents(completedEvents()),
+      modelKey: 'test-model-key',
+      headers: new Headers(),
+    };
+  });
+  queueResolution([makeCandidate({
+    endpoints: { openaiResponses: {} },
+    callOpenAIResponses,
+  })]);
+
+  const response = await makeApp().request('/v1/responses', {
+    method: 'POST',
+    headers: new Headers({ 'content-type': 'application/json' }),
+    body: JSON.stringify({
+      model: 'test-model',
+      store: false,
+      stream: true,
+      input: [
+        {
+          type: 'reasoning',
+          id: 'rs_542e678b3a6a71ba5ff94079e81fa6e1',
+          summary: [{ type: 'summary_text', text: 'We need continue. Need inspect agents status, merge state.' }],
+          content: null,
+        },
+        { type: 'message', role: 'user', content: 'continue' },
+      ],
+    }),
+  });
+
+  assertEquals(response.status, 200);
+  assertEquals(observedBody?.input, [
+    {
+      type: 'reasoning',
+      summary: [{ type: 'summary_text', text: 'We need continue. Need inspect agents status, merge state.' }],
+      content: null,
+    },
+    { type: 'message', role: 'user', content: 'continue' },
+  ]);
+});
+
 test('POST /v1/responses canonicalizes an implicit system message and rewrites it to developer', async () => {
   installRepo();
   let observedBody: Omit<CanonicalOpenAIResponsesPayload, 'model'> | undefined;

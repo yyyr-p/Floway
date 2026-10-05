@@ -1,7 +1,7 @@
 import { klona } from 'klona/json';
 
 import type { OpenAIChatCompletionsReasoningItem } from '@floway-dev/protocols/openai-chat-completions';
-import { createRandomOpenAIResponsesItemId, type OpenAIResponsesInputItem, type OpenAIResponsesOutputReasoning, type OpenAIResponsesReasoningItem } from '@floway-dev/protocols/openai-responses';
+import { type OpenAIResponsesInputItem, type OpenAIResponsesOutputReasoning, type OpenAIResponsesReasoningItem } from '@floway-dev/protocols/openai-responses';
 
 // OpenAI's Chat Completions spec has no reasoning-text field; upstreams expose
 // the same quantity as `reasoning_content` or `reasoning`. Treat both as
@@ -53,10 +53,20 @@ export const openaiChatCompletionsReasoningProjectionFields = (projection: OpenA
   ...(projection.items.length > 0 ? { reasoning_items: projection.items } : {}),
 });
 
+// Synthesis never mints an id. An input reasoning item's id is only the name
+// an upstream filed its signed `encrypted_content` under; a fresh id names a
+// row no upstream ever created, and a native Responses upstream answers an
+// id-bearing input item with a server-side lookup that fails the whole turn
+// ("Item with id 'rs_...' not found. Items are not persisted when `store` is
+// set to false."). Official Codex strips ids from every input item in exactly
+// that stateless case, so Chat-history reasoning crosses back as id-less
+// plain history. An id already present is an upstream-issued value and rides
+// verbatim.
+// https://github.com/openai/codex/blob/8c41ed33ce3e39460e7b13b14c35e0c39bb5980d/codex-rs/core/src/client.rs#L911-L921
 export const toOpenAIResponsesReasoningItem = <T extends OpenAIResponsesReasoningItem>(item: OpenAIChatCompletionsReasoningItem): T =>
   ({
     type: 'reasoning',
-    id: item.id ?? createRandomOpenAIResponsesItemId('reasoning'),
+    ...(item.id !== undefined ? { id: item.id } : {}),
     summary: item.summary ?? [],
   } as T);
 
@@ -65,8 +75,7 @@ export const scalarToOpenAIResponsesReasoningItem = <T extends OpenAIResponsesRe
 
   return {
     type: 'reasoning',
-    id: createRandomOpenAIResponsesItemId('reasoning'),
-    summary: reasoningText ? [{ type: 'summary_text', text: reasoningText }] : [],
+    summary: [{ type: 'summary_text', text: reasoningText }],
   } as T;
 };
 

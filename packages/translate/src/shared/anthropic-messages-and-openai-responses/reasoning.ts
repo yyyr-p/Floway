@@ -1,5 +1,5 @@
 import type { AnthropicMessagesRedactedThinkingBlock, AnthropicMessagesThinkingBlock } from '@floway-dev/protocols/anthropic-messages';
-import { createRandomOpenAIResponsesItemId, type OpenAIResponsesInputReasoning, type OpenAIResponsesReasoningItem } from '@floway-dev/protocols/openai-responses';
+import { type OpenAIResponsesInputReasoning, type OpenAIResponsesReasoningItem } from '@floway-dev/protocols/openai-responses';
 
 export type AnthropicMessagesReasoningBlock = AnthropicMessagesThinkingBlock | AnthropicMessagesRedactedThinkingBlock;
 
@@ -66,8 +66,10 @@ const unpackReasoningSignature = (signature: string): { id: string | null; encry
  * Project an Anthropic Messages reasoning carrier echoed by a downstream Anthropic Messages CLIENT
  * into an OpenAI Responses reasoning item bound for the OpenAI Responses UPSTREAM. Unpacks the
  * carrier so the upstream sees the original id and a clean `encrypted_content`
- * blob. A fresh random id is used when the carrier holds a genuine (unpacked)
- * upstream signature.
+ * blob. A carrier holding a genuine (unpacked) upstream signature names no
+ * OpenAI Responses row, so the item crosses id-less rather than under a minted
+ * id no upstream ever stored — a native Responses upstream resolves an
+ * id-bearing input item by server-side lookup and rejects the whole turn.
  */
 export const anthropicMessagesReasoningBlockToOpenAIResponsesReasoning = (block: AnthropicMessagesReasoningBlock): OpenAIResponsesInputReasoning => {
   const carrier = block.type === 'thinking' ? block.signature : block.data;
@@ -76,7 +78,7 @@ export const anthropicMessagesReasoningBlockToOpenAIResponsesReasoning = (block:
 
   return {
     type: 'reasoning',
-    id: id ?? createRandomOpenAIResponsesItemId('reasoning'),
+    ...(id !== null ? { id } : {}),
     summary,
     ...(encryptedContent !== undefined ? { encrypted_content: encryptedContent } : {}),
   };
