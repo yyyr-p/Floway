@@ -106,6 +106,23 @@ test('0062 rejects malformed legacy usage quantities and prices', async () => {
   }
 });
 
+test('0093 preserves known unmetered counts and marks mixed historical counts unknown', async () => {
+  const db = await createSqlJsDatabase();
+  for (const [filename, sql] of migrationSqlByFilename) {
+    if (filename === '0093_usage_unmetered_requests.sql') {
+      db.run(`INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests) VALUES
+        ('k', 'unmetered', NULL, 'mk', '2026-01-01T00', '{}', 2),
+        ('k', 'mixed', NULL, 'mk', '2026-01-01T00', '{}', 3)`);
+      db.run(`INSERT INTO usage (key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price)
+        VALUES ('k', 'mixed', NULL, 'mk', '2026-01-01T00', '{}', 'input_tokens', '10', '0.000001')`);
+    }
+    db.run(sql);
+  }
+
+  const rows = db.exec('SELECT model, requests, unmetered_requests FROM usage_requests ORDER BY model')[0]!.values;
+  assertEquals(rows, [['mixed', 3, null], ['unmetered', 2, 2]]);
+});
+
 for (const backend of backends) {
   test(`${backend.name} usage repo scopes a time window to a set of keys`, async () => {
     const repo = await backend.make();

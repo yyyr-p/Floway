@@ -73,7 +73,7 @@ import {
 } from './upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts';
 import { parseUpstreamHue, parseUpstreamKind } from './upstream-parse.ts';
-import { usageMetricRows } from './usage-metrics.ts';
+import { usageMetricRows, usageUnmeteredRequests } from './usage-metrics.ts';
 import { querySqlUsageOverview } from './usage-overview-sql.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogram.ts';
 import { parseServerSecret } from '../shared/server-secret.ts';
@@ -474,10 +474,16 @@ class SqlUsageRepo implements UsageRepo {
   async record(record: UsageRecord): Promise<void> {
     const upstream = record.upstream ?? null;
     const selector = canonicalPricingSelectorKey(record.pricingSelector);
+    const unmeteredRequests = usageUnmeteredRequests(record);
     await this.db.prepare(
-      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT DO UPDATE SET requests = requests + excluded.requests`,
-    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests).run();
+      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO UPDATE SET
+         requests = requests + excluded.requests,
+         unmetered_requests = CASE
+           WHEN usage_requests.unmetered_requests IS NULL OR excluded.unmetered_requests IS NULL THEN NULL
+           ELSE usage_requests.unmetered_requests + excluded.unmetered_requests
+         END`,
+    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests, unmeteredRequests).run();
     await Promise.all(usageMetricRows(record).map(row => this.addMetric(record, upstream, selector, row)));
   }
 
@@ -491,7 +497,7 @@ class SqlUsageRepo implements UsageRepo {
       : [JSON.stringify(keyIds), opts.start, opts.end];
     const [{ results: metrics }, { results: requests }] = await Promise.all([
       this.db.prepare(`SELECT key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price FROM usage WHERE ${where} ORDER BY rowid`).bind(...binds).all<UsageMetricRow>(),
-      this.db.prepare(`SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests FROM usage_requests WHERE ${where}`).bind(...binds).all<UsageRequestRow>(),
+      this.db.prepare(`SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests FROM usage_requests WHERE ${where}`).bind(...binds).all<UsageRequestRow>(),
     ]);
     return assembleUsageRecords(metrics, requests);
   }
@@ -503,7 +509,7 @@ class SqlUsageRepo implements UsageRepo {
   async listAll(): Promise<UsageRecord[]> {
     const [{ results: metrics }, { results: requests }] = await Promise.all([
       this.db.prepare('SELECT key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price FROM usage ORDER BY rowid').all<UsageMetricRow>(),
-      this.db.prepare('SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests FROM usage_requests').all<UsageRequestRow>(),
+      this.db.prepare('SELECT key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests FROM usage_requests').all<UsageRequestRow>(),
     ]);
     return assembleUsageRecords(metrics, requests);
   }
@@ -511,17 +517,19 @@ class SqlUsageRepo implements UsageRepo {
   async set(record: UsageRecord): Promise<void> {
     const upstream = record.upstream ?? null;
     const selector = canonicalPricingSelectorKey(record.pricingSelector);
+    const metricRows = usageMetricRows(record);
+    const unmeteredRequests = usageUnmeteredRequests(record);
     const statements: SqlPreparedStatement[] = [
       this.db.prepare("DELETE FROM usage WHERE key_id = ? AND model = ? AND COALESCE(upstream, '') = COALESCE(?, '') AND model_key = ? AND hour = ? AND pricing_selector = ?")
         .bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector),
-      ...usageMetricRows(record).map(row => this.db.prepare(
+      ...metricRows.map(row => this.db.prepare(
         'INSERT INTO usage (key_id, model, upstream, model_key, hour, pricing_selector, metric, quantity, unit_price) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, row.metric, row.quantity, row.unitPrice)),
     ];
     statements.push(this.db.prepare(
-      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests) VALUES (?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT DO UPDATE SET requests = excluded.requests`,
-    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests));
+      `INSERT INTO usage_requests (key_id, model, upstream, model_key, hour, pricing_selector, requests, unmetered_requests) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON CONFLICT DO UPDATE SET requests = excluded.requests, unmetered_requests = excluded.unmetered_requests`,
+    ).bind(record.keyId, record.model, upstream, record.modelKey, record.hour, selector, record.requests, unmeteredRequests));
     await runStatements(this.db, statements);
   }
 
@@ -588,11 +596,7 @@ const usageLimitHasUnpricedSql = `(
     WHERE ur.hour >= b.window_start AND ur.hour < b.window_end
       AND ((c.principal_type = 'key' AND ur.key_id = c.principal_id)
         OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
-      AND NOT EXISTS (
-        SELECT 1 FROM usage u WHERE u.key_id = ur.key_id AND u.model = ur.model
-          AND COALESCE(u.upstream, '') = COALESCE(ur.upstream, '') AND u.model_key = ur.model_key
-          AND u.hour = ur.hour AND u.pricing_selector = ur.pricing_selector
-      )
+      AND ur.requests > 0 AND (ur.unmetered_requests IS NULL OR ur.unmetered_requests > 0)
   ) OR EXISTS (
     SELECT 1 FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
     WHERE u.hour >= b.window_start AND u.hour < b.window_end AND u.unit_price IS NULL
@@ -761,7 +765,7 @@ interface UsageMetricRow {
 }
 interface UsageRequestRow {
   key_id: string; model: string; upstream: string | null; model_key: string; hour: string;
-  pricing_selector: string; requests: number;
+  pricing_selector: string; requests: number; unmetered_requests: number | null;
 }
 
 type UsageIdentityRow = Pick<UsageMetricRow, 'key_id' | 'model' | 'upstream' | 'model_key' | 'hour' | 'pricing_selector'>;
@@ -790,7 +794,11 @@ const assembleUsageRecords = (metrics: readonly UsageMetricRow[], requests: read
     if (existing) throw new Error(`Duplicate stored usage metric: ${metric}`);
     record.metrics.push({ metric, quantity, unitPrice });
   }
-  for (const row of requests) ensureRecord(row).requests = row.requests;
+  for (const row of requests) {
+    const record = ensureRecord(row);
+    record.requests = row.requests;
+    record.unmeteredRequests = row.unmetered_requests;
+  }
   return [...byBucket.values()].sort((a, b) => a.hour.localeCompare(b.hour));
 };
 

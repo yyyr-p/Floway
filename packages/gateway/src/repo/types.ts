@@ -64,6 +64,9 @@ export interface UsageRecord {
   // object. `{}` is the base coordinate.
   pricingSelector: PricingSelector;
   requests: number;
+  // Exact count of requests in this bucket whose upstream supplied no usage
+  // metrics. `null` means the count cannot be recovered from legacy history.
+  unmeteredRequests?: number | null;
   metrics: UsageMetricRecord[];
 }
 
