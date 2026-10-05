@@ -186,6 +186,8 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
     ? {
         ...structuredClone(record.config),
         apiKey: '',
+        usageProbeJson: record.config.usageProbe === undefined ? '' : JSON.stringify(record.config.usageProbe, null, 2),
+        actionsJson: record.config.actions === undefined ? '' : JSON.stringify(record.config.actions, null, 2),
         // The override fields register the whole map, so the edited value
         // carries every listed path whether or not the stored config does.
         // Seeding the blanks keeps the saved state and the edited state the
@@ -197,7 +199,7 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
           { key: '', value: null },
         ],
         modelsFetch: withRegisteredKey('endpoint', structuredClone(record.config.modelsFetch)),
-      }
+      } as unknown as UpstreamRecord['config']
     : record.kind === 'azure'
       ? { ...structuredClone(record.config), apiKey: '' }
       : record.kind === 'ollama'
@@ -236,6 +238,20 @@ const configFromValues = (
   }
   if (record.kind === 'custom') {
     const custom = config as Record<string, unknown>;
+    for (const [textKey, configKey] of [['usageProbeJson', 'usageProbe'], ['actionsJson', 'actions']] as const) {
+      const raw = custom[textKey];
+      delete custom[textKey];
+      if (typeof raw !== 'string' || raw.trim() === '') {
+        delete custom[configKey];
+        continue;
+      }
+      try {
+        custom[configKey] = JSON.parse(raw);
+      } catch {
+        // The editor's schema prevents saving invalid JSON; draft previews keep
+        // the last parsed provider value until the field becomes valid.
+      }
+    }
     if (custom.authStyle === 'none') delete custom.apiKey;
     const ingressHeadersRules = custom.ingressHeadersRules as { key: string; value: string | null }[];
     custom.ingressHeadersRules = ingressHeadersRules.flatMap(rule => {

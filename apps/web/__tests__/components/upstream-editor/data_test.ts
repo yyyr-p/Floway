@@ -45,6 +45,41 @@ test('Custom editor values add one blank ingress row and never serialize it', ()
   expect((previewRecord(record, values).config as CustomRecord['config']).ingressHeadersRules).toEqual(expected);
 });
 
+test('Custom editor round-trips usage probes and actions without serializing editor-only fields', () => {
+  const configured = upstreamRecord('up_custom', {
+    kind: 'custom',
+    config: {
+      baseUrl: 'https://api.example.com',
+      authStyle: 'none',
+      endpoints: { openaiResponses: {} },
+      ingressHeadersRules: [],
+      modelsFetch: { enabled: false },
+      models: [],
+      usageProbe: {
+        path: '/account/usage',
+        windows: [{ id: 'week', label: 'Weekly', used: '/usage/used', limit: '/usage/limit' }],
+      },
+      actions: [{ id: 'reset', label: 'Reset quota', path: '/account/reset', method: 'POST' }],
+    },
+    state: null,
+  }) as CustomRecord;
+  const values = valuesFromRecord(configured);
+  const config = values.config as CustomRecord['config'] & { usageProbeJson: string; actionsJson: string };
+  expect(JSON.parse(config.usageProbeJson)).toEqual(config.usageProbe);
+  expect(JSON.parse(config.actionsJson)).toEqual(config.actions);
+
+  config.usageProbeJson = JSON.stringify({
+    path: '/v2/usage',
+    windows: [{ id: 'day', label: 'Daily', used: '/day/used', limit: '/day/limit' }],
+  });
+  config.actionsJson = JSON.stringify([{ id: 'refresh', label: 'Refresh', path: '/account/refresh', method: 'PUT' }]);
+  const preview = previewRecord(configured, values).config as CustomRecord['config'] & Record<string, unknown>;
+  expect(preview.usageProbe).toEqual(JSON.parse(config.usageProbeJson));
+  expect(preview.actions).toEqual(JSON.parse(config.actionsJson));
+  expect(preview.usageProbeJson).toBeUndefined();
+  expect(preview.actionsJson).toBeUndefined();
+});
+
 test('discovery input edits exclude metadata-only changes', () => {
   expect(hasUnsavedDiscoveryInputs({})).toBe(false);
   expect(hasUnsavedDiscoveryInputs({ config: true })).toBe(true);

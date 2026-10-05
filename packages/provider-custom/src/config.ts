@@ -53,6 +53,27 @@ export interface CustomModelsFetch {
   endpoint?: string;
 }
 
+export interface CustomUsageProbeWindow {
+  id: string;
+  label: string;
+  used: string;
+  limit: string;
+  resetAt?: string;
+}
+
+export interface CustomUsageProbe {
+  path: string;
+  windows: CustomUsageProbeWindow[];
+}
+
+export interface CustomOperationalAction {
+  id: string;
+  label: string;
+  path: string;
+  method: 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+  body?: Record<string, unknown>;
+}
+
 // One rule per value the operator wants this upstream to receive under a
 // header name. `value: null` passes the client's own value through, so it
 // contributes a value only when the client sent the header. Any other value —
@@ -89,6 +110,8 @@ interface CustomUpstreamConfigBase {
   ingressHeadersRules: CustomIngressHeaderRule[];
   modelsFetch: CustomModelsFetch;
   models: UpstreamModelConfig[];
+  usageProbe?: CustomUsageProbe;
+  actions?: CustomOperationalAction[];
 }
 
 export type CustomUpstreamConfig =
@@ -205,6 +228,121 @@ const modelsFetchField = (value: unknown): CustomModelsFetch => {
   return { enabled: value.enabled, endpoint: validPath.value };
 };
 
+const managementPathField = (value: unknown, field: string): string => {
+  if (typeof value !== 'string') throw new Error(`Malformed custom upstream config: ${field} must be a path`);
+  const path = value.trim();
+  if (
+    path.length === 0 || path.length > 256 || !path.startsWith('/') || path.startsWith('//')
+    || path.includes('//') || path.includes('\\') || /[?#%\u0000-\u0020\u007f]/.test(path)
+    || path.split('/').some(segment => segment === '.' || segment === '..')
+  ) {
+    throw new Error(`Malformed custom upstream config: ${field} must be a same-origin absolute path without query or fragment`);
+  }
+  return path;
+};
+
+export const customManagementUrl = (config: CustomUpstreamConfig, rawPath: string): string => {
+  const path = managementPathField(rawPath, 'management path');
+  const base = new URL(config.baseUrl);
+  if (base.username !== '' || base.password !== '' || base.search !== '' || base.hash !== '') {
+    throw new Error('Malformed custom upstream config: management requests require a baseUrl without credentials, query, or fragment');
+  }
+  return `${config.baseUrl.replace(/\/+$/, '')}${path}`;
+};
+
+const actionIdField = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$/.test(value)) {
+    throw new Error(`Malformed custom upstream config: ${field} must be a stable ASCII identifier`);
+  }
+  return value;
+};
+
+const actionLabelField = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || value.trim().length === 0 || value.trim().length > 80) {
+    throw new Error(`Malformed custom upstream config: ${field} must be 1 to 80 characters`);
+  }
+  return value.trim();
+};
+
+const jsonPointerField = (value: unknown, field: string): string => {
+  if (typeof value !== 'string' || value.length < 2 || value.length > 512 || !value.startsWith('/')) {
+    throw new Error(`Malformed custom upstream config: ${field} must be a JSON Pointer`);
+  }
+  if (/(~(?![01]))/.test(value)) throw new Error(`Malformed custom upstream config: ${field} contains an invalid JSON Pointer escape`);
+  if (value.split('/').some(segment => ['__proto__', 'prototype', 'constructor'].includes(segment.replaceAll('~1', '/').replaceAll('~0', '~')))) {
+    throw new Error(`Malformed custom upstream config: ${field} contains a forbidden property`);
+  }
+  return value;
+};
+
+const usageProbeField = (value: unknown): CustomUsageProbe => {
+  if (!isRecord(value) || Object.keys(value).some(key => key !== 'path' && key !== 'windows')) {
+    throw new Error('Malformed custom upstream config: usageProbe must contain only path and windows');
+  }
+  if (!Array.isArray(value.windows) || value.windows.length === 0 || value.windows.length > 8) {
+    throw new Error('Malformed custom upstream config: usageProbe.windows must contain 1 to 8 windows');
+  }
+  const ids = new Set<string>();
+  const windows = value.windows.map((raw, index): CustomUsageProbeWindow => {
+    const field = `usageProbe.windows[${index}]`;
+    if (!isRecord(raw) || Object.keys(raw).some(key => !['id', 'label', 'used', 'limit', 'resetAt'].includes(key))) {
+      throw new Error(`Malformed custom upstream config: ${field} has unsupported fields`);
+    }
+    const id = actionIdField(raw.id, `${field}.id`);
+    if (ids.has(id)) throw new Error(`Malformed custom upstream config: ${field}.id must be unique`);
+    ids.add(id);
+    if (typeof raw.label !== 'string' || raw.label.trim().length === 0 || raw.label.trim().length > 80) {
+      throw new Error(`Malformed custom upstream config: ${field}.label must be 1 to 80 characters`);
+    }
+    return {
+      id,
+      label: raw.label.trim(),
+      used: jsonPointerField(raw.used, `${field}.used`),
+      limit: jsonPointerField(raw.limit, `${field}.limit`),
+      ...(raw.resetAt !== undefined ? { resetAt: jsonPointerField(raw.resetAt, `${field}.resetAt`) } : {}),
+    };
+  });
+  return { path: managementPathField(value.path, 'usageProbe.path'), windows };
+};
+
+const actionsField = (value: unknown): CustomOperationalAction[] => {
+  if (!Array.isArray(value) || value.length > 8) {
+    throw new Error('Malformed custom upstream config: actions must be an array with at most 8 entries');
+  }
+  const ids = new Set<string>();
+  return value.map((raw, index) => {
+    const field = `actions[${index}]`;
+    if (!isRecord(raw) || Object.keys(raw).some(key => !['id', 'label', 'path', 'method', 'body'].includes(key))) {
+      throw new Error(`Malformed custom upstream config: ${field} has unsupported fields`);
+    }
+    const id = actionIdField(raw.id, `${field}.id`);
+    if (ids.has(id)) throw new Error(`Malformed custom upstream config: ${field}.id must be unique`);
+    ids.add(id);
+    if (raw.method !== 'POST' && raw.method !== 'PUT' && raw.method !== 'PATCH' && raw.method !== 'DELETE') {
+      throw new Error(`Malformed custom upstream config: ${field}.method must be POST, PUT, PATCH, or DELETE`);
+    }
+    let body: Record<string, unknown> | undefined;
+    if (raw.body !== undefined) {
+      if (!isRecord(raw.body)) throw new Error(`Malformed custom upstream config: ${field}.body must be a JSON object`);
+      let serialized: string;
+      try {
+        serialized = JSON.stringify(raw.body);
+      } catch {
+        throw new Error(`Malformed custom upstream config: ${field}.body must be JSON serializable`);
+      }
+      if (serialized.length > 4096) throw new Error(`Malformed custom upstream config: ${field}.body must not exceed 4096 characters`);
+      body = structuredClone(raw.body);
+    }
+    return {
+      id,
+      label: actionLabelField(raw.label, `${field}.label`),
+      path: managementPathField(raw.path, `${field}.path`),
+      method: raw.method,
+      ...(body !== undefined ? { body } : {}),
+    };
+  });
+};
+
 export const assertCustomUpstreamRecord = (record: UpstreamRecord): CustomUpstreamRecord => {
   if (record.kind !== 'custom') throw new Error(`Expected custom upstream record, got ${record.kind}`);
   if (!isRecord(record.config)) throw new Error('Malformed custom upstream config: config must be an object');
@@ -218,6 +356,8 @@ export const assertCustomUpstreamRecord = (record: UpstreamRecord): CustomUpstre
     ingressHeadersRules: ingressHeadersRulesField(raw.ingressHeadersRules),
     modelsFetch: modelsFetchField(raw.modelsFetch),
     models: modelsField(raw.models ?? [], 'custom'),
+    ...(raw.usageProbe !== undefined ? { usageProbe: usageProbeField(raw.usageProbe) } : {}),
+    ...(raw.actions !== undefined ? { actions: actionsField(raw.actions) } : {}),
   };
 
   if (authStyle === 'none') {
