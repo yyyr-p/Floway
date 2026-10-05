@@ -1200,7 +1200,6 @@ const microUsdToString = (value: number): string => {
 const usdToMicrosCeil = (value: string): number => {
   const canonical = parseNonNegativeDecimalString(value, 'usage limit cost');
   const [whole, fraction = ''] = canonical.split('.');
-  if (fraction.length > 6) throw new TypeError('usage limit cost supports at most six fractional digits');
   const head = fraction.slice(0, 6).padEnd(6, '0');
   const tail = fraction.slice(6);
   const micros = BigInt(whole!) * 1_000_000n + BigInt(head || '0') + (/[1-9]/.test(tail) ? 1n : 0n);
@@ -1290,7 +1289,12 @@ class SqlUsageLimitsRepo implements UsageLimitsRepo {
     if (limit.principalType === 'key' && (typeof limit.principalId !== 'string' || principalId.length === 0)) throw new TypeError('usage-limit key id must be a non-empty string');
     if (!['hour', 'day', 'month'].includes(limit.window)) throw new TypeError(`Invalid usage-limit window: ${limit.window}`);
     if (limit.maxTokens !== null && (!Number.isSafeInteger(limit.maxTokens) || limit.maxTokens < 0)) throw new TypeError('usage-limit maxTokens must be a non-negative safe integer or null');
-    const maxCostMicros = limit.maxCostUsd === null ? null : usdToMicrosCeil(limit.maxCostUsd);
+    let maxCostMicros: number | null = null;
+    if (limit.maxCostUsd !== null) {
+      const cost = parseNonNegativeDecimalString(limit.maxCostUsd, 'usage limit cost');
+      if ((cost.split('.')[1]?.length ?? 0) > 6) throw new TypeError('usage limit cost supports at most six fractional digits');
+      maxCostMicros = usdToMicrosCeil(cost);
+    }
     if (limit.maxTokens === null && maxCostMicros === null) throw new TypeError('usage limit must define a token or cost maximum');
     await this.db.prepare(
       `INSERT INTO usage_limits (principal_type, principal_id, window, max_tokens, max_cost_micros)
