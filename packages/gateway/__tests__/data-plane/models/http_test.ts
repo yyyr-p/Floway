@@ -701,6 +701,29 @@ test('/v1/models returns an empty OpenAI model list when no provider is configur
   }
 });
 
+test('client-specific model discovery formats return empty catalogs without providers', async () => {
+  const { repo, apiKey } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  clearInProcessCopilotTokenCache();
+
+  const cases = [
+    { userAgent: 'codex_cli_rs/987.654.321', body: { models: [] } },
+    { userAgent: 'claude-code/2.1.206', body: { data: [], first_id: null, has_more: false, last_id: null } },
+  ];
+  await withMockedFetch(request => {
+    if (new URL(request.url).hostname === 'raw.githubusercontent.com') return new Response(null, { status: 404 });
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    for (const { userAgent, body } of cases) {
+      const response = await requestAppWithWarmModels('/models', {
+        headers: { 'x-api-key': apiKey.key, 'user-agent': userAgent },
+      });
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), body);
+    }
+  });
+});
+
 test('/v1/models returns the id-sorted union of every connected GitHub account', async () => {
   const { repo, apiKey, githubAccount } = await setupAppTest();
   await saveUpstreamForTest(repo.upstreams, buildCopilotUpstreamRecord(SECOND_ACCOUNT, { id: 'up_copilot_second', sortOrder: 1 }));

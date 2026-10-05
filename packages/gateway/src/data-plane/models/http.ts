@@ -121,14 +121,6 @@ export const serveModels = async (c: Context): Promise<Response> => {
       ? toClaudeCodeCatalog(publicCatalog)
       : publicCatalog);
   } catch (e) {
-    if (
-      !isCodexUserAgent(userAgent)
-      && !isClaudeCodeDiscoveryUserAgent(userAgent)
-      && e instanceof Error
-      && e.message.startsWith('No upstream provider configured')
-    ) {
-      return Response.json({ object: 'list', has_more: false, first_id: null, last_id: null, data: [] });
-    }
     const message = e instanceof Error ? e.message : String(e);
     return Response.json({ error: { message, type: 'api_error' } }, { status: 502 });
   }
