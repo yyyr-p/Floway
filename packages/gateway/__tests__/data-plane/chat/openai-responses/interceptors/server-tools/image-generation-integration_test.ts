@@ -297,7 +297,14 @@ for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
         'images_image_generation', 'image_generation_2',
       ]);
       if (turns === 2) {
-        assert(trip.target.messages.some(message => message.role === 'tool' && message.tool_call_id === 'image_call'));
+        const feedback = trip.target.messages.find(message => message.role === 'tool');
+        assert(feedback?.role === 'tool');
+        assert(typeof feedback.content === 'string');
+        assertEquals((JSON.parse(feedback.content) as { ok: boolean }).ok, true);
+        assert(trip.target.messages.some(message => message.role === 'assistant'
+          && message.tool_calls?.some(call => call.id === feedback.tool_call_id && call.function.name === 'image_generation_2')));
+        assert(trip.target.messages.some(message => message.role === 'user' && Array.isArray(message.content)
+          && message.content.some(part => part.type === 'image_url' && part.image_url.url === 'data:image/png;base64,R0VO')));
       }
       const chunks: OpenAIChatCompletionsStreamEvent[] = turns === 1 ? [
         {
