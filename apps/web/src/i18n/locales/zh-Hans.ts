@@ -605,6 +605,7 @@ const zhHansCN = {
           create: '新建上游',
           refresh: '刷新上游',
           delete: '删除上游',
+          detailsNamed: '查看 {{name}} 的订阅详情',
           editNamed: '编辑上游 {{name}}',
           copyNamed: '复制上游 {{name}}',
           deleteNamed: '删除上游 {{name}}',
@@ -693,6 +694,43 @@ const zhHansCN = {
           visibility: { pending: '正在更新普通用户可见状态' },
           reorder: { pending: '正在更新路由优先级' },
           delete: { pending: '正在删除上游 {{name}}', success: '已删除上游 {{name}}' },
+        },
+      },
+      upstreamDetails: {
+        actions: {
+          back: '返回上游列表',
+          edit: '编辑上游',
+          reload: '重新读取已保存状态',
+        },
+        sections: {
+          connection: '连接与认证',
+          usage: '用量与限额',
+        },
+        fields: {
+          authentication: '认证状态',
+          tokenExpires: '会话令牌到期时间',
+          endpoint: '端点',
+        },
+        status: {
+          enabled: '已启用',
+          disabled: '已停用',
+          configured: '已配置凭据',
+          missing: '缺少凭据',
+        },
+        credentials: {
+          active: '有效',
+          session_terminated: '会话已终止',
+          refresh_failed: '刷新失败',
+        },
+        values: {
+          unknownAccount: '无法识别账号',
+          accountPending: '账号信息尚未读取',
+          expiresAt: '到期时间：{{time}}',
+        },
+        errors: {
+          refreshCredential: '无法刷新凭据。',
+          refreshUsage: '无法刷新用量。',
+          reload: '无法重新读取已保存状态。',
         },
       },
       upstreamEditor: {
