@@ -123,6 +123,7 @@ const CUSTOM_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: 'https://custom.example.com/logo.svg',
   config: {
     baseUrl: 'https://custom.example.com',
     authStyle: 'bearer',
@@ -153,6 +154,7 @@ const COPILOT_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     githubHost: 'github.com',
     githubToken: 'ghu-alice',
@@ -182,6 +184,7 @@ const AZURE_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     endpoint: 'https://example.openai.azure.com',
     apiKey: 'az-key',
@@ -218,6 +221,7 @@ const OLLAMA_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     baseUrl: 'https://ollama.com',
     apiKey: 'ollama-key',
@@ -249,6 +253,7 @@ const CODEX_UPSTREAM: StoredUpstreamRecord = {
   configVersion: 1,
   modelsCache: null,
   hue: 210,
+  logoUrl: null,
   config: {
     accounts: [{
       email: 'alice@example.com',
@@ -1893,6 +1898,7 @@ test('a full v26 export re-imports verbatim — the export→import round trip i
 
   // Spot-check fidelity across collection types (order-independent).
   assertEquals((await repo.upstreams.list()).find(u => u.id === 'up_codex_a')?.state, CODEX_UPSTREAM.state);
+  assertEquals((await repo.upstreams.getById('up_custom_a'))?.logoUrl, 'https://custom.example.com/logo.svg');
   assertEquals((await repo.users.listIncludingDeleted()).find(u => u.id === USER_BOB.id), USER_BOB);
   assertEquals((await repo.oauth2.listAccounts()).find(account => account.userId === USER_BOB.id), OAUTH2_BOB);
   assertEquals(await repo.oauth2Config.getSettings(), OAUTH2_SETTINGS);

@@ -23,6 +23,7 @@ const commonFields = {
   model_prefix: null,
   model_metadata_defaults: {},
   hue: 210,
+  logo_url: null,
   modelsCache: { fetchedAt: null, lastError: null, modelCount: null },
 } satisfies Omit<UpstreamRecord, 'id' | 'kind' | 'config' | 'state'>;
 

@@ -55,7 +55,7 @@ export function ClaudeCodeAccountCard({ onRefreshQuota, probing, record }: {
 
   return <section className="grid gap-4">
     <div className="flex items-start gap-3">
-      <ProviderIcon kind="claude-code" className="h-8 w-8 shrink-0" />
+      <ProviderIcon kind="claude-code" logoUrl={record.logo_url} className="h-8 w-8 shrink-0" />
       <div className="grid gap-1 min-w-0 flex-1">
         <Text block weight="semibold" truncate wrap={false}>{account.email ?? accountUuidShort}</Text>
         <div className="flex flex-wrap items-center gap-2">

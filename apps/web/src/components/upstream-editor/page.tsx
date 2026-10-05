@@ -37,6 +37,7 @@ import { useOutcomeToasts } from '../ui/outcome-toast';
 import { Panel } from '../ui/panel';
 import { useDialogInvocation } from '../ui/use-dialog-invocation';
 import { useRefresh } from '../ui/use-refresh';
+import { normalizeUpstreamLogoUrl } from '@floway-dev/provider/model';
 
 const { Button, Spinner, Text } = fluentComponents;
 
@@ -77,6 +78,14 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     name: z.string().trim().min(1, 'dashboard.upstreamEditor.validation.name'),
     enabled: z.boolean(),
     hue: z.number(),
+    logoUrl: z.string().trim().refine(value => {
+      try {
+        normalizeUpstreamLogoUrl(value);
+        return true;
+      } catch {
+        return false;
+      }
+    }, 'dashboard.upstreamEditor.validation.logoUrl'),
     proxyFallbackList: z.any(),
     modelPrefix: z.any(),
     modelMetadataDefaults: z.string().superRefine((value, ctx) => {

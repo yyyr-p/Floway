@@ -7,7 +7,7 @@ type ModelOverrides = Omit<Partial<ControlPlaneModel>, 'upstreams'> & {
   contextWindow?: number;
 };
 
-const upstreamBinding = (id: string) => ({ id, name: id, modelId: id, kind: 'custom' as const, hue: 210 });
+const upstreamBinding = (id: string) => ({ id, name: id, modelId: id, kind: 'custom' as const, hue: 210, logoUrl: null });
 
 // One builder for the catalog shape, so a new required field on
 // `ControlPlaneModel` is one edit rather than one per suite. The defaults are

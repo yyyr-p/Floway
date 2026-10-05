@@ -8,7 +8,7 @@ import type {
   UpstreamRecord,
   UpstreamRecordEnvelope,
 } from '../../api/types';
-import type { UpstreamProviderKind } from '@floway-dev/provider/model';
+import { normalizeUpstreamLogoUrl, type UpstreamProviderKind } from '@floway-dev/provider/model';
 import { modelMetadataDefaultsField, type ModelMetadataDefaults, type UpstreamModelConfig } from '@floway-dev/provider/model-config';
 import { MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX } from '@floway-dev/provider/model-prefix';
 
@@ -65,6 +65,7 @@ export interface UpstreamEditorValues {
   name: string;
   enabled: boolean;
   hue: UpstreamRecord['hue'];
+  logoUrl: string;
   proxyFallbackList: UpstreamRecord['proxy_fallback_list'];
   modelPrefix: UpstreamRecord['model_prefix'];
   modelMetadataDefaults: string;
@@ -209,6 +210,7 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
     name: record.name,
     enabled: record.enabled,
     hue: record.hue,
+    logoUrl: record.logo_url ?? '',
     proxyFallbackList: structuredClone(record.proxy_fallback_list).map(entry => withRegisteredKey('colos', entry)),
     modelPrefix: structuredClone(record.model_prefix),
     modelMetadataDefaults: JSON.stringify(record.model_metadata_defaults ?? {}, null, 2),
@@ -266,6 +268,7 @@ export const previewRecord = (record: UpstreamRecord, values: UpstreamEditorValu
     name: values.name.trim(),
     enabled: values.enabled,
     hue: values.hue,
+    logo_url: normalizeUpstreamLogoUrl(values.logoUrl),
     config: configFromValues(record, values, { preserveStoredSecret: true }),
     state: values.state,
     proxy_fallback_list: values.proxyFallbackList,
@@ -284,6 +287,7 @@ export const createBody = (record: UpstreamRecord, values: UpstreamEditorValues,
     name: values.name.trim(),
     enabled: values.enabled,
     hue: values.hue,
+    logo_url: normalizeUpstreamLogoUrl(values.logoUrl),
     flag_overrides: values.flagOverrides,
     disabled_public_model_ids: values.disabledPublicModelIds,
     proxy_fallback_list: values.proxyFallbackList,
@@ -301,6 +305,7 @@ export const updateBody = (record: UpstreamRecord, values: UpstreamEditorValues)
     name: values.name.trim(),
     enabled: values.enabled,
     hue: values.hue,
+    logo_url: normalizeUpstreamLogoUrl(values.logoUrl),
     flag_overrides: values.flagOverrides,
     disabled_public_model_ids: values.disabledPublicModelIds,
     proxy_fallback_list: values.proxyFallbackList,

@@ -20,7 +20,7 @@ import type { InternalModel, Provider, UpstreamProviderKind } from '@floway-dev/
 // targets live under `aliasedFrom`. `hue` is the upstream's badge hue, which
 // the dashboard paints each chip from.
 interface ControlPlaneModel extends PublicModel {
-  upstreams: { kind: UpstreamProviderKind; id: string; name: string; hue: number; modelId: string }[];
+  upstreams: { kind: UpstreamProviderKind; id: string; name: string; hue: number; modelId: string; logoUrl: string | null }[];
 }
 
 interface ControlPlaneModelsResponse extends Omit<PublicModelsResponse, 'data'> {
@@ -36,10 +36,17 @@ const upstreamHue = (hueByUpstream: ReadonlyMap<string, number>, upstreamId: str
   return hue;
 };
 
+const upstreamLogoUrl = (logoUrlByUpstream: ReadonlyMap<string, string | null>, upstreamId: string): string | null => {
+  const logoUrl = logoUrlByUpstream.get(upstreamId);
+  if (logoUrl === undefined) throw new Error(`No upstream row backs provider instance ${upstreamId}`);
+  return logoUrl;
+};
+
 const toControlPlaneModel = (
   model: InternalModel,
   instances: readonly Provider[],
   hueByUpstream: ReadonlyMap<string, number>,
+  logoUrlByUpstream: ReadonlyMap<string, string | null>,
 ): ControlPlaneModel => ({
   ...toPublicModel(model),
   upstreams: instances.map(instance => ({
@@ -48,6 +55,7 @@ const toControlPlaneModel = (
     name: instance.name,
     hue: upstreamHue(hueByUpstream, instance.upstreamId),
     modelId: model.providerModels?.[instance.upstreamId]?.catalogModelId ?? model.id,
+    logoUrl: upstreamLogoUrl(logoUrlByUpstream, instance.upstreamId),
   })),
 });
 
@@ -61,8 +69,9 @@ const toControlPlaneModel = (
 const toUnlistedControlPlaneModel = (
   entry: AddressableIdEntry,
   hueByUpstream: ReadonlyMap<string, number>,
+  logoUrlByUpstream: ReadonlyMap<string, string | null>,
 ): ControlPlaneModel => ({
-  ...toControlPlaneModel(entry.model, entry.upstreams, hueByUpstream),
+  ...toControlPlaneModel(entry.model, entry.upstreams, hueByUpstream, logoUrlByUpstream),
   id: entry.id,
   display_name: entry.model.display_name ?? entry.id,
   unlisted: true,
@@ -102,6 +111,7 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
       includeAliases ? getRepo().modelAliases.list() : Promise.resolve([]),
     ]);
     const hueByUpstream = new Map<string, number>(upstreamRows.map(row => [row.id, row.hue]));
+    const logoUrlByUpstream = new Map<string, string | null>(upstreamRows.map(row => [row.id, row.logoUrl ?? null]));
     const gatewayAddressableModelIds = gatewayAddressable ?? callerAddressable;
     const upstreamsByListedId = new Map(callerAddressable.map(entry => [entry.id, entry.upstreams] as const));
     const realModels = listedRealModels(callerAddressable);
@@ -122,7 +132,7 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     const listedRows = merged.map(model => {
       const upstreams = model.aliasedFrom !== undefined ? [] : upstreamsByListedId.get(model.id);
       if (upstreams === undefined) throw new Error(`Missing upstream index for listed model ${model.id}`);
-      return toControlPlaneModel(model, upstreams, hueByUpstream);
+      return toControlPlaneModel(model, upstreams, hueByUpstream, logoUrlByUpstream);
     });
     // Dedupe the unlisted half against the listed half on `id` — an alias
     // whose name coincides with an addressable-but-not-listed id (e.g. a
@@ -133,7 +143,7 @@ export const controlPlaneModels = async (c: CtxWithQuery<typeof modelsQuery>) =>
     const unlistedRows = includeUnlisted
       ? callerAddressable
           .filter(entry => entry.unlisted === true && !listedIds.has(entry.id))
-          .map(entry => toUnlistedControlPlaneModel(entry, hueByUpstream))
+          .map(entry => toUnlistedControlPlaneModel(entry, hueByUpstream, logoUrlByUpstream))
       : [];
     const data = [...listedRows, ...unlistedRows];
     const response: ControlPlaneModelsResponse = {

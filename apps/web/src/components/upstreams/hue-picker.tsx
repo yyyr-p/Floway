@@ -12,9 +12,10 @@ const useStyles = makeStyles({
   slider: { width: '100%' },
 });
 
-export function HuePicker({ hue, kind, onChange }: {
+export function HuePicker({ hue, kind, logoUrl, onChange }: {
   hue: number;
   kind: UpstreamProviderKind;
+  logoUrl?: string | null;
   onChange: (hue: number) => void;
 }) {
   const { t } = useTranslation();
@@ -28,7 +29,7 @@ export function HuePicker({ hue, kind, onChange }: {
           aria-label={`${t('dashboard.upstreamEditor.hue.label')}: ${hue}`}
           className="!min-w-0 !p-0"
         >
-          <ProviderBadge upstream={{ hue, kind }} />
+          <ProviderBadge logoUrl={logoUrl} upstream={{ hue, kind }} />
         </Button>
       </PopoverTrigger>
       <PopoverSurface className="w-[min(360px,calc(100vw-32px))]">

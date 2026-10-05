@@ -21,7 +21,7 @@ import { normalizeDisabledPublicModelIds } from '../repo/disabled-public-models.
 import { CUSTOM_API_KEY_MAX_LENGTH, KEY_SOURCES } from '../shared/api-key-tokens.ts';
 import { RETENTION_MAX_SECONDS, SECONDS_PER_DAY } from '../shared/retention.ts';
 import { kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
-import { type FlagOverrides, modelMetadataDefaultsField, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
+import { type FlagOverrides, modelMetadataDefaultsField, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, normalizeUpstreamLogoUrl, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
 
 // --- shared atoms ---
 
@@ -48,6 +48,15 @@ const modelMetadataDefaultsSchema = z.unknown().transform((value, ctx) => {
     return modelMetadataDefaultsField(value, 'model_metadata_defaults') ?? {};
   } catch (error) {
     ctx.issues.push({ code: 'custom', message: error instanceof Error ? error.message : String(error), input: value });
+    return z.NEVER;
+  }
+});
+
+const upstreamLogoUrlSchema = z.union([z.string(), z.null()]).transform((value, ctx): string | null => {
+  try {
+    return normalizeUpstreamLogoUrl(value);
+  } catch (cause) {
+    ctx.issues.push({ code: 'custom', message: cause instanceof Error ? cause.message : String(cause), input: value });
     return z.NEVER;
   }
 });
@@ -382,6 +391,7 @@ const upstreamBaseFields = {
   model_prefix: modelPrefixSchema.optional(),
   model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   hue: upstreamHueSchema,
+  logo_url: upstreamLogoUrlSchema.optional(),
 };
 
 // Create accepts a discriminated union on `kind` for per-provider config
@@ -423,6 +433,7 @@ export const updateUpstreamBody = z.object({
   model_prefix: modelPrefixSchema.optional(),
   model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   hue: upstreamHueSchema.optional(),
+  logo_url: upstreamLogoUrlSchema.optional(),
   // Patches only carry field diffs, not per-kind shape validation — the
   // handler dispatches on the existing row's kind and enforces the shape
   // there (Copilot/Codex/Claude Code reject a config patch outright, since
@@ -445,6 +456,7 @@ export const upstreamRecordEnvelope = z.object({
   config: z.unknown(),
   state: z.unknown(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
+  logo_url: upstreamLogoUrlSchema.optional(),
 }).passthrough();
 
 const recordOnlyBody = z.object({ record: upstreamRecordEnvelope });
@@ -561,6 +573,7 @@ export const previewModelsBody = z.object({
     disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
     model_prefix: modelPrefixSchema.optional(),
     model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
+    logo_url: upstreamLogoUrlSchema.optional(),
   }),
 });
 // --- ollama ---

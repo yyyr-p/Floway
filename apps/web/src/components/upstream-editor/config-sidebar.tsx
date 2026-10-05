@@ -48,6 +48,7 @@ export function UpstreamConfigSidebar({
 }) {
   const { t } = useTranslation();
   const { control, formState: { errors } } = useFormContext<UpstreamEditorValues>();
+  const logoUrl = useWatch({ control, name: 'logoUrl' });
   return <ScrollArea axes="vertical" className="h-full min-h-0 max-[1050px]:h-auto" noTabIndex viewportClassName="scroll-py-1">
     <div className={PANEL_INSET_CLASS}>
       <aside className="grid gap-7">
@@ -78,7 +79,30 @@ export function UpstreamConfigSidebar({
           title={t('dashboard.upstreamEditor.sections.hue')}
           description={t('dashboard.upstreamEditor.hue.description')}
         >
-          <UpstreamHueEditor kind={record.kind} />
+          <UpstreamHueEditor kind={record.kind} logoUrl={logoUrl} />
+        </EditorSection>
+        <EditorSection
+          title={t('dashboard.upstreamEditor.sections.logo')}
+          description={t('dashboard.upstreamEditor.logo.description')}
+        >
+          <Controller control={control} name="logoUrl" render={({ field }) => (
+            <Field
+              validationMessage={errors.logoUrl?.message ? t(errors.logoUrl.message) : undefined}
+              validationState={errors.logoUrl ? 'error' : undefined}
+            >
+              <Input
+                aria-label={t('dashboard.upstreamEditor.fields.logoUrl')}
+                autoComplete="url"
+                name={field.name}
+                onBlur={field.onBlur}
+                onChange={(_, data) => field.onChange(data.value)}
+                placeholder="https://example.com/logo.png"
+                ref={field.ref}
+                type="url"
+                value={field.value}
+              />
+            </Field>
+          )} />
         </EditorSection>
         <EditorSection
           error={errors.config?.message ? t(errors.config.message) : undefined}
@@ -131,10 +155,10 @@ export function UpstreamConfigSidebar({
   </ScrollArea>;
 }
 
-function UpstreamHueEditor({ kind }: { kind: UpstreamRecord['kind'] }) {
+function UpstreamHueEditor({ kind, logoUrl }: { kind: UpstreamRecord['kind']; logoUrl: string }) {
   const { control } = useFormContext<UpstreamEditorValues>();
   return <Controller control={control} name="hue" render={({ field }) => (
-    <HuePicker kind={kind} hue={field.value} onChange={field.onChange} />
+    <HuePicker kind={kind} hue={field.value} logoUrl={logoUrl} onChange={field.onChange} />
   )} />;
 }
 

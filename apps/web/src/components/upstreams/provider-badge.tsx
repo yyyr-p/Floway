@@ -1,5 +1,5 @@
 import { ServerRegular } from '@fluentui/react-icons';
-import type { RefCallback } from 'react';
+import { useState, type RefCallback } from 'react';
 import { Link } from 'react-router';
 
 import azureIconUrl from '../../assets/azure-color.svg?no-inline';
@@ -15,7 +15,7 @@ import { useBadgeHue } from '../ui/badge-hue';
 import { Chip } from '../ui/chip';
 import { MaskedIcon } from '../ui/masked-icon';
 import { TruncationTooltip } from '../ui/truncation-tooltip';
-import type { UpstreamProviderKind } from '@floway-dev/provider/model';
+import { normalizeUpstreamLogoUrl, type UpstreamProviderKind } from '@floway-dev/provider/model';
 
 const { Tooltip, makeStyles } = fluentComponents;
 
@@ -49,8 +49,9 @@ export const providerLabel = (kind: UpstreamProviderKind) => providerLabels[kind
 // Given `to`, the badge is the row's own name and opens the record. It carries
 // no underline, at rest or under the pointer: the chip is the affordance, and
 // ../ui/row-title.tsx already keeps a row's name off the hyperlink treatment.
-export function ProviderBadge({ label, title, to, upstream }: {
+export function ProviderBadge({ label, logoUrl, title, to, upstream }: {
   label?: string;
+  logoUrl?: string | null;
   title?: string;
   to?: string;
   upstream: { hue: number; kind: UpstreamProviderKind };
@@ -63,7 +64,7 @@ export function ProviderBadge({ label, title, to, upstream }: {
     <Chip
       className={hue.className}
       style={hue.style}
-      icon={<ProviderIcon kind={upstream.kind} className="h-4 w-4" />}
+      icon={<ProviderIcon kind={upstream.kind} logoUrl={logoUrl} className="h-4 w-4" />}
       textRef={measureRef}
     >
       {visibleLabel}
@@ -118,13 +119,35 @@ const providerIconMaskSizes: Record<Exclude<UpstreamProviderKind, 'custom'>, str
 
 export function ProviderIcon({
   kind,
+  logoUrl,
   className,
 }: {
   kind: UpstreamProviderKind;
+  logoUrl?: string | null;
   className: string;
 }) {
   const styles = useStyles();
+  const [failedLogoUrl, setFailedLogoUrl] = useState<string | null>(null);
   const baseClassName = `block flex-none ${className}`;
+  let safeLogoUrl: string | null = null;
+  try {
+    safeLogoUrl = normalizeUpstreamLogoUrl(logoUrl);
+  } catch {
+    // Invalid values fall through to the established provider mark.
+  }
+  if (safeLogoUrl !== null && safeLogoUrl !== failedLogoUrl) {
+    return <img
+      alt=""
+      aria-hidden="true"
+      className={`${baseClassName} object-contain`}
+      decoding="async"
+      draggable={false}
+      loading="lazy"
+      onError={() => setFailedLogoUrl(safeLogoUrl)}
+      referrerPolicy="no-referrer"
+      src={safeLogoUrl}
+    />;
+  }
   if (kind === 'custom') return <ServerRegular className={baseClassName} />;
   return (
     <MaskedIcon
