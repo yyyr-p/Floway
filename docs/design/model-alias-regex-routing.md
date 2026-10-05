@@ -5,22 +5,25 @@ Status: proposal only. No regex routing is implemented by this change.
 ## Baseline Semantics
 
 The current exact alias is a uniquely named database row with a kind, an
-ordered `targets` array, `selection`, optional request-rule overlays, listing
+ordered `targets` array, `selection`, `enabled`, optional request-rule overlays, listing
 visibility, and `sort_order` (`packages/protocols/src/common/aliases.ts`,
 `packages/gateway/src/control-plane/schemas.ts`, and the model-alias repository).
-The data plane calls `getByName(model)` for an exact lookup. If found, it walks
-the alias targets and resolves each target directly against real model
-catalogs; the resolver does not re-enter alias resolution. Thus multiple exact
-targets are a failover/selection list, not nested aliases.
+The data plane calls `getByName(model)` for an exact lookup. Enabled aliases
+expand nested alias targets before resolving terminal IDs against real model
+catalogs. Inner target rules override outer rules, while reasoning fields
+merge individually. Expansion preserves each alias's target-selection policy.
+Control-plane writes reject cross-alias cycles; request-time expansion also
+detects cycles and caps depth at 64 aliases and work at 4096 target visits.
+Same-name targets bind the real model directly, preserving existing aliases
+that override a real model under its own ID without recursive lookup.
 
-There is no per-alias `enabled` field in the current wire schema, database row,
-or dashboard. `visible_in_models_list` only controls catalog listing; the
-request-time resolver deliberately ignores it, so hidden aliases remain
-addressable. `sort_order` orders alias listing (`sort_order`, then name) and
-does not affect exact request dispatch. The `enabled` field found on upstream
-records belongs to upstreams, not aliases. Any requirement to preserve nested
-alias targets or per-alias enablement is therefore a product decision against
-the current baseline, not behavior that regex routing can inherit unchanged.
+Disabled aliases do not expand, including when referenced by a parent; their
+names can still bind a real model with the same ID. `visible_in_models_list`
+only controls catalog listing, so hidden enabled aliases remain addressable
+and can serve as nested targets. `sort_order` controls visual/list order and
+does not affect exact request dispatch. Model listing computes nested alias
+metadata from terminal targets and narrows their projection to the caller's
+access, while the admin projection retains the original configuration.
 
 ## Evidence From Other Projects
 
@@ -60,10 +63,10 @@ the current baseline, not behavior that regex routing can inherit unchanged.
    `sort_order`, which remains a listing-only field.
 3. Treat a regex rule as a routing transformation from one inbound model ID to
    one concrete real model ID. Resolve the transformed ID through the existing
-   real-model resolver exactly once; maximum alias-expansion depth is one.
-   Do not resolve it as another alias. This makes alias cycles impossible by
-   construction, avoids recursive rule expansion, and leaves exact aliases'
-   target-list failover semantics intact.
+   real-model resolver exactly once; maximum regex-expansion depth is one.
+   Do not resolve it as another exact alias or regex rule. This makes regex
+   cycles impossible by construction and leaves existing exact aliases'
+   nested failover semantics intact.
 4. Use RE2-compatible syntax with implicit full-string matching and fixed
    case-sensitive semantics. Do not allow inline mode flags to change those
    semantics. Match the original UTF-8 model ID exactly: no normalization,
@@ -112,14 +115,11 @@ client-only JavaScript regex validation would disagree with RE2. Existing
 
 ## Decisions Required Before Production Routing
 
-- Confirm the baseline discrepancy: are “nested exact aliases” intended to
-  mean the existing multi-target exact alias, or should alias targets be
-  allowed to refer to other aliases? Recommendation: retain the current
-  no-recursion contract; if nesting is explicitly required later, design its
-  graph validation and a strict maximum depth separately.
-- Decide whether regex rules get their own `enabled` field. There is no
-  per-alias enable switch to inherit today; do not overload
-  `visible_in_models_list`, because it does not disable routing.
+- Confirm that regex replacement outputs bind only real models rather than
+  entering the existing exact-alias graph. This proposal recommends keeping
+  regex expansion non-recursive while preserving exact-alias nesting.
+- Give regex rules their own `enabled` field, following exact aliases' switch;
+  do not overload `visible_in_models_list`, because it does not disable routing.
 - Select and verify one maintained RE2-compatible implementation across Node,
   Cloudflare Workers, tests, and any import/export path. The repository has no
   RE2 dependency today; a Worker Wasm build is not yet proven.
