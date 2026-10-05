@@ -1,4 +1,4 @@
-import { hasReadableSummary, toOpenAIChatCompletionsReasoningItem } from '../shared/openai-chat-completions-and-openai-responses/reasoning.ts';
+import { hasReasoningPayload, toOpenAIChatCompletionsReasoningItem } from '../shared/openai-chat-completions-and-openai-responses/reasoning.ts';
 import { createOpenAIResponsesOutputOrderState, recordOpenAIResponsesOutputOrderEvent, type OpenAIResponsesOutputOrderState, shouldDeferForEarlierOpenAIResponsesOutput } from '../shared/via-openai-responses/openai-responses-stream-order.ts';
 import { openaiResponsesPartKey } from '../shared/via-openai-responses/openai-responses-stream.ts';
 import { doneFrame, eventFrame, splitInclusiveInputTokens, type ProtocolFrame } from '@floway-dev/protocols/common';
@@ -192,7 +192,7 @@ export const translateOpenAIResponsesEventToOpenAIChatCompletionsChunks = (event
 
     const chunks: OpenAIChatCompletionsStreamEvent[] = [];
     const reasoningItem = toOpenAIChatCompletionsReasoningItem(item);
-    if (hasReadableSummary(reasoningItem)) state.reasoningItems.push(reasoningItem);
+    if (hasReasoningPayload(reasoningItem)) state.reasoningItems.push(reasoningItem);
 
     for (const [summaryIndex, part] of item.summary.entries()) {
       chunks.push(...emitReasoningSummaryText(output_index, summaryIndex, part.text, state, 'done-fallback'));

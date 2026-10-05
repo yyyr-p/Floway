@@ -1,6 +1,7 @@
 import { expect, test, vi } from 'vitest';
 
-import { scalarToOpenAIResponsesReasoningItem, toOpenAIResponsesReasoningItem } from '../../../src/shared/openai-chat-completions-and-openai-responses/reasoning.ts';
+import { hasReasoningPayload, scalarToOpenAIResponsesReasoningItem, toOpenAIChatCompletionsReasoningItem, toOpenAIResponsesReasoningItem, translateOpenAIChatCompletionsReasoningItems } from '../../../src/shared/openai-chat-completions-and-openai-responses/reasoning.ts';
+import type { OpenAIChatCompletionsReasoningItem } from '@floway-dev/protocols/openai-chat-completions';
 import type { OpenAIResponsesInputReasoning } from '@floway-dev/protocols/openai-responses';
 
 test('synthesis never mints a reasoning id and an upstream-issued id rides verbatim', () => {
@@ -31,4 +32,24 @@ test('synthesis never mints a reasoning id and an upstream-issued id rides verba
     id: 'rs_existing',
     summary: [{ type: 'summary_text', text: 'trace' }],
   }).id).toBe('rs_existing');
+});
+
+test('reasoning item carriers preserve opaque content in both directions', () => {
+  const responseItem: OpenAIResponsesInputReasoning = {
+    type: 'reasoning',
+    id: 'rs_opaque',
+    summary: [],
+    encrypted_content: 'opaque-upstream-payload',
+  };
+  const chatItem: OpenAIChatCompletionsReasoningItem = {
+    type: 'reasoning',
+    id: 'rs_opaque',
+    summary: [],
+    encrypted_content: 'opaque-upstream-payload',
+  };
+
+  expect(toOpenAIChatCompletionsReasoningItem(responseItem)).toEqual(chatItem);
+  expect(hasReasoningPayload(chatItem)).toBe(true);
+  expect(translateOpenAIChatCompletionsReasoningItems<OpenAIResponsesInputReasoning>([chatItem])).toEqual([responseItem]);
+  expect(toOpenAIResponsesReasoningItem<OpenAIResponsesInputReasoning>(chatItem)).toEqual(responseItem);
 });
