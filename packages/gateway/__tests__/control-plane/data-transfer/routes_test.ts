@@ -281,6 +281,7 @@ const USAGE_1: UsageRecord = {
   hour: '2026-01-01T10',
   pricingSelector: { serviceTier: 'fast' },
   requests: 5,
+  unmeteredRequests: 0,
   metrics: tokenUsageMetrics({ input: 1000, output: 500, input_cache_read: 120, input_cache_write: 80 }, null),
 };
 
@@ -292,6 +293,7 @@ const USAGE_2: UsageRecord = {
   hour: '2026-01-01T11',
   pricingSelector: {},
   requests: 3,
+  unmeteredRequests: 0,
   metrics: tokenUsageMetrics({ input: 2000, output: 800, input_cache_read: 200, input_cache_write: 50 }, null),
 };
 
@@ -490,6 +492,53 @@ test('export emits the v26 envelope with users, OAuth2 configuration, and upstre
   assertEquals(result.data.searchConfig, DEFAULT_WEB_SEARCH_CONFIG);
   assertEquals(hasOwn(result.data, 'githubAccounts'), false);
   assertEquals(hasOwn(result.data, 'upstreamConfigs'), false);
+});
+
+test('usage export/import preserves exact unmetered counts and marks legacy mixed counts unknown', async () => {
+  const { app, repo } = setup();
+  const upstreamId = 'opaque/upstream:variant';
+  await repo.usage.record({ ...USAGE_2, upstream: upstreamId, requests: 1, metrics: [{ metric: 'input_tokens', quantity: '10', unitPrice: '0.000001' }] });
+  await repo.usage.record({ ...USAGE_2, upstream: upstreamId, requests: 1, unmeteredRequests: undefined, metrics: [] });
+
+  const exported = await doExport(app);
+  assertEquals(exported.data.usage, [{
+    ...USAGE_2,
+    upstream: upstreamId,
+    requests: 2,
+    unmeteredRequests: 1,
+    metrics: [{ metric: 'input_tokens', quantity: '10', unitPrice: '0.000001' }],
+  }]);
+  assertEquals((await doImport(app, 'replace', exported.data)).status, 200);
+  assertEquals(await repo.usage.listAll(), exported.data.usage);
+
+  await repo.usageLimits.save({ principalType: 'key', principalId: USAGE_2.keyId, window: 'day', maxTokens: null, maxCostUsd: '1' });
+  assertEquals(await repo.usageLimits.reserve({
+    id: 'round-tripped-unmetered',
+    keyId: USAGE_2.keyId,
+    userId: 1,
+    now: '2026-01-01T11:30:00.000Z',
+    expiresAt: '2026-01-01T12:30:00.000Z',
+    inputTokens: 1,
+    outputTokens: 1,
+    maxUnitPriceUsd: '0.000001',
+  }), { ok: false, reason: 'historical-cost-unpriced' });
+
+  const legacy = await doImport(app, 'replace', latestImportData({
+    usage: [
+      { ...USAGE_2, model: 'legacy-mixed', unmeteredRequests: undefined },
+      { ...USAGE_2, model: 'legacy-no-metrics', unmeteredRequests: undefined, metrics: [] },
+    ],
+  }));
+  assertEquals(legacy.status, 200);
+  const [legacyMixed, legacyNoMetrics] = await repo.usage.listAll();
+  assertEquals(legacyMixed?.unmeteredRequests, null);
+  assertEquals(legacyNoMetrics?.unmeteredRequests, USAGE_2.requests);
+
+  const invalidCount = await doImport(app, 'replace', latestImportData({
+    usage: [{ ...USAGE_2, unmeteredRequests: USAGE_2.requests + 1 }],
+  }));
+  assertEquals(invalidCount.status, 400);
+  assertEquals(invalidCount.body.error, 'invalid usage at index 0: unmeteredRequests must not exceed requests');
 });
 
 test('export includes full upstream configs and omits performance by default', async () => {

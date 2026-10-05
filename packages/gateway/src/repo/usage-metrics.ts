@@ -26,6 +26,22 @@ export const usageMetricRows = (record: UsageRecord): UsageMetricRecord[] => {
   return record.metrics;
 };
 
+export const usageUnmeteredRequests = (record: UsageRecord): number | null => {
+  if (!Number.isSafeInteger(record.requests) || record.requests < 0) {
+    throw new RangeError('usage requests must be a non-negative safe integer');
+  }
+  const count = record.unmeteredRequests === undefined
+    ? record.metrics.length === 0 ? record.requests : 0
+    : record.unmeteredRequests;
+  if (count !== null && (!Number.isSafeInteger(count) || count < 0 || count > record.requests)) {
+    throw new RangeError('usage unmeteredRequests must be null or a non-negative safe integer not exceeding requests');
+  }
+  if (record.metrics.length === 0 && count !== null && count !== record.requests) {
+    throw new RangeError('usage unmeteredRequests must equal requests when metrics are empty');
+  }
+  return count;
+};
+
 export const usageMetrics = (quantities: UsageQuantities, rates: PriceVector | null): UsageMetricRecord[] =>
   BILLING_METRICS.flatMap(metric => {
     const quantity = quantities[metric];
