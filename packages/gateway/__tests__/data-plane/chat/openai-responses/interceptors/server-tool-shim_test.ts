@@ -6749,6 +6749,32 @@ for (const targetApi of ['openaiChatCompletions', 'anthropicMessages', 'openaiRe
   });
 }
 
+for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
+  test(`Chat Completions keeps dynamically declared image generation beside namespaced tools from ${carrier}`, async () => {
+    const inv = makeInvocation({
+      payload: {
+        tools: [{ type: 'namespace', name: 'images', description: '', tools: [{ type: 'function', name: 'image_generation' }] }],
+        input: [
+          { type: 'message', role: 'user', content: 'Draw a cat.' },
+          carrier === 'additional_tools'
+            ? { type: carrier, role: 'developer', tools: [{ type: 'image_generation' }] }
+            : { type: carrier, tools: [{ type: 'image_generation' }] },
+        ],
+      },
+    });
+    const shim = withOpenAIResponsesServerToolShim([imageGenerationServerTool]);
+
+    await runShimAndDrain(shim, inv, makeGatewayCtx(), async () => {
+      const trip = await translateOpenAIResponsesViaOpenAIChatCompletions(inv.payload, { model: 'm' });
+      assertEquals(trip.target.tools?.map(tool => tool.type === 'function' ? tool.function.name : 'unexpected'), [
+        'images_image_generation',
+        'image_generation_2',
+      ]);
+      return await scriptedRun([messageTurn('Done.')]).run();
+    });
+  });
+}
+
 test('native helper injection allocates past namespace children while retaining genuine hosted execution', async () => {
   const { backend } = makeStubDeps();
   const inv = makeInvocation({
