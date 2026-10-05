@@ -11,7 +11,7 @@ import { isModelAllowedByUpstreamModelAccess, type UpstreamModelAccessRule } fro
 import type { ModelAliasRecord } from '../../repo/types.ts';
 import type { BackgroundScheduler } from '@floway-dev/platform';
 import type { ModelKind } from '@floway-dev/protocols/common';
-import type { Fetcher, ModelCandidate } from '@floway-dev/provider';
+import { applyModelMetadataDefaults, type Fetcher, type ModelCandidate } from '@floway-dev/provider';
 
 // Resolve one inbound id against one upstream. The upstream's
 // `modelPrefix.addressable` configuration decides which lookup branches
@@ -60,7 +60,8 @@ const enumerateOneUpstreamCandidates = (
     if (!isModelAllowedByUpstreamModelAccess(modelAccess, provider.upstreamId, match.id)) continue;
     sawAnyId = true;
     if (match.kind === kind) {
-      candidates.push({ provider, model: internalModelFromProviderModel(match, provider.upstreamId), fetcher });
+      const providerModel = applyModelMetadataDefaults(match, provider.modelMetadataDefaults);
+      candidates.push({ provider, model: internalModelFromProviderModel(providerModel, provider.upstreamId), fetcher });
     }
   }
   return { candidates, sawAnyId, modelsError: snapshot.lastError !== null };
