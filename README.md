@@ -240,6 +240,12 @@ update and rollback flow by default. A deployment named as new first runs an
 isolated binding-probe bootstrap and requires its `Hello World` response before
 publishing Floway.
 
+Set `vars.FLOWAY_MAX_CONCURRENT_REQUESTS` in `wrangler.jsonc` to a positive
+integer to cap active HTTP data-plane requests per Worker isolate; unset or
+`0` disables the cap. Streaming responses occupy a slot until the body finishes
+or is cancelled. This is not a Worker-wide limit: traffic handled by multiple
+isolates can exceed the configured value. WebSocket upgrades are not counted.
+
 For a manual production update, configure the admin secret, then apply the
 remote migrations and deploy as one step — publishing the code that reads a
 migration's result is part of applying it, and stopping in between leaves the
@@ -267,6 +273,12 @@ before starting; deployments that build separately may set
 `FLOWAY_WEB_DIST_DIR` to the bundle directory (default:
 `apps/web/dist/client`). Production Node.js deployments must set both
 `NODE_ENV=production` and a non-empty `ADMIN_KEY`.
+
+Set `FLOWAY_MAX_CONCURRENT_REQUESTS` to a positive integer to cap active HTTP
+data-plane requests in the Node process. Unset or set it to `0` to disable the
+cap. The slot remains occupied until the response body finishes or the client
+cancels it, so streaming responses count for their full lifetime. WebSocket
+upgrades are not counted.
 
 Podman users can instead follow the
 [systemd deployment guide](./docker/systemd/README.md).
