@@ -70,20 +70,19 @@ test.each(cases)('$name controls model visibility and upstream dispatch', async 
       choices: [{ message: { role: 'assistant', content: 'Available' }, finish_reason: 'stop' }],
     });
   }, async () => {
-    const listingStatus = models.length > 0 ? 200 : 502;
     const listed = await requestApp('/v1/models', { headers: { 'x-api-key': apiKey.key } });
-    assertEquals(listed.status, listingStatus);
+    assertEquals(listed.status, 200);
     const catalog = await listed.json();
 
     const geminiListed = await requestApp('/v1beta/models', { headers: { 'x-api-key': apiKey.key } });
-    assertEquals(geminiListed.status, listingStatus);
+    assertEquals(geminiListed.status, models.length > 0 ? 200 : 502);
     const geminiCatalog = await geminiListed.json();
     if (models.length > 0) {
       assertEquals(catalog.data.map((model: { id: string }) => model.id).sort(), models);
       assertEquals(geminiCatalog.models.map((model: { baseModelId: string }) => model.baseModelId).sort(), models);
     } else {
       const message = 'No upstream provider configured — connect GitHub Copilot or add a Custom/Azure upstream in the dashboard';
-      assertEquals(catalog, { error: { message, type: 'api_error' } });
+      assertEquals(catalog, { object: 'list', has_more: false, first_id: null, last_id: null, data: [] });
       assertEquals(geminiCatalog, { error: { code: 502, message, status: 'UNAVAILABLE' } });
     }
 
