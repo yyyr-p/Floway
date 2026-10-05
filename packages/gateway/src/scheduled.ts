@@ -74,11 +74,12 @@ export const runScheduledMaintenance = async (
     try {
       await runSweep('expirations.sweep', () => sweepExpirations(nowMs));
       await heartbeat.assertOwned();
-      await runSweep('cyberInterceptAudit.sweep', () => sweepCyberInterceptAuditLog(nowMs));
-      await heartbeat.assertOwned();
       await runSweep('spilledFiles.collect', () => collectSpilledFiles(nowMs));
       await heartbeat.assertOwned();
       await runSweep('imageCacheStore.sweepExpired', () => getImageCacheStore().sweepExpired(nowMs));
+      // The audit sweep is a pair of repo reads; it needs no heartbeat of its
+      // own and runs last so it never delays the phases above.
+      await runSweep('cyberInterceptAudit.sweep', () => sweepCyberInterceptAuditLog(nowMs));
     } catch (error) {
       capture(error);
     }

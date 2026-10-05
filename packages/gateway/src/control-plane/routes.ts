@@ -3,7 +3,7 @@ import { Hono, type Next } from 'hono';
 import { AGENT_SETUP_ROUTE_PATH, agentSetupControlRoutes } from './agent-setup.ts';
 import { createKey, deleteKey, listKeys, rotateKey, updateKey } from './api-keys/routes.ts';
 import { authLogin, authLogout, authMe } from './auth/routes.ts';
-import { deleteCyberInterceptAuditLogRoute, getCyberInterceptSettingsRoute, listCyberInterceptAuditLogRoute, putCyberInterceptSettingsRoute } from './cyber-intercept/routes.ts';
+import { deleteCyberInterceptAuditLogRoute, getCyberInterceptDefaultsRoute, getCyberInterceptSettingsRoute, listCyberInterceptAuditLogRoute, putCyberInterceptSettingsRoute } from './cyber-intercept/routes.ts';
 import { exportData, importData } from './data-transfer/routes.ts';
 import { dumpRoutes } from './dump.ts';
 import { createAlias, deleteAlias, listAliases, updateAlias } from './model-aliases/routes.ts';
@@ -122,6 +122,7 @@ export const controlPlaneRoutes = new Hono<{ Variables: AuthVars }>()
     .put('/search-config', zValidator('json', webSearchConfigSchema), putWebSearchConfigRoute)
     .post('/search-config/test', zValidator('json', webSearchConfigSchema), testWebSearchConfigRoute)
     .get('/cyber-intercept/settings', getCyberInterceptSettingsRoute)
+    .get('/cyber-intercept/defaults', getCyberInterceptDefaultsRoute)
     .put('/cyber-intercept/settings', zValidator('json', cyberInterceptSettingsSchema), putCyberInterceptSettingsRoute)
     .get('/cyber-intercept/audit-log', listCyberInterceptAuditLogRoute)
     .delete('/cyber-intercept/audit-log', deleteCyberInterceptAuditLogRoute)

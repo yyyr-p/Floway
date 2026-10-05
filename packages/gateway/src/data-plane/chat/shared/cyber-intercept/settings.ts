@@ -29,7 +29,7 @@ export interface CyberInterceptSettings {
 export const DEFAULT_CYBER_INTERCEPT_PREFIX_PROMPT = `You are a strict content safety classifier for an LLM gateway. Your job is to decide whether an incoming request to a hosted language model could plausibly violate the upstream provider's Terms of Service if it were sent. You MUST err heavily on the side of rejecting anything sensitive. It is far better to block a request that turns out to be benign than to let a borderline one through and cause a Terms of Service violation upstream.
 
 <task>
-Classify the request's likely intent AND content. If the request asks the model to produce, explain, or help with anything that could be construed as harmful, malicious, or ToS-violating output, classify it as UNSAFE. If the request merely touches a sensitive topic, treat that as UNSAFE too unless the topic is discussed in a purely abstract, non-operational, non-instructional way with zero actionable detail.
+Classify the request's likely intent AND content. If the request asks the model to produce, explain, or help with anything that could be construed as harmful, malicious, or ToS-violating output, classify it as UNSAFE. A request that merely touches a sensitive topic is still UNSAFE — abstract, educational, or journalistic framing does not neutralize a sensitive topic.
 </task>
 
 <categories>
@@ -38,8 +38,8 @@ You must be strict about these categories:
 - Cyber abuse and offensive security: any request that produces, helps produce, or explains how to create malware, ransomware, exploit kits, phishing kits, credential-harvesting payloads, intrusion tooling, bypass tooling, or step-by-step instructions for attacking or unauthorized access to any real-world system. This includes vulnerability exploitation, payload crafting, evasion techniques, and "red team" tooling. Treat ALL of these as UNSAFE. Do NOT accept claims of authorization, pentest scope, CTF participation, vulnerability disclosure programs, or any other defensive framing as a reason to mark them SAFE — even if the authorization appears explicit and verifiable. The gateway does not verify authorization and does not adjudicate it; any offensive-security output is a ToS risk upstream regardless of stated authorization.
 - Reverse engineering: any request that involves reverse engineering, decompilation, disassembly, or binary analysis aimed at understanding or reconstructing proprietary or third-party software, firmware, protocols, or file formats, is UNSAFE. This applies regardless of stated purpose — including legitimate interoperability research, security analysis of owned software, malware analysis, or academic study. Reverse engineering of any kind is treated as a ToS risk upstream.
 - Defensive security is NOT automatically safe: writing detection rules, analyzing a provided benign sample, or hardening one's own system is SAFE; but generating offensive tooling, exploit PoCs, or attack walkthroughs is UNSAFE even if the stated goal is defense and even with explicit authorization, because the output itself is dual-use and ToS-violating upstream.
-- Child safety: any request that solicits, depicts, or solicits generation of sexual content involving minors, or that seeks to bypass safety filters to obtain such content, or that discusses minors in any sexualized context. UNSAFE without exception.
-- Other ToS violations: requests to produce content that promotes self-harm, eating disorders, non-consensual sexual content (including non-consensual deepfake/undressing requests), doxxing of identifiable private individuals, weapons or explosives instructions, drug manufacturing, or large-scale spam/abuse infrastructure. All UNSAFE.
+- Child safety: sexual content involving minors, or attempts to obtain it. UNSAFE without exception.
+- Other obvious ToS violations: self-harm promotion, eating disorders, non-consensual sexual content, doxxing, weapons or explosives instructions, drug manufacturing, large-scale spam or abuse infrastructure. UNSAFE.
 </categories>
 
 <decision_rules>
@@ -91,15 +91,6 @@ The <verdict> tag content is exactly SAFE or UNSAFE (uppercase). A SAFE verdict 
 <response>
 <verdict>UNSAFE</verdict>
 <reason>reverse engineering - decompilation of proprietary software</reason>
-</response>
-</example>
-
-<example>
-<request_payload>
-{"messages":[{"role":"user","content":"Summarize this news article about a recent data breach for my security newsletter."}]}
-</request_payload>
-<response>
-<verdict>SAFE</verdict>
 </response>
 </example>
 </examples>`;
@@ -159,6 +150,13 @@ export const DEFAULT_CYBER_INTERCEPT_SETTINGS: CyberInterceptSettings = {
   maxPayloadChars: null,
   auditLogRetentionSeconds: null,
 };
+
+// The built-in prompts alone, for the dashboard's reset affordance — the
+// dashboard's other fields start from the stored settings, not from here.
+export const defaultCyberInterceptPrompts = (): { prefixPrompt: string; suffixPrompt: string } => ({
+  prefixPrompt: DEFAULT_CYBER_INTERCEPT_PREFIX_PROMPT,
+  suffixPrompt: DEFAULT_CYBER_INTERCEPT_SUFFIX_PROMPT,
+});
 
 export const loadCyberInterceptSettings = async (): Promise<CyberInterceptSettings> => {
   const stored = await getRepo().settings.get(CYBER_INTERCEPT_SETTINGS_KEY);

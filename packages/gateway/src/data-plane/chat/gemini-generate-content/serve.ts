@@ -4,9 +4,9 @@ import { renderGeminiGenerateContentCyberInterceptReject, renderGeminiGenerateCo
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
+import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
-import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { GeminiGenerateContentPayload, GeminiGenerateContentStreamEvent } from '@floway-dev/protocols/gemini-generate-content';
 import type { ExecuteResult, PlainResult } from '@floway-dev/provider';
@@ -57,7 +57,7 @@ export const geminiGenerateContentServe = {
         candidates: selection.candidates,
         requestMethod: 'POST',
         requestPath: '/v1beta/models/generateContent',
-      }, cyberSettings, renderGeminiGenerateContentCyberInterceptReject);
+      }, cyberSettings);
       if (gate.kind === 'reject') return renderGeminiGenerateContentCyberInterceptReject(gate.reason);
       if (gate.candidates.length === 0) return renderGeminiGenerateContentFailure(noViableCandidateFailure(sawModel, model, failedUpstreams), 'generate');
       dispatched = gate.candidates;

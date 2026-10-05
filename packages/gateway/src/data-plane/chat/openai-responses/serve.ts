@@ -1,13 +1,13 @@
 import { openaiResponsesAttempt } from './attempt.ts';
 import { openaiResponsesCreatedAt, wrapOpenAIResponsesStatefulOutput } from './client-output.ts';
 import { completeOpenAIResponsesCompaction } from './compaction-resource.ts';
+import { renderOpenAIResponsesCyberInterceptReject } from './errors.ts';
 import type { OpenAIResponsesAttemptResult } from './interceptors/types.ts';
 import { syntheticEventsFromCompaction } from './items/output.ts';
 import { prepareOpenAIResponsesServePlan } from './serve-prep.ts';
-import { renderOpenAIResponsesCyberInterceptReject } from './errors.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
-import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
+import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import { collectOpenAIResponsesProtocolEventsToResult, type CanonicalOpenAIResponsesPayload, type ClientOpenAIResponsesCompaction, type OpenAIResponsesStreamEvent } from '@floway-dev/protocols/openai-responses';
 import type { ExecuteResult } from '@floway-dev/provider';
@@ -36,7 +36,7 @@ export const openaiResponsesServe = {
         candidates: plan.candidates,
         requestMethod: 'POST',
         requestPath: '/v1/responses',
-      }, cyberSettings, renderOpenAIResponsesCyberInterceptReject);
+      }, cyberSettings);
       if (gate.kind === 'reject') return renderOpenAIResponsesCyberInterceptReject(gate.reason);
       if (gate.candidates.length === 0) return renderOpenAIResponsesCyberInterceptReject('unsafe content detected');
       dispatched = gate.candidates;

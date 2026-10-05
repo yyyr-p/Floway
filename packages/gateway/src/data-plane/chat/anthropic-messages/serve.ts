@@ -4,9 +4,9 @@ import { renderAnthropicMessagesCyberInterceptReject, renderAnthropicMessagesFai
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
+import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
-import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import { parseAnthropicBetaHeader, type AnthropicMessagesPayload, type AnthropicMessagesStreamEvent } from '@floway-dev/protocols/anthropic-messages';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { ExecuteResult, PlainResult } from '@floway-dev/provider';
@@ -53,7 +53,7 @@ export const anthropicMessagesServe = {
         candidates: selection.candidates,
         requestMethod: 'POST',
         requestPath: '/v1/messages',
-      }, cyberSettings, renderAnthropicMessagesCyberInterceptReject);
+      }, cyberSettings);
       if (gate.kind === 'reject') return renderAnthropicMessagesCyberInterceptReject(gate.reason);
       if (gate.candidates.length === 0) return renderAnthropicMessagesFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams), 'generate');
       dispatched = gate.candidates;

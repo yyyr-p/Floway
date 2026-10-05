@@ -81,6 +81,7 @@ const en = {
         playground: 'Playground',
         upstreams: 'Upstreams',
         search: 'Search',
+        cyberIntercept: 'Cyber Intercept',
         proxy: 'Proxy',
         modelAliases: 'Model Aliases',
         apiKeys: 'API Keys',
@@ -117,6 +118,8 @@ const en = {
             'Manage console users, permissions, telemetry access, and upstream scopes',
         backupRestore:
             'Download a full copy of everything this gateway holds, or restore it from an earlier export',
+        cyberIntercept:
+            'Screen requests against Terms-of-Service-violating content before they reach an upstream',
         unavailable: 'This view could not be loaded',
       },
       playground: {
@@ -1302,6 +1305,67 @@ const en = {
             'Connection test successful - {{count, number}} results returned.',
         testFailed: 'Test failed',
         pageAge: '{{age}} ago',
+      },
+      cyberIntercept: {
+        heading: 'Cyber Intercept',
+        enableLabel: 'Enable cyber intercept',
+        enableDescription:
+            'When enabled, every request whose candidates include a flag-on upstream is judged once before dispatch',
+        judgeModel: 'Judge model',
+        unavailableModel: '{{id}} (unavailable)',
+        unavailableHint:
+            'The saved judge model no longer resolves to any enabled upstream. Pick a live model before relying on the gate.',
+        modeLabel: 'Unsafe handling',
+        modeDescription: 'What happens when the judge model flags a request',
+        modeField: 'Mode',
+        mode: { reject: 'Reject the request', fallback: 'Route to a non-flag upstream' },
+        modeRejectHint:
+            'Rejected requests receive HTTP 403 with the judge model’s reason. No other upstream is tried.',
+        modeFallbackHint:
+            'Flag-on candidates are dropped and the request continues on the remaining upstreams. When none remain, the request is rejected with HTTP 403.',
+        payloadCapLabel: 'Payload size cap',
+        payloadCapDescription:
+            'How much of the request payload the judge model sees; longer payloads are truncated head+tail',
+        capEstimateNotice:
+            'The judge model declares a {{window}}-character context window; the gate estimates a cap of {{estimate}} characters.',
+        capFallbackNotice:
+            'The judge model declares no context window; the gate falls back to {{fallback}} characters. Consider setting an explicit cap.',
+        capField: 'Maximum payload characters',
+        capAutoHint: 'Auto-estimated at {{value}} characters from the judge model’s context window',
+        capClearHint: 'Clear the field to go back to the automatic estimate.',
+        retainLabel: 'Audit log retention',
+        retainDescription: 'How long rejected-request audit entries are kept',
+        retainField: 'Retention seconds',
+        retainForever: 'Keep forever',
+        retainForeverPlaceholder: 'Keep forever',
+        promptsLabel: 'Judge prompts',
+        promptsDescription: 'The prefix (system) and suffix prompts wrapping the request payload',
+        prefixPrompt: 'Prefix prompt (system message)',
+        suffixPrompt: 'Suffix prompt (appended to the payload)',
+        resetPrompts: 'Reset to built-in defaults',
+        save: 'Save Cyber Intercept Settings',
+        toastSavePending: 'Saving the cyber intercept settings',
+        toastSaveSuccess: 'Saved the cyber intercept settings',
+        audit: {
+          heading: 'Rejected requests',
+          empty: 'No requests have been rejected by the cyber intercept gate.',
+          time: 'Time',
+          action: 'Outcome',
+          reason: 'Reason',
+          judge: 'Judge model',
+          request: 'Request',
+          actionTaken: {
+            rejected: 'Rejected (403)',
+            'fallback-exhausted': 'Fallback exhausted (403)',
+          },
+          newer: 'Newer',
+          older: 'Older',
+          purge: 'Delete all entries',
+          purgeTitle: 'Delete all audit entries?',
+          purgeConfirm: 'Every rejected-request audit entry will be permanently deleted. This cannot be undone.',
+          purgePending: 'Deleting the audit log',
+          purgeSuccess: 'Deleted the audit log',
+        },
       },
       modelAliases: {
         description: 'Create virtual model IDs that route to one or more target models with optional locked request rules',

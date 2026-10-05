@@ -9,9 +9,9 @@
 // with the same care as a DB backup.
 
 import { parseImportData, type SerializedProxy } from './import-schema.ts';
+import { loadCyberInterceptSettings, CYBER_INTERCEPT_SETTINGS_KEY, type CyberInterceptSettings } from '../../data-plane/chat/shared/cyber-intercept/settings.ts';
 import { parseWebSearchConfigDefault, parseWebSearchConfigStrict } from '../../data-plane/tools/web-search/config.ts';
 import type { WebSearchConfig } from '../../data-plane/tools/web-search/types.ts';
-import { loadCyberInterceptSettings, CYBER_INTERCEPT_SETTINGS_KEY, type CyberInterceptSettings } from '../../data-plane/chat/shared/cyber-intercept/settings.ts';
 import { notifyDisabledBestEffort } from '../../dump/registry.ts';
 import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';

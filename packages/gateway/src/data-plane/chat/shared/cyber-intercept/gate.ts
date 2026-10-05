@@ -14,15 +14,15 @@
 import { nanoid } from 'nanoid';
 
 import type { ChatGatewayCtx } from '../gateway-ctx.ts';
-import { serializePayload, type SerializedPayload, estimateMaxPayloadChars } from './payload.ts';
 import { runCyberInterceptJudge } from './judge.ts';
+import { serializePayload, type SerializedPayload, estimateMaxPayloadChars } from './payload.ts';
 import { loadCyberInterceptSettings, type CyberInterceptSettings } from './settings.ts';
-import type { CyberInterceptAuditRecord } from '../../../../repo/types.ts';
 import { getRepo } from '../../../../repo/index.ts';
-import type { ModelCandidate, ExecuteResult } from '@floway-dev/provider';
-import { providerModelOf } from '@floway-dev/provider';
+import type { CyberInterceptAuditRecord } from '../../../../repo/types.ts';
 import { getModelsFromProviders } from '../../../providers/catalog.ts';
 import { listModelProviders } from '../../../providers/registry.ts';
+import type { ModelCandidate } from '@floway-dev/provider';
+import { providerModelOf } from '@floway-dev/provider';
 
 export interface CyberInterceptGateInput {
   // The caller payload's model field — for Gemini this is the URL-carried id,
@@ -56,12 +56,11 @@ export const cyberInterceptGateSettingsFor = async (
   return settings;
 };
 
-// The gate's full flow for one request. `renderReject` is the per-protocol
-// envelope builder; the gate supplies only the verdict text.
-export const runCyberInterceptGate = async <T>(
+// The gate's full flow for one request. The caller renders its own protocol's
+// reject envelope from the returned reason.
+export const runCyberInterceptGate = async (
   input: CyberInterceptGateInput,
   settings: CyberInterceptSettings,
-  renderReject: (verdict: string) => ExecuteResult<T>,
 ): Promise<CyberInterceptGateDecision<readonly ModelCandidate[]>> => {
   const flagOnCandidates = input.candidates.filter(candidate => providerModelOf(candidate).enabledFlags.has('cyber-intercept'));
   if (flagOnCandidates.length === 0) return { kind: 'pass', candidates: input.candidates };
@@ -95,7 +94,7 @@ export const runCyberInterceptGate = async <T>(
       requestMethod: input.requestMethod,
       requestPath: input.requestPath,
     };
-    await appendCyberInterceptAudit(record);
+    appendCyberInterceptAudit(record);
     return { kind: 'reject', reason: outcome.verdict.reason };
   }
 

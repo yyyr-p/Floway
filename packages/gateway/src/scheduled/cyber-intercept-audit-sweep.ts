@@ -4,8 +4,8 @@
 // (`auditLogRetentionSeconds`, null = keep forever), so there is no
 // expiration_sweeps key to claim — each maintenance tick drains a fixed
 // batch oldest-first and only reports work left to do.
-import { getRepo } from '../repo/index.ts';
 import { loadCyberInterceptSettings } from '../data-plane/chat/shared/cyber-intercept/settings.ts';
+import { getRepo } from '../repo/index.ts';
 
 const DELETE_BATCH_SIZE = 100;
 

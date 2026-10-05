@@ -4,9 +4,9 @@ import { renderOpenAIChatCompletionsCyberInterceptReject, renderOpenAIChatComple
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
+import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
-import { cyberInterceptGateSettingsFor, runCyberInterceptGate } from '../shared/cyber-intercept/gate.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { OpenAIChatCompletionsPayload, OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
 import type { ExecuteResult } from '@floway-dev/provider';
@@ -46,7 +46,7 @@ export const openaiChatCompletionsServe = {
         candidates: selection.candidates,
         requestMethod: 'POST',
         requestPath: '/v1/chat/completions',
-      }, cyberSettings, renderOpenAIChatCompletionsCyberInterceptReject);
+      }, cyberSettings);
       if (gate.kind === 'reject') return renderOpenAIChatCompletionsCyberInterceptReject(gate.reason);
       if (gate.candidates.length === 0) return renderOpenAIChatCompletionsFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams));
       dispatched = gate.candidates;

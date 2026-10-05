@@ -14,23 +14,21 @@
 //     caller's user/apiKey upstream cap.
 //   - `bypassCyberIntercept`: the gate checks this flag and stands down, so
 //     the judged turn cannot recurse into itself.
-import { analyzeOpenAIChatCompletionsAffinity } from '../../openai-chat-completions/affinity/ingress.ts';
-import { openaiChatCompletionsAttempt, openaiChatCompletionsTarget } from '../../openai-chat-completions/attempt.ts';
-import { collectOpenAIChatCompletionsProtocolEventsToResult } from '@floway-dev/protocols/openai-chat-completions';
-import { enumerateModelCandidates } from '../../../providers/resolution.ts';
-import { iterateCandidates } from '../../../shared/iterate-candidates.ts';
-import { selectAffinityCandidates } from '../affinity/index.ts';
-import type { ChatGatewayCtx } from '../gateway-ctx.ts';
-import { settle } from '../../../shared/telemetry/settle.ts';
-import { tokenUsageFromBillableUsage } from '../../../shared/telemetry/usage.ts';
-import type { InternalDebugError } from '@floway-dev/provider';
-import { toInternalDebugError, type ExecuteResult, type ModelCandidate } from '@floway-dev/provider';
-import type { ProtocolFrame } from '@floway-dev/protocols/common';
-import type { OpenAIChatCompletionsPayload } from '@floway-dev/protocols/openai-chat-completions';
 import type { CyberInterceptSettings } from './settings.ts';
 import { JUDGE_PAYLOAD_CLOSE_TAG, JUDGE_PAYLOAD_OPEN_TAG } from './settings.ts';
 import type { CyberInterceptVerdict } from './verdict.ts';
 import { parseCyberInterceptVerdict } from './verdict.ts';
+import { enumerateModelCandidates } from '../../../providers/resolution.ts';
+import { iterateCandidates } from '../../../shared/iterate-candidates.ts';
+import { settle } from '../../../shared/telemetry/settle.ts';
+import { tokenUsageFromBillableUsage } from '../../../shared/telemetry/usage.ts';
+import { analyzeOpenAIChatCompletionsAffinity } from '../../openai-chat-completions/affinity/ingress.ts';
+import { openaiChatCompletionsAttempt, openaiChatCompletionsTarget } from '../../openai-chat-completions/attempt.ts';
+import { selectAffinityCandidates } from '../affinity/index.ts';
+import type { ChatGatewayCtx } from '../gateway-ctx.ts';
+import { collectOpenAIChatCompletionsProtocolEventsToResult } from '@floway-dev/protocols/openai-chat-completions';
+import type { OpenAIChatCompletionsPayload } from '@floway-dev/protocols/openai-chat-completions';
+import { toInternalDebugError, type InternalDebugError, type ModelCandidate } from '@floway-dev/provider';
 
 // How the judge call resolved. `judged` carries the parsed verdict plus the
 // candidate that produced it (for audit attribution), or the internal-error

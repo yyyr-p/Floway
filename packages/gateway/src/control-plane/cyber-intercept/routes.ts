@@ -1,8 +1,8 @@
 import type { Context } from 'hono';
 
+import { defaultCyberInterceptPrompts, loadCyberInterceptSettings, saveCyberInterceptSettings } from '../../data-plane/chat/shared/cyber-intercept/settings.ts';
 import { type CtxWithJson } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
-import { loadCyberInterceptSettings, saveCyberInterceptSettings } from '../../data-plane/chat/shared/cyber-intercept/settings.ts';
 import type { cyberInterceptSettingsSchema } from '../schemas.ts';
 
 // Read the effective settings: the stored document, with the built-in
@@ -10,6 +10,10 @@ import type { cyberInterceptSettingsSchema } from '../schemas.ts';
 // dashboard edits what it sees, and a GET that returned nothing would erase
 // the prompts on the next save.
 export const getCyberInterceptSettingsRoute = async (c: Context) => c.json(await loadCyberInterceptSettings());
+
+// The built-in default prompts, for the dashboard's "reset to defaults"
+// affordance. Read-only; never stored.
+export const getCyberInterceptDefaultsRoute = async (c: Context) => c.json(defaultCyberInterceptPrompts());
 
 export const putCyberInterceptSettingsRoute = async (c: CtxWithJson<typeof cyberInterceptSettingsSchema>) =>
   c.json(await saveCyberInterceptSettings(c.req.valid('json')));

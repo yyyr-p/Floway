@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'vitest';
 
+import { estimateMaxPayloadChars, FALLBACK_MAX_PAYLOAD_CHARS, serializePayload, truncateMiddle } from '../../../../../src/data-plane/chat/shared/cyber-intercept/payload.ts';
 import { stableStringify } from '../../../../../src/data-plane/chat/shared/cyber-intercept/stable-stringify.ts';
 import { parseCyberInterceptVerdict } from '../../../../../src/data-plane/chat/shared/cyber-intercept/verdict.ts';
-import { estimateMaxPayloadChars, FALLBACK_MAX_PAYLOAD_CHARS, serializePayload, truncateMiddle } from '../../../../../src/data-plane/chat/shared/cyber-intercept/payload.ts';
 
 describe('stableStringify', () => {
   test('sorts object keys lexicographically so field order cannot change bytes', () => {
@@ -82,7 +82,7 @@ describe('parseCyberInterceptVerdict', () => {
 
 describe('payload serialization', () => {
   test('under the cap the text is verbatim and not truncated', async () => {
-    const serialized = await serializePayload({ a: 1 }, 1000);
+    const serialized = serializePayload({ a: 1 }, 1000);
     expect(serialized.text).toBe('{"a":1}');
     expect(serialized.truncated).toBe(false);
   });
@@ -92,7 +92,7 @@ describe('payload serialization', () => {
     // A string payload serializes to a JSON string literal, so the
     // serialized form gains outer quotes; truncation keeps the literal's
     // head (quote + leading x's) and tail (trailing y's + closing quote).
-    const serialized = await serializePayload(long, 60);
+    const serialized = serializePayload(long, 60);
     expect(serialized.truncated).toBe(true);
     expect(serialized.text).toContain('[...truncated ');
     expect(serialized.text.startsWith('"x')).toBe(true);
@@ -107,8 +107,8 @@ describe('payload serialization', () => {
 
   test('the digest covers the pre-truncation text', async () => {
     const value = `${'a'.repeat(2000)}`;
-    const serialized = await serializePayload(value, 100);
-    expect(serialized.sha256).toBe((await serializePayload(value, 2000)).sha256);
+    const serialized = serializePayload(value, 100);
+    expect(serialized.sha256).toBe(serializePayload(value, 2000).sha256);
   });
 });
 

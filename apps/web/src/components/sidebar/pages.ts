@@ -11,6 +11,7 @@ import {
   PersonKey20Color,
   SearchSparkle20Color,
   ShareAndroid20Color,
+  Shield20Color,
   TextEditStyle20Color,
 } from '@fluentui/react-icons';
 import type { FluentIcon } from '@fluentui/react-icons';
@@ -48,6 +49,7 @@ export const navGroups: NavGroup[] = [
     items: [
       { to: '/dashboard/providers/upstreams', labelKey: 'dashboard.nav.upstreams', icon: Cloud20Color, adminOnly: true },
       { to: '/dashboard/providers/search', labelKey: 'dashboard.nav.search', icon: SearchSparkle20Color, adminOnly: true },
+      { to: '/dashboard/providers/cyber-intercept', labelKey: 'dashboard.nav.cyberIntercept', icon: Shield20Color, adminOnly: true },
       { to: '/dashboard/providers/proxy', labelKey: 'dashboard.nav.proxy', icon: ShareAndroid20Color, adminOnly: true },
       { to: '/dashboard/providers/model-aliases', labelKey: 'dashboard.nav.modelAliases', icon: TextEditStyle20Color, adminOnly: true },
     ],
