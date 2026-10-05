@@ -7,17 +7,18 @@
 // (`{"object":"list","data":[...]}`) we serve at `/v1/models`.
 //
 // Pipeline: codex publishes a versioned catalog per release (see catalog.ts);
-// for each chat-kind model the registry lists as addressable, we call
-// `synthesizeCatalogEntry(model, base?)` with the segment-matched client
-// catalog entry as `base` (or `undefined` when no catalog entry matches). The
-// synthesizer builds the codex-shaped entry from that base, the registry-owned
-// overlays it announces, and capabilities proven by the exact client catalog
-// (see synthesize.ts for the exact field precedence rules).
+// the shared listing pipeline contributes real chat models and visible,
+// caller-reachable chat aliases. We call `synthesizeCatalogEntry(model, base?)`
+// with the segment-matched client catalog entry as `base` (or `undefined`
+// when no catalog entry matches), then retain Codex's own wire shape.
 
 import { resolveCodexCatalog, type CatalogModel, type CodexCatalog, type CodexCatalogCapabilities, type CodexServiceTier } from './catalog.ts';
 import { synthesizeCatalogEntry } from './synthesize.ts';
 import type { ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
-import { enumerateAddressableModelIds, type AddressableIdEntry } from '../shared/listing/addressable.ts';
+import type { ModelAliasesRepo } from '../../repo/types.ts';
+import { loadListedModels } from '../models/load.ts';
+import type { AddressableIdEntry } from '../shared/listing/addressable.ts';
+import type { InternalModel } from '@floway-dev/provider';
 import { codexModelContextWindow } from '@floway-dev/provider-codex';
 
 // Pure transformation: client catalog + addressable entries →
@@ -28,6 +29,9 @@ export const assembleCodexCatalog = (
   catalog: CodexCatalog,
   addressable: readonly AddressableIdEntry[],
   capabilities: CodexCatalogCapabilities = {},
+  listedModels: readonly InternalModel[] = addressable
+    .filter(entry => entry.unlisted === undefined)
+    .map(entry => entry.model),
 ): CodexCatalog => {
   const catalogBySlug = new Map<string, CatalogModel>();
   for (const model of catalog.models) catalogBySlug.set(model.slug.toLowerCase(), model);
@@ -48,24 +52,22 @@ export const assembleCodexCatalog = (
     return undefined;
   };
 
+  const addressableById = new Map(addressable.map(entry => [entry.id, entry] as const));
   const models: CatalogModel[] = [];
-  for (const entry of addressable) {
-    // Prefix-addressable alternates that the listing surface did not
-    // publish stay off the codex picker too — they are routable at
-    // request time but never surface as their own picker row.
-    if (entry.unlisted !== undefined) continue;
-    if (entry.model.kind !== 'chat') continue;
+  for (const model of listedModels) {
+    if (model.kind !== 'chat') continue;
     // Limits follow the registry's first-provider metadata policy. Only that
     // provider can supply Codex's private default; a same-named model from a
     // different provider must use its own advertised input budget.
-    const primaryUpstream = entry.upstreams[0];
+    const sourceEntry = model.aliasedFrom === undefined ? addressableById.get(model.id) : undefined;
+    const primaryUpstream = sourceEntry?.upstreams[0];
     let codexContextWindow;
     if (primaryUpstream?.kind === 'codex') {
-      const providerModel = entry.model.providerModels?.[primaryUpstream.upstreamId];
-      if (providerModel === undefined) throw new Error(`Codex catalog model ${entry.id} has no primary provider model`);
+      const providerModel = model.providerModels?.[primaryUpstream.upstreamId];
+      if (providerModel === undefined) throw new Error(`Codex catalog model ${model.id} has no primary provider model`);
       codexContextWindow = codexModelContextWindow(providerModel);
     }
-    models.push(synthesizeCatalogEntry(entry.model, matchCatalog(entry.model.id), capabilities, catalogServiceTiers, codexContextWindow));
+    models.push(synthesizeCatalogEntry(model, matchCatalog(model.id), capabilities, catalogServiceTiers, codexContextWindow));
   }
   return { models };
 };
@@ -74,10 +76,11 @@ export const loadCodexCatalog = async (
   userAgent: string | undefined,
   upstreamIds: readonly string[] | null,
   scheduleRefresh: ModelsRefreshScheduler,
+  aliasRepo: ModelAliasesRepo,
 ): Promise<CodexCatalog> => {
-  const [resolution, addressable] = await Promise.all([
+  const [resolution, listed] = await Promise.all([
     resolveCodexCatalog(userAgent),
-    enumerateAddressableModelIds(upstreamIds, scheduleRefresh),
+    loadListedModels(upstreamIds, scheduleRefresh, aliasRepo),
   ]);
-  return assembleCodexCatalog(resolution.catalog, addressable, resolution.capabilities);
+  return assembleCodexCatalog(resolution.catalog, listed.addressable, resolution.capabilities, listed.models);
 };
