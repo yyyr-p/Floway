@@ -71,6 +71,35 @@ test('PATCH /api/keys/:id accepts a custom upstream whitelist + order', async ()
   assertEquals(stored.upstreamIds, ['up_y', 'up_x']);
 });
 
+test('PATCH /api/keys/:id stores model rules scoped to an upstream and preserves exact IDs', async () => {
+  const { repo, apiKey } = await setupAppTest();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));
+  const rules = [{ upstreamId: 'up_x', mode: 'allow', modelIds: ['gpt-4o', 'vendor/model-v2'] }];
+
+  const response = await ownerPatch(apiKey.id, { upstream_model_access: rules }, apiKey.key);
+  assertEquals(response.status, 200);
+  assertEquals((await response.json()).upstream_model_access, rules);
+  assertEquals((await repo.apiKeys.getById(apiKey.id))?.upstreamModelAccess, rules);
+});
+
+test('PATCH /api/keys/:id rejects model rules outside the owner upstream cap without echoing configuration', async () => {
+  const { repo, apiKey } = await setupAppTest();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_a', name: 'A' }));
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_b', name: 'B' }));
+  const owner = await repo.users.getById(apiKey.userId);
+  if (!owner) throw new Error('owner missing');
+  await repo.users.save({ ...owner, upstreamIds: ['up_a'] });
+
+  const response = await ownerPatch(apiKey.id, {
+    upstream_model_access: [{ upstreamId: 'up_b', mode: 'deny', modelIds: ['private-model'] }],
+  }, apiKey.key);
+  assertEquals(response.status, 400);
+  const body = (await response.json()) as { error?: string };
+  assertEquals(body.error, "Some model access upstreams aren't available to your account.");
+  assertEquals(body.error?.includes('private-model'), false);
+  assertEquals(body.error?.includes('up_b'), false);
+});
+
 test('PATCH /api/keys/:id resets to default with upstream_ids: null', async () => {
   const { repo, apiKey } = await setupAppTest();
   await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));

@@ -28,6 +28,7 @@ const KEY_A: ApiKey = {
   createdAt: '2026-01-01T00:00:00.000Z',
   lastUsedAt: '2026-01-02T00:00:00.000Z',
   upstreamIds: null,
+  upstreamModelAccess: [],
   deletedAt: null,
   dumpRetentionSeconds: null,
   openaiResponsesRetentionSeconds: 0,
@@ -41,6 +42,7 @@ const KEY_B: ApiKey = {
   serverSecret: '22'.repeat(32),
   createdAt: '2026-02-01T00:00:00.000Z',
   upstreamIds: null,
+  upstreamModelAccess: [],
   deletedAt: null,
   dumpRetentionSeconds: null,
   openaiResponsesRetentionSeconds: 0,
@@ -53,6 +55,7 @@ const SEED_ADMIN: User = {
   isAdmin: true,
   canViewGlobalUsage: false,
   upstreamIds: null,
+  upstreamModelAccess: [],
   createdAt: '2026-01-01T00:00:00.000Z',
   deletedAt: null,
 };
@@ -64,6 +67,7 @@ const USER_BOB: User = {
   isAdmin: false,
   canViewGlobalUsage: false,
   upstreamIds: null,
+  upstreamModelAccess: [],
   createdAt: '2026-02-01T00:00:00.000Z',
   deletedAt: null,
 };
@@ -390,14 +394,24 @@ const latestImportData = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-test('export and import preserve empty upstream restrictions separately from unrestricted access', async () => {
+test('export and import preserve empty upstream and model restrictions separately from unrestricted access', async () => {
   const { app, repo } = setup();
-  const restrictedUser = { ...USER_BOB, upstreamIds: [] };
-  const restrictedKey = { ...KEY_B, userId: USER_BOB.id, upstreamIds: [] };
+  const restrictedUser = {
+    ...USER_BOB,
+    upstreamIds: [],
+    upstreamModelAccess: [{ upstreamId: CUSTOM_UPSTREAM.id, mode: 'allow' as const, modelIds: ['model-a'] }],
+  };
+  const restrictedKey = {
+    ...KEY_B,
+    userId: USER_BOB.id,
+    upstreamIds: [],
+    upstreamModelAccess: [{ upstreamId: CUSTOM_UPSTREAM.id, mode: 'deny' as const, modelIds: ['model-b'] }],
+  };
   await repo.users.save(SEED_ADMIN);
   await repo.users.save(restrictedUser);
   await repo.apiKeys.save(KEY_A);
   await repo.apiKeys.save(restrictedKey);
+  await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);
 
   const exported = await doExport(app);
   await repo.users.save(USER_BOB);
@@ -407,9 +421,25 @@ test('export and import preserve empty upstream restrictions separately from unr
   assertEquals(imported.status, 200);
   assertEquals((await repo.users.getById(SEED_ADMIN.id))?.upstreamIds, null);
   assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamIds, []);
+  assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamModelAccess, restrictedUser.upstreamModelAccess);
   assertEquals((await repo.apiKeys.getById(KEY_A.id))?.upstreamIds, null);
   assertEquals((await repo.apiKeys.getById(KEY_B.id))?.upstreamIds, []);
+  assertEquals((await repo.apiKeys.getById(KEY_B.id))?.upstreamModelAccess, restrictedKey.upstreamModelAccess);
   assertEquals((await doExport(app)).data, exported.data);
+});
+
+test('imports default absent model restrictions to unrestricted', async () => {
+  const { app, repo } = setup();
+  const legacyUser = { ...USER_BOB };
+  const legacyKey = { ...KEY_A, userId: USER_BOB.id };
+  delete legacyUser.upstreamModelAccess;
+  delete legacyKey.upstreamModelAccess;
+
+  const result = await doImport(app, 'replace', latestImportData({ users: [SEED_ADMIN, legacyUser], apiKeys: [legacyKey] }));
+
+  assertEquals(result.status, 200, String(result.body.error ?? ''));
+  assertEquals((await repo.users.getById(USER_BOB.id))?.upstreamModelAccess, []);
+  assertEquals((await repo.apiKeys.getById(KEY_A.id))?.upstreamModelAccess, []);
 });
 
 test('import round-trips a usage record carrying a positive input-length coordinate', async () => {
@@ -504,7 +534,7 @@ test('export includes performance only when requested', async () => {
   assertEquals(fullExport.data.performance, [PERFORMANCE_1, PERFORMANCE_2]);
 });
 
-test('import rejects any version other than the current one before deleting data', async () => {
+test('import accepts v20 and v21 and rejects older versions before deleting data', async () => {
   const { app, repo } = setup();
   await repo.apiKeys.save(KEY_A);
   await saveUpstreamForTest(repo.upstreams, CUSTOM_UPSTREAM);

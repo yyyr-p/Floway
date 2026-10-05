@@ -93,8 +93,12 @@ export default function DashboardServicesApiKeys({ loaderData }: Route.Component
   const clipboard = useCopyToClipboard();
 
   const selectedKey = data.keys?.find(key => key.id === selectedKeyId) ?? null;
+  const modelAccess = [
+    ...(user.upstreamModelAccess ?? []),
+    ...(selectedKey?.upstream_model_access ?? []),
+  ];
   const agentSetupModels = selectedKey && data.models && data.targetModels
-    ? reachableModels(data.models, effectiveUpstreamCap(selectedKey.upstream_ids, user.upstreamIds), undefined, data.targetModels)
+    ? reachableModels(data.models, effectiveUpstreamCap(selectedKey.upstream_ids, user.upstreamIds), undefined, data.targetModels, modelAccess)
     : [];
 
   // Written where the picking happens rather than mirrored off rendered state:

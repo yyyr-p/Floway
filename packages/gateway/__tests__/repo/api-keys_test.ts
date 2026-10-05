@@ -77,6 +77,17 @@ for (const [backend, makeRepo] of REPO_BACKENDS) {
     assertEquals((await repo.apiKeys.getById('key_dump'))?.upstreamIds, []);
   });
 
+  test(`[${backend}] api key model-access rules round-trip and update`, async () => {
+    const repo = await makeRepo();
+    const access = [{ upstreamId: 'up_a', mode: 'allow' as const, modelIds: ['model-a'] }];
+    await repo.apiKeys.save(baseKey({ upstreamModelAccess: access }));
+    assertEquals((await repo.apiKeys.findByRawKey('raw_dump_key'))?.upstreamModelAccess, access);
+
+    const denied = [{ upstreamId: 'up_a', mode: 'deny' as const, modelIds: ['model-b'] }];
+    await repo.apiKeys.update('key_dump', { upstreamModelAccess: denied });
+    assertEquals((await repo.apiKeys.listByUserId(1))[0]?.upstreamModelAccess, denied);
+  });
+
   test(`[${backend}] api keys repo defaults dumpRetentionSeconds to null on save`, async () => {
     const repo = await makeRepo();
     await repo.apiKeys.save(baseKey());

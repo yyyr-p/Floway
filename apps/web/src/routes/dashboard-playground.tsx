@@ -176,14 +176,18 @@ export default function DashboardPlayground({ loaderData }: Route.ComponentProps
   const narrow = useMediaQuery('(max-width: 1100px)');
 
   const selectedKey = loaderData.keys?.find(key => key.id === keyId) ?? null;
+  const modelAccess = useMemo(
+    () => [...(user.upstreamModelAccess ?? []), ...(selectedKey?.upstream_model_access ?? [])],
+    [selectedKey, user.upstreamModelAccess],
+  );
   const cap = useMemo(
     () => effectiveUpstreamCap(selectedKey?.upstream_ids ?? null, user.upstreamIds),
     [selectedKey, user.upstreamIds],
   );
   const catalog = useMemo(() => indexCatalog(loaderData.targetModels), [loaderData.targetModels]);
   const models = useMemo(
-    () => reachableModels(loaderData.models ?? [], cap, model => model.kind === 'chat', loaderData.targetModels ?? []),
-    [cap, loaderData.models, loaderData.targetModels],
+    () => reachableModels(loaderData.models ?? [], cap, model => model.kind === 'chat', loaderData.targetModels ?? [], modelAccess),
+    [cap, loaderData.models, loaderData.targetModels, modelAccess],
   );
   const selectedModel = models.find(model => model.id === publicModelId) ?? null;
   const imageEnabled = supportsImageInput(selectedModel);
@@ -384,7 +388,7 @@ export default function DashboardPlayground({ loaderData }: Route.ComponentProps
           {matchingModels.map(model => <Option key={model.id} value={model.id} text={model.display_name}><div className="min-w-0 grid gap-1"><div className="truncate leading-[var(--lineHeightBase300)]">{model.display_name}</div><div className="text-fui-fg2 truncate font-mono">{model.id}</div></div></Option>)}
         </Combobox>
       </Field>
-      {selectedModel && <ModelInfoBadges cap={cap} catalog={catalog} model={selectedModel} />}
+      {selectedModel && <ModelInfoBadges cap={cap} catalog={catalog} model={selectedModel} modelAccess={modelAccess} />}
     </SettingsSection>
     <SettingsSection title={t('dashboard.playground.settings.generation')}>
       <Field label={t('dashboard.playground.generation.reasoningEffort')}>

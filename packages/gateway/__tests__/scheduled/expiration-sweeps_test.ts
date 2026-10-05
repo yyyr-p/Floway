@@ -395,7 +395,25 @@ test('bounded cleanup backfill tracks rows whose API key was hard-deleted', asyn
     }
     const db = wrapSqlJsDatabase(raw);
     const repo = new SqlRepo(db);
-    await repo.apiKeys.save(key(now));
+    const legacyKey = key(now);
+    await db.prepare(`
+      INSERT INTO api_keys (
+        id, user_id, name, key, created_at, last_used_at, upstream_ids, deleted_at,
+        dump_retention_seconds, server_secret, responses_retention_seconds
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      legacyKey.id,
+      legacyKey.userId,
+      legacyKey.name,
+      legacyKey.key,
+      legacyKey.createdAt,
+      legacyKey.lastUsedAt ?? null,
+      null,
+      legacyKey.deletedAt,
+      legacyKey.dumpRetentionSeconds,
+      legacyKey.serverSecret,
+      legacyKey.openaiResponsesRetentionSeconds,
+    ).run();
     const recordId = '01K00000000000000000ORPH';
     const fileKey = `dumps/v1/key-a/1970010100/${recordId}.req.gz`;
     await db.prepare(

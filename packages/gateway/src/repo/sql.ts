@@ -1,6 +1,7 @@
 import { normalizeDisabledPublicModelIds } from './disabled-public-models.ts';
 import { SqlExpirationSweepsRepo } from './expiration-sweeps-sql.ts';
 import { normalizeFlagOverrides } from './flag-overrides.ts';
+import { parseUpstreamModelAccess } from './model-access.ts';
 import { decodeAliasTargets, decodeAnnouncedMetadata, encodeAliasTargets, encodeAnnouncedMetadata } from './model-alias-codecs.ts';
 import { MODEL_CATALOG_REVISION, storedModelErrorMessage } from './models-cache-contract.ts';
 import { matchesModelsRefreshInputs } from './models-refresh-inputs.ts';
@@ -97,12 +98,13 @@ interface ApiKeyRow {
   created_at: string;
   last_used_at: string | null;
   upstream_ids: string | null;
+  upstream_model_access: string | null;
   deleted_at: string | null;
   dump_retention_seconds: number | null;
   responses_retention_seconds: number;
 }
 
-const API_KEY_COLUMNS = 'id, user_id, name, key, server_secret, created_at, last_used_at, upstream_ids, deleted_at, dump_retention_seconds, responses_retention_seconds';
+const API_KEY_COLUMNS = 'id, user_id, name, key, server_secret, created_at, last_used_at, upstream_ids, upstream_model_access, deleted_at, dump_retention_seconds, responses_retention_seconds';
 
 const serializeUpstreamIds = (value: readonly string[] | null): string | null => (value === null ? null : JSON.stringify(value));
 
@@ -125,6 +127,17 @@ const parseUpstreamIds = (raw: string | null, label: string): string[] | null =>
   return parsed as string[];
 };
 
+const parseStoredUpstreamModelAccess = (raw: string | null, label: string) => {
+  if (raw === null) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (cause) {
+    throw new Error(`upstream_model_access JSON is malformed for ${label}: ${cause instanceof Error ? cause.message : String(cause)}`, { cause });
+  }
+  return parseUpstreamModelAccess(parsed, label);
+};
+
 const toApiKey = (row: ApiKeyRow): ApiKey => ({
   id: row.id,
   userId: row.user_id,
@@ -134,6 +147,7 @@ const toApiKey = (row: ApiKeyRow): ApiKey => ({
   createdAt: row.created_at,
   lastUsedAt: row.last_used_at ?? undefined,
   upstreamIds: parseUpstreamIds(row.upstream_ids, `api_keys.id=${row.id}`),
+  upstreamModelAccess: parseStoredUpstreamModelAccess(row.upstream_model_access, `api_keys.id=${row.id}`),
   deletedAt: row.deleted_at,
   dumpRetentionSeconds: row.dump_retention_seconds,
   openaiResponsesRetentionSeconds: row.responses_retention_seconds,
@@ -191,7 +205,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
   async save(key: ApiKey): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO api_keys (${API_KEY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO api_keys (${API_KEY_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            user_id = excluded.user_id,
            name = excluded.name,
@@ -199,6 +213,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
            server_secret = excluded.server_secret,
            last_used_at = excluded.last_used_at,
            upstream_ids = excluded.upstream_ids,
+           upstream_model_access = excluded.upstream_model_access,
            deleted_at = excluded.deleted_at,
            dump_retention_seconds = excluded.dump_retention_seconds,
            responses_retention_seconds = excluded.responses_retention_seconds`,
@@ -212,6 +227,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
         key.createdAt,
         key.lastUsedAt ?? null,
         serializeUpstreamIds(key.upstreamIds),
+        JSON.stringify(key.upstreamModelAccess ?? []),
         key.deletedAt,
         key.dumpRetentionSeconds,
         key.openaiResponsesRetentionSeconds,
@@ -224,6 +240,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
     const hasKey = sqliteBoolean(patch.key !== undefined);
     const hasLastUsedAt = sqliteBoolean(patch.lastUsedAt !== undefined);
     const hasUpstreamIds = sqliteBoolean(patch.upstreamIds !== undefined);
+    const hasUpstreamModelAccess = sqliteBoolean(patch.upstreamModelAccess !== undefined);
     const hasDumpRetention = sqliteBoolean(patch.dumpRetentionSeconds !== undefined);
     const hasOpenAIResponsesRetention = sqliteBoolean(patch.openaiResponsesRetentionSeconds !== undefined);
     const row = await this.db
@@ -233,6 +250,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
              key = CASE WHEN ? THEN ? ELSE key END,
              last_used_at = CASE WHEN ? THEN ? ELSE last_used_at END,
              upstream_ids = CASE WHEN ? THEN ? ELSE upstream_ids END,
+             upstream_model_access = CASE WHEN ? THEN ? ELSE upstream_model_access END,
              dump_retention_seconds = CASE WHEN ? THEN ? ELSE dump_retention_seconds END,
              responses_retention_seconds = CASE WHEN ? THEN ? ELSE responses_retention_seconds END
          WHERE id = ? AND deleted_at IS NULL
@@ -243,6 +261,7 @@ class SqlApiKeyRepo implements ApiKeyRepo {
         hasKey ? 1 : 0, patch.key ?? null,
         hasLastUsedAt ? 1 : 0, patch.lastUsedAt ?? null,
         hasUpstreamIds ? 1 : 0, hasUpstreamIds ? serializeUpstreamIds(patch.upstreamIds!) : null,
+        hasUpstreamModelAccess ? 1 : 0, hasUpstreamModelAccess ? JSON.stringify(patch.upstreamModelAccess!) : null,
         hasDumpRetention ? 1 : 0, patch.dumpRetentionSeconds ?? null,
         hasOpenAIResponsesRetention ? 1 : 0, patch.openaiResponsesRetentionSeconds ?? null,
         id,
@@ -279,11 +298,12 @@ interface UserRow {
   is_admin: number;
   can_view_global_usage: number;
   upstream_ids: string | null;
+  upstream_model_access: string | null;
   created_at: string;
   deleted_at: string | null;
 }
 
-const USER_COLUMNS = 'id, username, password_hash, is_admin, can_view_global_usage, upstream_ids, created_at, deleted_at';
+const USER_COLUMNS = 'id, username, password_hash, is_admin, can_view_global_usage, upstream_ids, upstream_model_access, created_at, deleted_at';
 
 const toUser = (row: UserRow): User => ({
   id: row.id,
@@ -292,6 +312,7 @@ const toUser = (row: UserRow): User => ({
   isAdmin: row.is_admin === 1,
   canViewGlobalUsage: row.can_view_global_usage === 1,
   upstreamIds: parseUpstreamIds(row.upstream_ids, `users.id=${row.id}`),
+  upstreamModelAccess: parseStoredUpstreamModelAccess(row.upstream_model_access, `users.id=${row.id}`),
   createdAt: row.created_at,
   deletedAt: row.deleted_at,
 });
@@ -336,7 +357,7 @@ class SqlUsersRepo implements UsersRepo {
     const row = await this.db
       .prepare(
         `INSERT INTO users (${USER_COLUMNS})
-         SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ?, ?, ? FROM users
+         SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ?, ?, ?, ? FROM users
          RETURNING id`,
       )
       .bind(
@@ -345,6 +366,7 @@ class SqlUsersRepo implements UsersRepo {
         template.isAdmin ? 1 : 0,
         template.canViewGlobalUsage ? 1 : 0,
         serializeUpstreamIds(template.upstreamIds),
+        JSON.stringify(template.upstreamModelAccess ?? []),
         template.createdAt,
         template.deletedAt,
       )
@@ -356,13 +378,14 @@ class SqlUsersRepo implements UsersRepo {
   async save(user: User): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        `INSERT INTO users (${USER_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT (id) DO UPDATE SET
            username = excluded.username,
            password_hash = excluded.password_hash,
            is_admin = excluded.is_admin,
            can_view_global_usage = excluded.can_view_global_usage,
            upstream_ids = excluded.upstream_ids,
+           upstream_model_access = excluded.upstream_model_access,
            deleted_at = excluded.deleted_at`,
       )
       .bind(
@@ -372,6 +395,7 @@ class SqlUsersRepo implements UsersRepo {
         user.isAdmin ? 1 : 0,
         user.canViewGlobalUsage ? 1 : 0,
         serializeUpstreamIds(user.upstreamIds),
+        JSON.stringify(user.upstreamModelAccess ?? []),
         user.createdAt,
         user.deletedAt,
       )

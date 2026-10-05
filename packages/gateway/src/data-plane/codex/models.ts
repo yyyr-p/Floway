@@ -17,6 +17,7 @@
 import { resolveCodexCatalog, type CatalogModel, type CodexCatalog, type CodexCatalogCapabilities, type CodexServiceTier } from './catalog.ts';
 import { synthesizeCatalogEntry } from './synthesize.ts';
 import type { ModelsRefreshScheduler } from '../../execution/models-refresh.ts';
+import type { UpstreamModelAccessRule } from '../../repo/model-access.ts';
 import { enumerateAddressableModelIds, type AddressableIdEntry } from '../shared/listing/addressable.ts';
 import { codexModelContextWindow } from '@floway-dev/provider-codex';
 
@@ -74,10 +75,11 @@ export const loadCodexCatalog = async (
   userAgent: string | undefined,
   upstreamIds: readonly string[] | null,
   scheduleRefresh: ModelsRefreshScheduler,
+  modelAccess: readonly UpstreamModelAccessRule[] = [],
 ): Promise<CodexCatalog> => {
   const [resolution, addressable] = await Promise.all([
     resolveCodexCatalog(userAgent),
-    enumerateAddressableModelIds(upstreamIds, scheduleRefresh),
+    enumerateAddressableModelIds(upstreamIds, scheduleRefresh, undefined, modelAccess),
   ]);
   return assembleCodexCatalog(resolution.catalog, addressable, resolution.capabilities);
 };

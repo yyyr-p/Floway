@@ -95,6 +95,16 @@ describe.each(backends)('UsersRepo (%s)', (_label, makeRepo) => {
     expect((await repo.users.getById(3))?.upstreamIds).toEqual(['up_one']);
   });
 
+  test('upstreamModelAccess round-trips user model allow and deny rules', async () => {
+    const repo = await makeRepo();
+    const access = [
+      { upstreamId: 'up_one', mode: 'allow' as const, modelIds: ['model-a'] },
+      { upstreamId: 'up_two', mode: 'deny' as const, modelIds: ['model-b'] },
+    ];
+    await repo.users.save(sampleUser({ id: 2, upstreamModelAccess: access }));
+    expect((await repo.users.getById(2))?.upstreamModelAccess).toEqual(access);
+  });
+
   test('findByUsername does not return soft-deleted rows', async () => {
     const repo = await makeRepo();
     await repo.users.save(sampleUser({ id: 2, username: 'alice' }));
