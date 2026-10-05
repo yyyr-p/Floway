@@ -560,6 +560,7 @@ function UpstreamsTable({
                   label={record.name}
                   title={hasSubscriptionDetails(record) ? t('dashboard.upstreams.actions.detailsNamed', { name: record.name }) : undefined}
                   to={hasSubscriptionDetails(record) ? upstreamDetailsPath(record) : upstreamEditorPath(record)}
+                  logoUrl={record.logo_url}
                   upstream={record}
                 />
               </TableCell>

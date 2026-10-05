@@ -194,7 +194,7 @@ test('/v1/models returns merged model list from Copilot and custom upstreams', a
         data: Array<{
           id: string;
           display_name: string;
-          upstreams?: Array<{ kind: 'copilot' | 'custom' | 'azure'; id: string; modelId: string; name: string }>;
+          upstreams?: Array<{ kind: 'copilot' | 'custom' | 'azure'; id: string; modelId: string; name: string; hue: number; logoUrl: string | null }>;
           provider?: unknown;
           upstream_ids?: unknown;
           billing?: unknown;
@@ -208,8 +208,8 @@ test('/v1/models returns merged model list from Copilot and custom upstreams', a
       };
       const controlClaude = controlBody.data.find(m => m.id === 'claude-sonnet-4')!;
       assertEquals(controlClaude.display_name, 'Claude Sonnet 4');
-      assertEquals(controlClaude.upstreams, [{ kind: 'copilot', id: 'up_copilot', modelId: 'claude-sonnet-4', name: 'GitHub Copilot (tester)', hue: 210 }]);
-      assertEquals(controlBody.data.find(m => m.id === 'gpt-4o')?.upstreams, [{ kind: 'custom', id: 'up_oai', modelId: 'gpt-4o', name: 'Test OpenAI', hue: 210 }]);
+      assertEquals(controlClaude.upstreams, [{ kind: 'copilot', id: 'up_copilot', modelId: 'claude-sonnet-4', name: 'GitHub Copilot (tester)', hue: 210, logoUrl: null }]);
+      assertEquals(controlBody.data.find(m => m.id === 'gpt-4o')?.upstreams, [{ kind: 'custom', id: 'up_oai', modelId: 'gpt-4o', name: 'Test OpenAI', hue: 210, logoUrl: null }]);
       // Legacy split fields and Copilot-only fields never reach the dashboard.
       for (const model of controlBody.data) {
         assertEquals(model.provider, undefined);

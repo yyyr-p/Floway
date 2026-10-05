@@ -48,7 +48,7 @@ export function CodexAccountCard({ record }: { record: CodexRecord }) {
 
   return <section className="grid gap-4">
     <div className="flex items-start gap-3">
-      <ProviderIcon kind="codex" className="h-8 w-8 shrink-0" />
+      <ProviderIcon kind="codex" logoUrl={record.logo_url} className="h-8 w-8 shrink-0" />
       <div className="grid gap-1 min-w-0 flex-1">
         <Text block weight="semibold" truncate wrap={false}>{account.email ?? t('dashboard.upstreamEditor.codex.unknownEmail')}</Text>
         <div className="flex flex-wrap items-center gap-2">
