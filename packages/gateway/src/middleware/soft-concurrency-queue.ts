@@ -1,5 +1,6 @@
 import type { Context, Next } from 'hono';
 
+import { concurrencyAbortReason, holdConcurrencyResponseStream } from './concurrency-response-stream.ts';
 import { concurrencyLimitResponse, isDataPlaneRequest } from './concurrency-response.ts';
 import { getEnvOptional } from '@floway-dev/platform';
 
@@ -119,9 +120,6 @@ const admissionHeaders = (response: Response, admission: QueueAdmission): Respon
   });
 };
 
-const abortReason = (signal: AbortSignal): unknown =>
-  signal.reason ?? new DOMException('Client disconnected while waiting for a concurrency slot.', 'AbortError');
-
 class FifoConcurrencyQueue {
   private active = 0;
   private currentLimit: number | null;
@@ -134,7 +132,7 @@ class FifoConcurrencyQueue {
   acquire(config: SoftConcurrencyQueueConfig, signal: AbortSignal): Promise<AcquireResult> {
     this.currentLimit = config.limit;
     this.drain();
-    if (signal.aborted) return Promise.reject(abortReason(signal));
+    if (signal.aborted) return Promise.reject(concurrencyAbortReason(signal));
 
     const limit = config.limit;
     if (limit === null || (this.active < limit && this.waiters.length === 0)) {
@@ -172,7 +170,7 @@ class FifoConcurrencyQueue {
       waiter.abort = () => {
         if (waiter.settled || !remove()) return;
         waiter.settled = true;
-        reject(abortReason(signal));
+        reject(concurrencyAbortReason(signal));
       };
       this.waiters.push(waiter);
       signal.addEventListener('abort', waiter.abort, { once: true });
@@ -213,7 +211,7 @@ class FifoConcurrencyQueue {
         waiter.settled = true;
         if (waiter.timer !== undefined) clearTimeout(waiter.timer);
         waiter.signal.removeEventListener('abort', waiter.abort);
-        waiter.reject(abortReason(waiter.signal));
+        waiter.reject(concurrencyAbortReason(waiter.signal));
         continue;
       }
       waiter.settled = true;
@@ -227,75 +225,6 @@ class FifoConcurrencyQueue {
     }
   }
 }
-
-const holdUntilBodySettles = (
-  response: Response,
-  release: () => void,
-  signal: AbortSignal,
-): Response => {
-  const body = response.body;
-  if (body === null || response.status === 101) {
-    release();
-    return response;
-  }
-
-  const reader = body.getReader();
-  let settled = false;
-  let controllerRef: ReadableStreamDefaultController<Uint8Array> | undefined;
-  const finish = (): void => {
-    if (settled) return;
-    settled = true;
-    signal.removeEventListener('abort', onAbort);
-    release();
-  };
-  const onAbort = (): void => {
-    void reader.cancel(abortReason(signal)).catch(error => {
-      try {
-        controllerRef?.error(error);
-      } catch {
-        // A disconnected client may already have cancelled the wrapped stream.
-      }
-    }).finally(finish);
-  };
-
-  const wrapped = new ReadableStream<Uint8Array>({
-    start(controller) {
-      controllerRef = controller;
-    },
-    async pull(controller) {
-      try {
-        const result = await reader.read();
-        if (result.done) {
-          controller.close();
-          finish();
-          return;
-        }
-        controller.enqueue(result.value);
-      } catch (error) {
-        try {
-          controller.error(error);
-        } finally {
-          finish();
-        }
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        finish();
-      }
-    },
-  });
-
-  signal.addEventListener('abort', onAbort, { once: true });
-  if (signal.aborted) onAbort();
-  return new Response(wrapped, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: new Headers(response.headers),
-  });
-};
 
 export const createSoftConcurrencyQueueMiddleware = (
   getConfig: () => SoftConcurrencyQueueConfig,
@@ -322,7 +251,7 @@ export const createSoftConcurrencyQueueMiddleware = (
     try {
       await next();
       const withHeaders = admissionHeaders(c.res, result.admission);
-      c.res = holdUntilBodySettles(withHeaders, result.admission.release, c.req.raw.signal);
+      c.res = holdConcurrencyResponseStream(withHeaders, result.admission.release, c.req.raw.signal);
     } catch (error) {
       result.admission.release();
       throw error;
