@@ -80,7 +80,7 @@ export const synthesizeCatalogEntry = (
   capabilities: CodexCatalogCapabilities = {},
   catalogServiceTiers: readonly CodexServiceTier[] = [],
   codexContextWindow?: CodexContextWindow,
-): CatalogModel => {
+): CatalogModel & { context_window: number } => {
   const source: CatalogModel = base ?? BASELINE;
 
   const inputModalities = (model.chat?.modalities?.input
@@ -128,7 +128,7 @@ export const synthesizeCatalogEntry = (
     ? providerWindow
     : codexContextWindow.max_context_window;
 
-  const entry: CatalogModel = {
+  const entry: CatalogModel & { context_window: number } = {
     ...source,
     slug: model.id,
     display_name: model.display_name ?? source.display_name ?? model.id,
