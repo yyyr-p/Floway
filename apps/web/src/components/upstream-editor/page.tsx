@@ -27,7 +27,6 @@ import { api, callApi } from '../../api/client';
 import type { UpstreamRecord } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
-import { normalizeUpstreamLogoUrl } from '@floway-dev/provider/model';
 import { useEntryRewrite } from '../../lib/page-navigation';
 import { BackNavigationButton } from '../ui/back-navigation-button';
 import { ConfirmDialog } from '../ui/confirm-dialog';
@@ -37,6 +36,7 @@ import { useOutcomeToasts } from '../ui/outcome-toast';
 import { Panel } from '../ui/panel';
 import { useDialogInvocation } from '../ui/use-dialog-invocation';
 import { useRefresh } from '../ui/use-refresh';
+import { normalizeUpstreamLogoUrl } from '@floway-dev/provider/model';
 
 const { Button, Spinner, Text } = fluentComponents;
 

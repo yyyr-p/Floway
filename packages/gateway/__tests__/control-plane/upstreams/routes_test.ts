@@ -120,7 +120,7 @@ test('upstream logos persist through create and patch, while unsafe schemes are 
   assertEquals(created.logo_url, 'https://example.com/brand.svg');
   assertEquals((await repo.upstreams.getById(created.id))?.logoUrl, 'https://example.com/brand.svg');
 
-  const patchLogo = async (logoUrl: string | null) => requestApp(`/api/upstreams/${created.id}`, {
+  const patchLogo = (logoUrl: string | null) => requestApp(`/api/upstreams/${created.id}`, {
     method: 'PATCH',
     headers: { 'content-type': 'application/json', 'x-floway-session': adminSession },
     body: JSON.stringify({ logo_url: logoUrl }),
