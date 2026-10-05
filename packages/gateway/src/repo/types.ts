@@ -344,6 +344,37 @@ export interface WebSearchConfigRepo {
   save(config: WebSearchConfig): Promise<void>;
 }
 
+// One rejected cyber-intercept request. Written by the data plane's
+// cyber-intercept gate, read (list + delete) by the control plane; there is
+// no create/update route — logs only come from real gate decisions.
+export interface CyberInterceptAuditRecord {
+  id: string;
+  // ISO timestamp, matching every other record's clock convention.
+  createdAt: string;
+  // Global mode in force when the request was judged: how the gate acted.
+  mode: 'reject' | 'fallback';
+  // How this request actually terminated: the mode's own action (reject =
+  // blocked, fallback = every flag-on candidate filtered out) or the shared
+  // fail-closed fallback when the judge itself failed.
+  actionTaken: 'rejected' | 'fallback-exhausted';
+  reason: string;
+  judgeModelId: string;
+  // Public model ids the request targeted when the judge flagged it.
+  hitCandidates: readonly { readonly upstreamId: string; readonly modelId: string }[];
+  // Digest of the deterministic payload serialization, taken before
+  // truncation. Never the request text itself.
+  payloadSha256: string;
+  requestMethod: string;
+  requestPath: string;
+}
+
+export interface CyberInterceptAuditLogRepo {
+  append(record: CyberInterceptAuditRecord): Promise<void>;
+  list(opts: { limit: number; offset: number }): Promise<CyberInterceptAuditRecord[]>;
+  deleteExpired(createdAtBeforeIso: string, limit: number): Promise<number>;
+  deleteAll(): Promise<void>;
+}
+
 // Operator-owned server-wide settings, keyed by a stable setting name and
 // persisted as one JSON document per key. Value shape and validation belong
 // to the control-plane schemas that own each key; the repo stores and returns
@@ -585,6 +616,7 @@ export interface Repo {
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
   settings: SettingsRepo;
+  cyberInterceptAuditLog: CyberInterceptAuditLogRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;

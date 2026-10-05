@@ -15,6 +15,8 @@ import type {
   ApiKey,
   ApiKeyRepo,
   ApiKeyUpdate,
+  CyberInterceptAuditLogRepo,
+  CyberInterceptAuditRecord,
   ExpirationSweepsRepo,
   AgentSetupMutation,
   AgentSetupRecord,
@@ -909,6 +911,76 @@ class SqlSettingsRepo implements SettingsRepo {
   }
 }
 
+interface CyberInterceptAuditRow {
+  id: string;
+  created_at: string;
+  mode: string;
+  action_taken: string;
+  reason: string;
+  judge_model_id: string;
+  hit_candidates_json: string;
+  payload_sha256: string;
+  request_method: string;
+  request_path: string;
+}
+
+const toCyberInterceptAuditRecord = (row: CyberInterceptAuditRow): CyberInterceptAuditRecord => ({
+  id: row.id,
+  createdAt: row.created_at,
+  mode: row.mode as CyberInterceptAuditRecord['mode'],
+  actionTaken: row.action_taken as CyberInterceptAuditRecord['actionTaken'],
+  reason: row.reason,
+  judgeModelId: row.judge_model_id,
+  hitCandidates: JSON.parse(row.hit_candidates_json) as CyberInterceptAuditRecord['hitCandidates'],
+  payloadSha256: row.payload_sha256,
+  requestMethod: row.request_method,
+  requestPath: row.request_path,
+});
+
+class SqlCyberInterceptAuditLogRepo implements CyberInterceptAuditLogRepo {
+  constructor(private db: SqlDatabase) {}
+
+  async append(record: CyberInterceptAuditRecord): Promise<void> {
+    await this.db
+      .prepare(
+        `INSERT INTO cyber_intercept_audit_log (id, created_at, mode, action_taken, reason, judge_model_id, hit_candidates_json, payload_sha256, request_method, request_path)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .bind(record.id, record.createdAt, record.mode, record.actionTaken, record.reason, record.judgeModelId, JSON.stringify(record.hitCandidates), record.payloadSha256, record.requestMethod, record.requestPath)
+      .run();
+  }
+
+  async list(opts: { limit: number; offset: number }): Promise<CyberInterceptAuditRecord[]> {
+    const { results } = await this.db
+      .prepare('SELECT id, created_at, mode, action_taken, reason, judge_model_id, hit_candidates_json, payload_sha256, request_method, request_path FROM cyber_intercept_audit_log ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?')
+      .bind(opts.limit, opts.offset)
+      .all<CyberInterceptAuditRow>();
+    return results.map(toCyberInterceptAuditRecord);
+  }
+
+  async deleteExpired(createdAtBeforeIso: string, limit: number): Promise<number> {
+    // RETURNING counts only audit rows — the created_at index carries the
+    // sweep the same way the dump store's rowid sweep does.
+    const deleted = await this.db
+      .prepare(
+        `DELETE FROM cyber_intercept_audit_log WHERE rowid IN (
+           SELECT rowid FROM cyber_intercept_audit_log
+           WHERE created_at < ?
+           ORDER BY created_at, rowid
+           LIMIT ?
+         )
+         RETURNING rowid`,
+      )
+      .bind(createdAtBeforeIso, limit)
+      .all<{ rowid: number }>();
+    return deleted.results.length;
+  }
+
+  async deleteAll(): Promise<void> {
+    await this.db.prepare('DELETE FROM cyber_intercept_audit_log').run();
+  }
+}
+
 // Losing once is ordinary on a row this contended, losing four times in a row
 // is not — and the attempts run back-to-back with no delay, so they observe
 // much the same contention rather than independent draws. The bound is a
@@ -1732,6 +1804,7 @@ export class SqlRepo implements Repo {
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
   settings: SettingsRepo;
+  cyberInterceptAuditLog: CyberInterceptAuditLogRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
@@ -1752,6 +1825,7 @@ export class SqlRepo implements Repo {
     this.performance = new SqlPerformanceRepo(db);
     this.webSearchConfig = new SqlWebSearchConfigRepo(db);
     this.settings = new SqlSettingsRepo(db);
+    this.cyberInterceptAuditLog = new SqlCyberInterceptAuditLogRepo(db);
     this.upstreams = new SqlUpstreamRepo(db);
     this.proxies = new SqlProxyRepo(db);
     this.proxyBackoffs = new SqlProxyBackoffRepo(db);

@@ -41,6 +41,8 @@ import type {
   PerformanceMetric,
   PerformanceOverviewQueryOptions,
   PerformanceOverviewResult,
+  CyberInterceptAuditLogRepo,
+  CyberInterceptAuditRecord,
   ProxyBackoffRepo,
   ProxyRecord,
   ProxyRepo,
@@ -753,6 +755,45 @@ class MemorySettingsRepo implements SettingsRepo {
 
   list(): Promise<{ key: string; value: unknown }[]> {
     return Promise.resolve([...this.byKey.keys()].sort().map(key => ({ key, value: structuredClone(this.byKey.get(key)) })));
+  }
+}
+
+class MemoryCyberInterceptAuditLogRepo implements CyberInterceptAuditLogRepo {
+  private rows: { record: CyberInterceptAuditRecord; seq: number }[] = [];
+  private nextSeq = 0;
+
+  append(record: CyberInterceptAuditRecord): Promise<void> {
+    this.rows.push({ record: structuredClone(record), seq: this.nextSeq++ });
+    return Promise.resolve();
+  }
+
+  list(opts: { limit: number; offset: number }): Promise<CyberInterceptAuditRecord[]> {
+    const sorted = [...this.rows].sort((a, b) => {
+      if (a.record.createdAt !== b.record.createdAt) return a.record.createdAt < b.record.createdAt ? -1 : 1;
+      return b.seq - a.seq;
+    });
+    // SQL orders created_at ASC for the delete sweep and DESC for the list;
+    // the list route reads newest first.
+    const desc = [...sorted].reverse();
+    return Promise.resolve(desc.slice(opts.offset, opts.offset + opts.limit).map(row => structuredClone(row.record)));
+  }
+
+  deleteExpired(createdAtBeforeIso: string, limit: number): Promise<number> {
+    const doomed = this.rows
+      .filter(row => row.record.createdAt < createdAtBeforeIso)
+      .sort((a, b) => {
+        if (a.record.createdAt !== b.record.createdAt) return a.record.createdAt < b.record.createdAt ? -1 : 1;
+        return a.seq - b.seq;
+      })
+      .slice(0, limit);
+    const doomedSeqs = new Set(doomed.map(row => row.seq));
+    this.rows = this.rows.filter(row => !doomedSeqs.has(row.seq));
+    return Promise.resolve(doomedSeqs.size);
+  }
+
+  deleteAll(): Promise<void> {
+    this.rows = [];
+    return Promise.resolve();
   }
 }
 
@@ -1512,6 +1553,7 @@ export class InMemoryRepo implements Repo {
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
   settings: SettingsRepo;
+  cyberInterceptAuditLog: CyberInterceptAuditLogRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
@@ -1534,6 +1576,7 @@ export class InMemoryRepo implements Repo {
     this.performance = new MemoryPerformanceRepo(this.apiKeys);
     this.webSearchConfig = new MemoryWebSearchConfigRepo();
     this.settings = new MemorySettingsRepo();
+    this.cyberInterceptAuditLog = new MemoryCyberInterceptAuditLogRepo();
     this.upstreams = new MemoryUpstreamRepo();
     this.proxies = new MemoryProxyRepo(this.upstreams);
     this.proxyBackoffs = new MemoryProxyBackoffRepo();

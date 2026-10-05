@@ -15,6 +15,10 @@ import type { OpenAIResponsesStatefulStore } from '../openai-responses/items/sto
 export interface ChatGatewayCtx extends GatewayCtx {
   readonly affinity: AffinityRequestContext;
   readonly store: OpenAIResponsesStatefulStore;
+  // Set on the judge model's own request context so the cyber-intercept
+  // gate skips itself — the judge call routes through the same chat serve
+  // entry and would otherwise recurse.
+  readonly bypassCyberIntercept?: boolean;
 }
 
 // Chat-protocol counterpart of `createGatewayCtxFromHono`. The factory receives
