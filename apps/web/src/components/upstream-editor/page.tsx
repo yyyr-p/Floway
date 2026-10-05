@@ -95,7 +95,10 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     // with, and the editor never sends it back.
     if (data.mode !== 'create') return;
     if (record.kind === 'copilot' && !values.config.githubToken) ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.validation.copilot', path: ['config'] });
-    if ((record.kind === 'codex' || record.kind === 'claude-code') && values.config.accounts.length === 0) ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.validation.credential', path: ['config'] });
+    if (record.kind === 'codex' || record.kind === 'claude-code' || record.kind === 'antigravity') {
+      const accounts = values.config.accounts as typeof values.config extends { accounts: infer A } ? A : never;
+      if (!Array.isArray(accounts) || accounts.length === 0) ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.validation.credential', path: ['config'] });
+    }
   }), [data.mode, record.kind]);
   const form = useForm<UpstreamEditorValues>({
     defaultValues: initialValues,

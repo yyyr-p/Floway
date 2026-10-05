@@ -64,6 +64,8 @@ const en = {
       codex: 'Codex',
       'claude-code': 'Claude Code',
       ollama: 'Ollama',
+      gemini: 'Gemini',
+      antigravity: 'Antigravity',
     },
     dashboard: {
       title: 'Dashboard',
@@ -471,6 +473,8 @@ const en = {
           codex: 'ChatGPT Plus, Pro, or Team',
           'claude-code': 'Claude Pro, Max, or Team subscription',
           ollama: 'ollama.com or self-hosted',
+          gemini: 'Google AI Studio API key',
+          antigravity: 'Google account via Antigravity',
         },
         models: {
           count_one: '{{count, number}} model',
@@ -491,10 +495,18 @@ const en = {
         summary: {
           ollama: 'Ollama endpoint',
           copilot: 'GitHub Copilot account',
+          gemini: 'Gemini API endpoint',
+          antigravity: 'Antigravity account',
           noAccount: 'No account connected',
         },
         copy: {
           nameSuffix: '{{name}} copy',
+        },
+        antigravity: {
+          state: {
+            active: 'Active',
+            refresh_failed: 'Refresh failed - re-import to recover',
+          },
         },
         errors: {
           missing: 'That upstream no longer exists.',
@@ -1001,6 +1013,14 @@ const en = {
             unreadable: 'Ollama reported no usage windows in a shape this dashboard understands.',
             backgroundFailed: 'The last background refresh failed: {{message}}',
           },
+        },
+        gemini: {
+          baseUrlHint: 'Google AI Studio endpoint. Model discovery lists the models this key can serve from /v1beta/models.',
+        },
+        antigravity: {
+          unknownEmail: 'unknown email',
+          stateUpdated: 'State updated {{time}}',
+          tokenExpires: 'Access token expires {{time}}',
         },
         oauth: {
           refresh: 'Refresh credential',

@@ -29,6 +29,13 @@ codex.svg uses a later commit because the Codex mark did not yet exist:
 - codex.svg
   https://github.com/lobehub/lobe-icons/blob/63c800e3db6427b3f156f7b88d426ccb3f7277a1/packages/static-svg/icons/codex-color.svg
 
+The same later commit supplies the two newest provider marks:
+
+- gemini.svg
+  https://github.com/lobehub/lobe-icons/blob/63c800e3db6427b3f156f7b88d426ccb3f7277a1/packages/static-svg/icons/gemini.svg
+- antigravity.svg
+  https://github.com/lobehub/lobe-icons/blob/63c800e3db6427b3f156f7b88d426ccb3f7277a1/packages/static-svg/icons/antigravity.svg
+
 codex.svg drops the white app-icon plate and tightens its viewBox to the glyph,
 so it renders at the same optical size as the other provider marks.
 

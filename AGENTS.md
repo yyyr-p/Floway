@@ -65,11 +65,13 @@
 | Package | `packages/platform` | Defines portable runtime contracts. |
 | Package | `packages/protocols` | Defines protocol contracts. |
 | Package | `packages/provider` | Defines provider contracts. |
+| Package | `packages/provider-antigravity` | Integrates Google Antigravity subscriptions. |
 | Package | `packages/provider-azure` | Integrates Azure OpenAI. |
 | Package | `packages/provider-claude-code` | Integrates Claude Code subscriptions. |
 | Package | `packages/provider-codex` | Integrates OpenAI Codex subscriptions. |
 | Package | `packages/provider-copilot` | Integrates GitHub Copilot subscriptions. |
 | Package | `packages/provider-custom` | Integrates OpenAI-compatible providers. |
+| Package | `packages/provider-gemini` | Integrates the Gemini API. |
 | Package | `packages/provider-ollama` | Integrates Ollama. |
 | Package | `packages/proxy` | Routes traffic through configured proxies. |
 | Package | `packages/test-utils` | Provides shared test infrastructure. |

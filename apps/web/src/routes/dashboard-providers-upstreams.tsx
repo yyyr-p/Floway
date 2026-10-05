@@ -88,6 +88,8 @@ const PROVIDER_MENU_ORDER: readonly UpstreamProviderKind[] = [
   'codex',
   'claude-code',
   'ollama',
+  'gemini',
+  'antigravity',
 ];
 
 const menuRank = (kind: UpstreamProviderKind) => {
@@ -669,6 +671,12 @@ const upstreamSummary = (record: UpstreamRecord, t: TFunction): string => {
     const account = record.config.accounts[0];
     if (!account) return t('dashboard.upstreams.summary.noAccount');
     return account.email ?? shortAccountId(account.accountUuid);
+  }
+  case 'gemini': return record.config.baseUrl || t('dashboard.upstreams.summary.gemini');
+  case 'antigravity': {
+    const identity = record.config.accounts[0];
+    if (!identity) return t('dashboard.upstreams.summary.noAccount');
+    return identity.email ?? t('dashboard.upstreams.summary.antigravity');
   }
   }
 };

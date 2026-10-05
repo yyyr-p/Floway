@@ -8,6 +8,7 @@ import {
 import { useEffect, useRef, useState } from 'react';
 import { Controller, useFormContext, useWatch } from 'react-hook-form';
 
+import { AntigravityAccountCard } from './antigravity-account-card';
 import { ClaudeCodeAccountCard } from './claude-code-account-card';
 import { CodexAccountCard } from './codex-account-card';
 import { CodexImportForm } from './codex-import';
@@ -75,7 +76,9 @@ export function ProviderConfigSection({
   if (record.kind === 'custom') return <CustomConfig record={record} onRefreshModels={onRefreshModels} />;
   if (record.kind === 'azure') return <AzureConfig record={record} />;
   if (record.kind === 'ollama') return <OllamaConfig record={record} />;
+  if (record.kind === 'gemini') return <GeminiConfig record={record} />;
   if (record.kind === 'copilot') return <CopilotConfig record={record} onPatch={onPatch} />;
+  if (record.kind === 'antigravity') return <AntigravityOAuthConfig record={record} onPatch={onPatch} />;
   return <OAuthConfig record={record} onPatch={onPatch} />;
 }
 
@@ -198,6 +201,20 @@ function AzureConfig({ record }: { record: Extract<UpstreamRecord, { kind: 'azur
   </div>;
 }
 
+function GeminiConfig({ record }: { record: Extract<UpstreamRecord, { kind: 'gemini' }> }) {
+  const { t } = useTranslation();
+  const { control } = useFormContext<ValuesForKind<'gemini'>>();
+  return <div className="grid gap-4">
+    <Field
+      hint={t('dashboard.upstreamEditor.gemini.baseUrlHint')}
+      label={t('dashboard.upstreamEditor.fields.baseUrl')}
+    >
+      <Controller control={control} name="config.baseUrl" render={({ field }) => <Input className="font-mono" name={field.name} onBlur={field.onBlur} onChange={(_, data) => field.onChange(data.value)} placeholder="https://generativelanguage.googleapis.com" ref={field.ref} value={field.value} />} />
+    </Field>
+    <SecretField secretSet={record.config.apiKeySet === true || Boolean(record.config.apiKey)} />
+  </div>;
+}
+
 function OllamaConfig({ record }: { record: Extract<UpstreamRecord, { kind: 'ollama' }> }) {
   const { t } = useTranslation();
   const { control, setValue } = useFormContext<ValuesForKind<'ollama'>>();
@@ -246,7 +263,7 @@ function OllamaConfig({ record }: { record: Extract<UpstreamRecord, { kind: 'oll
 
 function SecretField({ optional, secretSet }: { optional?: boolean; secretSet: boolean }) {
   const { t } = useTranslation();
-  const { control } = useFormContext<ValuesForKind<'custom' | 'azure' | 'ollama'>>();
+  const { control } = useFormContext<ValuesForKind<'custom' | 'azure' | 'ollama' | 'gemini'>>();
   const [visible, setVisible] = useState(false);
   return <Field
     label={`${t('dashboard.upstreamEditor.fields.apiKey')}${optional ? ` (${t('dashboard.upstreamEditor.optional')})` : ''}`}
@@ -308,6 +325,60 @@ function ReadyToSaveHint({ kind }: { kind: UpstreamProviderKind }) {
   return <OutcomeMessageBar intent="info" title={t('dashboard.upstreamEditor.readyToSave.title')}>
     {t('dashboard.upstreamEditor.readyToSave.description', { provider: providerLabel(kind) })}
   </OutcomeMessageBar>;
+}
+
+// Antigravity runs the same PKCE round trip as claude-code's OAuth tab, but
+// the callback is the only import path — Google hands out no pastable
+// credentials document and no setup-token analog — so the tabs collapse into
+// one surface and the import form itself is the shared component.
+function AntigravityOAuthConfig({ record, onPatch }: {
+  record: Extract<UpstreamRecord, { kind: 'antigravity' }>;
+  onPatch: (patch: { config?: unknown; state?: unknown }, persisted?: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const { getValues } = useFormContext<UpstreamEditorValues>();
+  const values = useWatch<UpstreamEditorValues>() as UpstreamEditorValues;
+  const config = values.config as typeof record.config;
+  // The draft carries the blueprint's empty state until an exchange fills it;
+  // a persisted upstream always holds one account.
+  const hasAccount = config.accounts.length > 0 && record.state !== null && record.state.accounts.length > 0;
+  const [refreshing, setRefreshing] = useState(false);
+  const [open, setOpen] = useState(!hasAccount);
+  const [error, setError] = useState<string | null>(null);
+
+  const refreshCredential = async () => {
+    setRefreshing(true);
+    setError(null);
+    const result = await callApi(() => api.api.upstreams.antigravity.oauth.refresh.$post({
+      json: { record: previewRecord(record, values) },
+    }));
+    setRefreshing(false);
+    if (result.error) { setError(result.error.message); return; }
+    onPatch(result.data.patch, isPersisted(record));
+  };
+
+  return <div className="grid gap-4">
+    {hasAccount && record.state !== null && <AntigravityAccountCard
+      onRefresh={() => void refreshCredential()}
+      record={{ ...record, state: record.state }}
+      refreshing={refreshing}
+    />}
+    {hasAccount && !isPersisted(record) && <ReadyToSaveHint kind="antigravity" />}
+    {hasAccount && <div className="flex flex-wrap items-center gap-2">
+      <Button appearance="primary" disabledFocusable={refreshing} icon={refreshing ? <Spinner size="tiny" /> : <ArrowClockwiseRegular />} onClick={() => void refreshCredential()}>
+        {t('dashboard.upstreamEditor.oauth.refresh')}
+      </Button>
+      <Button onClick={() => setOpen(value => !value)}>{open ? t('common.cancel') : t('dashboard.upstreamEditor.oauth.reimport')}</Button>
+    </div>}
+    {error && <OutcomeMessageBar onDismiss={() => setError(null)}>{error}</OutcomeMessageBar>}
+    {open && <OAuthCallbackImport
+      kind="antigravity"
+      hasAccount={hasAccount}
+      record={record}
+      getValues={getValues}
+      onImported={patch => { onPatch(patch, isPersisted(record)); setOpen(false); }}
+    />}
+  </div>;
 }
 
 function CopilotConfig({ record, onPatch }: {

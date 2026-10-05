@@ -7,6 +7,7 @@ import type {
   UpstreamModelConfig,
 } from '@floway-dev/provider';
 import type {
+  AntigravityAccessTokenEntry,
   AntigravityAccountCredential,
   AntigravityAccountIdentity,
   AntigravityUpstreamConfig as StoredAntigravityUpstreamConfig,
@@ -244,6 +245,33 @@ interface DashboardUpstreamRecordBase extends SerializedUpstreamRecordBase {
   modelsCache: ModelsCacheStatus;
 }
 
+// The dashboard's antigravity config keeps the stored shape but relaxes the
+// credential's 1-tuple: the editor opens an import-empty upstream on the
+// blueprint's `{accounts: []}` and the OAuth exchange fills it, mirroring the
+// codex / claude-code Dashboard configs their own Omit grants the same
+// freedom.
+export type AntigravityUpstreamConfig = Omit<StoredAntigravityUpstreamConfig, 'accounts'> & {
+  accounts: AntigravityAccountIdentity[];
+};
+
+// The dashboard consumes both the redacted listing and the full editor
+// response against one union, so its credential is the redaction envelope:
+// the token itself stays optional, and whichever side serialized the record
+// decides which key it set. Same shape the codex / claude-code Dashboard
+// states draw.
+export type AntigravityAccountCredentialSummary = Pick<
+  AntigravityAccountCredential,
+  'email' | 'state' | 'stateMessage' | 'stateUpdatedAt' | 'projectId'
+> & {
+  refreshToken?: string | null;
+  refreshTokenSet?: boolean;
+  accessToken: (Omit<AntigravityAccessTokenEntry, 'token'> & { token?: string }) | null;
+};
+
+export type AntigravityUpstreamState = Omit<StoredAntigravityUpstreamState, 'accounts'> & {
+  accounts: AntigravityAccountCredentialSummary[];
+};
+
 export type UpstreamRecord =
   | (DashboardUpstreamRecordBase & { kind: 'custom'; config: CustomUpstreamConfig; state: null })
   | (DashboardUpstreamRecordBase & { kind: 'azure'; config: AzureUpstreamConfig; state: null })
@@ -252,7 +280,7 @@ export type UpstreamRecord =
   | (DashboardUpstreamRecordBase & { kind: 'claude-code'; config: ClaudeCodeUpstreamConfig; state: ClaudeCodeUpstreamState })
   | (DashboardUpstreamRecordBase & { kind: 'ollama'; config: OllamaUpstreamConfig; state: StoredOllamaUpstreamState | null })
   | (DashboardUpstreamRecordBase & { kind: 'gemini'; config: GeminiUpstreamConfig; state: null })
-  | (DashboardUpstreamRecordBase & { kind: 'antigravity'; config: StoredAntigravityUpstreamConfig; state: StoredAntigravityUpstreamState | null });
+  | (DashboardUpstreamRecordBase & { kind: 'antigravity'; config: AntigravityUpstreamConfig; state: AntigravityUpstreamState | null });
 
 export interface ListedUpstreamModel extends UpstreamModelConfig {
   upstreamModelId: string;

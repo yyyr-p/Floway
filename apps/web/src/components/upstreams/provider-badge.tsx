@@ -2,8 +2,10 @@ import { ServerRegular } from '@fluentui/react-icons';
 import type { RefCallback } from 'react';
 import { Link } from 'react-router';
 
+import antigravityIconUrl from '../../assets/antigravity.svg?no-inline';
 import azureIconUrl from '../../assets/azure-color.svg?no-inline';
 import claudeIconUrl from '../../assets/claude-color.svg?no-inline';
+import geminiIconUrl from '../../assets/gemini.svg?no-inline';
 import githubCopilotIconUrl from '../../assets/githubcopilot.svg?no-inline';
 import ollamaIconUrl from '../../assets/ollama.svg?no-inline';
 import openaiIconUrl from '../../assets/openai.svg?no-inline';
@@ -26,6 +28,8 @@ const providerLabels: Record<UpstreamProviderKind, string> = {
   codex: 'Codex',
   'claude-code': 'Claude Code',
   ollama: 'Ollama',
+  gemini: 'Gemini',
+  antigravity: 'Antigravity',
 };
 
 const useStyles = makeStyles({
@@ -104,6 +108,8 @@ const providerIconUrls: Record<Exclude<UpstreamProviderKind, 'custom'>, string> 
   codex: openaiIconUrl,
   'claude-code': claudeIconUrl,
   ollama: ollamaIconUrl,
+  gemini: geminiIconUrl,
+  antigravity: antigravityIconUrl,
 };
 
 // The source SVGs share a 24×24 viewBox but not optical weight; these scales
@@ -114,6 +120,8 @@ const providerIconMaskSizes: Record<Exclude<UpstreamProviderKind, 'custom'>, str
   codex: '80% 80%',
   'claude-code': '80% 80%',
   ollama: '86% 86%',
+  gemini: '76% 76%',
+  antigravity: '78% 78%',
 };
 
 export function ProviderIcon({

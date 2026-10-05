@@ -62,6 +62,8 @@ const zhHansCN = {
       codex: 'Codex',
       'claude-code': 'Claude Code',
       ollama: 'Ollama',
+      gemini: 'Gemini',
+      antigravity: 'Antigravity',
     },
     dashboard: {
       title: 'Dashboard',
@@ -447,6 +449,8 @@ const zhHansCN = {
           codex: 'ChatGPT Plus、Pro 或 Team',
           'claude-code': 'Claude Pro、Max 或 Team 订阅',
           ollama: 'ollama.com 或自托管服务',
+          gemini: 'Google AI Studio API 密钥',
+          antigravity: '通过 Antigravity 接入的 Google 账号',
         },
         models: {
           count_other: '{{count, number}} 个模型',
@@ -465,10 +469,18 @@ const zhHansCN = {
         summary: {
           ollama: 'Ollama 端点',
           copilot: 'GitHub Copilot 账号',
+          gemini: 'Gemini API 端点',
+          antigravity: 'Antigravity 账号',
           noAccount: '尚未连接账号',
         },
         copy: {
           nameSuffix: '{{name}} 副本',
+        },
+        antigravity: {
+          state: {
+            active: '正常',
+            refresh_failed: '刷新失败，请重新导入以恢复',
+          },
         },
         errors: {
           missing: '该上游已不存在。',
@@ -954,6 +966,14 @@ const zhHansCN = {
             unreadable: 'Ollama 返回的用量窗口不是此面板可识别的结构。',
             backgroundFailed: '最近一次后台刷新失败：{{message}}',
           },
+        },
+        gemini: {
+          baseUrlHint: 'Google AI Studio 端点。模型发现会从 /v1beta/models 列出此密钥可用的模型。',
+        },
+        antigravity: {
+          unknownEmail: '邮箱未知',
+          stateUpdated: '状态更新于 {{time}}',
+          tokenExpires: '访问令牌 {{time}} 过期',
         },
         oauth: {
           'refresh': '刷新凭据',

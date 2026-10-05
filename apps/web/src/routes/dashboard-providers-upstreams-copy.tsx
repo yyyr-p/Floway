@@ -77,6 +77,18 @@ const copyableRecord = (source: UpstreamRecord, name: string, hue: number): {
       record: { ...base, kind: 'claude-code', config: { accounts: [] }, state: { accounts: [] } },
       preserveCredentials: false,
     };
+  // Same as the other OAuth subscriptions: the credential is minted by the
+  // exchange and the copy re-runs it on its own grant.
+  case 'antigravity':
+    return {
+      record: { ...base, kind: 'antigravity', config: { accounts: [] }, state: { accounts: [] } },
+      preserveCredentials: false,
+    };
+  case 'gemini':
+    return {
+      record: { ...base, kind: 'gemini', config: structuredClone(source.config), state: null },
+      preserveCredentials: true,
+    };
   }
 };
 

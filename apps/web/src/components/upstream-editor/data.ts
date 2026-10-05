@@ -81,6 +81,8 @@ export const providerDefaultName: Record<UpstreamProviderKind, string> = {
   codex: 'ChatGPT Codex',
   'claude-code': 'Claude Code',
   ollama: 'Ollama',
+  gemini: 'Gemini',
+  antigravity: 'Antigravity',
 };
 
 export const loadEditorAux = async (): Promise<EditorAuxData> => {
@@ -108,6 +110,8 @@ export const canFetchModelCatalog = (record: UpstreamRecord, config: UpstreamEdi
   }
   case 'ollama':
     return Boolean((config as Extract<UpstreamRecord, { kind: 'ollama' }>['config']).baseUrl);
+  case 'gemini':
+    return Boolean((config as Extract<UpstreamRecord, { kind: 'gemini' }>['config']).baseUrl);
   case 'azure':
     return false;
   default:
@@ -118,8 +122,8 @@ export const canFetchModelCatalog = (record: UpstreamRecord, config: UpstreamEdi
 // Manual entries exist only for the kinds whose stored config carries a model
 // list. For the rest the catalog is the provider's, and the editor can only
 // enable and disable what it lists.
-export const manualModelsSupported = (record: UpstreamRecord): record is Extract<UpstreamRecord, { kind: 'custom' | 'azure' | 'ollama' }> =>
-  record.kind === 'custom' || record.kind === 'azure' || record.kind === 'ollama';
+export const manualModelsSupported = (record: UpstreamRecord): record is Extract<UpstreamRecord, { kind: 'custom' | 'azure' | 'ollama' | 'gemini' }> =>
+  record.kind === 'custom' || record.kind === 'azure' || record.kind === 'ollama' || record.kind === 'gemini';
 
 export interface ModelCatalogFetch {
   /** Null when the request produced no new catalog. */
@@ -202,7 +206,9 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
       ? { ...structuredClone(record.config), apiKey: '' }
       : record.kind === 'ollama'
         ? { ...structuredClone(record.config), apiKey: '' }
-        : structuredClone(record.config);
+        : record.kind === 'gemini'
+          ? { ...structuredClone(record.config), apiKey: '' }
+          : structuredClone(record.config);
   const manualModels = manualModelsSupported(record) ? structuredClone(record.config.models) : [];
   return {
     name: record.name,
@@ -281,7 +287,7 @@ export const createBody = (record: UpstreamRecord, values: UpstreamEditorValues,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
     config: configFromValues(record, values, options),
-    ...((record.kind === 'copilot' || record.kind === 'codex' || record.kind === 'claude-code')
+    ...((record.kind === 'copilot' || record.kind === 'codex' || record.kind === 'claude-code' || record.kind === 'antigravity')
       ? { state: values.state }
       : {}),
   } as CreateUpstreamBody;

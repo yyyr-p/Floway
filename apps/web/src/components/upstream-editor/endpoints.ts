@@ -2,12 +2,16 @@ import type { ModelEndpoints, ModelKind, RerankTarget } from '@floway-dev/protoc
 
 // The path each endpoint is addressed by, unversioned: the editor labels its
 // checkboxes and its per-path overrides with the public route rather than with
-// the key the config stores.
+// the key the config stores. Gemini's route carries the model and its action
+// in the path itself (`/v1beta/models/{model}:{action}`), so the label is the
+// shared prefix rather than a path that stands alone — the route's own
+// declaration lives in packages/protocols/src/common/data-plane-routes.ts.
 export const ENDPOINT_PATHS = {
   openaiCompletions: '/completions',
   openaiChatCompletions: '/chat/completions',
   openaiResponses: '/responses',
   anthropicMessages: '/messages',
+  geminiGenerateContent: '/v1beta/models',
   openaiEmbeddings: '/embeddings',
   rerank: '/alpha/search',
   openaiImagesGenerations: '/images/generations',

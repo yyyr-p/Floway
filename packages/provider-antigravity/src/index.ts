@@ -13,7 +13,7 @@ export const antigravityProviderModule: ProviderModule = {
 
 export { createAntigravityProvider } from './provider.ts';
 export { assertAntigravityUpstreamRecord, type AntigravityAccountIdentity, type AntigravityUpstreamConfig, type AntigravityUpstreamRecord } from './config.ts';
-export { assertAntigravityUpstreamState, readAntigravityUpstreamState, replaceSoleAccount, type AntigravityAccountCredential, type AntigravityUpstreamState } from './state.ts';
+export { assertAntigravityUpstreamState, readAntigravityUpstreamState, replaceSoleAccount, type AntigravityAccessTokenEntry, type AntigravityAccountCredential, type AntigravityUpstreamState } from './state.ts';
 export { ensureAntigravityAccessToken, invalidateAntigravityAccessToken, type EnsuredAntigravityAccessToken } from './access-token.ts';
 export { AntigravityOAuthSessionTerminatedError, buildAntigravityAuthorizeUrl, exchangeAntigravityAuthorizationCode, refreshAntigravityAccessToken } from './oauth.ts';
 export { probeCloudCodeProject, onboardCloudCodeUser, ensureAntigravityProjectId } from './project.ts';

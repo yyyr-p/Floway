@@ -235,11 +235,26 @@ const upstreamSignals = (record: UpstreamRecord, t: TFunction, locale: string, n
   // An operator-configured endpoint publishes no account of its own to report on.
   case 'custom':
   case 'azure':
+  case 'gemini':
     return [];
   case 'copilot': return copilotSignals(record, t, locale);
   case 'codex': return codexSignals(record, t, locale, now);
   case 'claude-code': return claudeCodeSignals(record, t, locale, now);
   case 'ollama': return ollamaSignals(record, t, locale);
+  // The credential state is the one reading Antigravity reports, and the
+  // terminal one is the blocked signal the row already knows how to draw.
+  case 'antigravity': {
+    const credential = record.state?.accounts[0];
+    if (credential?.state !== 'refresh_failed') return [];
+    return [{
+      key: 'refresh-failed',
+      percent: null,
+      value: t('dashboard.upstreams.signals.rateLimited'),
+      label: null,
+      detail: credential.stateMessage ?? t('dashboard.upstreams.antigravity.state.refresh_failed'),
+      blocked: true,
+    }];
+  }
   }
 };
 
@@ -251,6 +266,10 @@ const upstreamPlan = (record: UpstreamRecord): string | null => {
   switch (record.kind) {
   case 'custom':
   case 'azure':
+  // An API key names no subscription, and the credential state is the one
+  // fact Antigravity reports — already drawn on the signals line above.
+  case 'gemini':
+  case 'antigravity':
     return null;
   case 'copilot': return copilotPlanLabel(record);
   case 'ollama': return ollamaPlanLabel(record);

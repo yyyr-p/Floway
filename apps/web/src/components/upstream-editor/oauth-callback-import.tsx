@@ -20,7 +20,7 @@ const { Button, Field, Link, Spinner, Text } = fluentComponents;
 
 type OAuthFlow = 'oauth' | 'setup-token';
 
-type OAuthImportRecord = Extract<UpstreamRecord, { kind: 'codex' | 'claude-code' }>;
+type OAuthImportRecord = Extract<UpstreamRecord, { kind: 'codex' | 'claude-code' | 'antigravity' }>;
 
 type OAuthCallbackImportProps =
   | {
@@ -37,6 +37,13 @@ type OAuthCallbackImportProps =
     record: OAuthImportRecord;
     getValues: () => UpstreamEditorValues;
     onImported: (patch: { config?: unknown; state?: unknown }) => void;
+  }
+  | {
+    kind: 'antigravity';
+    hasAccount: boolean;
+    record: OAuthImportRecord;
+    getValues: () => UpstreamEditorValues;
+    onImported: (patch: { config?: unknown; state?: unknown }) => void;
   };
 
 // The codex OAuth tab opens with a hint the claude-code OAuth and Setup-Token
@@ -44,7 +51,7 @@ type OAuthCallbackImportProps =
 // shows.
 export function OAuthCallbackImport(props: OAuthCallbackImportProps) {
   const { kind, hasAccount, record, getValues, onImported } = props;
-  const flowKind: OAuthFlow = kind === 'codex' ? 'oauth' : props.flowKind;
+  const flowKind: OAuthFlow = kind === 'codex' || kind === 'antigravity' ? 'oauth' : props.flowKind;
   const { t } = useTranslation();
   const values = useWatch<UpstreamEditorValues>() as UpstreamEditorValues;
   const { copy, outcomeFor } = useCopyToClipboard();
@@ -69,9 +76,11 @@ export function OAuthCallbackImport(props: OAuthCallbackImportProps) {
     const body = { record: previewRecord(record, getValues()), challenge: pkce.challenge, state: pkce.state };
     const result = kind === 'codex'
       ? await callApi(() => api.api.upstreams.codex.oauth['authorize-url'].$post({ json: body }))
-      : flowKind === 'setup-token'
-        ? await callApi(() => api.api.upstreams['claude-code']['setup-token']['authorize-url'].$post({ json: body }))
-        : await callApi(() => api.api.upstreams['claude-code'].oauth['authorize-url'].$post({ json: body }));
+      : kind === 'antigravity'
+        ? await callApi(() => api.api.upstreams.antigravity.oauth['authorize-url'].$post({ json: body }))
+        : flowKind === 'setup-token'
+          ? await callApi(() => api.api.upstreams['claude-code']['setup-token']['authorize-url'].$post({ json: body }))
+          : await callApi(() => api.api.upstreams['claude-code'].oauth['authorize-url'].$post({ json: body }));
     if (generation.current !== mine) return;
     setBusy(false);
     if (result.error) { setError(result.error.message); return; }
@@ -102,13 +111,17 @@ export function OAuthCallbackImport(props: OAuthCallbackImportProps) {
       ? await callApi(() => api.api.upstreams.codex.import.exchange.$post({
           json: { record: editorRecord, callback: { code: parsed.code, verifier: recalled.verifier } },
         }))
-      : flowKind === 'setup-token'
-        ? await callApi(() => api.api.upstreams['claude-code']['setup-token'].exchange.$post({
+      : kind === 'antigravity'
+        ? await callApi(() => api.api.upstreams.antigravity.oauth.exchange.$post({
             json: { record: editorRecord, callback: { code: parsed.code, verifier: recalled.verifier, state: parsed.state } },
           }))
-        : await callApi(() => api.api.upstreams['claude-code'].oauth.exchange.$post({
-            json: { record: editorRecord, callback: { code: parsed.code, verifier: recalled.verifier, state: parsed.state } },
-          }));
+        : flowKind === 'setup-token'
+          ? await callApi(() => api.api.upstreams['claude-code']['setup-token'].exchange.$post({
+              json: { record: editorRecord, callback: { code: parsed.code, verifier: recalled.verifier, state: parsed.state } },
+            }))
+          : await callApi(() => api.api.upstreams['claude-code'].oauth.exchange.$post({
+              json: { record: editorRecord, callback: { code: parsed.code, verifier: recalled.verifier, state: parsed.state } },
+            }));
     setBusy(false);
     if (result.error) { setError(result.error.message); return; }
     clearPkce(kind, flowKind);
