@@ -1,4 +1,4 @@
-import { type AffinityCodec, type AffinityRequestAnalysis, type DecodedAffinityBlob, defineAffinityRequest, projectOptionalAffinityBlob } from '../../shared/affinity/index.ts';
+import { type AffinityCodec, type AffinityRequestAnalysis, type DecodedAffinityBlob, analyzeAffinityRoutingHistory, defineAffinityRequest, projectOptionalAffinityBlob } from '../../shared/affinity/index.ts';
 import type { GeminiGenerateContentPart, GeminiGenerateContentPayload } from '@floway-dev/protocols/gemini-generate-content';
 
 interface GeminiGenerateContentBlobLocation {
@@ -25,7 +25,6 @@ export const analyzeGeminiGenerateContentAffinity = async (
     }
   }
 
-  const latest = locations.map(location => location.decoded).findLast(blob => blob.kind === 'owned');
   return defineAffinityRequest([], candidate => {
     const projections = locations.map(location => ({ location, projection: projectOptionalAffinityBlob(location.decoded, candidate) }));
     return {
@@ -61,5 +60,5 @@ export const analyzeGeminiGenerateContentAffinity = async (
         return candidatePayload;
       },
     };
-  }, latest?.kind === 'owned' ? latest.affinity : undefined);
+  }, analyzeAffinityRoutingHistory(locations.map(location => location.decoded)));
 };

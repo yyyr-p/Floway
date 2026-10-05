@@ -3,6 +3,7 @@ import {
   type AffinityIdentity,
   type AffinityRequestAnalysis,
   affinityIdentityOf,
+  analyzeAffinityRoutingHistory,
   candidateSatisfiesAffinityIdentity,
   type DecodedAffinityBlob,
   defineAffinityRequest,
@@ -227,10 +228,9 @@ export const analyzeOpenAIResponsesAffinity = async (
 ): Promise<AffinityRequestAnalysis<CanonicalOpenAIResponsesPayload>> => {
   const locations = await opaqueBlobLocations(payload.input, codec);
   const analysis = analyzeOpenAIResponsesRequest(payload.input, locations);
-  const latest = locations.findLast(location => location.decoded.kind === 'owned')?.decoded;
   return defineAffinityRequest(
     analysis.requiredTargets,
     candidate => evaluateOpenAIResponsesCandidate(payload, analysis, candidate),
-    latest?.kind === 'owned' ? latest.affinity : undefined,
+    analyzeAffinityRoutingHistory(locations.map(location => location.decoded)),
   );
 };

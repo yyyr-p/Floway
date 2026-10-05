@@ -5,7 +5,7 @@ import { analyzeOpenAIChatCompletionsAffinity } from '../../../../../src/data-pl
 import { analyzeOpenAIResponsesAffinity } from '../../../../../src/data-plane/chat/openai-responses/affinity/ingress.ts';
 import { AffinityCodec, compatibilityIdentityForCandidate, defineAffinityRequest, selectAffinityCandidates } from '../../../../../src/data-plane/chat/shared/affinity/index.ts';
 import type { ModelCandidate } from '@floway-dev/provider';
-import { stubModelCandidate } from '@floway-dev/test-utils';
+import { stubModelCandidate, stubProviderModel } from '@floway-dev/test-utils';
 
 const codec = new AffinityCodec('22'.repeat(32));
 const candidate = (id: string): ModelCandidate => {
@@ -70,7 +70,7 @@ for (const preserveOpaque of [false, true]) {
     const first = aliasCandidate(a, 0);
     const last = aliasCandidate(b, 1);
     const compatible = aliasCandidate(candidate('up-c'), 2);
-    const analysis = defineAffinityRequest([], value => ({ kind: 'accepted', degrades: value === first, materialize: () => undefined }), target(b));
+    const analysis = defineAffinityRequest([], value => ({ kind: 'accepted', degrades: value === first, materialize: () => undefined }), { latestTarget: target(b) });
     const selection = selectAffinityCandidates([first, last, compatible], analysis);
     if ('kind' in selection) throw new Error(selection.message);
     expect(selection.candidates).toEqual(preserveOpaque ? [last, compatible, first] : [last, first, compatible]);
@@ -79,8 +79,34 @@ for (const preserveOpaque of [false, true]) {
 
 test('latest route cannot bypass a required opaque compatibility constraint', () => {
   const analysis = defineAffinityRequest([target(a)], value => value === a
-    ? { kind: 'accepted', degrades: false, materialize: () => undefined } : { kind: 'rejected' }, target(b));
+    ? { kind: 'accepted', degrades: false, materialize: () => undefined } : { kind: 'rejected' }, { latestTarget: target(b) });
   const selection = selectAffinityCandidates([a, b], analysis);
   if ('kind' in selection) throw new Error(selection.message);
   expect(selection.candidates).toEqual([a]);
 });
+
+for (const preserveOpaque of [false, true]) {
+  test(`mixed natural history prioritizes preserving the latest opaque state only under the selected policy: ${preserveOpaque}`, async () => {
+    const c = stubModelCandidate({
+      provider: b.provider,
+      model: {
+        id: 'other-model',
+        providerModels: { 'up-b': stubProviderModel({ id: 'other-model', upstreamModelId: 'other-model', opaqueBlobCompatibilityScope: { bindToUpstream: true, key: 'model' } }) },
+      },
+    });
+    const candidates = [a, b, c].map((value, group) => ({ ...value, aliasRouting: { id: 'alias', group, preserveOpaque } }));
+    const old = await codec.wrap('opaque-a', target(a), 'openai-chat-completions.reasoning_opaque');
+    const latest = await codec.wrap('opaque-b', target(b), 'openai-chat-completions.reasoning_opaque');
+    const analysis = await analyzeOpenAIChatCompletionsAffinity({
+      model: 'alias', messages: [
+        { role: 'assistant', content: 'old', reasoning_opaque: old },
+        { role: 'assistant', content: 'latest', reasoning_opaque: latest },
+      ],
+    }, codec);
+    const selection = selectAffinityCandidates(candidates, analysis);
+    if ('kind' in selection) throw new Error(selection.message);
+    expect(selection.candidates).toEqual(preserveOpaque ? [candidates[1], candidates[2], candidates[0]] : [candidates[1], candidates[0], candidates[2]]);
+    expect(selection.payloadFor(candidates[2]).messages[1].reasoning_opaque).toBe('opaque-b');
+    expect(selection.payloadFor(candidates[0]).messages[1].reasoning_opaque).toBeUndefined();
+  });
+}

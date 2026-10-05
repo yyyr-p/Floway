@@ -1,4 +1,4 @@
-import { type AffinityCodec, type AffinityRequestAnalysis, type DecodedAffinityBlob, defineAffinityRequest, projectOptionalAffinityBlob } from '../../shared/affinity/index.ts';
+import { type AffinityCodec, type AffinityRequestAnalysis, type DecodedAffinityBlob, analyzeAffinityRoutingHistory, defineAffinityRequest, projectOptionalAffinityBlob } from '../../shared/affinity/index.ts';
 import type { AnthropicMessagesAssistantContentBlock, AnthropicMessagesPayload } from '@floway-dev/protocols/anthropic-messages';
 
 interface AnthropicMessagesBlobLocation {
@@ -24,7 +24,6 @@ export const analyzeAnthropicMessagesAffinity = async (
     }
   }
 
-  const latest = locations.map(location => location.decoded).findLast(blob => blob.kind === 'owned');
   return defineAffinityRequest([], candidate => {
     const projections = locations.map(location => ({ location, projection: projectOptionalAffinityBlob(location.decoded, candidate) }));
     return {
@@ -40,8 +39,6 @@ export const analyzeAnthropicMessagesAffinity = async (
           const replacements = new Map<number, AnthropicMessagesAssistantContentBlock | null>();
           for (const { location, projection } of messageProjections) {
             const block = message.content[location.blockIndex];
-            const unsignedThinking = block.type === 'thinking'
-              ? (({ signature: _signature, ...rest }) => rest)(block) : undefined;
             if (location.kind === 'thinking') {
               if (block.type !== 'thinking') throw new Error('Anthropic Messages affinity thinking location no longer points at a thinking block');
               // Anthropic requires an assistant thinking block to retain the
@@ -49,11 +46,12 @@ export const analyzeAnthropicMessagesAffinity = async (
               // selects another candidate, remove the complete block rather
               // than forwarding the visible thinking without its signature.
               // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks
+              const { signature: _signature, ...unsignedThinking } = block;
               replacements.set(
                 location.blockIndex,
                 projection.kind === 'preserve' ? { ...block, signature: projection.value }
                   : location.decoded.kind === 'owned' && location.decoded.value === undefined
-                    ? unsignedThinking! : null,
+                    ? unsignedThinking : null,
               );
             } else {
               replacements.set(
@@ -74,5 +72,5 @@ export const analyzeAnthropicMessagesAffinity = async (
         return candidatePayload;
       },
     };
-  }, latest?.kind === 'owned' ? latest.affinity : undefined);
+  }, analyzeAffinityRoutingHistory(locations.map(location => location.decoded)));
 };

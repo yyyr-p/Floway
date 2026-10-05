@@ -1,12 +1,25 @@
 import { isEqual } from 'es-toolkit';
 
-import type { AffinityIdentity, AffinityTarget, DecodedAffinityBlob, OpaqueBlobCompatibilityIdentity } from './carrier.ts';
+import { affinityIdentityOf, type AffinityIdentity, type AffinityTarget, type DecodedAffinityBlob, type OpaqueBlobCompatibilityIdentity } from './carrier.ts';
 import type { ChatServeFailure } from '../errors.ts';
 import { materializeOpaqueBlobCompatibilityIdentity } from '@floway-dev/protocols/common';
 import { providerModelOf, type ModelCandidate } from '@floway-dev/provider';
 
-export interface AffinityRequestAnalysis<T> {
+export interface AffinityRoutingHistory {
   readonly latestTarget?: AffinityTarget;
+  readonly latestOpaqueTarget?: AffinityIdentity;
+}
+
+export const analyzeAffinityRoutingHistory = (blobs: readonly DecodedAffinityBlob[]): AffinityRoutingHistory => {
+  const latest = blobs.findLast(blob => blob.kind === 'owned');
+  const opaque = blobs.findLast(blob => blob.kind === 'owned' && blob.value !== undefined);
+  return {
+    latestTarget: latest?.kind === 'owned' ? latest.affinity : undefined,
+    latestOpaqueTarget: opaque?.kind === 'owned' ? affinityIdentityOf(opaque) : undefined,
+  };
+};
+
+export interface AffinityRequestAnalysis<T> extends AffinityRoutingHistory {
   readonly requiredTargets: readonly AffinityIdentity[];
   readonly evaluateCandidate: (candidate: ModelCandidate) => CandidateAffinityEvaluation<T>;
 }
@@ -35,7 +48,7 @@ const sameCompatibilityIdentity = (
   right: OpaqueBlobCompatibilityIdentity,
 ): boolean => left.upstreamId === right.upstreamId && left.key === right.key;
 
-export const candidateMatchesExactTarget = (candidate: ModelCandidate, affinity: AffinityTarget): boolean =>
+const candidateMatchesExactTarget = (candidate: ModelCandidate, affinity: AffinityTarget): boolean =>
   candidate.provider.upstreamId === affinity.upstreamId
   && candidate.model.id === affinity.modelId
   // Alias targets always carry a rules object, while direct candidates omit
@@ -94,7 +107,7 @@ export const projectRequiredAffinityBlob = (
 export const defineAffinityRequest = <T>(
   requiredTargets: readonly AffinityIdentity[],
   evaluate: (candidate: ModelCandidate) => CandidateAffinityEvaluation<T>,
-  latestTarget?: AffinityTarget,
+  history: AffinityRoutingHistory = {},
 ): AffinityRequestAnalysis<T> => {
   const uniqueRequiredTargets: AffinityIdentity[] = [];
   for (const target of requiredTargets) {
@@ -105,7 +118,7 @@ export const defineAffinityRequest = <T>(
   }
   const evaluations = new WeakMap<ModelCandidate, CandidateAffinityEvaluation<T>>();
   return {
-    latestTarget,
+    ...history,
     requiredTargets: uniqueRequiredTargets,
     evaluateCandidate: candidate => {
       const existing = evaluations.get(candidate);
@@ -163,7 +176,11 @@ export const selectAffinityCandidates = <T>(
     };
   }
 
-  const rank = (item: typeof accepted[number]): number => item.evaluation.degrades ? 1 : 0;
+  const rank = (item: typeof accepted[number]): number => {
+    const losesLatestOpaque = affinity.latestOpaqueTarget !== undefined
+      && !candidateSatisfiesAffinityIdentity(item.candidate, affinity.latestOpaqueTarget);
+    return (losesLatestOpaque ? 2 : 0) + (item.evaluation.degrades ? 1 : 0);
+  };
   const ordered = [...accepted].sort((left, right) => {
     const leftLast = latestTarget !== undefined && candidateMatchesExactTarget(left.candidate, latestTarget);
     const rightLast = latestTarget !== undefined && candidateMatchesExactTarget(right.candidate, latestTarget);

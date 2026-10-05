@@ -39,8 +39,8 @@ export class AffinityRequestContext {
   async candidates<T>(model: string, candidates: readonly ModelCandidate[], analysis: AffinityRequestAnalysis<T>, snapshotRoute?: ConversationRoute) {
     const alias = candidates[0]?.aliasRouting;
     this.#scope = alias === undefined ? `model:${model}` : `alias:${alias.id}`;
-    const binding = this.session === undefined || this.#clientSessionId === undefined ? null
-      : await getRepo().conversationRoutes.lookup(this.session.apiKeyId, this.#clientSessionId!, this.#scope);
+    const binding = snapshotRoute !== undefined || this.session === undefined || this.#clientSessionId === undefined ? null
+      : await getRepo().conversationRoutes.lookup(this.session.apiKeyId, this.#clientSessionId, this.#scope);
     return selectAffinityCandidates(candidates, analysis, snapshotRoute ?? binding ?? analysis.latestTarget);
   }
 
@@ -49,7 +49,7 @@ export class AffinityRequestContext {
     const target = this.selectedTarget();
     if (this.session !== undefined && this.#clientSessionId !== undefined && this.#scope !== undefined) {
       const { opaqueBlobCompatibilityIdentity: _compatibility, ...route } = target;
-      await getRepo().conversationRoutes.bind(this.session.apiKeyId, this.#clientSessionId!, this.#scope, route);
+      await getRepo().conversationRoutes.bind(this.session.apiKeyId, this.#clientSessionId, this.#scope, route);
     }
     this.#committed = true;
   }
