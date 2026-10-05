@@ -907,3 +907,57 @@ for (const target of ['openaiChatCompletions', 'anthropicMessages'] as const) {
     }
   });
 }
+
+test('POST /v1/responses carries effort to a Chat Completions upstream across defaults, unknown values, aliases, and stream modes', async () => {
+  installRepo();
+  const bodies: Record<string, unknown>[] = [];
+  const observe = (body: Record<string, unknown>) => { bodies.push(structuredClone(body)); };
+  const base = translatedCustomCandidate('openaiChatCompletions', observe);
+  const candidate: ModelCandidate = {
+    ...base,
+    model: {
+      ...base.model,
+      chat: {
+        reasoning: {
+          effort: { supported: ['low', 'medium', 'high'], default: 'medium' },
+          adaptive: true,
+          mandatory: true,
+        },
+      },
+    },
+  };
+  const headers = { 'content-type': 'application/json' };
+
+  queueResolution([candidate]);
+  const defaultResponse = await makeApp().request('/v1/responses', {
+    method: 'POST', headers,
+    body: JSON.stringify({ model: 'test-model', input: 'hello', stream: false }),
+  });
+  assertEquals(defaultResponse.status, 200);
+  assertEquals(defaultResponse.headers.get('content-type')?.split(';')[0], 'application/json');
+  await defaultResponse.json();
+  assertEquals('reasoning_effort' in bodies[0]!, false);
+
+  queueResolution([candidate]);
+  const unsupportedResponse = await makeApp().request('/v1/responses', {
+    method: 'POST', headers,
+    body: JSON.stringify({ model: 'test-model', input: 'hello', stream: true, reasoning: { effort: 'future_effort' } }),
+  });
+  assertEquals(unsupportedResponse.status, 200);
+  assertEquals(unsupportedResponse.headers.get('content-type')?.split(';')[0], 'text/event-stream');
+  await unsupportedResponse.text();
+  assertEquals(bodies[1]!.reasoning_effort, 'future_effort');
+
+  queueResolution([candidate], {
+    aliasRules: { reasoning: { effort: 'low', adaptive: true, budget_tokens: 4096 } },
+  });
+  const aliasResponse = await makeApp().request('/v1/responses', {
+    method: 'POST', headers,
+    body: JSON.stringify({ model: 'test-model', input: 'hello', stream: false, reasoning: { effort: 'max' } }),
+  });
+  assertEquals(aliasResponse.status, 200);
+  await aliasResponse.json();
+  assertEquals(bodies[2]!.reasoning_effort, 'low');
+  assertEquals('budget_tokens' in bodies[2]!, false);
+  assertEquals('adaptive' in bodies[2]!, false);
+});
