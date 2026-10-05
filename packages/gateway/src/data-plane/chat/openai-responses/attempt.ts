@@ -10,6 +10,7 @@ import { tokenUsageFromBillableUsage } from '../../shared/telemetry/usage.ts';
 import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { anthropicMessagesAttempt } from '../anthropic-messages/attempt.ts';
 import { openaiChatCompletionsAttempt } from '../openai-chat-completions/attempt.ts';
+import { withOpenAIChatCompletionsReasoningBeforeContent } from '../openai-chat-completions/reasoning-order.ts';
 import { applyRulesToUpstreamOpenAIResponses } from '../shared/alias-rules.ts';
 import { createExternalImageLoader } from '../shared/external-image-loader.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
@@ -193,9 +194,9 @@ const dispatchOpenAIResponses = async (
     return await traverseTranslation(
       invocation.payload,
       p => translateOpenAIResponsesViaOpenAIChatCompletions(p, { model: candidate.model.id }),
-      translated => openaiChatCompletionsAttempt.generate({
+      async translated => withOpenAIChatCompletionsReasoningBeforeContent(await openaiChatCompletionsAttempt.generate({
         payload: translated, ctx, candidate, headers: invocation.headers,
-      }),
+      })),
       captureFromDump(ctx.dump, targetApi),
     );
   default: {
