@@ -34,6 +34,7 @@ const graphAlias = (name: string, targets: ModelAliasRecord['targets']): ModelAl
   name,
   kind: 'chat',
   selection: 'first-available',
+  enabled: true,
   displayName: null,
   visibleInModelsList: true,
   targets,
