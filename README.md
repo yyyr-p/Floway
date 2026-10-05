@@ -140,9 +140,17 @@ resolved candidates. After a request finishes, Floway persists its measured
 usage before releasing the reservation. A request without a recognized output
 cap reserves the remaining allowance for its active limits; this can
 intentionally reduce concurrency until the request finishes. The byte-based
-input estimate is a conservative heuristic, not a tokenizer guarantee, so a
-small estimate error can still allow temporary in-flight overshoot before
-actual usage is settled. Abandoned reservations expire after 24 hours.
+input estimate is a conservative heuristic, not a tokenizer guarantee. Across
+requests admitted concurrently, any final or temporary limit overrun caused by
+estimation is bounded by the sum of their positive per-request deltas:
+`sum(max(0, actual tokens - reserved tokens))` for token limits and
+`sum(max(0, actual recorded cost - reserved cost))` for cost limits. This is
+not a fixed numeric ceiling: input-token estimation error, an upstream
+exceeding its requested output cap, or actual prices/metrics exceeding the
+candidate estimate can increase those deltas. After each `UsageRecord` is
+persisted, later admissions see actual usage in place of that request's
+reservation; already-admitted concurrent requests can still preserve an
+overrun. Abandoned reservations expire after 24 hours.
 
 Cost limits fail closed: earlier requests with no usage metrics or positive
 metrics with no stored unit price block further admission with HTTP 429 until
