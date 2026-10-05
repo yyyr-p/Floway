@@ -64,7 +64,7 @@ const applied: ApplyResult = {
 
 describe('who can inspect historical usage pricing', () => {
   it('redirects an operator before calling the admin API', async () => {
-    useAuthStore.getState().primeFromLogin({ token: 'operator-session', user: { id: 2, username: 'operator', isAdmin: false, upstreamIds: null } });
+    useAuthStore.getState().primeFromLogin({ token: 'operator-session', user: { id: 2, username: 'operator', isAdmin: false, canViewGlobalUsage: false, upstreamIds: null, upstreamModelAccess: [] } });
     const fetch = vi.fn();
     vi.stubGlobal('fetch', fetch);
 
@@ -77,7 +77,7 @@ describe('who can inspect historical usage pricing', () => {
 
 describe('how a historical usage price plan is confirmed', () => {
   it('posts the displayed plan only after its exact ID is entered, then shows server verification', async () => {
-    const user = { id: 1, username: 'admin', isAdmin: true, upstreamIds: null };
+    const user = { id: 1, username: 'admin', isAdmin: true, canViewGlobalUsage: true, upstreamIds: null, upstreamModelAccess: [] };
     useAuthStore.getState().primeFromLogin({ token: 'admin-session', user });
     const applyBodies: Array<{ plan: BackfillPlan; confirmationPlanId: string }> = [];
     const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -116,7 +116,7 @@ describe('how a historical usage price plan is confirmed', () => {
   });
 
   it('discards a plan response when the selected scope changes while it is pending', async () => {
-    useAuthStore.getState().primeFromLogin({ token: 'admin-session', user: { id: 1, username: 'admin', isAdmin: true, upstreamIds: null } });
+    useAuthStore.getState().primeFromLogin({ token: 'admin-session', user: { id: 1, username: 'admin', isAdmin: true, canViewGlobalUsage: true, upstreamIds: null, upstreamModelAccess: [] } });
     let resolvePlan: ((response: Response) => void) | undefined;
     const pendingPlan = new Promise<Response>(resolve => { resolvePlan = resolve; });
     const fetch = vi.fn(async () => await pendingPlan);
@@ -143,7 +143,7 @@ describe('how a historical usage price plan is confirmed', () => {
   });
 
   it('keeps the reviewed scope fixed until its apply result is verified', async () => {
-    useAuthStore.getState().primeFromLogin({ token: 'admin-session', user: { id: 1, username: 'admin', isAdmin: true, upstreamIds: null } });
+    useAuthStore.getState().primeFromLogin({ token: 'admin-session', user: { id: 1, username: 'admin', isAdmin: true, canViewGlobalUsage: true, upstreamIds: null, upstreamModelAccess: [] } });
     let resolveApply: ((response: Response) => void) | undefined;
     const pendingApply = new Promise<Response>(resolve => { resolveApply = resolve; });
     const fetch = vi.fn(async (input: RequestInfo | URL) => {
