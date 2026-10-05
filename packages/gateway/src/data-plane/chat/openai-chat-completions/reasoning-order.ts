@@ -76,23 +76,31 @@ const reasoningBeforeContentFrames = async function* (
   const reasoningFrames: OpenAIChatCompletionsFrame[] = [];
   const contentFrames: OpenAIChatCompletionsFrame[] = [];
   let terminalFrame: OpenAIChatCompletionsFrame | undefined;
+  let failure: { error: unknown } | undefined;
 
   // Chat Completions has no event that closes the reasoning phase. Buffering
   // to the terminal frame is the only protocol-neutral way to move arbitrarily
   // late reasoning ahead of text without dropping or guessing at its boundary.
-  for await (const frame of frames) {
-    if (frame.type === 'done') {
-      terminalFrame = frame;
-      break;
-    }
+  try {
+    for await (const frame of frames) {
+      if (frame.type === 'done') {
+        terminalFrame = frame;
+        break;
+      }
 
-    const split = splitReasoningFromEvent(frame.event);
-    if (split.reasoning) reasoningFrames.push(eventFrame(split.reasoning));
-    if (split.content) contentFrames.push(eventFrame(split.content));
+      const split = splitReasoningFromEvent(frame.event);
+      if (split.reasoning) reasoningFrames.push(eventFrame(split.reasoning));
+      if (split.content) contentFrames.push(eventFrame(split.content));
+    }
+  } catch (error) {
+    failure = { error };
   }
 
   yield* reasoningFrames;
   yield* contentFrames;
+  // Flush received partial output before propagating the original failure;
+  // an interrupted upstream must not become a successful terminal frame.
+  if (failure) throw failure.error;
   if (terminalFrame) yield terminalFrame;
 };
 
