@@ -35,6 +35,11 @@
   // `ctx.exports` needs an explicit flag at this compatibility date:
   // https://developers.cloudflare.com/workers/configuration/compatibility-flags/#enable-ctxexports
   "compatibility_flags": ["nodejs_compat", "enable_ctx_exports"],
+  "vars": {
+    // Zero disables the per-isolate hard request cap. Set a positive integer
+    // to reject excess concurrent HTTP data-plane requests with 429.
+    "FLOWAY_MAX_CONCURRENT_REQUESTS": "0"
+  },
   "triggers": {
     // Minute scheduling provides catch-up throughput while bounded deletion
     // and collection batches keep each tick's D1 write load predictable.
