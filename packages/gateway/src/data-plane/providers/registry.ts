@@ -2,11 +2,13 @@ import { getRepo } from '../../repo/index.ts';
 import { modelsRefreshInputHash } from '../../repo/models-refresh-inputs.ts';
 import type { StoredUpstreamRecord } from '../../repo/types.ts';
 import type { FlagDefaults, Provider, ProviderModule, UpstreamProviderKind, UpstreamRecord } from '@floway-dev/provider';
+import { antigravityProviderModule } from '@floway-dev/provider-antigravity';
 import { azureProviderModule } from '@floway-dev/provider-azure';
 import { claudeCodeProviderModule } from '@floway-dev/provider-claude-code';
 import { codexProviderModule } from '@floway-dev/provider-codex';
 import { copilotProviderModule } from '@floway-dev/provider-copilot';
 import { customProviderModule } from '@floway-dev/provider-custom';
+import { geminiProviderModule } from '@floway-dev/provider-gemini';
 import { ollamaProviderModule } from '@floway-dev/provider-ollama';
 
 const providersByKind: Record<UpstreamProviderKind, ProviderModule> = {
@@ -16,6 +18,8 @@ const providersByKind: Record<UpstreamProviderKind, ProviderModule> = {
   codex: codexProviderModule,
   'claude-code': claudeCodeProviderModule,
   ollama: ollamaProviderModule,
+  gemini: geminiProviderModule,
+  antigravity: antigravityProviderModule,
 };
 
 export type GatewayProvider = Provider & {

@@ -23,11 +23,13 @@ import {
   type UpstreamProviderKind,
   type UpstreamRecord,
 } from '@floway-dev/provider';
+import { assertAntigravityUpstreamRecord, assertAntigravityUpstreamState } from '@floway-dev/provider-antigravity';
 import { assertAzureUpstreamRecord } from '@floway-dev/provider-azure';
 import { assertClaudeCodeUpstreamRecord, readClaudeCodeUpstreamState } from '@floway-dev/provider-claude-code';
 import { type CodexQuotaSnapshotMap, type CodexUpstreamConfig, assertCodexUpstreamRecord, assertCodexUpstreamState, getCodexQuota, patchCodexIdentityMetadata } from '@floway-dev/provider-codex';
 import { parseCopilotUpstreamConfig, readCopilotUpstreamState } from '@floway-dev/provider-copilot';
 import { assertCustomUpstreamRecord } from '@floway-dev/provider-custom';
+import { assertGeminiUpstreamRecord } from '@floway-dev/provider-gemini';
 import { assertOllamaUpstreamRecord } from '@floway-dev/provider-ollama';
 
 type CodexQuotaProjection = { codex_quota?: CodexQuotaSnapshotMap | null };
@@ -98,6 +100,13 @@ const normalizeConfig = (record: UpstreamRecord): ValidationResult<unknown> => {
     }
     if (record.kind === 'claude-code') {
       assertClaudeCodeUpstreamRecord(record);
+      return { ok: true, value: record.config };
+    }
+    if (record.kind === 'gemini') {
+      return { ok: true, value: assertGeminiUpstreamRecord(record).config };
+    }
+    if (record.kind === 'antigravity') {
+      assertAntigravityUpstreamRecord(record);
       return { ok: true, value: record.config };
     }
     return {
@@ -237,7 +246,7 @@ export const createUpstream = async (c: CtxWithJson<typeof createUpstreamBody>) 
   // Save. The per-kind assertXxxUpstreamRecord below narrows those opaque
   // payloads into their typed shape and rejects a POST that skipped the
   // credential step.
-  const stateFromBody = body.kind === 'copilot' || body.kind === 'codex' || body.kind === 'claude-code' ? body.state ?? null : null;
+  const stateFromBody = body.kind === 'copilot' || body.kind === 'codex' || body.kind === 'claude-code' || body.kind === 'antigravity' ? body.state ?? null : null;
   const upstream: UpstreamRecord = {
     id: shortId('up'),
     kind: body.kind,
@@ -273,6 +282,7 @@ export const createUpstream = async (c: CtxWithJson<typeof createUpstreamBody>) 
     if (upstream.kind === 'copilot') readCopilotUpstreamState(stateFromBody);
     else if (upstream.kind === 'codex') assertCodexUpstreamState(stateFromBody);
     else if (upstream.kind === 'claude-code') readClaudeCodeUpstreamState(stateFromBody);
+    else if (upstream.kind === 'antigravity') assertAntigravityUpstreamState(stateFromBody);
   } catch (err) {
     return c.json({ error: `Invalid state for ${upstream.kind}: ${errorMessage(err)}` }, 400);
   }
@@ -310,10 +320,12 @@ export const updateUpstream = async (c: CtxWithJson<typeof updateUpstreamBody, '
       return c.json({ error: errorMessage(err) }, 400);
     }
   }
-  if (body.config !== undefined && (existing.kind === 'copilot' || existing.kind === 'claude-code')) {
+  if (body.config !== undefined && (existing.kind === 'copilot' || existing.kind === 'claude-code' || existing.kind === 'antigravity')) {
     const endpoint = existing.kind === 'copilot'
       ? '/api/upstreams/copilot/oauth/device-login/poll'
-      : '/api/upstreams/claude-code/oauth/exchange';
+      : existing.kind === 'claude-code'
+        ? '/api/upstreams/claude-code/oauth/exchange'
+        : '/api/upstreams/antigravity/oauth/exchange';
     return c.json({ error: `Use POST ${endpoint} to update ${existing.kind} credentials` }, 400);
   }
 

@@ -6,6 +6,12 @@ import type {
   ProxyFallbackEntry,
   UpstreamModelConfig,
 } from '@floway-dev/provider';
+import type {
+  AntigravityAccountCredential,
+  AntigravityAccountIdentity,
+  AntigravityUpstreamConfig as StoredAntigravityUpstreamConfig,
+  AntigravityUpstreamState as StoredAntigravityUpstreamState,
+} from '@floway-dev/provider-antigravity';
 import type { AzureUpstreamConfig as StoredAzureUpstreamConfig } from '@floway-dev/provider-azure';
 import type {
   ClaudeCodeAccessTokenEntry,
@@ -38,6 +44,9 @@ import type {
   CustomModelsFetch,
   CustomUpstreamConfig as StoredCustomUpstreamConfig,
 } from '@floway-dev/provider-custom';
+import type {
+  GeminiUpstreamConfig as StoredGeminiUpstreamConfig,
+} from '@floway-dev/provider-gemini';
 import type {
   OllamaUpstreamConfig as StoredOllamaUpstreamConfig,
   OllamaUpstreamState as StoredOllamaUpstreamState,
@@ -87,6 +96,11 @@ export type CodexUpstreamConfig = Omit<StoredCodexUpstreamConfig, 'accounts'> & 
 
 export type OllamaUpstreamConfig = Omit<StoredOllamaUpstreamConfig, 'apiKey'> & {
   apiKey?: string | null;
+  apiKeySet?: boolean;
+};
+
+export type GeminiUpstreamConfig = Omit<StoredGeminiUpstreamConfig, 'apiKey'> & {
+  apiKey?: string;
   apiKeySet?: boolean;
 };
 
@@ -148,6 +162,7 @@ type RedactedCustomConfig = CustomConfigFields & { apiKeySet: boolean };
 type RedactedAzureConfig = Omit<StoredAzureUpstreamConfig, 'apiKey'> & { apiKeySet: boolean };
 type RedactedCopilotConfig = Omit<StoredCopilotUpstreamConfig, 'githubToken'> & { githubTokenSet: boolean };
 type RedactedOllamaConfig = Omit<StoredOllamaUpstreamConfig, 'apiKey'> & { apiKeySet: boolean };
+type RedactedGeminiConfig = Omit<StoredGeminiUpstreamConfig, 'apiKey'> & { apiKeySet: boolean };
 
 type RedactedCodexCredential = Pick<
   CodexAccountCredential,
@@ -164,13 +179,26 @@ type RedactedClaudeCodeCredential = Pick<
   usageProbeSnapshot: ClaudeCodeUsageProbeSnapshotEntry | null;
 };
 
+// Antigravity credentials carry a live refresh token, so the redacted shape
+// swaps it for a `refreshTokenSet` boolean; the access token keeps only its
+// timing — same boundary the codex / claude-code branches draw.
+type RedactedAntigravityCredential = Pick<
+  AntigravityAccountCredential,
+  'email' | 'state' | 'stateMessage' | 'stateUpdatedAt' | 'projectId'
+> & {
+  refreshTokenSet: boolean;
+  accessToken: { expiresAt: number; refreshedAt: string } | null;
+};
+
 export type RedactedSerializedUpstreamRecord =
   | (SerializedUpstreamRecordBase & { kind: 'custom'; config: RedactedCustomConfig; state: null })
   | (SerializedUpstreamRecordBase & { kind: 'azure'; config: RedactedAzureConfig; state: null })
   | (SerializedUpstreamRecordBase & { kind: 'copilot'; config: RedactedCopilotConfig; state: CopilotUpstreamState | null })
   | (SerializedUpstreamRecordBase & { kind: 'codex'; config: StoredCodexUpstreamConfig; state: { accounts: RedactedCodexCredential[] } })
   | (SerializedUpstreamRecordBase & { kind: 'claude-code'; config: StoredClaudeCodeUpstreamConfig; state: { accounts: RedactedClaudeCodeCredential[] } })
-  | (SerializedUpstreamRecordBase & { kind: 'ollama'; config: RedactedOllamaConfig; state: StoredOllamaUpstreamState | null });
+  | (SerializedUpstreamRecordBase & { kind: 'ollama'; config: RedactedOllamaConfig; state: StoredOllamaUpstreamState | null })
+  | (SerializedUpstreamRecordBase & { kind: 'gemini'; config: RedactedGeminiConfig; state: null })
+  | (SerializedUpstreamRecordBase & { kind: 'antigravity'; config: StoredAntigravityUpstreamConfig; state: { accounts: RedactedAntigravityCredential[] } });
 
 export type FullSerializedUpstreamRecord =
   | (SerializedUpstreamRecordBase & { kind: 'custom'; config: StoredCustomUpstreamConfig; state: null })
@@ -178,7 +206,9 @@ export type FullSerializedUpstreamRecord =
   | (SerializedUpstreamRecordBase & { kind: 'copilot'; config: StoredCopilotUpstreamConfig; state: StoredCopilotUpstreamState | null })
   | (SerializedUpstreamRecordBase & { kind: 'codex'; config: StoredCodexUpstreamConfig; state: StoredCodexUpstreamState })
   | (SerializedUpstreamRecordBase & { kind: 'claude-code'; config: StoredClaudeCodeUpstreamConfig; state: StoredClaudeCodeUpstreamState })
-  | (SerializedUpstreamRecordBase & { kind: 'ollama'; config: StoredOllamaUpstreamConfig; state: StoredOllamaUpstreamState | null });
+  | (SerializedUpstreamRecordBase & { kind: 'ollama'; config: StoredOllamaUpstreamConfig; state: StoredOllamaUpstreamState | null })
+  | (SerializedUpstreamRecordBase & { kind: 'gemini'; config: StoredGeminiUpstreamConfig; state: null })
+  | (SerializedUpstreamRecordBase & { kind: 'antigravity'; config: StoredAntigravityUpstreamConfig; state: StoredAntigravityUpstreamState });
 
 // A blueprint is an unsaved upstream, so it carries no hue: the dashboard
 // picks one distinct from the hues already in use and sends it on create.
@@ -190,7 +220,9 @@ export type BlueprintSerializedUpstreamRecord =
   | (BlueprintUpstreamRecordBase & { kind: 'copilot'; config: StoredCopilotUpstreamConfig; state: null })
   | (BlueprintUpstreamRecordBase & { kind: 'codex'; config: { accounts: CodexAccountIdentity[] }; state: { accounts: CodexAccountCredential[] } })
   | (BlueprintUpstreamRecordBase & { kind: 'claude-code'; config: { accounts: ClaudeCodeAccountIdentity[] }; state: { accounts: ClaudeCodeAccountCredential[] } })
-  | (BlueprintUpstreamRecordBase & { kind: 'ollama'; config: StoredOllamaUpstreamConfig; state: null });
+  | (BlueprintUpstreamRecordBase & { kind: 'ollama'; config: StoredOllamaUpstreamConfig; state: null })
+  | (BlueprintUpstreamRecordBase & { kind: 'gemini'; config: StoredGeminiUpstreamConfig; state: null })
+  | (BlueprintUpstreamRecordBase & { kind: 'antigravity'; config: { accounts: AntigravityAccountIdentity[] }; state: { accounts: AntigravityAccountCredential[] } });
 
 export interface ModelsCacheStatus {
   fetchedAt: number | null;
@@ -218,7 +250,9 @@ export type UpstreamRecord =
   | (DashboardUpstreamRecordBase & { kind: 'copilot'; config: CopilotUpstreamConfig; state: CopilotUpstreamState | StoredCopilotUpstreamState | null })
   | (DashboardUpstreamRecordBase & { kind: 'codex'; config: CodexUpstreamConfig; state: CodexUpstreamState; codex_quota?: CodexQuotaSnapshotMap | null })
   | (DashboardUpstreamRecordBase & { kind: 'claude-code'; config: ClaudeCodeUpstreamConfig; state: ClaudeCodeUpstreamState })
-  | (DashboardUpstreamRecordBase & { kind: 'ollama'; config: OllamaUpstreamConfig; state: StoredOllamaUpstreamState | null });
+  | (DashboardUpstreamRecordBase & { kind: 'ollama'; config: OllamaUpstreamConfig; state: StoredOllamaUpstreamState | null })
+  | (DashboardUpstreamRecordBase & { kind: 'gemini'; config: GeminiUpstreamConfig; state: null })
+  | (DashboardUpstreamRecordBase & { kind: 'antigravity'; config: StoredAntigravityUpstreamConfig; state: StoredAntigravityUpstreamState | null });
 
 export interface ListedUpstreamModel extends UpstreamModelConfig {
   upstreamModelId: string;

@@ -12,11 +12,12 @@ export const antigravityProviderModule: ProviderModule = {
 };
 
 export { createAntigravityProvider } from './provider.ts';
-export { assertAntigravityUpstreamRecord, type AntigravityUpstreamConfig, type AntigravityUpstreamRecord } from './config.ts';
+export { assertAntigravityUpstreamRecord, type AntigravityAccountIdentity, type AntigravityUpstreamConfig, type AntigravityUpstreamRecord } from './config.ts';
 export { assertAntigravityUpstreamState, readAntigravityUpstreamState, replaceSoleAccount, type AntigravityAccountCredential, type AntigravityUpstreamState } from './state.ts';
 export { ensureAntigravityAccessToken, invalidateAntigravityAccessToken, type EnsuredAntigravityAccessToken } from './access-token.ts';
 export { AntigravityOAuthSessionTerminatedError, buildAntigravityAuthorizeUrl, exchangeAntigravityAuthorizationCode, refreshAntigravityAccessToken } from './oauth.ts';
 export { probeCloudCodeProject, onboardCloudCodeUser, ensureAntigravityProjectId } from './project.ts';
+export { fetchAntigravityAccountEmail, importAntigravityFromCallback, type AntigravityImportResult } from './import.ts';
 export { fetchAntigravityCatalog, mergeAntigravityModels, type AntigravityRawModel } from './fetch-available-models.ts';
 export { buildAntigravityEnvelope, unwrapAntigravitySseChunk, syntheticTerminalIfMissing, createAntigravityUnwrapState } from './envelope.ts';
 export { parseAntigravityStream, type ParseAntigravityStreamOptions } from './stream.ts';

@@ -16,11 +16,13 @@ import { isRecord } from '../shared/field-validators.ts';
 import { parseUpstreamIdsValue } from '../shared/upstream-ids.ts';
 import { BILLING_METRICS, canonicalizePricingSelector, type BillingMetric, parseNonNegativeDecimalString, type PricingSelector } from '@floway-dev/protocols/common';
 import { ALL_PROVIDER_KINDS, normalizeModelPrefix, normalizeUpstreamHue, parseFlagOverridesWire, parsePerformanceOperation, type ProxyFallbackEntry, type UpstreamProviderKind, type UpstreamRecord } from '@floway-dev/provider';
+import { assertAntigravityUpstreamRecord, assertAntigravityUpstreamState } from '@floway-dev/provider-antigravity';
 import { assertAzureUpstreamRecord } from '@floway-dev/provider-azure';
 import { assertClaudeCodeUpstreamRecord, assertClaudeCodeUpstreamState } from '@floway-dev/provider-claude-code';
 import { assertCodexUpstreamRecord, assertCodexUpstreamState } from '@floway-dev/provider-codex';
 import { parseCopilotUpstreamConfig } from '@floway-dev/provider-copilot';
 import { assertCustomUpstreamRecord } from '@floway-dev/provider-custom';
+import { assertGeminiUpstreamRecord } from '@floway-dev/provider-gemini';
 import { assertOllamaUpstreamRecord } from '@floway-dev/provider-ollama';
 import { parseProxyUri } from '@floway-dev/proxy';
 
@@ -113,23 +115,29 @@ const normalizeUpstreamConfig = (record: UpstreamRecord): unknown => {
   case 'custom': return assertCustomUpstreamRecord(record).config;
   case 'azure': return assertAzureUpstreamRecord(record).config;
   case 'ollama': return assertOllamaUpstreamRecord(record).config;
+  case 'gemini': return assertGeminiUpstreamRecord(record).config;
   case 'codex':
     assertCodexUpstreamRecord(record);
     return record.config;
   case 'claude-code':
     assertClaudeCodeUpstreamRecord(record);
     return record.config;
+  case 'antigravity':
+    assertAntigravityUpstreamRecord(record);
+    return record.config;
   case 'copilot': return parseCopilotUpstreamConfig(record.config, (field, expected) => new Error(`${field} must be ${expected}`));
   }
 };
 
-// Codex and Claude Code state contains refresh credentials and health that
-// cannot be re-derived, so it round-trips through their strict runtime
-// assertions. Every other provider owns no durable state or can re-mint it.
+// Codex, Claude Code, and Antigravity state contains refresh credentials and
+// health that cannot be re-derived, so it round-trips through their strict
+// runtime assertions. Every other provider owns no durable state or can
+// re-mint it.
 const normalizeUpstreamState = (kind: UpstreamProviderKind, value: unknown): unknown => {
-  if (kind !== 'codex' && kind !== 'claude-code') return null;
+  if (kind !== 'codex' && kind !== 'claude-code' && kind !== 'antigravity') return null;
   if (value === null || value === undefined) throw new Error(`${kind} upstream is missing state — re-export with current code`);
   if (kind === 'codex') assertCodexUpstreamState(value);
+  else if (kind === 'antigravity') assertAntigravityUpstreamState(value);
   else assertClaudeCodeUpstreamState(value);
   return value;
 };

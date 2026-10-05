@@ -339,6 +339,9 @@ importers:
       '@floway-dev/provider':
         specifier: workspace:*
         version: link:../provider
+      '@floway-dev/provider-antigravity':
+        specifier: workspace:*
+        version: link:../provider-antigravity
       '@floway-dev/provider-azure':
         specifier: workspace:*
         version: link:../provider-azure

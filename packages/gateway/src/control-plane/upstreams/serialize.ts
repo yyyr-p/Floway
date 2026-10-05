@@ -5,11 +5,13 @@ import type {
 } from './types.ts';
 import { flagDefaultsForKind } from '../../data-plane/providers/registry.ts';
 import type { FlagOverrides, ProxyFallbackEntry, UpstreamProviderKind, UpstreamRecord } from '@floway-dev/provider';
+import { assertAntigravityUpstreamRecord, assertAntigravityUpstreamState } from '@floway-dev/provider-antigravity';
 import { assertAzureUpstreamRecord } from '@floway-dev/provider-azure';
 import { assertClaudeCodeUpstreamRecord, assertClaudeCodeUpstreamState } from '@floway-dev/provider-claude-code';
 import { assertCodexUpstreamRecord, assertCodexUpstreamState } from '@floway-dev/provider-codex';
 import { assertCopilotUpstreamRecord, assertCopilotUpstreamState } from '@floway-dev/provider-copilot';
 import { assertCustomUpstreamRecord } from '@floway-dev/provider-custom';
+import { assertGeminiUpstreamRecord } from '@floway-dev/provider-gemini';
 import { assertOllamaUpstreamRecord, readOllamaUpstreamState } from '@floway-dev/provider-ollama';
 
 export type { FullSerializedUpstreamRecord } from './types.ts';
@@ -144,6 +146,38 @@ export const upstreamRecordToJson = (upstream: UpstreamRecord): RedactedSerializ
       state: upstream.state === null ? null : readOllamaUpstreamState(upstream.state),
     };
   }
+  case 'gemini': {
+    const { config } = assertGeminiUpstreamRecord(upstream);
+    return {
+      ...base,
+      kind: 'gemini',
+      config: { baseUrl: config.baseUrl, models: clone(config.models), apiKeySet: hasSecret(config.apiKey) },
+      state: stateless(upstream),
+    };
+  }
+  case 'antigravity': {
+    assertAntigravityUpstreamRecord(upstream);
+    assertAntigravityUpstreamState(upstream.state);
+    const state = {
+      accounts: upstream.state.accounts.map(account => ({
+        email: account.email,
+        state: account.state,
+        ...(account.stateMessage !== undefined ? { stateMessage: account.stateMessage } : {}),
+        stateUpdatedAt: account.stateUpdatedAt,
+        projectId: clone(account.projectId),
+        refreshTokenSet: hasSecret(account.refreshToken),
+        // Same timing-only projection the codex branch exposes: the bearer is
+        // server-only, but when it lapses decides whether the account is
+        // usable right now.
+        accessToken: account.accessToken === null
+          ? null
+          : { expiresAt: account.accessToken.expiresAt, refreshedAt: account.accessToken.refreshedAt },
+      })),
+    };
+    // No secret in the config (identities only), so it crosses whole — the
+    // codex branch redacts nothing from its config for the same reason.
+    return { ...base, kind: 'antigravity', config: clone(upstream.config), state };
+  }
   }
 };
 
@@ -176,6 +210,15 @@ export const upstreamRecordToFullJson = (upstream: UpstreamRecord): FullSerializ
   case 'ollama': {
     const record = assertOllamaUpstreamRecord(upstream);
     return { ...base, kind: 'ollama', config: clone(record.config), state: upstream.state === null ? null : readOllamaUpstreamState(upstream.state) };
+  }
+  case 'gemini': {
+    const record = assertGeminiUpstreamRecord(upstream);
+    return { ...base, kind: 'gemini', config: clone(record.config), state: stateless(upstream) };
+  }
+  case 'antigravity': {
+    assertAntigravityUpstreamRecord(upstream);
+    assertAntigravityUpstreamState(upstream.state);
+    return { ...base, kind: 'antigravity', config: clone(upstream.config), state: clone(upstream.state) };
   }
   }
 };
@@ -213,5 +256,12 @@ export const blueprintUpstreamRecord = (kind: UpstreamProviderKind): BlueprintSe
     return { ...base, kind, config: { accounts: [] }, state: { accounts: [] } };
   case 'ollama':
     return { ...base, kind, config: { baseUrl: '', apiKey: '', cloudUsage: false, models: [] }, state: null };
+  case 'gemini':
+    return { ...base, kind, config: { baseUrl: '', apiKey: '', models: [] }, state: null };
+  case 'antigravity':
+    // An OAuth import writes the whole record at once, so the create-form
+    // blueprint is an empty shell the dashboard fills from the exchange —
+    // same shape the codex / claude-code blueprints open with.
+    return { ...base, kind, config: { accounts: [] }, state: { accounts: [] } };
   }
 };

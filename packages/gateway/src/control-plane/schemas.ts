@@ -225,6 +225,14 @@ const ollamaConfigSchema = z.object({
   path: ['models'],
 });
 
+const geminiConfigSchema = z.object({
+  baseUrl: z.string().min(1),
+  apiKey: z.string().optional(),
+  // The catalog is normally fetched live from `/v1beta/models`; static rows
+  // only pin an id the operator wants to shape by hand.
+  models: z.array(upstreamModelSchema).optional(),
+});
+
 // --- auth ---
 
 // Cap PBKDF2 input length: 1024 bytes — well above any real passphrase. The
@@ -373,6 +381,8 @@ export const createUpstreamBody = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('codex'), ...upstreamBaseFields, config: z.unknown(), state: z.unknown().optional() }),
   z.object({ kind: z.literal('claude-code'), ...upstreamBaseFields, config: z.unknown(), state: z.unknown().optional() }),
   z.object({ kind: z.literal('ollama'), ...upstreamBaseFields, config: ollamaConfigSchema }),
+  z.object({ kind: z.literal('gemini'), ...upstreamBaseFields, config: geminiConfigSchema }),
+  z.object({ kind: z.literal('antigravity'), ...upstreamBaseFields, config: z.unknown(), state: z.unknown().optional() }),
 ]);
 
 // Update is kind-agnostic: kind is read from the existing record, and
@@ -385,7 +395,7 @@ export const createUpstreamBody = z.discriminatedUnion('kind', [
 // without this field the schema would silently strip it and the API would
 // look like it had accepted the change.
 export const updateUpstreamBody = z.object({
-  kind: z.enum(['custom', 'azure', 'copilot', 'codex', 'claude-code', 'ollama']).optional(),
+  kind: z.enum(['custom', 'azure', 'copilot', 'codex', 'claude-code', 'ollama', 'gemini', 'antigravity']).optional(),
   name: z.string().min(1).optional(),
   enabled: z.boolean().optional(),
   sort_order: z.number().int().optional(),
@@ -516,6 +526,22 @@ export const claudeCodeSetupTokenExchangeBody = z.object({
 });
 
 export const claudeCodeProbeBody = recordOnlyBody;
+
+// --- antigravity OAuth (record-body contract) ---
+//
+// Same PKCE round trip as claude-code OAuth, but the callback is the only
+// import path: Google does not hand out a pastable credentials.json for this
+// surface, so there is no credentials_json alternative and no setup-token
+// analog.
+
+export const antigravityOAuthAuthorizeUrlBody = oauthAuthorizeUrlBody;
+
+export const antigravityOAuthExchangeBody = z.object({
+  record: upstreamRecordEnvelope,
+  callback: oauthCallbackSchema,
+});
+
+export const antigravityOAuthRefreshBody = recordOnlyBody;
 
 // The editor sends every discovery input, including model projection policy,
 // while direct preview callers can omit unrelated display metadata.

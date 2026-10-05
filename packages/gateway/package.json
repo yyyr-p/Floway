@@ -42,6 +42,7 @@
     "@floway-dev/platform": "workspace:*",
     "@floway-dev/protocols": "workspace:*",
     "@floway-dev/provider": "workspace:*",
+    "@floway-dev/provider-antigravity": "workspace:*",
     "@floway-dev/provider-azure": "workspace:*",
     "@floway-dev/provider-claude-code": "workspace:*",
     "@floway-dev/provider-codex": "workspace:*",
