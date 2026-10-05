@@ -16,7 +16,7 @@ import type { StoredUpstreamRecord } from '../../../repo/types.ts';
 import { compareModelIds, getModelsFromProviders, mergeIntoCatalog } from '../../providers/catalog.ts';
 import { MODEL_CATALOG_REVISION } from '../../providers/models-cache.ts';
 import { listModelProviders } from '../../providers/registry.ts';
-import type { InternalModel, Provider } from '@floway-dev/provider';
+import { applyModelMetadataDefaults, type InternalModel, type Provider } from '@floway-dev/provider';
 
 export interface AddressableIdEntry {
   // The inbound model id the data plane will accept verbatim.
@@ -100,9 +100,10 @@ export const enumerateAddressableModelIds = async (
     for (const upstreamModel of upstreamModels) {
       if (!upstreamModel.id || disabled.has(upstreamModel.id)) continue;
       if (cfg.listed.length === 0) {
+        const providerModel = applyModelMetadataDefaults(upstreamModel, provider.modelMetadataDefaults);
         for (const form of addressableOnly) {
           const id = form === 'prefixed' ? `${cfg.prefix}${upstreamModel.id}` : upstreamModel.id;
-          mergeIntoCatalog(unlistedOnlyModels, unlistedOnlyUpstreams, provider, upstreamModel, id);
+          mergeIntoCatalog(unlistedOnlyModels, unlistedOnlyUpstreams, provider, providerModel, id);
         }
         continue;
       }
