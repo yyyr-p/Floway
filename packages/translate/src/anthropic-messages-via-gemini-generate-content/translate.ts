@@ -10,6 +10,6 @@ import type { GeminiGenerateContentPayload, GeminiGenerateContentStreamEvent } f
 export const translateAnthropicMessagesViaGeminiGenerateContent: TranslateTrip<
   AnthropicMessagesPayload, AnthropicMessagesStreamEvent, GeminiGenerateContentPayload, GeminiGenerateContentStreamEvent
 > = async (src, ctx) => ({
-  target: buildTargetRequest(src, ctx.model),
+  target: buildTargetRequest(src),
   events: translateToSourceEvents(ctx.model),
 });

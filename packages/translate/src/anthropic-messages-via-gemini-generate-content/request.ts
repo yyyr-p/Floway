@@ -157,7 +157,7 @@ const applyToolChoice = (request: GeminiGenerateContentPayload, toolChoice: NonN
   }
 };
 
-export const buildTargetRequest = (payload: AnthropicMessagesPayload, model: string): GeminiGenerateContentPayload => {
+export const buildTargetRequest = (payload: AnthropicMessagesPayload): GeminiGenerateContentPayload => {
   const request: GeminiGenerateContentPayload = { contents: [] };
   const toolNamesById: GeminiGenerateContentToolNamesById = {};
   let lastSystem: GeminiGenerateContentContent | undefined;
