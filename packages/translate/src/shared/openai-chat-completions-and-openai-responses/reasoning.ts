@@ -39,6 +39,7 @@ export const toOpenAIChatCompletionsReasoningItem = (item: OpenAIChatCompletions
   type: 'reasoning',
   id: item.id,
   summary: item.summary,
+  ...(item.encrypted_content !== undefined ? { encrypted_content: item.encrypted_content } : {}),
 });
 
 export const addOpenAIResponsesReasoningToOpenAIChatCompletionsProjection = (projection: OpenAIChatCompletionsReasoningProjection, item: OpenAIChatCompletionsReasoningSourceItem): void => {
@@ -58,6 +59,7 @@ export const toOpenAIResponsesReasoningItem = <T extends OpenAIResponsesReasonin
     type: 'reasoning',
     id: item.id ?? createRandomOpenAIResponsesItemId('reasoning'),
     summary: item.summary ?? [],
+    ...(item.encrypted_content !== undefined ? { encrypted_content: item.encrypted_content } : {}),
   } as T);
 
 export const scalarToOpenAIResponsesReasoningItem = <T extends OpenAIResponsesReasoningItem>(reasoningText: string | null | undefined): T | null => {
@@ -70,18 +72,19 @@ export const scalarToOpenAIResponsesReasoningItem = <T extends OpenAIResponsesRe
   } as T;
 };
 
-export const hasReadableSummary = (item: OpenAIChatCompletionsReasoningItem): boolean => item.summary?.some(part => part.text) === true;
+export const hasReasoningPayload = (item: OpenAIChatCompletionsReasoningItem): boolean =>
+  item.summary?.some(part => part.text) === true || item.encrypted_content !== undefined;
 
 export const translateOpenAIChatCompletionsReasoningItems = <T extends OpenAIResponsesReasoningItem>(reasoningItems: OpenAIChatCompletionsReasoningItem[] | null | undefined): T[] | null => {
   if (!reasoningItems?.length) return null;
 
-  // `reasoning_items[]` is a LiteLLM-inspired compatibility workaround for
-  // carrying multiple readable OpenAI Responses reasoning summaries through OpenAI Chat Completions.
+  // `reasoning_items[]` is a LiteLLM-inspired compatibility extension for
+  // carrying OpenAI Responses reasoning summaries and encrypted content through OpenAI Chat Completions.
   // Scalars remain first-group only.
   // References:
   // - https://github.com/BerriAI/litellm/blob/70492cee4282541256fb9ac963be94412b1a109c/litellm/completion_extras/litellm_responses_transformation/transformation.py#L59-L104
   // - https://github.com/BerriAI/litellm/blob/70492cee4282541256fb9ac963be94412b1a109c/litellm/completion_extras/litellm_responses_transformation/transformation.py#L1322-L1355
-  const translated = reasoningItems.flatMap(item => (hasReadableSummary(item)
+  const translated = reasoningItems.flatMap(item => (hasReasoningPayload(item)
     ? [{ ...toOpenAIResponsesReasoningItem<T>(item), summary: klona(item.summary ?? []) } as T]
     : []));
   return translated.length > 0 ? translated : null;
