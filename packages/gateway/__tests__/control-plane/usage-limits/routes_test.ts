@@ -1,4 +1,4 @@
-import { test } from 'vitest';
+import { test, vi } from 'vitest';
 
 import { requestApp, setupAppTest } from '../../test-utils/app.ts';
 import { assertEquals } from '@floway-dev/test-utils';
@@ -55,6 +55,91 @@ test('admin can create, update, inspect current usage, and delete key limits', a
   });
   assertEquals(removed.status, 200);
   assertEquals(await repo.usageLimits.list(), []);
+});
+
+test.each([1, null])('usage-limit summaries omit cost when unmetered requests are %s', async unmeteredRequests => {
+  const { adminSession, apiKey, repo } = await setupAppTest();
+  const now = new Date();
+  const hour = now.toISOString().slice(0, 13);
+  await repo.usageLimits.save({
+    principalType: 'key', principalId: apiKey.id, window: 'month', maxTokens: null, maxCostUsd: '2',
+  });
+  await repo.usage.record({
+    keyId: apiKey.id,
+    model: 'model',
+    upstream: 'upstream',
+    modelKey: 'model',
+    hour,
+    pricingSelector: {},
+    requests: 2,
+    unmeteredRequests,
+    metrics: [{ metric: 'input_tokens', quantity: '5', unitPrice: '0.01' }],
+  });
+
+  const snapshot = await requestApp('/api/usage-limits', { headers: { 'x-floway-session': adminSession } });
+  assertEquals(snapshot.status, 200);
+  const body = await snapshot.json() as { limits: Array<{ usedCostUsd: string | null }> };
+  assertEquals(body.limits[0]?.usedCostUsd, null);
+});
+
+test('usage-limit summaries keep zero-request cost at zero when the unmetered count is unknown', async () => {
+  const { adminSession, apiKey, repo } = await setupAppTest();
+  const hour = new Date().toISOString().slice(0, 13);
+  await repo.usageLimits.save({
+    principalType: 'key', principalId: apiKey.id, window: 'month', maxTokens: null, maxCostUsd: '2',
+  });
+  await repo.usage.record({
+    keyId: apiKey.id,
+    model: 'model',
+    upstream: 'upstream',
+    modelKey: 'model',
+    hour,
+    pricingSelector: {},
+    requests: 0,
+    unmeteredRequests: null,
+    metrics: [],
+  });
+
+  const snapshot = await requestApp('/api/usage-limits', { headers: { 'x-floway-session': adminSession } });
+  assertEquals(snapshot.status, 200);
+  const body = await snapshot.json() as { limits: Array<{ usedCostUsd: string | null }> };
+  assertEquals(body.limits[0]?.usedCostUsd, '0');
+});
+
+test('usage-limit summaries use the queried UTC window across a month rollover', async () => {
+  vi.useFakeTimers();
+  try {
+    vi.setSystemTime(new Date('2026-01-31T23:59:59.000Z'));
+    const { adminSession, apiKey, repo } = await setupAppTest();
+    await repo.usageLimits.save({
+      principalType: 'key', principalId: apiKey.id, window: 'month', maxTokens: null, maxCostUsd: '2',
+    });
+    await repo.usage.record({
+      keyId: apiKey.id,
+      model: 'model',
+      upstream: 'upstream',
+      modelKey: 'model',
+      hour: '2026-01-31T23',
+      pricingSelector: {},
+      requests: 1,
+      metrics: [{ metric: 'input_tokens', quantity: '5', unitPrice: '0.01' }],
+    });
+    const query = repo.usage.query.bind(repo.usage);
+    vi.spyOn(repo.usage, 'query').mockImplementation(async options => {
+      vi.setSystemTime(new Date('2026-02-01T00:00:01.000Z'));
+      return await query(options);
+    });
+
+    const snapshot = await requestApp('/api/usage-limits', { headers: { 'x-floway-session': adminSession } });
+    assertEquals(snapshot.status, 200);
+    const body = await snapshot.json() as { limits: Array<Record<string, unknown>> };
+    assertEquals(body.limits, [{
+      principalType: 'key', principalId: apiKey.id, window: 'month', maxTokens: null, maxCostUsd: '2',
+      windowStart: '2026-01-01T00', windowEnd: '2026-02-01T00', usedTokens: 5, usedCostUsd: '0.05',
+    }]);
+  } finally {
+    vi.useRealTimers();
+  }
 });
 
 test('usage-limit admin routes reject non-admin callers, unknown principals, and empty policies', async () => {
