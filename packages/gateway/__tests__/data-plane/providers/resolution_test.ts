@@ -77,6 +77,52 @@ test('a cold candidate read schedules refresh without waiting for upstream I/O',
   });
 });
 
+test('applies model metadata defaults to addressable-only routing candidates from a warm snapshot', async () => {
+  const { repo } = await setupAppTest();
+  await repo.upstreams.deleteAll();
+  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({
+    modelMetadataDefaults: {
+      limits: { max_context_window_tokens: 256_000, max_output_tokens: 8_000 },
+      chat: {
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        image_detail_original: true,
+        reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+      },
+    },
+    modelPrefix: { prefix: 'private/', addressable: ['prefixed'], listed: [] },
+  }));
+
+  await withMockedFetch(
+    request => {
+      if (new URL(request.url).pathname === '/v1/models') {
+        return jsonResponse({ object: 'list', data: [{ id: 'hidden-model', supported_endpoints: ['/chat/completions'] }] });
+      }
+      throw new Error(`Unhandled fetch ${request.url}`);
+    },
+    async () => {
+      const resolved = await enumerateModelCandidates({
+        upstreamIds: null,
+        model: 'private/hidden-model',
+        kind: 'chat',
+        scheduler: testScheduler,
+        runtimeLocation: 'TEST',
+      });
+
+      expect(resolved.candidates).toHaveLength(1);
+      expect(resolved.candidates[0]?.model.limits).toMatchObject({
+        max_context_window_tokens: 256_000,
+        max_output_tokens: 8_000,
+      });
+      expect(resolved.candidates[0]?.model.chat).toEqual({
+        modalities: { input: ['text', 'image'], output: ['text'] },
+        image_detail_original: true,
+        reasoning: { effort: { supported: ['low', 'high'], default: 'high' } },
+      });
+      expect(realProviderModels(resolved.candidates[0]?.model).up_custom?.limits.max_output_tokens).toBe(8_000);
+    },
+  );
+});
+
 test('scheduler registration failures propagate rather than looking like an upstream model-list failure', async () => {
   const { repo } = await setupAppTest();
   await repo.upstreams.deleteAll();
