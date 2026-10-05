@@ -137,12 +137,11 @@ export const buildTargetRequest = (payload: OpenAIChatCompletionsPayload): Canon
 
   const responseTextConfig = payload.response_format === undefined ? undefined : payload.response_format === null ? null : { format: klona(payload.response_format) };
 
-  // OpenAI Chat Completions and Responses expose the same model-dependent
-  // effort vocabulary. Preserve it verbatim, including `none` and future
-  // values; the selected upstream owns model-specific validation.
-  // https://platform.openai.com/docs/api-reference/chat/create
-  // https://platform.openai.com/docs/api-reference/responses/create
-  const reasoningEffort = payload.reasoning_effort;
+  // OpenAI Chat Completions' `reasoning_effort: 'none'` disables reasoning without an OpenAI Responses
+  // equivalent (OpenAI Responses `reasoning.effort` has no 'none' member); drop the
+  // field instead of forwarding a value the upstream rejects.
+  const reasoningEffort = payload.reasoning_effort && payload.reasoning_effort !== 'none' ? payload.reasoning_effort : undefined;
+  const reasoning = reasoningEffort !== undefined ? { effort: reasoningEffort } : undefined;
 
   return {
     model: payload.model,
@@ -173,7 +172,7 @@ export const buildTargetRequest = (payload: OpenAIChatCompletionsPayload): Canon
     // https://developers.openai.com/api/docs/guides/migrate-to-responses
     ...(payload.store !== undefined ? { store: payload.store } : {}),
     ...(payload.parallel_tool_calls !== undefined ? { parallel_tool_calls: payload.parallel_tool_calls } : {}),
-    ...(reasoningEffort != null ? { reasoning: { effort: reasoningEffort } } : {}),
+    ...(reasoning ? { reasoning } : {}),
     ...(responseTextConfig !== undefined ? { text: responseTextConfig } : {}),
     ...(payload.prompt_cache_key !== undefined ? { prompt_cache_key: payload.prompt_cache_key } : {}),
     ...(payload.safety_identifier !== undefined ? { safety_identifier: payload.safety_identifier } : {}),
