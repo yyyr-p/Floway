@@ -47,11 +47,11 @@ describe('model reachability', () => {
   it('intersects user and key model rules against each upstream source model ID', () => {
     const first = {
       ...catalogModel('shared', { upstreams: ['u1'] }),
-      upstreams: [{ id: 'u1', name: 'u1', modelId: 'source-a', kind: 'custom' as const, hue: 210 }],
+      upstreams: [{ id: 'u1', name: 'u1', modelId: 'source-a', kind: 'custom' as const, hue: 210, logoUrl: null }],
     };
     const second = {
       ...catalogModel('shared', { upstreams: ['u2'] }),
-      upstreams: [{ id: 'u2', name: 'u2', modelId: 'source-b', kind: 'custom' as const, hue: 210 }],
+      upstreams: [{ id: 'u2', name: 'u2', modelId: 'source-b', kind: 'custom' as const, hue: 210, logoUrl: null }],
     };
     const shared = { ...first, upstreams: [...first.upstreams, ...second.upstreams] };
     const catalog = [shared];
@@ -73,7 +73,7 @@ describe('model reachability', () => {
   it('keeps prefix-projected IDs separate from source IDs and applies policy after alias resolution', () => {
     const target = {
       ...catalogModel('team/public-id', { upstreams: ['u1'] }),
-      upstreams: [{ id: 'u1', name: 'u1', modelId: 'provider-id', kind: 'custom' as const, hue: 210 }],
+      upstreams: [{ id: 'u1', name: 'u1', modelId: 'provider-id', kind: 'custom' as const, hue: 210, logoUrl: null }],
     };
     const alias = aliasModel('friendly-name', [target.id]);
     const catalog = [target, alias];

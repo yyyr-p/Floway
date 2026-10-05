@@ -397,7 +397,7 @@ function CopilotConfig({ record, onPatch }: {
     </Field>
     {config.user.login
       ? <>
-          <AccountSummary kind="copilot" title={config.user.name ?? config.user.login} subtitle={`${config.githubHost}/${config.user.login}`} />
+          <AccountSummary kind="copilot" logoUrl={record.logo_url} title={config.user.name ?? config.user.login} subtitle={`${config.githubHost}/${config.user.login}`} />
           {isPersisted(record) ? <CopilotQuotaCard record={record} /> : <ReadyToSaveHint kind="copilot" />}
         </>
       : <>
@@ -527,9 +527,9 @@ function OAuthConfig({ record, onPatch }: {
   </div>;
 }
 
-function AccountSummary({ kind, subtitle, title }: { kind: UpstreamProviderKind; subtitle: string; title: string }) {
+function AccountSummary({ kind, logoUrl, subtitle, title }: { kind: UpstreamProviderKind; logoUrl?: string | null; subtitle: string; title: string }) {
   return <div className="flex items-center gap-3 min-w-0">
-    <ProviderIcon kind={kind} className="h-8 w-8" />
+    <ProviderIcon kind={kind} logoUrl={logoUrl} className="h-8 w-8" />
     <div className="grid gap-0.5 min-w-0"><Text block weight="semibold" truncate wrap={false}>{title}</Text><Text block size={200} className="text-fui-fg2" truncate wrap={false}>{subtitle}</Text></div>
   </div>;
 }

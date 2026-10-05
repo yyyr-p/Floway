@@ -36,6 +36,7 @@ const copyableRecord = (source: UpstreamRecord, name: string, hue: number): {
     model_prefix: source.model_prefix === null ? null : structuredClone(source.model_prefix),
     model_metadata_defaults: structuredClone(source.model_metadata_defaults),
     hue,
+    logo_url: source.logo_url,
     modelsCache: { fetchedAt: null, lastError: null, modelCount: null },
   };
 

@@ -12,6 +12,7 @@ export const dumpUpstreamRefSchema = z.object({
   name: z.string(),
   kind: z.enum(ALL_PROVIDER_KINDS),
   hue: z.number(),
+  logoUrl: z.string().nullable().optional(),
 }).strict();
 
 export const dumpMetadataSchema = z.object({

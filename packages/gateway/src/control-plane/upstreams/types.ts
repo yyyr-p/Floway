@@ -145,6 +145,7 @@ interface SerializedUpstreamRecordBase {
   model_prefix: ModelPrefixConfig | null;
   model_metadata_defaults: ModelMetadataDefaults;
   hue: number;
+  logo_url: string | null;
 }
 
 type RedactedCustomConfig = CustomConfigFields & { apiKeySet: boolean };

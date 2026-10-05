@@ -85,7 +85,7 @@ import {
   encodeUpstreamModelsCache,
 } from './upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from './upstream-json.ts';
-import { parseUpstreamHue, parseUpstreamKind } from './upstream-parse.ts';
+import { parseUpstreamHue, parseUpstreamKind, parseUpstreamLogoUrl } from './upstream-parse.ts';
 import { usageMetricRows } from './usage-metrics.ts';
 import { querySqlUsageOverview } from './usage-overview-sql.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../shared/performance-histogram.ts';
@@ -1770,7 +1770,7 @@ const MODELS_CACHE_EPOCH_SQL = `CASE
   ELSE 0
 END`;
 
-const UPSTREAM_COLUMNS = 'id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, models_cache_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue';
+const UPSTREAM_COLUMNS = 'id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, models_cache_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue, logo_url';
 
 class SqlUpstreamRepo implements UpstreamRepo {
   constructor(private db: SqlDatabase) {}
@@ -1792,7 +1792,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
 
   async insertForModels(upstream: UpstreamRecord): Promise<StoredUpstreamRecord | null> {
     const row = await this.db
-      .prepare(`INSERT INTO upstreams (id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING
+      .prepare(`INSERT INTO upstreams (id, provider, name, user_visible, enabled, sort_order, created_at, updated_at, config_version, config_json, state_json, flag_overrides, disabled_public_model_ids, proxy_fallback_list_json, model_prefix_json, model_metadata_defaults_json, hue, logo_url) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO NOTHING
         RETURNING ${UPSTREAM_COLUMNS}`)
       .bind(
         upstream.id,
@@ -1811,6 +1811,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         upstream.modelPrefix === null ? null : JSON.stringify(upstream.modelPrefix),
         encodeUpstreamModelMetadataDefaults(upstream.modelMetadataDefaults),
         upstream.hue,
+        upstream.logoUrl ?? null,
       )
       .first<UpstreamRow>();
     return row === null ? null : toUpstreamRecord(row);
@@ -1836,6 +1837,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
     const stored = toUpstreamRecord(storedRow);
     const comparable = (record: StoredUpstreamRecord): StoredUpstreamRecord => ({
       ...record,
+      logoUrl: record.logoUrl ?? null,
       modelsCache: null,
       state: replaceState ? record.state : null,
     });
@@ -1863,7 +1865,8 @@ class SqlUpstreamRepo implements UpstreamRepo {
            proxy_fallback_list_json = ?,
            model_prefix_json = ?,
            model_metadata_defaults_json = ?,
-           hue = ?${modelsCacheUpdate}
+           hue = ?,
+           logo_url = ?${modelsCacheUpdate}
          WHERE id = ?
            AND provider = ?
            AND name = ?
@@ -1880,6 +1883,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
            AND model_prefix_json IS ?
            AND model_metadata_defaults_json = ?
            AND hue = ?
+           AND logo_url IS ?
          RETURNING ${UPSTREAM_COLUMNS}`,
       )
       .bind(
@@ -1899,6 +1903,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         upstream.modelPrefix === null ? null : JSON.stringify(upstream.modelPrefix),
         encodeUpstreamModelMetadataDefaults(upstream.modelMetadataDefaults),
         upstream.hue,
+        upstream.logoUrl ?? null,
         upstream.id,
         previous.kind,
         previous.name,
@@ -1916,6 +1921,7 @@ class SqlUpstreamRepo implements UpstreamRepo {
         storedRow.model_prefix_json,
         storedRow.model_metadata_defaults_json,
         previous.hue,
+        previous.logoUrl ?? null,
       )
       .first<UpstreamRow>();
     return row === null ? null : toUpstreamRecord(row);
@@ -2043,6 +2049,7 @@ interface UpstreamRow {
   model_prefix_json: string | null;
   model_metadata_defaults_json: string;
   hue: number;
+  logo_url: string | null;
 }
 
 const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
@@ -2072,6 +2079,7 @@ const toUpstreamRecord = (row: UpstreamRow): StoredUpstreamRecord => {
     modelPrefix: parseModelPrefix(row.id, row.model_prefix_json),
     ...(modelMetadataDefaults !== undefined ? { modelMetadataDefaults } : {}),
     hue: parseUpstreamHue(row.id, row.hue),
+    logoUrl: parseUpstreamLogoUrl(row.id, row.logo_url),
   };
 };
 
