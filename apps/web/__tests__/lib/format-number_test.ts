@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatBytes,
   formatCompactCount,
+  formatCompactTokenCount,
   formatCount,
   formatTokenRate,
   formatTokenRateFromTpot,
@@ -39,7 +40,7 @@ describe('byte sizes', () => {
 });
 
 describe('counts', () => {
-  it('abbreviates the way the locale does, not the way English does', () => {
+  it('keeps generic compact counts localized', () => {
     expect(formatCompactCount(12_345, 'en')).toBe('12.3K');
     expect(formatCompactCount(12_345, 'zh-Hans')).toBe('1.2万');
     expect(formatCompactCount(999, 'en')).toBe('999');
@@ -49,6 +50,21 @@ describe('counts', () => {
     expect(formatCount(12_345.6, 'en')).toBe('12,346');
     expect(formatCount(0, 'en')).toBe('0');
     expect(formatCount(-5, 'en')).toBe('0');
+  });
+});
+
+describe('compact token counts', () => {
+  it('uses K/M suffixes across locales while localizing the number', () => {
+    for (const locale of ['en', 'zh-Hans']) {
+      expect(formatCompactTokenCount(12_345, locale)).toBe('12.3K');
+      expect(formatCompactTokenCount(12_345_678, locale)).toBe('12.3M');
+      expect(formatCompactTokenCount(999, locale)).toBe('999');
+    }
+  });
+
+  it('retains compact promotion at unit boundaries', () => {
+    expect(formatCompactTokenCount(999.95, 'en')).toBe('1K');
+    expect(formatCompactTokenCount(999_950, 'zh-Hans')).toBe('1M');
   });
 });
 
