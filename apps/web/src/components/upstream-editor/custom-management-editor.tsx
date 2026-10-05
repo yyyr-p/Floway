@@ -2,6 +2,9 @@ import { PlugConnectedRegular } from '@fluentui/react-icons';
 import { useCallback, useState } from 'react';
 import { Controller, useFormContext, useFormState, useWatch } from 'react-hook-form';
 
+import { EditorSection } from './section';
+import type { UpstreamEditorValues } from './data';
+import { previewRecord } from './data';
 import { api, callApi } from '../../api/client';
 import type { CustomUsageRefresh, UpstreamRecord, UpstreamRecordEnvelope } from '../../api/types';
 import { fluentComponents } from '../../fluent';
@@ -10,9 +13,6 @@ import { dateTime } from '../../lib/format-time';
 import { clampPercent } from '../../lib/percent';
 import { useLocale } from '../../lib/use-locale';
 import { ConfirmDialog } from '../ui/confirm-dialog';
-import { EditorSection } from './section';
-import type { UpstreamEditorValues } from './data';
-import { previewRecord } from './data';
 import { OutcomeMessageBar } from '../ui/outcome-message-bar';
 import { ResourceListActions } from '../ui/resource-list';
 import { SectionHeader } from '../ui/section-header';
@@ -122,7 +122,7 @@ function CustomUsageCard({ getValues, probeValid, record }: {
     if (signal.aborted) return;
     if (failure) setError(failure.message);
     else setReading(data.observation);
-  }, [probeRecord, t]));
+  }, [probeRecord]));
 
   return <section className="grid gap-3 border-0 border-t border-solid border-fui-divider pt-4">
     <SectionHeader level={3} title={t('dashboard.upstreamEditor.management.usageTitle')} actions={

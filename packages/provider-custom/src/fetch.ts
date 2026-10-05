@@ -61,12 +61,14 @@ const customFetchInternal = async (
   path: string,
   init: FetchInit,
   options: UpstreamFetchOptions,
-): Promise<Response> => customFetchUrlInternal(
-  config,
-  joinBaseAndPath(config.baseUrl, path),
-  init,
-  options,
-);
+): Promise<Response> => {
+  return await customFetchUrlInternal(
+    config,
+    joinBaseAndPath(config.baseUrl, path),
+    init,
+    options,
+  );
+};
 
 export const customFetchManagement = (
   config: CustomUpstreamConfig,
