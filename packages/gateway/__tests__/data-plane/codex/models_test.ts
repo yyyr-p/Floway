@@ -170,6 +170,24 @@ describe('assembleCodexCatalog', () => {
     expect(out.models[0].slug).toBe('gpt-5.5');
   });
 
+  test('projects alias rows into the Codex catalog shape', () => {
+    const alias: InternalModel = {
+      id: 'fast-alias',
+      display_name: 'Fast alias',
+      kind: 'chat',
+      limits: { max_context_window_tokens: 64_000 },
+      endpoints: { openaiChatCompletions: {} },
+      aliasedFrom: { selection: 'first-available', targets: [] },
+    };
+    const out = assembleCodexCatalog(bundled, entries(chat('gpt-5.4')), {}, [chat('gpt-5.4'), alias]);
+
+    expect(Object.keys(out)).toEqual(['models']);
+    expect(out.models.map(model => model.slug)).toEqual(['gpt-5.4', 'fast-alias']);
+    expect(out.models[1]).toMatchObject({ slug: 'fast-alias', display_name: 'Fast alias', context_window: 64_000 });
+    expect(out.models[1]).not.toHaveProperty('id');
+    expect(out.models[1]).not.toHaveProperty('aliasedFrom');
+  });
+
   test('unlisted addressable entries are dropped', () => {
     // A model reachable only via `modelPrefix.addressable` alternates (not
     // listed on /v1/models) also stays off the codex picker — the operator
