@@ -582,22 +582,25 @@ test('public model list endpoints hide malformed upstream response bodies', asyn
   );
 });
 
-test('/v1/models surfaces the actionable "no upstream configured" hint when no provider is configured', async () => {
+test('/v1/models returns an empty OpenAI model list when no provider is configured', async () => {
   const { repo, apiKey } = await setupAppTest();
   await repo.upstreams.deleteAll();
   clearInProcessCopilotTokenCache();
 
-  const response = await requestAppWithWarmModels('/v1/models', {
-    headers: { 'x-api-key': apiKey.key },
-  });
+  for (const path of ['/v1/models', '/models']) {
+    const response = await requestAppWithWarmModels(path, {
+      headers: { 'x-api-key': apiKey.key },
+    });
 
-  assertEquals(response.status, 502);
-  assertEquals(await response.json(), {
-    error: {
-      message: 'No upstream provider configured — connect GitHub Copilot or add a Custom/Azure upstream in the dashboard',
-      type: 'api_error',
-    },
-  });
+    assertEquals(response.status, 200);
+    assertEquals(await response.json(), {
+      object: 'list',
+      has_more: false,
+      first_id: null,
+      last_id: null,
+      data: [],
+    });
+  }
 });
 
 test('/v1/models returns the id-sorted union of every connected GitHub account', async () => {

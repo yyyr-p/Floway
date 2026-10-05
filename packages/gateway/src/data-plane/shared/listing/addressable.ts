@@ -59,9 +59,9 @@ export const enumerateAddressableModelIds = async (
   // Resolve providers once and thread them into the catalog assembly so
   // the upstreams.list() round-trip and provider-instantiation cost is
   // paid once per call. `getModelsFromProviders` throws the actionable
-  // "no upstream provider configured" message when the provider list is
-  // empty; surface it the same way here so /v1/models keeps its 502 +
-  // hint behavior on a brand-new gateway. `preFetchedUpstreams` avoids
+  // "no upstream provider configured" error when the provider list is
+  // empty; the OpenAI models HTTP handler translates it to an empty list,
+  // while other callers preserve the error. `preFetchedUpstreams` avoids
   // an additional round-trip when the caller has the list already.
   const providers = await listModelProviders(upstreamFilter, preFetchedUpstreams);
   const { models: realModels, upstreamsByPublicId } = getModelsFromProviders(providers, scheduleRefresh);
