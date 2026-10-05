@@ -226,7 +226,7 @@ test('POST /api/aliases rejects an empty target_model_id with 400', async () => 
   assertEquals(resp.status, 400);
 });
 
-test('POST /api/aliases rejects a self-referential target', async () => {
+test('POST /api/aliases preserves a same-name real-model target', async () => {
   const { repo, adminSession } = await setupAppTest();
   await repo.modelAliases.deleteAll();
 
@@ -234,9 +234,9 @@ test('POST /api/aliases rejects a self-referential target', async () => {
     name: 'self',
     targets: [{ target_model_id: 'self', rules: {} }],
   })));
-  assertEquals(resp.status, 400);
-  const body = (await resp.json()) as { error?: string };
-  assertEquals(body.error, 'Model alias cycle detected: self -> self');
+  assertEquals(resp.status, 201);
+  const body = (await resp.json()) as { targets: { target_model_id: string }[] };
+  assertEquals(body.targets[0]?.target_model_id, 'self');
 });
 
 test('PUT /api/aliases/:id rejects an update that closes a nested alias cycle', async () => {
