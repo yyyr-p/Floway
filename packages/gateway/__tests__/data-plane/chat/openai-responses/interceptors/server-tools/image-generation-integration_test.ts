@@ -8,9 +8,11 @@ import { mockChatGatewayCtx } from '../../../../../test-utils/gateway-ctx.ts';
 import { createInMemoryImageProcessor, initExternalResourceFetcher, initImageProcessor } from '@floway-dev/platform';
 import { eventFrame } from '@floway-dev/protocols/common';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
+import type { OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
 import type { OpenAIResponsesResult, OpenAIResponsesStreamEvent, OpenAIResponsesTool, OpenAIResponsesToolChoice } from '@floway-dev/protocols/openai-responses';
-import { type EventResult, type ExecuteResult, type FlagId, type OpenAIImagesEditsRequest } from '@floway-dev/provider';
+import { eventResult, type EventResult, type ExecuteResult, type FlagId, type OpenAIImagesEditsRequest } from '@floway-dev/provider';
 import { assert, assertEquals, assertStringIncludes, stubModelCandidate } from '@floway-dev/test-utils';
+import { translateOpenAIResponsesViaOpenAIChatCompletions } from '@floway-dev/translate';
 
 // Dirty integration harness: mock the model registry so the image backend is a
 // pair of in-test stubs, then drive the whole shim (function-tool rewrite,
@@ -274,6 +276,63 @@ test('generates an image from an additional_tools declaration without moving the
   assertEquals(item.tools[0].type, 'function');
   assertEquals(stub.generationsCalls[0], { prompt: 'a cat', n: 1, quality: 'low' });
 });
+
+for (const carrier of ['additional_tools', 'tool_search_output'] as const) {
+  test(`executes a dynamically declared image tool through Chat Completions beside a namespace from ${carrier}`, async () => {
+    stub.nextGenerations = [jsonResponse('R0VO')];
+    const invocation = makeCtx([
+      carrier === 'additional_tools'
+        ? { type: carrier, role: 'developer', tools: [{ type: 'image_generation', quality: 'low' }] }
+        : { type: carrier, tools: [{ type: 'image_generation', quality: 'low' }] },
+      { type: 'message', role: 'user', content: 'draw an image' },
+    ]);
+    invocation.targetApi = 'openaiChatCompletions';
+    invocation.payload.tools = [{
+      type: 'namespace', name: 'images', description: '', tools: [{ type: 'function', name: 'image_generation' }],
+    }];
+    let turns = 0;
+    const result = await shim(invocation, gatewayCtx(), async () => {
+      turns++;
+      const trip = await translateOpenAIResponsesViaOpenAIChatCompletions(invocation.payload, { model: 'm' });
+      assertEquals(trip.target.tools?.map(tool => tool.type === 'function' ? tool.function.name : 'unexpected'), [
+        'images_image_generation', 'image_generation_2',
+      ]);
+      if (turns === 2) {
+        assert(trip.target.messages.some(message => message.role === 'tool' && message.tool_call_id === 'image_call'));
+      }
+      const chunks: OpenAIChatCompletionsStreamEvent[] = turns === 1 ? [
+        {
+          id: 'chat', object: 'chat.completion.chunk', created: 0, model: 'm',
+          choices: [{ index: 0, delta: { tool_calls: [{
+            index: 0, id: 'image_call', type: 'function',
+            function: { name: 'image_generation_2', arguments: JSON.stringify({ prompt: 'an image' }) },
+          }] }, finish_reason: null }],
+        },
+        {
+          id: 'chat', object: 'chat.completion.chunk', created: 0, model: 'm',
+          choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }],
+        },
+      ] : [
+        {
+          id: 'chat', object: 'chat.completion.chunk', created: 0, model: 'm',
+          choices: [{ index: 0, delta: { content: 'Image ready.' }, finish_reason: null }],
+        },
+        {
+          id: 'chat', object: 'chat.completion.chunk', created: 0, model: 'm',
+          choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+        },
+      ];
+      const events = (async function* () { for (const chunk of chunks) yield eventFrame(chunk); })();
+      return eventResult(trip.events(events), MODEL_IDENTITY);
+    });
+    const events = await drain(result);
+    assertEquals(turns, 2);
+    assertEquals(stub.generationsCalls, [{ prompt: 'an image', n: 1, quality: 'low' }]);
+    assert(events.some(event => event.type === 'response.output_item.done'
+      && event.item.type === 'image_generation_call' && event.item.result === 'R0VO'));
+    assert(events.some(event => event.type === 'response.completed' && event.response.status === 'completed'));
+  });
+}
 
 test('invalid image generation in tool_search_output reports its input path', async () => {
   const invocation = makeCtx([{
