@@ -26,7 +26,7 @@ export interface AffinityRequestAnalysis<T> extends AffinityRoutingHistory {
 
 export type CandidateAffinityEvaluation<T> =
   | { readonly kind: 'rejected' }
-  | { readonly kind: 'accepted'; readonly degrades: boolean; readonly preferred?: boolean; readonly materialize: () => T };
+  | { readonly kind: 'accepted'; readonly degrades: boolean; readonly materialize: () => T };
 
 export interface AffinityCandidateSelection<T> {
   readonly candidates: readonly ModelCandidate[];
@@ -36,8 +36,8 @@ export interface AffinityCandidateSelection<T> {
 export type AffinitySelectionFailure = Extract<ChatServeFailure, { kind: 'routing-unavailable' }>;
 
 export type OptionalAffinityBlobProjection =
-  | { readonly kind: 'preserve'; readonly value: string; readonly preferred: boolean }
-  | { readonly kind: 'remove'; readonly degrades: boolean; readonly preferred: boolean };
+  | { readonly kind: 'preserve'; readonly value: string }
+  | { readonly kind: 'remove'; readonly degrades: boolean };
 
 export type RequiredAffinityBlobProjection =
   | OptionalAffinityBlobProjection
@@ -57,9 +57,6 @@ const candidateMatchesExactTarget = (candidate: ModelCandidate, affinity: Affini
   // same-name alias starts shadowing that model.
   && isEqual(candidate.rules ?? {}, affinity.rules ?? {});
 
-const candidateMatchesPhysicalTarget = (candidate: ModelCandidate, affinity: AffinityTarget): boolean =>
-  candidate.provider.upstreamId === affinity.upstreamId && candidate.model.id === affinity.modelId;
-
 export const compatibilityIdentityForCandidate = (candidate: ModelCandidate): OpaqueBlobCompatibilityIdentity => {
   const model = providerModelOf(candidate);
   return materializeOpaqueBlobCompatibilityIdentity(
@@ -76,32 +73,30 @@ export const projectOptionalAffinityBlob = (
   decoded: DecodedAffinityBlob,
   candidate: ModelCandidate,
 ): OptionalAffinityBlobProjection => {
-  if (decoded.kind === 'foreign') return { kind: 'preserve', value: decoded.value, preferred: true };
+  if (decoded.kind === 'foreign') return { kind: 'preserve', value: decoded.value };
   const target = {
     ...decoded.affinity,
     opaqueBlobCompatibilityIdentity: decoded.opaqueBlobCompatibilityIdentity,
   };
   const compatible = candidateSatisfiesAffinityIdentity(candidate, target);
-  const preferred = compatible && candidateMatchesExactTarget(candidate, decoded.affinity);
   if (!compatible || decoded.value === undefined) {
-    return { kind: 'remove', degrades: decoded.value !== undefined, preferred };
+    return { kind: 'remove', degrades: decoded.value !== undefined };
   }
-  return { kind: 'preserve', value: decoded.value, preferred };
+  return { kind: 'preserve', value: decoded.value };
 };
 
 export const projectRequiredAffinityBlob = (
   decoded: DecodedAffinityBlob,
   candidate: ModelCandidate,
 ): RequiredAffinityBlobProjection => {
-  if (decoded.kind === 'foreign') return { kind: 'preserve', value: decoded.value, preferred: true };
+  if (decoded.kind === 'foreign') return { kind: 'preserve', value: decoded.value };
   const target = {
     ...decoded.affinity,
     opaqueBlobCompatibilityIdentity: decoded.opaqueBlobCompatibilityIdentity,
   };
   if (!candidateSatisfiesAffinityIdentity(candidate, target)) return { kind: 'reject', requiredTarget: target };
-  const preferred = candidateMatchesPhysicalTarget(candidate, decoded.affinity);
-  if (decoded.value === undefined) return { kind: 'remove', degrades: false, preferred };
-  return { kind: 'preserve', value: decoded.value, preferred };
+  if (decoded.value === undefined) return { kind: 'remove', degrades: false };
+  return { kind: 'preserve', value: decoded.value };
 };
 
 export const defineAffinityRequest = <T>(
@@ -136,7 +131,6 @@ export const defineAffinityRequest = <T>(
       const accepted: CandidateAffinityEvaluation<T> = {
         kind: 'accepted',
         degrades: candidateEvaluation.degrades,
-        preferred: candidateEvaluation.preferred !== false,
         materialize: () => {
           materialized ??= { value: candidateEvaluation.materialize() };
           return materialized.value;

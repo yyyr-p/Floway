@@ -208,16 +208,6 @@ const evaluateOpenAIResponsesCandidate = (
   return {
     kind: 'accepted' as const,
     degrades,
-    preferred: analysis.items.every(item => {
-      if (item.inheritedRequiredTarget !== undefined) {
-        const target = item.inheritedRequiredTarget;
-        if (
-          candidate.provider.upstreamId !== target.upstreamId
-          || candidate.model.id !== target.modelId
-        ) return false;
-      }
-      return (projectionsByItem.get(item.itemIndex) ?? []).every(projection => projection.projection.preferred);
-    }),
     materialize: () => materializeOpenAIResponsesPayload(payload, projectionsByItem),
   };
 };

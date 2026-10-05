@@ -181,26 +181,26 @@ describe('affinity blob projection', () => {
 
   test('preserves foreign blobs independently of candidate and policy', () => {
     const foreign = { kind: 'foreign', value: 'opaque' } as const;
-    expect(projectOptionalAffinityBlob(foreign, other)).toEqual({ kind: 'preserve', value: 'opaque', preferred: true });
-    expect(projectRequiredAffinityBlob(foreign, other)).toEqual({ kind: 'preserve', value: 'opaque', preferred: true });
+    expect(projectOptionalAffinityBlob(foreign, other)).toEqual({ kind: 'preserve', value: 'opaque' });
+    expect(projectRequiredAffinityBlob(foreign, other)).toEqual({ kind: 'preserve', value: 'opaque' });
   });
 
   test('removes originless metadata without degradation', () => {
     const originless = ownedBlob(targetFor(exact));
-    expect(projectOptionalAffinityBlob(originless, exact)).toEqual({ kind: 'remove', degrades: false, preferred: true });
-    expect(projectOptionalAffinityBlob(originless, other)).toEqual({ kind: 'remove', degrades: false, preferred: false });
-    expect(projectRequiredAffinityBlob(originless, samePhysicalTarget)).toEqual({ kind: 'remove', degrades: false, preferred: true });
+    expect(projectOptionalAffinityBlob(originless, exact)).toEqual({ kind: 'remove', degrades: false });
+    expect(projectOptionalAffinityBlob(originless, other)).toEqual({ kind: 'remove', degrades: false });
+    expect(projectRequiredAffinityBlob(originless, samePhysicalTarget)).toEqual({ kind: 'remove', degrades: false });
   });
 
   test('preserves optional natural state across rule variants in the same compatibility identity', () => {
     const natural = ownedBlob(targetFor(exact), 'opaque');
-    expect(projectOptionalAffinityBlob(natural, exact)).toEqual({ kind: 'preserve', value: 'opaque', preferred: true });
-    expect(projectOptionalAffinityBlob(natural, samePhysicalTarget)).toEqual({ kind: 'preserve', value: 'opaque', preferred: false });
+    expect(projectOptionalAffinityBlob(natural, exact)).toEqual({ kind: 'preserve', value: 'opaque' });
+    expect(projectOptionalAffinityBlob(natural, samePhysicalTarget)).toEqual({ kind: 'preserve', value: 'opaque' });
   });
 
   test('rejects required state outside its compatibility identity while accepting every rule variant', () => {
     const natural = ownedBlob(targetFor(exact), 'opaque');
-    expect(projectRequiredAffinityBlob(natural, samePhysicalTarget)).toEqual({ kind: 'preserve', value: 'opaque', preferred: true });
+    expect(projectRequiredAffinityBlob(natural, samePhysicalTarget)).toEqual({ kind: 'preserve', value: 'opaque' });
     expect(projectRequiredAffinityBlob(natural, other)).toEqual({ kind: 'reject', requiredTarget: targetFor(exact) });
   });
 
@@ -213,8 +213,8 @@ describe('affinity blob projection', () => {
       opaqueBlobCompatibilityIdentity: { upstreamId: 'up-a', key: 'openai' },
     }, 'opaque');
 
-    expect(projectOptionalAffinityBlob(natural, compatible)).toEqual({ kind: 'preserve', value: 'opaque', preferred: false });
-    expect(projectRequiredAffinityBlob(natural, compatible)).toEqual({ kind: 'preserve', value: 'opaque', preferred: false });
+    expect(projectOptionalAffinityBlob(natural, compatible)).toEqual({ kind: 'preserve', value: 'opaque' });
+    expect(projectRequiredAffinityBlob(natural, compatible)).toEqual({ kind: 'preserve', value: 'opaque' });
     expect(projectRequiredAffinityBlob(natural, otherUpstream)).toMatchObject({ kind: 'reject' });
   });
 
@@ -226,6 +226,6 @@ describe('affinity blob projection', () => {
       opaqueBlobCompatibilityIdentity: { key: 'claude-opus' },
     }, 'opaque');
 
-    expect(projectRequiredAffinityBlob(natural, compatible)).toEqual({ kind: 'preserve', value: 'opaque', preferred: false });
+    expect(projectRequiredAffinityBlob(natural, compatible)).toEqual({ kind: 'preserve', value: 'opaque' });
   });
 });
