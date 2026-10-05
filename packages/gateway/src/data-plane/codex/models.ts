@@ -19,7 +19,16 @@ import type { ModelAliasesRepo } from '../../repo/types.ts';
 import { loadListedModels } from '../models/load.ts';
 import type { AddressableIdEntry } from '../shared/listing/addressable.ts';
 import type { InternalModel } from '@floway-dev/provider';
-import { codexModelContextWindow } from '@floway-dev/provider-codex';
+import { codexModelContextWindow, type CodexContextWindow } from '@floway-dev/provider-codex';
+
+const primaryCodexContextWindow = (entry: AddressableIdEntry | undefined): CodexContextWindow | undefined => {
+  if (entry === undefined) return undefined;
+  const primaryUpstream = entry.upstreams[0];
+  if (primaryUpstream?.kind !== 'codex') return undefined;
+  const providerModel = entry.model.providerModels?.[primaryUpstream.upstreamId];
+  if (providerModel === undefined) throw new Error(`Codex catalog model ${entry.id} has no primary provider model`);
+  return codexModelContextWindow(providerModel);
+};
 
 // Pure transformation: client catalog + addressable entries →
 // codex-shaped catalog (drops unlisted alternates and non-chat kinds).
@@ -59,15 +68,25 @@ export const assembleCodexCatalog = (
     // Limits follow the registry's first-provider metadata policy. Only that
     // provider can supply Codex's private default; a same-named model from a
     // different provider must use its own advertised input budget.
-    const sourceEntry = model.aliasedFrom === undefined ? addressableById.get(model.id) : undefined;
-    const primaryUpstream = sourceEntry?.upstreams[0];
-    let codexContextWindow;
-    if (primaryUpstream?.kind === 'codex') {
-      const providerModel = model.providerModels?.[primaryUpstream.upstreamId];
-      if (providerModel === undefined) throw new Error(`Codex catalog model ${model.id} has no primary provider model`);
-      codexContextWindow = codexModelContextWindow(providerModel);
+    const codexContextWindow = model.aliasedFrom === undefined
+      ? primaryCodexContextWindow(addressableById.get(model.id))
+      : undefined;
+    const synthesized = synthesizeCatalogEntry(model, matchCatalog(model.id), capabilities, catalogServiceTiers, codexContextWindow);
+    if (model.aliasedFrom !== undefined) {
+      const targets = model.aliasedFrom.targets.flatMap(target => {
+        const entry = addressableById.get(target.target_model_id);
+        return entry?.model.kind === 'chat' ? [{ entry, codexWindow: primaryCodexContextWindow(entry) }] : [];
+      });
+      if (targets.some(target => target.codexWindow !== undefined)) {
+        // Flattened, caller-reachable targets retain their own provider defaults.
+        // The alias's announced maximum remains the cap on the private default.
+        const defaults = targets.map(({ entry, codexWindow }) => synthesizeCatalogEntry(
+          entry.model, matchCatalog(entry.id), capabilities, catalogServiceTiers, codexWindow,
+        ).context_window);
+        synthesized.context_window = Math.min(synthesized.context_window, ...defaults);
+      }
     }
-    models.push(synthesizeCatalogEntry(model, matchCatalog(model.id), capabilities, catalogServiceTiers, codexContextWindow));
+    models.push(synthesized);
   }
   return { models };
 };
