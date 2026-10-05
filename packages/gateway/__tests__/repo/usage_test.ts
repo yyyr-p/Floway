@@ -306,7 +306,7 @@ test('SQL usage overview matches the in-memory oracle across filters, facets, ax
   }
   const options: UsageOverviewQueryOptions = {
     actorUserId: 1,
-    canViewGlobalUsage: true,
+    isAdmin: true, canViewGlobalUsage: true,
     start: '2026-11-01T05',
     end: '2026-11-01T08',
     groupBy: 'model',
@@ -377,7 +377,7 @@ test('SQL usage overview preserves request-only and metric-only storage identiti
 
   const overview = await repo.usage.queryOverview({
     actorUserId: 1,
-    canViewGlobalUsage: true,
+    isAdmin: true, canViewGlobalUsage: true,
     start: '2026-07-12T00',
     end: '2026-07-12T01',
     groupBy: 'model',
@@ -410,7 +410,7 @@ test('SQL usage overview validates scoped metric rows before dashboard filters',
 
   await assertRejects(() => repo.usage.queryOverview({
     actorUserId: 1,
-    canViewGlobalUsage: true,
+    isAdmin: true, canViewGlobalUsage: true,
     start: '2026-07-12T00',
     end: '2026-07-12T01',
     groupBy: 'model',
@@ -429,7 +429,7 @@ test('SQL usage overview uses key-hour indexes for an actor-scoped aggregate', a
 
   await repo.usage.queryOverview({
     actorUserId: 1,
-    canViewGlobalUsage: true,
+    isAdmin: true, canViewGlobalUsage: true,
     start: '2026-07-12T00',
     end: '2026-07-12T01',
     groupBy: 'keyId',
@@ -463,7 +463,7 @@ test('SQL usage overview returns grouped term cardinality rather than raw storag
 
   const overview = await repo.usage.queryOverview({
     actorUserId: 1,
-    canViewGlobalUsage: true,
+    isAdmin: true, canViewGlobalUsage: true,
     start: '2026-07-12T00',
     end: '2026-07-12T01',
     groupBy: 'model',
@@ -493,7 +493,7 @@ for (const backend of backends) {
     await repo.usage.set(record({ keyId: 'own', requests: 2 }));
     await repo.usage.set(record({ keyId: 'other', requests: 5 }));
     const options: UsageOverviewQueryOptions = {
-      actorUserId: 2, canViewGlobalUsage: true,
+      actorUserId: 2, isAdmin: true, canViewGlobalUsage: true,
       start: '2026-07-12T00', end: '2026-07-12T01', groupBy: 'userId',
       filters: { keyIds: [], userIds: [], models: [], upstreams: [] }, bucketForHour: hour => hour,
     };
@@ -504,7 +504,7 @@ for (const backend of backends) {
     assertEquals(all.axes.keyId.map(row => row.group), ['own']);
     const ownKeys = await repo.usage.queryOverview({ ...options, groupBy: 'keyId' });
     assertEquals(ownKeys.axes.none[0].requests, 2);
-    const revoked = await repo.usage.queryOverview({ ...options, canViewGlobalUsage: false, groupBy: 'model' });
+    const revoked = await repo.usage.queryOverview({ ...options, isAdmin: true, canViewGlobalUsage: false, groupBy: 'model' });
     assertEquals(revoked.axes.none[0].requests, 2);
     assertEquals(revoked.axes.userId, []);
     assertEquals(revoked.dimensionValues.userIds, []);

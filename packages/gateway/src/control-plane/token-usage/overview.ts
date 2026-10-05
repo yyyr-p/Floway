@@ -59,6 +59,7 @@ export const tokenUsageOverview = async (c: Ctx) => {
 
   const overview = await repo.usage.queryOverview({
     actorUserId: identity.actor.id,
+    isAdmin: identity.actor.isAdmin,
     canViewGlobalUsage: identity.canViewUsers,
     start,
     end,

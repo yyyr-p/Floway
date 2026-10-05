@@ -138,8 +138,11 @@ export interface OAuth2ConfigRepo {
 }
 
 // Fork's additions to upstream-owned interfaces: augment `Repo` with the
-// OAuth2 sub-repos and `User` with the global-usage flag. Upstream keeps its
-// own declarations in ../types.ts untouched — these merge at the type level.
+// OAuth2 sub-repos, `User` with the global-usage flag, `UsageOverviewQueryOptions`
+// with the same flag for cross-user visibility, and `UsersRepo` with the bulk
+// upstream-access write. Upstream keeps its own declarations in ../types.ts
+// untouched — these merge at the type level rather than replacing fields, so a
+// fork-vs-upstream rename inside one interface stays out of the shared file.
 declare module '../types.ts' {
   interface Repo {
     oauth2: OAuth2Repo;
@@ -147,5 +150,11 @@ declare module '../types.ts' {
   }
   interface User {
     canViewGlobalUsage: boolean;
+  }
+  interface UsageOverviewQueryOptions {
+    canViewGlobalUsage: boolean;
+  }
+  interface UsersRepo {
+    setUpstreamIds(updates: readonly { id: number; upstreamIds: string[] | null }[]): Promise<void>;
   }
 }

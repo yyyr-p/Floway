@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { expect, test } from 'vitest';
 
 import { exportData, importData } from '../../../src/control-plane/data-transfer/routes.ts';
-import { exportQuery } from '../../../src/control-plane/schemas.ts';
 import { importBodyExtended } from '../../../src/control-plane/data-transfer/schema.ts';
+import { exportQuery } from '../../../src/control-plane/schemas.ts';
 import { upstreamRecordToFullJson } from '../../../src/control-plane/upstreams/serialize.ts';
 import { DEFAULT_WEB_SEARCH_CONFIG } from '../../../src/data-plane/tools/web-search/config.ts';
 import { initDumpBroker, initDumpStore } from '../../../src/dump/registry.ts';
