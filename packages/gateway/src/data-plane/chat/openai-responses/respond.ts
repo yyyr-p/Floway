@@ -5,7 +5,7 @@ import { wrapOpenAIResponsesClientEgress } from './client-output.ts';
 import type { GatewayCtx } from '../../shared/gateway-ctx.ts';
 import { type StreamCompletion, writeSSEFrames } from '../../shared/sse.ts';
 import { recordFailedRequest } from '../../shared/telemetry/performance.ts';
-import { settle } from '../../shared/telemetry/settle.ts';
+import { settle, settleUnpricedReservation } from '../../shared/telemetry/settle.ts';
 import { tokenUsageFromBillableUsage } from '../../shared/telemetry/usage.ts';
 import { forwardUpstreamHeaders, mergeForwardedUpstreamHeaders } from '../../shared/upstream-response.ts';
 import { SourceStreamState, eventResultMetadata, plainResultToResponse } from '../shared/respond.ts';
@@ -23,18 +23,21 @@ export const respondOpenAIResponsesFailure = (
   ctx: GatewayCtx,
 ): Response => {
   if (result.type === 'api-error') {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     recordFailedRequest(ctx, result.performance);
     ctx.dump?.error(result.source, result.upstreamId);
     return apiErrorToResponse(result);
   }
 
   if (result.type === 'internal-error') {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     recordFailedRequest(ctx, result.performance);
     ctx.dump?.failed(result.error.message);
     return internalOpenAIResponsesErrorResponse(result.status, result.error);
   }
 
   if (result.status >= 400) {
+    settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
     ctx.dump?.error(result.upstreamId !== undefined ? 'upstream' : 'gateway', result.upstreamId);
   }
   return plainResultToResponse(result);
@@ -65,6 +68,7 @@ export const respondOpenAIResponses = async (
       settle(ctx, metadata.performance, metadata.modelIdentity, usage, state.failed || response.status === 'failed');
       return Response.json(response, { headers: mergeForwardedUpstreamHeaders(undefined, result.headers) });
     } catch (error) {
+      settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
       recordFailedRequest(ctx, result.performance);
       ctx.dump?.failed(error);
       return internalOpenAIResponsesErrorResponse(502, toInternalDebugError(error));
@@ -80,7 +84,13 @@ export const respondOpenAIResponses = async (
         ...(ctx.downstreamAbortController !== undefined ? { downstreamAbortController: ctx.downstreamAbortController } : {}),
       });
     } finally {
-      const metadata = await eventResultMetadata(result);
+      let metadata;
+      try {
+        metadata = await eventResultMetadata(result);
+      } catch (error) {
+        settleUnpricedReservation(ctx, ctx.attempt.modelIdentity);
+        throw error;
+      }
       const failed = state.failedAfter(completion);
       if (failed) {
         ctx.dump?.failed(`responses stream failed (completion=${completion}, source-failed=${state.failed})`);

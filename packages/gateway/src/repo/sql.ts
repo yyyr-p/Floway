@@ -60,6 +60,12 @@ import type {
   SessionsRepo,
   UpstreamRepo,
   UsageRecord,
+  UsageLimit,
+  UsageLimitPrincipalType,
+  UsageLimitReservationInput,
+  UsageLimitReservationResult,
+  UsageLimitWindow,
+  UsageLimitsRepo,
   UsageOverviewQueryOptions,
   UsageOverviewResult,
   UsageRepo,
@@ -85,7 +91,7 @@ import { parseServerSecret } from '../shared/server-secret.ts';
 import { assertWebSearchProviderName, type WebSearchConfig } from '../shared/web-search-providers.ts';
 import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
 import type { SqlBindValue, SqlDatabase, SqlPreparedStatement, SqlResult } from '@floway-dev/platform';
-import { addDecimalStrings, canonicalPricingSelectorKey, parseBillingMetric, parseModelKind, parseNonNegativeDecimalString, parsePricingSelectorKey, type AliasSelection, type AnnouncedMetadata } from '@floway-dev/protocols/common';
+import { addDecimalStrings, canonicalPricingSelectorKey, multiplyDecimalStrings, parseBillingMetric, parseModelKind, parseNonNegativeDecimalString, parsePricingSelectorKey, type AliasSelection, type AnnouncedMetadata } from '@floway-dev/protocols/common';
 import type { ProxyFallbackEntry, ModelPrefixConfig, UpstreamModelsCache, UpstreamRecord } from '@floway-dev/provider';
 import { normalizeModelPrefix, parsePerformanceOperation, UpstreamGoneError } from '@floway-dev/provider';
 
@@ -1179,6 +1185,227 @@ class SqlUsageRepo implements UsageRepo {
 
   async deleteAll(): Promise<void> {
     await runStatements(this.db, [this.db.prepare('DELETE FROM usage'), this.db.prepare('DELETE FROM usage_requests')]);
+  }
+}
+
+const microUsdToString = (value: number): string => {
+  const whole = Math.floor(value / 1_000_000);
+  const fraction = String(value % 1_000_000).padStart(6, '0').replace(/0+$/, '');
+  return fraction.length === 0 ? String(whole) : `${whole}.${fraction}`;
+};
+
+const usdToMicrosCeil = (value: string): number => {
+  const canonical = parseNonNegativeDecimalString(value, 'usage limit cost');
+  const [whole, fraction = ''] = canonical.split('.');
+  if (fraction.length > 6) throw new TypeError('usage limit cost supports at most six fractional digits');
+  const head = fraction.slice(0, 6).padEnd(6, '0');
+  const tail = fraction.slice(6);
+  const micros = BigInt(whole!) * 1_000_000n + BigInt(head || '0') + (/[1-9]/.test(tail) ? 1n : 0n);
+  if (micros > BigInt(Number.MAX_SAFE_INTEGER)) throw new RangeError('usage limit cost exceeds the supported range');
+  return Number(micros);
+};
+
+const hourStamp = (date: Date): string => date.toISOString().slice(0, 13);
+
+const usageLimitWindowBounds = (now: Date): Record<UsageLimitWindow, { start: string; end: string }> => {
+  const hourStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
+  const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return {
+    hour: { start: hourStamp(hourStart), end: hourStamp(new Date(hourStart.getTime() + 3_600_000)) },
+    day: { start: hourStamp(dayStart), end: hourStamp(new Date(dayStart.getTime() + 86_400_000)) },
+    month: { start: hourStamp(monthStart), end: hourStamp(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))) },
+  };
+};
+
+const usageLimitTokensSql = `COALESCE((
+  SELECT SUM(CAST(u.quantity AS REAL))
+  FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
+  WHERE u.hour >= b.window_start AND u.hour < b.window_end
+    AND u.metric IN ('input_tokens','input_cache_read_tokens','input_cache_write_tokens','input_cache_write_1h_tokens','input_image_tokens','input_audio_tokens','output_tokens','output_image_tokens')
+    AND ((c.principal_type = 'key' AND u.key_id = c.principal_id)
+      OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+), 0)`;
+
+const usageLimitPendingTokensSql = `COALESCE((
+  SELECT SUM(r.tokens) FROM usage_limit_reservations r
+  WHERE r.principal_type = c.principal_type AND r.principal_id = c.principal_id
+    AND r.window = c.window AND r.window_start = b.window_start AND r.expires_at > p.now
+), 0)`;
+
+const usageLimitCostSql = `COALESCE((
+  SELECT SUM(CAST(u.quantity AS REAL) * CAST(u.unit_price AS REAL) * 1000000.0)
+  FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
+  WHERE u.hour >= b.window_start AND u.hour < b.window_end AND u.unit_price IS NOT NULL
+    AND ((c.principal_type = 'key' AND u.key_id = c.principal_id)
+      OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+), 0)`;
+
+const usageLimitHasUnpricedSql = `(
+  EXISTS (
+    SELECT 1 FROM usage_requests ur LEFT JOIN api_keys k ON k.id = ur.key_id
+    WHERE ur.hour >= b.window_start AND ur.hour < b.window_end
+      AND ((c.principal_type = 'key' AND ur.key_id = c.principal_id)
+        OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+      AND NOT EXISTS (
+        SELECT 1 FROM usage u WHERE u.key_id = ur.key_id AND u.model = ur.model
+          AND COALESCE(u.upstream, '') = COALESCE(ur.upstream, '') AND u.model_key = ur.model_key
+          AND u.hour = ur.hour AND u.pricing_selector = ur.pricing_selector
+      )
+  ) OR EXISTS (
+    SELECT 1 FROM usage u LEFT JOIN api_keys k ON k.id = u.key_id
+    WHERE u.hour >= b.window_start AND u.hour < b.window_end AND u.unit_price IS NULL
+      AND CAST(u.quantity AS REAL) > 0
+      AND ((c.principal_type = 'key' AND u.key_id = c.principal_id)
+        OR (c.principal_type = 'user' AND CAST(k.user_id AS TEXT) = c.principal_id))
+  )
+)`;
+
+class SqlUsageLimitsRepo implements UsageLimitsRepo {
+  constructor(private db: SqlDatabase) {}
+
+  async list(): Promise<UsageLimit[]> {
+    const { results } = await this.db.prepare(
+      'SELECT principal_type, principal_id, window, max_tokens, max_cost_micros FROM usage_limits ORDER BY principal_type, principal_id, window',
+    ).all<{ principal_type: string; principal_id: string; window: string; max_tokens: number | null; max_cost_micros: number | null }>();
+    return results.map(row => {
+      if (row.principal_type !== 'user' && row.principal_type !== 'key') throw new TypeError(`Invalid usage-limit principal type: ${row.principal_type}`);
+      if (row.window !== 'hour' && row.window !== 'day' && row.window !== 'month') throw new TypeError(`Invalid usage-limit window: ${row.window}`);
+      return {
+        principalType: row.principal_type,
+        principalId: row.principal_type === 'user' ? Number(row.principal_id) : row.principal_id,
+        window: row.window,
+        maxTokens: row.max_tokens,
+        maxCostUsd: row.max_cost_micros === null ? null : microUsdToString(row.max_cost_micros),
+      };
+    });
+  }
+
+  async save(limit: UsageLimit): Promise<void> {
+    const principalId = String(limit.principalId);
+    if (limit.principalType === 'user' && (!Number.isSafeInteger(limit.principalId) || Number(limit.principalId) <= 0)) throw new TypeError('usage-limit user id must be a positive safe integer');
+    if (limit.principalType === 'key' && (typeof limit.principalId !== 'string' || principalId.length === 0)) throw new TypeError('usage-limit key id must be a non-empty string');
+    if (!['hour', 'day', 'month'].includes(limit.window)) throw new TypeError(`Invalid usage-limit window: ${limit.window}`);
+    if (limit.maxTokens !== null && (!Number.isSafeInteger(limit.maxTokens) || limit.maxTokens < 0)) throw new TypeError('usage-limit maxTokens must be a non-negative safe integer or null');
+    const maxCostMicros = limit.maxCostUsd === null ? null : usdToMicrosCeil(limit.maxCostUsd);
+    if (limit.maxTokens === null && maxCostMicros === null) throw new TypeError('usage limit must define a token or cost maximum');
+    await this.db.prepare(
+      `INSERT INTO usage_limits (principal_type, principal_id, window, max_tokens, max_cost_micros)
+       VALUES (?, ?, ?, ?, ?) ON CONFLICT (principal_type, principal_id, window)
+       DO UPDATE SET max_tokens = excluded.max_tokens, max_cost_micros = excluded.max_cost_micros`,
+    ).bind(limit.principalType, principalId, limit.window, limit.maxTokens, maxCostMicros).run();
+  }
+
+  async delete(principalType: UsageLimitPrincipalType, principalId: number | string, window: UsageLimitWindow): Promise<boolean> {
+    const result = await this.db.prepare(
+      'DELETE FROM usage_limits WHERE principal_type = ? AND principal_id = ? AND window = ?',
+    ).bind(principalType, String(principalId), window).run();
+    if (result.meta.changes === undefined) throw new Error('SQL runtime did not report deleted usage-limit row count');
+    return result.meta.changes > 0;
+  }
+
+  async reserve(input: UsageLimitReservationInput): Promise<UsageLimitReservationResult> {
+    const limits = await this.list();
+    const applicable = limits.filter(limit =>
+      (limit.principalType === 'key' && limit.principalId === input.keyId)
+      || (limit.principalType === 'user' && limit.principalId === input.userId));
+    if (applicable.length === 0) return { ok: true, limited: false };
+    if (applicable.some(limit => limit.maxCostUsd !== null) && input.maxUnitPriceUsd === null) return { ok: false, reason: 'cost' };
+
+    const now = new Date(input.now);
+    if (!Number.isFinite(now.getTime())) throw new TypeError('usage-limit reservation time must be an ISO date');
+    const bounds = usageLimitWindowBounds(now);
+    const capTokens = input.outputTokens === null ? null : input.inputTokens + input.outputTokens;
+    if (capTokens !== null && (!Number.isSafeInteger(capTokens) || capTokens < 0)) throw new RangeError('usage token reservation exceeds the supported range');
+    const inputCostMicros = input.maxUnitPriceUsd === null ? 0 : usdToMicrosCeil(multiplyDecimalStrings(String(input.inputTokens), input.maxUnitPriceUsd));
+    const fixedCostMicros = input.maxUnitPriceUsd === null || capTokens === null
+      ? 0
+      : usdToMicrosCeil(multiplyDecimalStrings(String(capTokens), input.maxUnitPriceUsd));
+    const ctes = `WITH p AS (
+      SELECT ? AS reservation_id, ? AS now, ? AS expires_at, ? AS key_id, ? AS user_id,
+        ? AS input_tokens, ? AS output_tokens, ? AS input_cost_micros,
+        ? AS fixed_cost_micros, ? AS price_available
+    ), bounds(window, window_start, window_end) AS (
+      SELECT 'hour', ?, ? UNION ALL SELECT 'day', ?, ? UNION ALL SELECT 'month', ?, ?
+    ), current_limits AS (
+      SELECT c.principal_type, c.principal_id, c.window, c.max_tokens, c.max_cost_micros,
+        b.window_start, b.window_end,
+        ${usageLimitTokensSql} AS used_tokens,
+        ${usageLimitPendingTokensSql} AS pending_tokens,
+        ${usageLimitCostSql} AS used_cost_raw,
+        COALESCE((SELECT SUM(r.cost_micros) FROM usage_limit_reservations r
+          WHERE r.principal_type = c.principal_type AND r.principal_id = c.principal_id
+            AND r.window = c.window AND r.window_start = b.window_start AND r.expires_at > p.now), 0) AS pending_cost_micros,
+        ${usageLimitHasUnpricedSql} AS has_unpriced
+      FROM usage_limits c CROSS JOIN p JOIN bounds b ON b.window = c.window
+      WHERE (c.principal_type = 'key' AND c.principal_id = p.key_id)
+        OR (c.principal_type = 'user' AND c.principal_id = CAST(p.user_id AS TEXT))
+    ), normalized AS (
+      SELECT c.*,
+        CAST(used_cost_raw AS INTEGER) + CASE WHEN CAST(used_cost_raw AS INTEGER) < used_cost_raw THEN 1 ELSE 0 END AS used_cost_micros
+      FROM current_limits c
+    ), ready AS (
+      SELECT c.*,
+        CASE WHEN c.max_tokens IS NULL THEN p.input_tokens + COALESCE(p.output_tokens, 0)
+          WHEN p.output_tokens IS NULL THEN c.max_tokens - c.used_tokens - c.pending_tokens
+          ELSE p.input_tokens + p.output_tokens END AS reserve_tokens,
+        CASE WHEN c.max_cost_micros IS NULL THEN 0
+          WHEN p.output_tokens IS NULL THEN c.max_cost_micros - c.used_cost_micros - c.pending_cost_micros
+          ELSE p.fixed_cost_micros END AS reserve_cost_micros,
+        p.input_tokens, p.output_tokens, p.input_cost_micros, p.price_available, p.reservation_id, p.expires_at
+      FROM normalized c CROSS JOIN p
+    )`;
+    const tokenDenial = `(r.max_tokens IS NOT NULL AND (
+      r.reserve_tokens < 0 OR r.used_tokens + r.pending_tokens + r.reserve_tokens > r.max_tokens
+      OR (r.output_tokens IS NULL AND r.input_tokens > r.max_tokens - r.used_tokens - r.pending_tokens)
+    ))`;
+    const costDenial = `(r.max_cost_micros IS NOT NULL AND (
+      r.has_unpriced OR r.price_available = 0 OR r.reserve_cost_micros < 0
+      OR r.used_cost_micros + r.pending_cost_micros + r.reserve_cost_micros > r.max_cost_micros
+      OR (r.output_tokens IS NULL AND r.input_cost_micros > r.max_cost_micros - r.used_cost_micros - r.pending_cost_micros)
+    ))`;
+    const query = `${ctes}
+    INSERT INTO usage_limit_reservations (reservation_id, principal_type, principal_id, window, window_start, expires_at, tokens, cost_micros)
+    SELECT reservation_id, principal_type, principal_id, window, window_start, expires_at, reserve_tokens, reserve_cost_micros
+    FROM ready
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ready r WHERE ${tokenDenial} OR ${costDenial}
+    )`;
+    const binds = [
+      input.id, input.now, input.expiresAt, input.keyId, input.userId,
+      input.inputTokens, input.outputTokens, inputCostMicros, fixedCostMicros, input.maxUnitPriceUsd === null ? 0 : 1,
+      bounds.hour.start, bounds.hour.end, bounds.day.start, bounds.day.end, bounds.month.start, bounds.month.end,
+    ] as const;
+    const result = await this.db.prepare(query).bind(...binds).run();
+    if (result.meta.changes === undefined) throw new Error('SQL runtime did not report usage-limit reservation row count');
+    if (result.meta.changes === applicable.length) return { ok: true, limited: true };
+    if (result.meta.changes !== 0) {
+      await this.release(input.id);
+      throw new Error('Usage-limit reservation insert was only partially applied');
+    }
+
+    const denial = await this.db.prepare(`${ctes}
+      SELECT
+        MAX(CASE WHEN ${tokenDenial} THEN 1 ELSE 0 END) AS token_denied,
+        MAX(CASE WHEN ${costDenial} THEN 1 ELSE 0 END) AS cost_denied,
+        MAX(CASE WHEN r.max_cost_micros IS NOT NULL AND r.has_unpriced THEN 1 ELSE 0 END) AS history_unpriced
+      FROM ready r`).bind(...binds).first<{ token_denied: number; cost_denied: number; history_unpriced: number }>();
+    if (denial === null) throw new Error('Usage-limit admission did not return a denial reason');
+    if (denial.history_unpriced === 1) return { ok: false, reason: 'historical-cost-unpriced' };
+    if (denial.token_denied === 1) return { ok: false, reason: 'tokens' };
+    if (denial.cost_denied === 1) return { ok: false, reason: 'cost' };
+    throw new Error('Usage-limit admission rejected without a matching policy denial');
+  }
+
+  async release(id: string): Promise<void> {
+    await this.db.prepare('DELETE FROM usage_limit_reservations WHERE reservation_id = ?').bind(id).run();
+  }
+
+  async deleteAll(): Promise<void> {
+    await runStatements(this.db, [
+      this.db.prepare('DELETE FROM usage_limits'),
+      this.db.prepare('DELETE FROM usage_limit_reservations'),
+    ]);
   }
 }
 
@@ -2360,6 +2587,7 @@ export class SqlRepo implements Repo {
   oauth2Config: OAuth2ConfigRepo;
   apiKeys: ApiKeyRepo;
   usage: UsageRepo;
+  usageLimits: UsageLimitsRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
@@ -2381,6 +2609,7 @@ export class SqlRepo implements Repo {
     this.oauth2Config = new SqlOAuth2ConfigRepo(db);
     this.apiKeys = new SqlApiKeyRepo(db);
     this.usage = new SqlUsageRepo(db);
+    this.usageLimits = new SqlUsageLimitsRepo(db);
     this.webSearchUsage = new SqlWebSearchUsageRepo(db);
     this.performance = new SqlPerformanceRepo(db);
     this.webSearchConfig = new SqlWebSearchConfigRepo(db);

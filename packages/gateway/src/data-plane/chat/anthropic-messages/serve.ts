@@ -1,9 +1,10 @@
 import { analyzeAnthropicMessagesAffinity } from './affinity/ingress.ts';
 import { anthropicMessagesAttempt, anthropicMessagesGenerateTarget, anthropicMessagesCountTokensTarget } from './attempt.ts';
-import { renderAnthropicMessagesFailure } from './errors.ts';
+import { anthropicUsageLimitErrorResult, renderAnthropicMessagesFailure } from './errors.ts';
 import { decodeClaudeCodeModelId } from '../../models/claude-code-prefix.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
+import { reserveUsageLimit } from '../../shared/usage-limit-admission.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
@@ -40,6 +41,9 @@ export const anthropicMessagesServe = {
     const selection = selectAffinityCandidates(viable, affinity);
     if ('kind' in selection) return renderAnthropicMessagesFailure(selection, 'generate');
     if (selection.candidates.length === 0) return renderAnthropicMessagesFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams), 'generate');
+
+    const admission = await reserveUsageLimit(ctx, selection.candidates);
+    if (!admission.ok) return anthropicUsageLimitErrorResult(admission);
 
     // Try each affinity-selected candidate in order. A successful attempt (SSE
     // stream opened) is the final answer; an api-error or internal-error

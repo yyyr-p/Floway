@@ -1,6 +1,6 @@
 import { beforeEach, expect, test } from 'vitest';
 
-import { settle } from '../../../../src/data-plane/shared/telemetry/settle.ts';
+import { settle, settleUnpricedReservation } from '../../../../src/data-plane/shared/telemetry/settle.ts';
 import { initRepo } from '../../../../src/repo/index.ts';
 import { tokenCountsFromUsage } from '../../../../src/repo/usage-metrics.ts';
 import { InMemoryRepo } from '../../../repo/memory.ts';
@@ -70,6 +70,75 @@ test('settle records the request when usage carries no billable metric', async (
   assertEquals(rows.length, 1);
   assertEquals(rows[0].requests, 1);
   assertEquals(rows[0].metrics, []);
+});
+
+test('a failed stream settles partial token usage before releasing its reservation', async () => {
+  await repo.usageLimits.save({ principalType: 'key', principalId: 'key_a', window: 'hour', maxTokens: 100, maxCostUsd: null });
+  const now = new Date();
+  assertEquals(await repo.usageLimits.reserve({
+    id: 'partial-stream', keyId: 'key_a', userId: 1, now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(), inputTokens: 80,
+    outputTokens: 20, maxUnitPriceUsd: null,
+  }), { ok: true, limited: true });
+
+  const gatewayCtx = ctx();
+  gatewayCtx.usageLimitReservationId = 'partial-stream';
+  settle(gatewayCtx, testPerformanceContext, testTelemetryModelIdentity, { input: 10, output: 5 }, true);
+  await Promise.all(background);
+
+  const afterSettlement = await repo.usageLimits.reserve({
+    id: 'after-partial-stream', keyId: 'key_a', userId: 1, now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(), inputTokens: 85,
+    outputTokens: 0, maxUnitPriceUsd: null,
+  });
+  assertEquals(afterSettlement, { ok: true, limited: true });
+});
+
+test('an unpriced stream ending releases capacity but fails future cost admission closed', async () => {
+  await repo.usageLimits.save({ principalType: 'key', principalId: 'key_a', window: 'hour', maxTokens: null, maxCostUsd: '1' });
+  const now = new Date();
+  assertEquals(await repo.usageLimits.reserve({
+    id: 'unpriced-stream', keyId: 'key_a', userId: 1, now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(), inputTokens: 10,
+    outputTokens: 10, maxUnitPriceUsd: '0.000001',
+  }), { ok: true, limited: true });
+
+  const gatewayCtx = ctx();
+  gatewayCtx.usageLimitReservationId = 'unpriced-stream';
+  settleUnpricedReservation(gatewayCtx, testTelemetryModelIdentity);
+  await Promise.all(background);
+
+  const rows = await repo.usage.listAll();
+  assertEquals(rows.length, 1);
+  assertEquals(rows[0].metrics, []);
+  const afterUnpricedSettlement = await repo.usageLimits.reserve({
+    id: 'after-unpriced-stream', keyId: 'key_a', userId: 1, now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(), inputTokens: 10,
+    outputTokens: 10, maxUnitPriceUsd: '0.000001',
+  });
+  assertEquals(afterUnpricedSettlement, { ok: false, reason: 'historical-cost-unpriced' });
+});
+
+test('an unattributed pre-stream failure releases its reservation without inventing usage', async () => {
+  await repo.usageLimits.save({ principalType: 'key', principalId: 'key_a', window: 'hour', maxTokens: 100, maxCostUsd: null });
+  const now = new Date();
+  assertEquals(await repo.usageLimits.reserve({
+    id: 'unattributed', keyId: 'key_a', userId: 1, now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(), inputTokens: 10,
+    outputTokens: 10, maxUnitPriceUsd: null,
+  }), { ok: true, limited: true });
+
+  const gatewayCtx = ctx();
+  gatewayCtx.usageLimitReservationId = 'unattributed';
+  settleUnpricedReservation(gatewayCtx, undefined);
+  await Promise.all(background);
+
+  assertEquals(await repo.usage.listAll(), []);
+  assertEquals(await repo.usageLimits.reserve({
+    id: 'after-unattributed', keyId: 'key_a', userId: 1, now: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 60_000).toISOString(), inputTokens: 100,
+    outputTokens: 0, maxUnitPriceUsd: null,
+  }), { ok: true, limited: true });
 });
 
 // TPOT reflects the token stream, not the D1 write that follows it.
