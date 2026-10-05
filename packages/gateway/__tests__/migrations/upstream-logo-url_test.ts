@@ -5,12 +5,12 @@ import { test } from 'vitest';
 import { migrationSqlByFilename } from '../repo/test-sqlite.ts';
 import { assertEquals } from '@floway-dev/test-utils';
 
-const LOGO_MIGRATION = '0086_upstream_logo_url.sql';
+const LOGO_MIGRATION_SUFFIX = '_upstream_logo_url.sql';
 
 test('upstream logo migration adds a nullable HTTPS-only URL column', () => {
   const db = new DatabaseSync(':memory:');
   for (const [filename, sql] of migrationSqlByFilename) {
-    if (filename === LOGO_MIGRATION) {
+    if (filename.endsWith(LOGO_MIGRATION_SUFFIX)) {
       db.prepare("INSERT INTO upstreams (id, provider, name, created_at, updated_at, config_json, hue) VALUES ('legacy', 'custom', 'Legacy', '', '', '{}', 210)").run();
     }
     db.exec(sql);
