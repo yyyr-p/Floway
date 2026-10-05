@@ -57,7 +57,8 @@ export const findAliasGraphError = (
         return new ModelAliasGraphError(`Model alias graph exceeds ${MAX_ALIAS_EXPANSION_STEPS} targets: ${chain.join(' -> ')}`, chain);
       }
       const child = aliasesByName.get(target.target_model_id);
-      if (child) {
+      // Same-name targets bind the real model, preserving existing override aliases.
+      if (child && child.name !== alias.name) {
         const error = visit(child);
         if (error) return error;
       }
@@ -98,7 +99,7 @@ export const expandAliasTargets = (
       }
       const rules = mergeAliasRules(inheritedRules, target.rules);
       const child = aliasesByName.get(target.target_model_id);
-      if (child) visit(child, rules, nextPath);
+      if (child?.enabled && child.name !== alias.name) visit(child, rules, nextPath);
       else expanded.push({ targetModelId: target.target_model_id, rules });
     }
   };
