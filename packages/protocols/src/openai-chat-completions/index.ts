@@ -67,6 +67,9 @@ export interface OpenAIChatCompletionsReasoningItem {
   type: 'reasoning';
   id?: string;
   summary?: { type: 'summary_text'; text: string }[];
+  // Responses-compatible Chat carriers keep the upstream opaque reasoning blob intact.
+  // https://github.com/BerriAI/litellm/blob/main/litellm/completion_extras/litellm_responses_transformation/transformation.py#L2629-L2643
+  encrypted_content?: string;
 }
 
 export interface OpenAIChatCompletionsToolCall {

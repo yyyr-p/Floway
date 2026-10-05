@@ -1311,3 +1311,29 @@ test('translateOpenAIResponsesEventToOpenAIChatCompletionsChunks keeps first sca
     ],
   );
 });
+
+test('translateOpenAIResponsesEventToOpenAIChatCompletionsChunks preserves opaque-only reasoning carriers', () => {
+  const state = createOpenAIResponsesToOpenAIChatCompletionsStreamState();
+  const chunks = translateOpenAIResponsesEventToOpenAIChatCompletionsChunks(
+    {
+      type: 'response.output_item.done',
+      output_index: 0,
+      item: {
+        type: 'reasoning',
+        id: 'rs_opaque',
+        summary: [],
+        encrypted_content: 'opaque-upstream-payload',
+      },
+    },
+    state,
+  );
+
+  assertEquals(chunks.map(item => item.choices[0]?.delta), [{
+    reasoning_items: [{
+      type: 'reasoning',
+      id: 'rs_opaque',
+      summary: [],
+      encrypted_content: 'opaque-upstream-payload',
+    }],
+  }]);
+});
