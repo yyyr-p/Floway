@@ -3,6 +3,7 @@ import type { Context } from 'hono';
 import { type CtxWithJson, type CtxWithParam } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import type { UsageLimit, UsageRecord } from '../../repo/types.ts';
+import { usageLimitWindowBounds } from '../../repo/usage-limit-windows.ts';
 import type { usageLimitBody, usageLimitDeleteParams } from '../schemas.ts';
 import { addDecimalStrings, multiplyDecimalStrings } from '@floway-dev/protocols/common';
 
@@ -17,27 +18,12 @@ const TOKEN_METRICS = new Set([
   'output_image_tokens',
 ]);
 
-const boundsFor = (window: UsageLimit['window'], now: Date): { start: string; end: string } => {
-  const hour = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), now.getUTCHours()));
-  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-  const stamp = (date: Date) => date.toISOString().slice(0, 13);
-  const starts = { hour, day, month };
-  const start = starts[window];
-  const end = window === 'hour'
-    ? new Date(start.getTime() + 3_600_000)
-    : window === 'day'
-      ? new Date(start.getTime() + 86_400_000)
-      : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1));
-  return { start: stamp(start), end: stamp(end) };
-};
-
 const summarize = (
   limit: UsageLimit,
   records: readonly UsageRecord[],
   userByKey: ReadonlyMap<string, number>,
 ) => {
-  const { start, end } = boundsFor(limit.window, new Date());
+  const { start, end } = usageLimitWindowBounds(new Date())[limit.window];
   const scoped = records.filter(record => record.hour >= start && record.hour < end && (
     limit.principalType === 'key'
       ? record.keyId === limit.principalId
@@ -74,9 +60,8 @@ export const getUsageLimits = async (c: Context) => {
     repo.users.listIncludingDeleted(),
   ]);
   const now = new Date();
-  const monthStart = boundsFor('month', now).start;
-  const monthEnd = boundsFor('month', new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))).start;
-  const records = await repo.usage.query({ start: monthStart, end: monthEnd });
+  const month = usageLimitWindowBounds(now).month;
+  const records = await repo.usage.query({ start: month.start, end: month.end });
   const userByKey = new Map(keys.map(key => [key.id, key.userId]));
   return c.json({
     limits: limits.map(limit => summarize(limit, records, userByKey)),
