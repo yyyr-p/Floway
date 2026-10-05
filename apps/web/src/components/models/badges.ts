@@ -11,11 +11,10 @@ export type ModelBadge =
   | { key: string; kind: 'selection'; selection: 'random' | 'first-available' }
   | { key: string; kind: 'rule'; field: AliasRuleBadgeField; value: AliasRuleBadge['value'] | null; varies: boolean };
 
-// Not the app's compact formatter, which renders 128K and 12.8万 under zh-Hans;
-// a spec is quoted as its documentation writes it.
+// Token limit labels use base-1000 suffixes independent of the active locale.
 const formatTokenLimit = (count: number): string => {
   if (count >= 1_000_000) return `${(count / 1_000_000).toFixed(count % 1_000_000 === 0 ? 0 : 1)}M`;
-  if (count >= 1_000) return `${(count / 1_000).toFixed(count % 1_000 === 0 ? 0 : 1)}k`;
+  if (count >= 1_000) return `${(count / 1_000).toFixed(count % 1_000 === 0 ? 0 : 1)}K`;
   return String(count);
 };
 
