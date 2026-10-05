@@ -20,8 +20,7 @@ CLIProxyAPI 中与 Google 相关的上游有 4 条线:
 
 常量(constants.go):
 
-- ClientID: `<ANTIGRAVITY-OAUTH-CLIENT-ID-SEE-UPSTREAM-constants.go>`
-- ClientSecret: `<ANTIGRAVITY-OAUTH-CLIENT-SECRET-SEE-UPSTREAM-constants.go>`
+- ClientID / ClientSecret:CLIProxyAPI 硬编码的 Antigravity 专用 OAuth 客户端对,字段名即字面含义,完整字面值见上游 `internal/auth/antigravity/constants.go`(https://github.com/router-for-me/CLIProxyAPI/blob/main/internal/auth/antigravity/constants.go)。GitHub 会凭 Google OAuth 客户端字面值拦截 push,故本笔记不落其字面值
 - CallbackPort: 51121,redirect URI `http://localhost:51121/oauth-callback`
 - Scopes: `cloud-platform`, `userinfo.email`, `userinfo.profile`, `cclog`, `experimentsandconfigs`
 - OAuth endpoints:标准的 Google OAuth(accounts.google.com / oauth2.googleapis.com/token),userinfo 走 `https://www.googleapis.com/oauth2/v2/userinfo?alt=json`
