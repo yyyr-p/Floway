@@ -7,6 +7,7 @@ import { AGENT_SETUP_ROUTE_PATH, agentSetupPublicRoutes } from './control-plane/
 import { controlPlaneRoutes } from './control-plane/routes.ts';
 import { mountDataPlane } from './data-plane/routes.ts';
 import { type AuthVars, authMiddleware } from './middleware/auth.ts';
+import { hardConcurrencyLimitMiddleware } from './middleware/hard-concurrency-limit.ts';
 import { internalErrorResponse } from './middleware/internal-error-response.ts';
 
 // `app` is a single chained expression so its type carries the full path/method
@@ -27,6 +28,7 @@ export const app = new Hono<{ Variables: AuthVars }>()
   .use('*', logger())
   .use('*', cors())
   .use('*', authMiddleware)
+  .use('*', hardConcurrencyLimitMiddleware)
   .route('/', controlPlaneRoutes);
 
 mountDataPlane(app);
