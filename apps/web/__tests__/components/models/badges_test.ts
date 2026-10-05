@@ -12,8 +12,8 @@ describe('model badges', () => {
       limits: { max_context_window_tokens: 1_000_000, max_prompt_tokens: 1_500, max_output_tokens: 64_000 },
     }), indexCatalog([]), null)).toEqual([
       { key: 'limit:context', kind: 'limit', limit: 'context', value: '1M' },
-      { key: 'limit:prompt', kind: 'limit', limit: 'prompt', value: '1.5k' },
-      { key: 'limit:output', kind: 'limit', limit: 'output', value: '64k' },
+      { key: 'limit:prompt', kind: 'limit', limit: 'prompt', value: '1.5K' },
+      { key: 'limit:output', kind: 'limit', limit: 'output', value: '64K' },
     ]);
     expect(modelBadges(catalogModel('m', { upstreams: ['a'] }), indexCatalog([]), null)).toEqual([]);
   });

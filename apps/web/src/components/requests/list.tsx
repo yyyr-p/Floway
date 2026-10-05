@@ -18,7 +18,7 @@ import type { ApiKey } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
 import { formatDuration } from '../../lib/format-duration';
-import { formatBytes, formatCompactCount } from '../../lib/format-number';
+import { formatBytes, formatCompactTokenCount } from '../../lib/format-number';
 import { dateTime, relativeTime, shortDate } from '../../lib/format-time';
 import { NO_READING } from '../../lib/no-reading';
 import { useLocale } from '../../lib/use-locale';
@@ -294,7 +294,7 @@ function RequestRowContent({ exportIds, onToggleExport, addressOfRecord, index, 
                 {measureRef => <Text size={200} className={mergeClasses('ml-auto', s.error)} ref={measureRef} truncate wrap={false}>{rowError}</Text>}
               </TruncationTooltip>
             : <Text size={200} className="ml-auto text-fui-fg3" truncate wrap={false}>
-                {tokens === null ? NO_READING : `${formatCompactCount(tokens, locale)} tok`}
+                {tokens === null ? NO_READING : `${formatCompactTokenCount(tokens, locale)} tok`}
               </Text>}
         </div>
       </a>
