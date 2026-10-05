@@ -159,6 +159,7 @@ const upstreamWireSchema = parsedBy((value): UpstreamRecord => {
     id,
     kind,
     name: parseValue(nonEmptyStringSchema('name'), wire.name),
+    userVisible: parseValue(z.boolean().optional().default(false), wire.user_visible),
     enabled,
     sortOrder,
     createdAt: parseValue(nonEmptyStringSchema('created_at'), wire.created_at),

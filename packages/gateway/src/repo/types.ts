@@ -5,7 +5,7 @@ import type { PerformanceTelemetryContext, UpstreamModelsCache, UpstreamRecord }
 
 // Provider config, flag overrides, and catalog transport advance this version;
 // runtime state and non-model metadata do not.
-export type StoredUpstreamRecord = UpstreamRecord & { configVersion: number };
+export type StoredUpstreamRecord = UpstreamRecord & { configVersion: number; userVisible: boolean };
 
 export interface ApiKey {
   id: string;

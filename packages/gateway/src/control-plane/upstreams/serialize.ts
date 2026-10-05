@@ -20,6 +20,7 @@ const hasSecret = (value: string | undefined | null): boolean => typeof value ==
 const serializeBase = (upstream: UpstreamRecord) => ({
   id: upstream.id,
   name: upstream.name,
+  user_visible: upstream.userVisible ?? false,
   enabled: upstream.enabled,
   sort_order: upstream.sortOrder,
   created_at: upstream.createdAt,
@@ -183,6 +184,7 @@ export const upstreamRecordToFullJson = (upstream: UpstreamRecord): FullSerializ
 const blueprintBase = (kind: UpstreamProviderKind) => ({
   id: '',
   name: '',
+  user_visible: false,
   enabled: false,
   sort_order: 0,
   created_at: '',
