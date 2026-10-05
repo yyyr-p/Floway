@@ -1135,7 +1135,12 @@ test('import trims every formerly normalized non-empty string field', async () =
 
 test('import retains optional defaults from the v26 wire contract', async () => {
   const { app, repo } = setup();
-  const { disabled_public_model_ids: _disabled, model_prefix: _prefix, ...upstream } = upstreamRecordToFullJson(CUSTOM_UPSTREAM);
+  const {
+    disabled_public_model_ids: _disabled,
+    model_prefix: _prefix,
+    model_metadata_defaults: _metadataDefaults,
+    ...upstream
+  } = upstreamRecordToFullJson(CUSTOM_UPSTREAM);
   const result = await doImport(app, 'replace', latestImportData({
     apiKeys: [{ ...KEY_A, dumpRetentionSeconds: undefined }],
     upstreams: [upstream],
@@ -1145,6 +1150,27 @@ test('import retains optional defaults from the v26 wire contract', async () => 
   assertEquals((await repo.apiKeys.listIncludingDeleted())[0].dumpRetentionSeconds, null);
   assertEquals((await repo.upstreams.list())[0].disabledPublicModelIds, []);
   assertEquals((await repo.upstreams.list())[0].modelPrefix, null);
+  assertEquals((await repo.upstreams.list())[0].modelMetadataDefaults, undefined);
+});
+
+test('upstream metadata defaults round-trip through full backup import', async () => {
+  const { app, repo } = setup();
+  const metadataDefaults = {
+    limits: { max_context_window_tokens: 0 },
+    chat: { image_detail_original: false, reasoning: { mandatory: false } },
+  };
+  const upstream = {
+    ...upstreamRecordToFullJson(CUSTOM_UPSTREAM),
+    model_metadata_defaults: metadataDefaults,
+  };
+  const result = await doImport(app, 'replace', latestImportData({ upstreams: [upstream] }));
+
+  assertEquals(result.status, 200);
+  assertEquals((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))?.modelMetadataDefaults, metadataDefaults);
+  assertEquals(upstreamRecordToFullJson((await repo.upstreams.getById(CUSTOM_UPSTREAM.id))!), {
+    ...upstreamRecordToFullJson(CUSTOM_UPSTREAM),
+    model_metadata_defaults: metadataDefaults,
+  });
 });
 
 test('positive-integer import fields preserve Number.isInteger semantics', async () => {

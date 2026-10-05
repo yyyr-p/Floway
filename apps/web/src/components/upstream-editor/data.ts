@@ -9,7 +9,7 @@ import type {
   UpstreamRecordEnvelope,
 } from '../../api/types';
 import type { UpstreamProviderKind } from '@floway-dev/provider/model';
-import type { UpstreamModelConfig } from '@floway-dev/provider/model-config';
+import { modelMetadataDefaultsField, type ModelMetadataDefaults, type UpstreamModelConfig } from '@floway-dev/provider/model-config';
 import { MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX } from '@floway-dev/provider/model-prefix';
 
 type CreateUpstreamBody = InferRequestType<typeof api.api.upstreams.$post>['json'];
@@ -67,6 +67,7 @@ export interface UpstreamEditorValues {
   hue: UpstreamRecord['hue'];
   proxyFallbackList: UpstreamRecord['proxy_fallback_list'];
   modelPrefix: UpstreamRecord['model_prefix'];
+  modelMetadataDefaults: string;
   disabledPublicModelIds: string[];
   flagOverrides: UpstreamRecord['flag_overrides'];
   config: UpstreamRecord['config'];
@@ -210,12 +211,18 @@ export const valuesFromRecord = (record: UpstreamRecord): UpstreamEditorValues =
     hue: record.hue,
     proxyFallbackList: structuredClone(record.proxy_fallback_list).map(entry => withRegisteredKey('colos', entry)),
     modelPrefix: structuredClone(record.model_prefix),
+    modelMetadataDefaults: JSON.stringify(record.model_metadata_defaults ?? {}, null, 2),
     disabledPublicModelIds: [...record.disabled_public_model_ids],
     flagOverrides: record.flag_overrides,
     config,
     state: structuredClone(record.state),
     manualModels,
   };
+};
+
+export const parseModelMetadataDefaults = (value: string): ModelMetadataDefaults => {
+  const parsed: unknown = value.trim() === '' ? {} : JSON.parse(value);
+  return modelMetadataDefaultsField(parsed, 'model_metadata_defaults') ?? {};
 };
 
 // The editor holds one flat form model for every provider kind, so the config
@@ -263,6 +270,7 @@ export const previewRecord = (record: UpstreamRecord, values: UpstreamEditorValu
     state: values.state,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
+    model_metadata_defaults: parseModelMetadataDefaults(values.modelMetadataDefaults),
     disabled_public_model_ids: values.disabledPublicModelIds,
     flag_overrides: values.flagOverrides,
   };
@@ -280,6 +288,7 @@ export const createBody = (record: UpstreamRecord, values: UpstreamEditorValues,
     disabled_public_model_ids: values.disabledPublicModelIds,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
+    model_metadata_defaults: parseModelMetadataDefaults(values.modelMetadataDefaults),
     config: configFromValues(record, values, options),
     ...((record.kind === 'copilot' || record.kind === 'codex' || record.kind === 'claude-code')
       ? { state: values.state }
@@ -296,6 +305,7 @@ export const updateBody = (record: UpstreamRecord, values: UpstreamEditorValues)
     disabled_public_model_ids: values.disabledPublicModelIds,
     proxy_fallback_list: values.proxyFallbackList,
     model_prefix: values.modelPrefix,
+    model_metadata_defaults: parseModelMetadataDefaults(values.modelMetadataDefaults),
     ...(manualModelsSupported(record) ? { config: configFromValues(record, values) } : {}),
   } as UpdateUpstreamBody;
 };
