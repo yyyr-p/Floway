@@ -160,7 +160,7 @@ migration and legacy-snapshot import preserve that count as unknown, which
 blocks cost-limited admission until the affected window rolls forward. New
 records and backup round trips retain exact unmetered request counts. Policy
 denials use protocol-shaped HTTP 429 responses; a limit-ledger storage failure
-returns HTTP 503. Backup exports use version 26 and include configured limits.
+returns HTTP 503. Backup exports use version 21 and include configured limits.
 
 ## Other Deployment Options
 
