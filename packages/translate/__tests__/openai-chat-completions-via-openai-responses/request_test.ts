@@ -266,7 +266,7 @@ test('buildTargetRequest rejects an unknown message role', () => {
 });
 
 test('buildTargetRequest forwards every OpenAI reasoning_effort string onto the native slot', () => {
-  for (const effort of ['none', 'low', 'medium', 'high', 'xhigh', 'max', 'future_effort']) {
+  for (const effort of ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'future_effort']) {
     const result = buildTargetRequest({
       model: 'gpt-test',
       messages: [{ role: 'user', content: 'hi' }],
