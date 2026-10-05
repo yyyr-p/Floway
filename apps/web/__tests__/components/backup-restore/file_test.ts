@@ -11,6 +11,7 @@ const data = {
   upstreams: [],
   proxies: [],
   usage: [],
+  usageLimits: [],
   searchUsage: [],
   performanceIncluded: false,
   searchConfig: null,

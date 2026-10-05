@@ -13,7 +13,7 @@ import { createAlias, deleteAlias, listAliases, updateAlias } from './model-alia
 import { controlPlaneModels } from './models/routes.ts';
 import { performanceOverview } from './performance/routes.ts';
 import { createProxy, deleteProxy, listAllBackoffs, listProxies, listProxyBackoffs, resetProxyBackoffs, testProxy, updateProxy } from './proxies/routes.ts';
-import { authLoginBody, changeOwnPasswordBody, claudeCodeOAuthAuthorizeUrlBody, claudeCodeOAuthExchangeBody, claudeCodeOAuthRefreshBody, claudeCodeProbeBody, claudeCodeSetupTokenAuthorizeUrlBody, claudeCodeSetupTokenExchangeBody, codexImportExchangeBody, codexImportPreviewBody, codexOAuthAuthorizeUrlBody, codexOAuthRefreshBody, codexRateLimitResetConsumeBody, codexRateLimitResetCreditsBody, copilotOAuthDeviceLoginPollBody, copilotOAuthDeviceLoginStartBody, copilotQuotaBody, createAliasBody, createKeyBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, importBody, modelsQuery, ollamaUsageBody, performanceQuery, previewModelsBody, resetBackoffBody, rotateKeyBody, testProxyBody, tokenUsageOverviewQuery, tokenUsageQuery, updateAliasBody, updateKeyBody, updateProxyBody, updateUpstreamBody, updateUserBody, webSearchConfigSchema, webSearchUsageQuery } from './schemas.ts';
+import { authLoginBody, changeOwnPasswordBody, claudeCodeOAuthAuthorizeUrlBody, claudeCodeOAuthExchangeBody, claudeCodeOAuthRefreshBody, claudeCodeProbeBody, claudeCodeSetupTokenAuthorizeUrlBody, claudeCodeSetupTokenExchangeBody, codexImportExchangeBody, codexImportPreviewBody, codexOAuthAuthorizeUrlBody, codexOAuthRefreshBody, codexRateLimitResetConsumeBody, codexRateLimitResetCreditsBody, copilotOAuthDeviceLoginPollBody, copilotOAuthDeviceLoginStartBody, copilotQuotaBody, createAliasBody, createKeyBody, createProxyBody, createUpstreamBody, createUserBody, exportQuery, importBody, modelsQuery, ollamaUsageBody, performanceQuery, previewModelsBody, resetBackoffBody, rotateKeyBody, testProxyBody, tokenUsageOverviewQuery, tokenUsageQuery, updateAliasBody, updateKeyBody, updateProxyBody, updateUpstreamBody, updateUserBody, webSearchConfigSchema, webSearchUsageQuery, usageLimitBody, usageLimitDeleteParams } from './schemas.ts';
 import { getWebSearchConfigRoute, putWebSearchConfigRoute, testWebSearchConfigRoute } from './search-config/routes.ts';
 import { webSearchUsage } from './search-usage/routes.ts';
 import { tokenUsageOverview } from './token-usage/overview.ts';
@@ -27,6 +27,7 @@ import { createUpstream, deleteUpstream, getUpstream, getUpstreamBlueprint, list
 import { changeOwnPassword, createUser, deleteUser, listOwnOAuth2Accounts, listUserOAuth2Accounts, listUsers, unlinkOwnOAuth2Account, unlinkUserOAuth2Account, updateUsersUpstreamAccess, updateUser } from './users/routes.ts';
 import { createUserBodyExtended, updateUserBodyExtended } from './users/schema.ts';
 import { updateUsersUpstreamAccessBody } from './users/upstream-access-schemas.ts';
+import { deleteUsageLimit, getUsageLimits, saveUsageLimit } from './usage-limits/routes.ts';
 import { type AuthedContext, type AuthVars, userFromContext } from '../middleware/auth.ts';
 import { zValidator } from '../middleware/zod-validator.ts';
 import { getRuntimeInfo } from '../runtime/runtime-info.ts';
@@ -147,6 +148,9 @@ export const controlPlaneRoutes = new Hono<{ Variables: AuthVars }>()
     .get('/search-config', getWebSearchConfigRoute)
     .put('/search-config', zValidator('json', webSearchConfigSchema), putWebSearchConfigRoute)
     .post('/search-config/test', zValidator('json', webSearchConfigSchema), testWebSearchConfigRoute)
+    .get('/usage-limits', getUsageLimits)
+    .put('/usage-limits', zValidator('json', usageLimitBody), saveUsageLimit)
+    .delete('/usage-limits/:principalType/:principalId/:window', zValidator('param', usageLimitDeleteParams), deleteUsageLimit)
     .get('/export', zValidator('query', exportQuery), exportData)
     .post('/import', zValidator('json', importBodyExtended), importData));
 

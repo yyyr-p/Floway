@@ -15,7 +15,7 @@ import { notifyDisabledBestEffort } from '../../dump/registry.ts';
 import { type CtxWithJson, type CtxWithQuery } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { DIRECT_FALLBACK_IDS } from '../../repo/proxy-fallback-list.ts';
-import type { ApiKey, OAuth2Account, OAuth2Provider, OAuth2Settings, PerformanceTelemetryRecord, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
+import type { ApiKey, OAuth2Account, OAuth2Provider, OAuth2Settings, PerformanceTelemetryRecord, UsageLimit, UsageRecord, User, WebSearchUsageRecord } from '../../repo/types.ts';
 import { type exportQuery } from '../schemas.ts';
 import { type importBodyExtended } from './schema.ts';
 import { saveUpstreams } from '../shared/save-upstreams.ts';
@@ -34,6 +34,7 @@ interface ExportPayload {
     upstreams: FullSerializedUpstreamRecord[];
     proxies: SerializedProxy[];
     usage: UsageRecord[];
+    usageLimits: UsageLimit[];
     searchUsage: WebSearchUsageRecord[];
     performance?: PerformanceTelemetryRecord[];
     performanceIncluded: boolean;
@@ -104,13 +105,14 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
   const repo = getRepo();
   const includePerformance = c.req.valid('query').include_performance === '1';
 
-  const [users, oauth2Accounts, oauth2Settings, oauth2Providers, apiKeys, usage, webSearchUsage, performance, rawWebSearchConfig, upstreams, proxies] = await Promise.all([
+  const [users, oauth2Accounts, oauth2Settings, oauth2Providers, apiKeys, usage, usageLimits, webSearchUsage, performance, rawWebSearchConfig, upstreams, proxies] = await Promise.all([
     repo.users.listIncludingDeleted(),
     repo.oauth2.listAccounts(),
     repo.oauth2Config.getSettings(),
     repo.oauth2Config.listProviders(),
     repo.apiKeys.listIncludingDeleted(),
     repo.usage.listAll(),
+    repo.usageLimits.list(),
     repo.webSearchUsage.listAll(),
     includePerformance ? repo.performance.listAll() : Promise.resolve([]),
     repo.webSearchConfig.get(),
@@ -130,6 +132,7 @@ export const exportData = async (c: CtxWithQuery<typeof exportQuery>) => {
       upstreams: upstreams.map(upstreamRecordToFullJson),
       proxies: proxies.map(proxy => ({ id: proxy.id, name: proxy.name, url: proxy.url, dial_timeout_seconds: proxy.dialTimeoutSeconds })),
       usage,
+      usageLimits,
       searchUsage: webSearchUsage,
       performanceIncluded: includePerformance,
       searchConfig: rawWebSearchConfig === null ? parseWebSearchConfigDefault() : parseWebSearchConfigStrict(rawWebSearchConfig),
@@ -144,7 +147,7 @@ export const importData = async (c: CtxWithJson<typeof importBodyExtended>) => {
   const { mode, data: rawData } = c.req.valid('json');
   const parsed = parseImportData(rawData);
   if (parsed.type === 'invalid') return c.json({ error: parsed.error }, 400);
-  const { users, oauth2Accounts, oauth2Settings, oauth2Providers, apiKeys, upstreams, proxies, usage, searchUsage, performance, performanceIncluded, searchConfig } = parsed.data;
+  const { users, oauth2Accounts, oauth2Settings, oauth2Providers, apiKeys, upstreams, proxies, usage, usageLimits, searchUsage, performance, performanceIncluded, searchConfig } = parsed.data;
 
   const repo = getRepo();
   // Merge mode needs each key's prior dump policy to identify transitions that
@@ -172,6 +175,7 @@ export const importData = async (c: CtxWithJson<typeof importBodyExtended>) => {
       repo.sessions.deleteAll(),
       repo.apiKeys.deleteAll(),
       repo.usage.deleteAll(),
+      repo.usageLimits.deleteAll(),
       repo.webSearchUsage.deleteAll(),
       repo.upstreams.deleteAll(),
       repo.proxies.deleteAll(),
@@ -205,6 +209,7 @@ export const importData = async (c: CtxWithJson<typeof importBodyExtended>) => {
     }
   }
   for (const record of usage) await repo.usage.set(record);
+  for (const limit of usageLimits) await repo.usageLimits.save(limit);
   for (const record of searchUsage) await repo.webSearchUsage.set(record);
   await saveUpstreams(await Promise.all(upstreams.map(async next => ({
     previous: await repo.upstreams.getById(next.id),
@@ -223,6 +228,7 @@ export const importData = async (c: CtxWithJson<typeof importBodyExtended>) => {
       upstreams: upstreams.length,
       proxies: proxies.length,
       usage: usage.length,
+      usageLimits: usageLimits.length,
       searchUsage: searchUsage.length,
       performance: performance.length,
     },

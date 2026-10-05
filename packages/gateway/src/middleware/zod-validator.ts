@@ -39,3 +39,4 @@ export const zValidator = <T extends ZodType, Target extends keyof ValidationTar
 // case (the router never matches a `:id` route without the param).
 export type CtxWithJson<S extends ZodType, Path extends string = string> = Context<{ Variables: AuthVars }, Path, { in: { json: z.infer<S> }; out: { json: z.infer<S> } }>;
 export type CtxWithQuery<S extends ZodType, Path extends string = string> = Context<{ Variables: AuthVars }, Path, { in: { query: z.infer<S> }; out: { query: z.infer<S> } }>;
+export type CtxWithParam<S extends ZodType, Path extends string = string> = Context<{ Variables: AuthVars }, Path, { in: { param: z.infer<S> }; out: { param: z.infer<S> } }>;
