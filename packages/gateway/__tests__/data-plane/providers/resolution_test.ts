@@ -4,6 +4,8 @@ import { MODEL_CATALOG_REVISION } from '../../../src/data-plane/providers/models
 import { listModelProviders } from '../../../src/data-plane/providers/registry.ts';
 import { enumerateModelCandidates, enumerateRealModelCandidates } from '../../../src/data-plane/providers/resolution.ts';
 import { createModelsRefreshScheduler, modelsRefreshTarget, refreshModelsExplicit } from '../../../src/execution/models-refresh.ts';
+import { expandAliasTargets, MAX_ALIAS_EXPANSION_STEPS } from '../../../src/model-aliases/graph.ts';
+import type { ModelAliasRecord } from '../../../src/repo/types.ts';
 import { saveUpstreamForTest } from '../../repo/upstreams.ts';
 import { buildCustomUpstreamRecord, copilotModels, setupAppTest, warmModelsForTest } from '../../test-utils/app.ts';
 import { directFetcher, type InternalModel, type ProviderModel } from '@floway-dev/provider';
@@ -26,6 +28,20 @@ const testScheduler = (promise: Promise<unknown>): void => {
   promise.catch(err => console.error('[background]', err));
 };
 const scheduleRefresh = createModelsRefreshScheduler('TEST', testScheduler);
+
+const graphAlias = (name: string, targets: ModelAliasRecord['targets']): ModelAliasRecord => ({
+  id: `alias_${name}`,
+  name,
+  kind: 'chat',
+  selection: 'first-available',
+  displayName: null,
+  visibleInModelsList: true,
+  targets,
+  announcedMetadata: null,
+  sortOrder: 1,
+  createdAt: '2026-01-01T00:00:00.000Z',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+});
 
 test('a cold candidate read schedules refresh without waiting for upstream I/O', async () => {
   const { repo } = await setupAppTest();
@@ -765,5 +781,70 @@ describe('enumerateModelCandidates alias walk (flat + dedup)', () => {
         assertEquals(resolved.candidates[0]!.rules?.verbosity, 'high');
       },
     );
+  });
+
+  test('recursively resolves nested aliases and lets inner rule values override outer values', async () => {
+    const { repo } = await setupAppTest();
+    await seedUpstreams(repo);
+    await repo.modelAliases.insert(graphAlias('inner', [
+      { target_model_id: 'gpt-5', rules: { reasoning: { effort: 'high' } } },
+    ]));
+    await repo.modelAliases.insert(graphAlias('outer', [
+      { target_model_id: 'inner', rules: { reasoning: { effort: 'low', summary: 'concise' }, verbosity: 'low' } },
+    ]));
+
+    await withMockedFetch(
+      buildCatalogFetch({ up_a: ['gpt-5'], up_b: [] }),
+      async () => {
+        const resolved = await enumerateModelCandidates({
+          upstreamIds: null, model: 'outer', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+        });
+        expect(resolved.candidates).toHaveLength(1);
+        expect(resolved.candidates[0]!.model.id).toBe('gpt-5');
+        expect(resolved.candidates[0]!.rules).toEqual({
+          reasoning: { effort: 'high', summary: 'concise' },
+          verbosity: 'low',
+        });
+      },
+    );
+  });
+
+  test('reports a self-referential alias instead of recursing forever', async () => {
+    const { repo } = await setupAppTest();
+    await repo.modelAliases.insert(graphAlias('self', [
+      { target_model_id: 'self', rules: {} },
+    ]));
+
+    await expect(enumerateModelCandidates({
+      upstreamIds: null, model: 'self', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+    })).rejects.toThrow('Model alias cycle detected: self -> self');
+  });
+
+  test('reports the complete reachable alias cycle chain', async () => {
+    const { repo } = await setupAppTest();
+    await repo.modelAliases.insert(graphAlias('cycle-a', [{ target_model_id: 'cycle-b', rules: {} }]));
+    await repo.modelAliases.insert(graphAlias('cycle-b', [{ target_model_id: 'cycle-c', rules: {} }]));
+    await repo.modelAliases.insert(graphAlias('cycle-c', [{ target_model_id: 'cycle-a', rules: {} }]));
+
+    await expect(enumerateModelCandidates({
+      upstreamIds: null, model: 'cycle-a', kind: 'chat', scheduler: testScheduler, runtimeLocation: 'TEST',
+    })).rejects.toThrow('Model alias cycle detected: cycle-a -> cycle-b -> cycle-c -> cycle-a');
+  });
+
+  test('bounds expansion of a branching alias DAG', () => {
+    let child = graphAlias('leaf-alias', [{ target_model_id: 'real-model', rules: {} }]);
+    const records = [child];
+    for (let index = 0; index < 12; index++) {
+      const parent = graphAlias(`branch-${index}`, [
+        { target_model_id: child.name, rules: {} },
+        { target_model_id: child.name, rules: {} },
+      ]);
+      records.push(parent);
+      child = parent;
+    }
+    const aliasesByName = new Map(records.map(alias => [alias.name, alias]));
+
+    expect(() => expandAliasTargets(child, aliasesByName, alias => alias.targets))
+      .toThrow(`Model alias graph exceeds ${MAX_ALIAS_EXPANSION_STEPS} targets`);
   });
 });

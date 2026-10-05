@@ -226,6 +226,35 @@ test('POST /api/aliases rejects an empty target_model_id with 400', async () => 
   assertEquals(resp.status, 400);
 });
 
+test('POST /api/aliases rejects a self-referential target', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+
+  const resp = await requestApp('/api/aliases', authed(adminSession, baseBody({
+    name: 'self',
+    targets: [{ target_model_id: 'self', rules: {} }],
+  })));
+  assertEquals(resp.status, 400);
+  const body = (await resp.json()) as { error?: string };
+  assertEquals(body.error, 'Model alias cycle detected: self -> self');
+});
+
+test('PUT /api/aliases/:id rejects an update that closes a nested alias cycle', async () => {
+  const { repo, adminSession } = await setupAppTest();
+  await repo.modelAliases.deleteAll();
+  const outer = await createAlias(adminSession, { name: 'outer' });
+  await createAlias(adminSession, { name: 'inner', targets: [{ target_model_id: 'outer', rules: {} }] });
+
+  const resp = await requestApp(`/api/aliases/${outer.id}`, putAuthed(adminSession, baseBody({
+    name: 'outer',
+    targets: [{ target_model_id: 'inner', rules: {} }],
+  })));
+  assertEquals(resp.status, 400);
+  const body = (await resp.json()) as { error?: string };
+  assertEquals(body.error, 'Model alias cycle detected: outer -> inner -> outer');
+  assertEquals((await repo.modelAliases.getByName('outer'))?.targets[0]?.target_model_id, 'gpt-5.4');
+});
+
 test('POST /api/aliases rejects non-empty rules on kind=embedding with 400', async () => {
   const { repo, adminSession } = await setupAppTest();
   await repo.modelAliases.deleteAll();
