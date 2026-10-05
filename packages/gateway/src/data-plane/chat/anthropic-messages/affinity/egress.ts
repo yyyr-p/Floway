@@ -20,27 +20,26 @@ export const wrapAnthropicMessagesAffinityEgress = async function* (
   frames: AsyncIterable<ProtocolFrame<AnthropicMessagesStreamEvent>>,
   options: AffinityEgressOptions,
 ): AsyncGenerator<ProtocolFrame<AnthropicMessagesStreamEvent>> {
-  // Anthropic Messages exposes real block boundaries. A first block that cannot carry a
-  // signature is shifted behind one redacted prefix; thinking stays visible
-  // while only its latest signature waits for content_block_stop.
+  // Native signatures wait for content_block_stop. Unsigned thinking gets
+  // a separate routing block so replay never mistakes a marker for a signature.
   const openBlocks = new Map<number, OpenBlock>();
   let syntheticPrefixEmitted = false;
   let firstBlockSeen = false;
   let indexOffset = 0;
 
-  const syntheticEvents = async (): Promise<AnthropicMessagesStreamEvent[]> => {
+  const syntheticEvents = async (index = 0): Promise<AnthropicMessagesStreamEvent[]> => {
     if (syntheticPrefixEmitted) return [];
     syntheticPrefixEmitted = true;
     return [
       {
         type: 'content_block_start',
-        index: 0,
+        index,
         content_block: {
           type: 'redacted_thinking',
           data: await options.codec.wrap(undefined, options.affinity, 'anthropic-messages.redacted_thinking.data'),
         },
       },
-      { type: 'content_block_stop', index: 0 },
+      { type: 'content_block_stop', index },
     ];
   };
 
@@ -48,17 +47,7 @@ export const wrapAnthropicMessagesAffinityEgress = async function* (
     index: number,
     block: OpenBlock,
   ): Promise<AnthropicMessagesStreamEvent | null> => {
-    if (block.signatureEvent === undefined && (!block.first || block.type !== 'thinking')) return null;
-    if (block.signatureEvent === undefined) {
-      return {
-        type: 'content_block_delta',
-        index: index + indexOffset,
-        delta: {
-          type: 'signature_delta',
-          signature: await options.codec.wrap(undefined, options.affinity, 'anthropic-messages.thinking.signature'),
-        },
-      };
-    }
+    if (block.signatureEvent === undefined) return null;
     const { index: _index, delta, ...eventExtras } = block.signatureEvent;
     const { signature, ...deltaExtras } = delta;
     return {
@@ -140,6 +129,10 @@ export const wrapAnthropicMessagesAffinityEgress = async function* (
         openBlocks.delete(event.index);
       }
       yield eventFrame({ ...event, index: event.index + indexOffset });
+      if (block?.first && block.type === 'thinking' && block.signatureEvent === undefined) {
+        for (const synthetic of await syntheticEvents(event.index + 1)) yield eventFrame(synthetic);
+        indexOffset = 1;
+      }
       continue;
     }
 
@@ -149,6 +142,7 @@ export const wrapAnthropicMessagesAffinityEgress = async function* (
     }
 
     if (event.type === 'message_delta' && event.delta.stop_reason != null) {
+      await options.onSuccess?.();
       yield* flushOpenSignatures();
       if (!firstBlockSeen) for (const synthetic of await syntheticEvents()) yield eventFrame(synthetic);
       yield frame;
@@ -156,6 +150,7 @@ export const wrapAnthropicMessagesAffinityEgress = async function* (
     }
 
     if (event.type === 'message_stop') {
+      await options.onSuccess?.();
       yield* flushOpenSignatures();
       if (!firstBlockSeen) for (const synthetic of await syntheticEvents()) yield eventFrame(synthetic);
       yield frame;

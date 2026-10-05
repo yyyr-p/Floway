@@ -9,6 +9,7 @@ const record: ModelAliasRecord = {
   name: 'codex-auto-review',
   kind: 'chat',
   selection: 'first-available',
+  fallbackPolicy: 'configured',
   displayName: 'Codex Auto Review',
   visibleInModelsList: true,
   targets: [

@@ -188,7 +188,7 @@ describe('affinity blob projection', () => {
   test('removes originless metadata without degradation', () => {
     const originless = ownedBlob(targetFor(exact));
     expect(projectOptionalAffinityBlob(originless, exact)).toEqual({ kind: 'remove', degrades: false, preferred: true });
-    expect(projectOptionalAffinityBlob(originless, other)).toEqual({ kind: 'remove', degrades: false, preferred: true });
+    expect(projectOptionalAffinityBlob(originless, other)).toEqual({ kind: 'remove', degrades: false, preferred: false });
     expect(projectRequiredAffinityBlob(originless, samePhysicalTarget)).toEqual({ kind: 'remove', degrades: false, preferred: true });
   });
 

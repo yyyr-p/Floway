@@ -2,7 +2,7 @@ import { createOpenAIResponsesStorageKey, hashOpenAIResponsesItem, openaiRespons
 import { getRepo } from '../../../../repo/index.ts';
 import { assertSameStoredOpenAIResponsesItem, cloneStoredOpenAIResponsesItem, cloneStoredOpenAIResponsesSnapshot, compareOpenAIResponsesItemsByFreshness, scopedOpenAIResponsesKey } from '../../../../repo/openai-responses-clone.ts';
 import { quantizeOpenAIResponsesRefreshedAt, openaiResponsesStateCutoff } from '../../../../repo/openai-responses-retention.ts';
-import type { ApiKey, Repo, StoredOpenAIResponsesItem, StoredOpenAIResponsesSnapshot } from '../../../../repo/types.ts';
+import type { ApiKey, ConversationRoute, Repo, StoredOpenAIResponsesItem, StoredOpenAIResponsesSnapshot } from '../../../../repo/types.ts';
 import type { OpenAIResponsesInputItem } from '@floway-dev/protocols/openai-responses';
 
 interface OpenAIResponsesStatefulItemLookup {
@@ -30,12 +30,13 @@ type OpenAIResponsesSnapshotMode = 'append' | 'replace';
 export interface OpenAIResponsesStatefulStore {
   readonly apiKeyId: string;
   readonly writesState: boolean;
+  readonly previousRoute?: ConversationRoute;
   loadSnapshot(id: string): Promise<StoredOpenAIResponsesSnapshot | null>;
   loadInputItems(sourceItems: readonly OpenAIResponsesInputItem[], inputItemsToStage: readonly OpenAIResponsesInputItem[]): Promise<void>;
   getItemById(id: string): StoredOpenAIResponsesItem | undefined;
   stageInputItems(items: readonly OpenAIResponsesInputItem[]): Promise<void>;
   persistOutputItem(row: StoredOpenAIResponsesItem): Promise<void>;
-  commitSnapshot(responseId: string, mode: OpenAIResponsesSnapshotMode, outputItemIds: readonly string[]): Promise<void>;
+  commitSnapshot(responseId: string, mode: OpenAIResponsesSnapshotMode, outputItemIds: readonly string[], route?: ConversationRoute): Promise<void>;
   // Per-attempt transient state. `beginAttempt` reseeds the private-payload
   // scratchpad from hydrated items; interceptors can add server-only state
   // during the turn and output capture persists it with the exact wire item.
@@ -48,6 +49,7 @@ export class LayeredOpenAIResponsesStatefulStore implements OpenAIResponsesState
   private readonly loadedItems = new Map<string, StoredOpenAIResponsesItem>();
   private readonly loadedByItemHash = new Map<string, StoredOpenAIResponsesItem>();
   private readonly stagedInputItemIds: string[] = [];
+  previousRoute?: ConversationRoute;
   private previousSnapshotItemIds: string[] = [];
   private readonly committedItemIds = new Set<string>();
   private readonly privatePayloads = new Map<string, unknown>();
@@ -84,6 +86,7 @@ export class LayeredOpenAIResponsesStatefulStore implements OpenAIResponsesState
         if (snapshot.refreshedAt < refreshedAt) snapshot.refreshedAt = refreshedAt;
       }
       this.previousSnapshotItemIds = [...snapshot.itemIds];
+      this.previousRoute = snapshot.route;
       return cloneStoredOpenAIResponsesSnapshot(snapshot);
     }
     return null;
@@ -127,12 +130,12 @@ export class LayeredOpenAIResponsesStatefulStore implements OpenAIResponsesState
     this.rememberItem(cloned);
   }
 
-  async commitSnapshot(responseId: string, mode: OpenAIResponsesSnapshotMode, outputItemIds: readonly string[]): Promise<void> {
+  async commitSnapshot(responseId: string, mode: OpenAIResponsesSnapshotMode, outputItemIds: readonly string[], route?: ConversationRoute): Promise<void> {
     if (this.options.writes.length === 0) return;
     const itemIds = mode === 'replace'
       ? [...outputItemIds]
       : [...this.previousSnapshotItemIds, ...this.stagedInputItemIds, ...outputItemIds];
-    if (itemIds.length === 0) return;
+    if (itemIds.length === 0 && route === undefined) return;
     const uniqueRows = [...new Set(itemIds)].map(id => {
       const row = this.loadedItems.get(id);
       if (row === undefined) throw new Error(`OpenAI Responses snapshot item disappeared before commit: ${id}`);
@@ -147,11 +150,12 @@ export class LayeredOpenAIResponsesStatefulStore implements OpenAIResponsesState
         if (row.refreshedAt < refreshedAt) row.refreshedAt = refreshedAt;
       }
     }
-    const snapshotRefreshedAt = Math.min(...uniqueRows.map(row => row.refreshedAt));
+    const snapshotRefreshedAt = uniqueRows.length === 0 ? refreshedAt : Math.min(...uniqueRows.map(row => row.refreshedAt));
     const snapshot: StoredOpenAIResponsesSnapshot = {
       id: responseId,
       apiKeyId: this.apiKeyId,
       itemIds,
+      ...(route === undefined ? {} : { route }),
       refreshedAt: snapshotRefreshedAt,
     };
     await Promise.all(this.options.writes.map(write => write.insertSnapshot(snapshot)));

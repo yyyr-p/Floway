@@ -5,7 +5,6 @@ import { hydrateOpenAIResponsesPayload } from './items/hydrate.ts';
 import type { OpenAIResponsesStatefulStore } from './items/store.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import type { AffinityCandidateSelection } from '../shared/affinity/index.ts';
-import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure, tryCatchChatServeFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
@@ -81,6 +80,11 @@ export const prepareOpenAIResponsesServePlan = async (args: {
   readonly ctx: ChatGatewayCtx;
 }): Promise<OpenAIResponsesServePlan> => {
   const { payload, ctx } = args;
+  const metadata = (payload as CanonicalOpenAIResponsesPayload & { client_metadata?: unknown }).client_metadata;
+  if (typeof metadata === 'object' && metadata !== null && !Array.isArray(metadata)) {
+    const id = (metadata as Record<string, unknown>).session_id;
+    if (typeof id === 'string' && id.trim().length > 0) ctx.affinity.identifySession(id.trim());
+  }
   const store = ctx.store;
   const prepared = await expandPreviousResponseId(payload, store);
   const { candidates, sawModel, failedUpstreams } = await enumerateModelCandidates({
@@ -101,7 +105,7 @@ export const prepareOpenAIResponsesServePlan = async (args: {
     return { kind: 'failure', result: renderOpenAIResponsesFailure(failure) };
   }
   const affinity = await analyzeOpenAIResponsesAffinity(hydrated.payload, ctx.affinity.codec);
-  const selection = selectAffinityCandidates(viable, affinity);
+  const selection = await ctx.affinity.candidates(prepared.model, viable, affinity, store.previousRoute);
   if ('kind' in selection) return { kind: 'failure', result: renderOpenAIResponsesFailure(selection) };
   // Stage the user-supplied input from the original payload — not the
   // expansion's `item_reference` prefix — so the next-turn snapshot picks

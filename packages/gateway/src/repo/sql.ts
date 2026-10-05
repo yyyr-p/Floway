@@ -1,3 +1,4 @@
+import { SqlConversationRoutesRepo } from './conversation-routes-sql.ts';
 import { normalizeDisabledPublicModelIds } from './disabled-public-models.ts';
 import { SqlExpirationSweepsRepo } from './expiration-sweeps-sql.ts';
 import { normalizeFlagOverrides } from './flag-overrides.ts';
@@ -1442,6 +1443,7 @@ interface ModelAliasRow {
   name: string;
   kind: string;
   selection: string;
+  fallback_policy: 'configured' | 'preserve-opaque';
   display_name: string | null;
   visible_in_models_list: number;
   targets: string;
@@ -1451,13 +1453,14 @@ interface ModelAliasRow {
   updated_at: string;
 }
 
-const MODEL_ALIAS_COLUMNS = 'id, name, kind, selection, display_name, visible_in_models_list, targets, announced_metadata_json, sort_order, created_at, updated_at';
+const MODEL_ALIAS_COLUMNS = 'id, name, kind, selection, fallback_policy, display_name, visible_in_models_list, targets, announced_metadata_json, sort_order, created_at, updated_at';
 
 const toModelAliasRecord = (row: ModelAliasRow): ModelAliasRecord => ({
   id: row.id,
   name: row.name,
   kind: parseModelKind(row.kind, `model_aliases.kind for ${row.name}`),
   selection: row.selection as AliasSelection,
+  fallbackPolicy: row.fallback_policy,
   displayName: row.display_name,
   visibleInModelsList: row.visible_in_models_list !== 0,
   targets: decodeAliasTargets(row.targets, row.id),
@@ -1499,13 +1502,14 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
   async insert(record: ModelAliasRecord): Promise<void> {
     await this.db
       .prepare(
-        `INSERT INTO model_aliases (${MODEL_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO model_aliases (${MODEL_ALIAS_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .bind(
         record.id,
         record.name,
         record.kind,
         record.selection,
+        record.fallbackPolicy ?? 'configured',
         record.displayName,
         record.visibleInModelsList ? 1 : 0,
         encodeAliasTargets(record.targets),
@@ -1524,6 +1528,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
            name = ?,
            kind = ?,
            selection = ?,
+           fallback_policy = ?,
            display_name = ?,
            visible_in_models_list = ?,
            targets = ?,
@@ -1537,6 +1542,7 @@ class SqlModelAliasesRepo implements ModelAliasesRepo {
         record.name,
         record.kind,
         record.selection,
+        record.fallbackPolicy ?? 'configured',
         record.displayName,
         record.visibleInModelsList ? 1 : 0,
         encodeAliasTargets(record.targets),
@@ -1695,6 +1701,7 @@ export class SqlRepo implements Repo {
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
   modelAliases: ModelAliasesRepo;
+  conversationRoutes: SqlConversationRoutesRepo;
   openaiResponsesItems: OpenAIResponsesItemsRepo;
   openaiResponsesSnapshots: OpenAIResponsesSnapshotsRepo;
   spilledFiles: SpilledFilesRepo;
@@ -1714,6 +1721,7 @@ export class SqlRepo implements Repo {
     this.proxies = new SqlProxyRepo(db);
     this.proxyBackoffs = new SqlProxyBackoffRepo(db);
     this.modelAliases = new SqlModelAliasesRepo(db);
+    this.conversationRoutes = new SqlConversationRoutesRepo(db);
     this.openaiResponsesItems = new SqlOpenAIResponsesItemsRepo(db);
     this.openaiResponsesSnapshots = new SqlOpenAIResponsesSnapshotsRepo(db);
     this.spilledFiles = new SqlSpilledFilesRepo(db);

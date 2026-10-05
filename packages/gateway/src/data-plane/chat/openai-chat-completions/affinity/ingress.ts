@@ -11,6 +11,7 @@ export const analyzeOpenAIChatCompletionsAffinity = async (
     decoded.set(index, await codec.unwrap(message.reasoning_opaque, 'openai-chat-completions.reasoning_opaque'));
   }
 
+  const latest = [...decoded.values()].findLast(blob => blob.kind === 'owned');
   return defineAffinityRequest([], candidate => {
     const projections = [...decoded].map(([index, blob]) => ({ index, projection: projectOptionalAffinityBlob(blob, candidate) }));
     return {
@@ -27,5 +28,5 @@ export const analyzeOpenAIChatCompletionsAffinity = async (
         return candidatePayload;
       },
     };
-  });
+  }, latest?.kind === 'owned' ? latest.affinity : undefined);
 };

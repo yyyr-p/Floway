@@ -113,3 +113,16 @@ describe('alias wire body', () => {
     expect(aliasBody(values)).toMatchObject({ targets: [{ rules: {} }], announced_metadata: null });
   });
 });
+
+it('copies opaque fallback policy and defaults older aliases to configured selection', () => {
+  const values = aliasDefaults(null);
+  expect(values.fallbackPolicy).toBe('configured');
+  values.name = 'alias';
+  values.fallbackPolicy = 'preserve-opaque';
+  const body = aliasBody(values);
+  expect(body.fallback_policy).toBe('preserve-opaque');
+  const alias: ModelAlias = { ...body, id: 'alias', kind: 'chat', sort_order: 0, created_at: '', updated_at: '', announced_metadata: null };
+  expect(aliasDefaults(alias).fallbackPolicy).toBe('preserve-opaque');
+  delete alias.fallback_policy;
+  expect(aliasDefaults(alias).fallbackPolicy).toBe('configured');
+});

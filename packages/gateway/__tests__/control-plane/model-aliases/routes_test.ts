@@ -322,3 +322,15 @@ test('POST /api/aliases accepts adaptive=false alongside budget_tokens (force no
   );
   assertEquals(resp.status, 201);
 });
+
+test('alias fallback policy defaults to configured and survives updates from older clients', async () => {
+  const { adminSession } = await setupAppTest();
+  const alias = await createAlias(adminSession);
+  assertEquals(alias.fallback_policy, 'configured');
+  const changed = await requestApp(`/api/aliases/${alias.id}`, putAuthed(adminSession, baseBody({ fallback_policy: 'preserve-opaque' })));
+  assertEquals((await changed.json() as ModelAlias).fallback_policy, 'preserve-opaque');
+  const legacy = await requestApp(`/api/aliases/${alias.id}`, putAuthed(adminSession, baseBody({ name: 'renamed' })));
+  assertEquals((await legacy.json() as ModelAlias).fallback_policy, 'preserve-opaque');
+  const invalid = await requestApp(`/api/aliases/${alias.id}`, putAuthed(adminSession, baseBody({ fallback_policy: 'invalid' })));
+  assertEquals(invalid.status, 400);
+});

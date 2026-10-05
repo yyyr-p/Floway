@@ -43,6 +43,7 @@ export const wrapOpenAIChatCompletionsAffinityEgress = async function* (
   for await (const frame of frames) {
     if (frame.type !== 'event') {
       if (frame.type === 'done' && !failed) {
+        await options.onSuccess?.();
         const unfinished = [...choices.entries()].filter(([, state]) => !state.finished);
         if (unfinished.length > 0 && lastEvent !== undefined) {
           const wrappedChoices = await Promise.all(unfinished.map(async ([index, state]) => {
@@ -106,6 +107,7 @@ export const wrapOpenAIChatCompletionsAffinityEgress = async function* (
     })));
     yield eventFrame(eventWithChoices(frame.event, wrappedChoices, false));
 
+    if (!failed) await options.onSuccess?.();
     const finishedChoices = finishingChoices.map(({ index, finishReason, state }) => {
       state.finished = true;
       return { index, delta: {}, finish_reason: finishReason };

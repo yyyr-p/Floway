@@ -3,7 +3,6 @@ import { anthropicMessagesAttempt, anthropicMessagesGenerateTarget, anthropicMes
 import { renderAnthropicMessagesFailure } from './errors.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
-import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { parseAnthropicBetaHeader, type AnthropicMessagesPayload, type AnthropicMessagesStreamEvent } from '@floway-dev/protocols/anthropic-messages';
@@ -35,7 +34,7 @@ export const anthropicMessagesServe = {
     });
     const affinity = await analyzeAnthropicMessagesAffinity(payload, ctx.affinity.codec);
     const viable = enumerated.filter(c => anthropicMessagesGenerateTarget.canServe(c.model.endpoints));
-    const selection = selectAffinityCandidates(viable, affinity);
+    const selection = await ctx.affinity.candidates(payload.model, viable, affinity);
     if ('kind' in selection) return renderAnthropicMessagesFailure(selection, 'generate');
     if (selection.candidates.length === 0) return renderAnthropicMessagesFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams), 'generate');
 
@@ -70,7 +69,7 @@ export const anthropicMessagesServe = {
     });
     const affinity = await analyzeAnthropicMessagesAffinity(payload, ctx.affinity.codec);
     const viable = enumerated.filter(c => anthropicMessagesCountTokensTarget.canServe(c.model.endpoints));
-    const selection = selectAffinityCandidates(viable, affinity);
+    const selection = await ctx.affinity.candidates(payload.model, viable, affinity);
     if ('kind' in selection) return renderAnthropicMessagesFailure(selection, 'countTokens');
     if (selection.candidates.length === 0) return renderAnthropicMessagesFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams), 'countTokens');
 

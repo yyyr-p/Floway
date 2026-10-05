@@ -1,13 +1,10 @@
+import type { ConversationRoute } from '../../../../repo/types.ts';
 import { serverSecretBytes } from '../../../../shared/server-secret.ts';
 import { appendOpaqueTrailer, concatBytes, decodeOpaqueValue, encodeOpaqueValue, MAX_OPAQUE_TRAILER_BYTES, splitOpaqueTrailer, uint16be, type AliasRules, type OpaqueBlobCompatibilityIdentity, type OpaqueValueOrigin } from '@floway-dev/protocols/common';
 
 export type { OpaqueBlobCompatibilityIdentity } from '@floway-dev/protocols/common';
 
-export interface AffinityTarget {
-  upstreamId: string;
-  modelId: string;
-  rules?: AliasRules;
-}
+export type AffinityTarget = ConversationRoute;
 
 export interface AffinityIdentity extends AffinityTarget {
   opaqueBlobCompatibilityIdentity: OpaqueBlobCompatibilityIdentity;

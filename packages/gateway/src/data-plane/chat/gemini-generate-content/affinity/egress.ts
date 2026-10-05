@@ -93,6 +93,7 @@ export const wrapGeminiGenerateContentAffinityEgress = async function* (
       }
 
       const next = cloneGeminiGenerateContentEvent(frame.event);
+      if (next.candidates?.some(candidate => candidate.finishReason !== undefined)) await options.onSuccess?.();
       if (pending !== undefined) {
         const wrapped = await wrapGeminiGenerateContentEventAffinity(
           pending,

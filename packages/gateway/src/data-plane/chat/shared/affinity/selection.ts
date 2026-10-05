@@ -6,6 +6,7 @@ import { materializeOpaqueBlobCompatibilityIdentity } from '@floway-dev/protocol
 import { providerModelOf, type ModelCandidate } from '@floway-dev/provider';
 
 export interface AffinityRequestAnalysis<T> {
+  readonly latestTarget?: AffinityTarget;
   readonly requiredTargets: readonly AffinityIdentity[];
   readonly evaluateCandidate: (candidate: ModelCandidate) => CandidateAffinityEvaluation<T>;
 }
@@ -34,7 +35,7 @@ const sameCompatibilityIdentity = (
   right: OpaqueBlobCompatibilityIdentity,
 ): boolean => left.upstreamId === right.upstreamId && left.key === right.key;
 
-const candidateMatchesExactTarget = (candidate: ModelCandidate, affinity: AffinityTarget): boolean =>
+export const candidateMatchesExactTarget = (candidate: ModelCandidate, affinity: AffinityTarget): boolean =>
   candidate.provider.upstreamId === affinity.upstreamId
   && candidate.model.id === affinity.modelId
   // Alias targets always carry a rules object, while direct candidates omit
@@ -70,7 +71,7 @@ export const projectOptionalAffinityBlob = (
   const compatible = candidateSatisfiesAffinityIdentity(candidate, target);
   const preferred = compatible && candidateMatchesExactTarget(candidate, decoded.affinity);
   if (!compatible || decoded.value === undefined) {
-    return { kind: 'remove', degrades: decoded.value !== undefined, preferred: decoded.value === undefined || preferred };
+    return { kind: 'remove', degrades: decoded.value !== undefined, preferred };
   }
   return { kind: 'preserve', value: decoded.value, preferred };
 };
@@ -93,6 +94,7 @@ export const projectRequiredAffinityBlob = (
 export const defineAffinityRequest = <T>(
   requiredTargets: readonly AffinityIdentity[],
   evaluate: (candidate: ModelCandidate) => CandidateAffinityEvaluation<T>,
+  latestTarget?: AffinityTarget,
 ): AffinityRequestAnalysis<T> => {
   const uniqueRequiredTargets: AffinityIdentity[] = [];
   for (const target of requiredTargets) {
@@ -103,6 +105,7 @@ export const defineAffinityRequest = <T>(
   }
   const evaluations = new WeakMap<ModelCandidate, CandidateAffinityEvaluation<T>>();
   return {
+    latestTarget,
     requiredTargets: uniqueRequiredTargets,
     evaluateCandidate: candidate => {
       const existing = evaluations.get(candidate);
@@ -135,6 +138,7 @@ export const defineAffinityRequest = <T>(
 export const selectAffinityCandidates = <T>(
   candidates: readonly ModelCandidate[],
   affinity: AffinityRequestAnalysis<T>,
+  latestTarget: AffinityTarget | undefined = affinity.latestTarget,
 ): AffinityCandidateSelection<T> | AffinitySelectionFailure => {
   if (affinity.requiredTargets.length > 1) {
     return {
@@ -159,17 +163,18 @@ export const selectAffinityCandidates = <T>(
     };
   }
 
-  const preferred: typeof accepted = [];
-  const compatible: typeof accepted = [];
-  const degrading: typeof accepted = [];
-  for (const item of accepted) {
-    if (item.evaluation.degrades) degrading.push(item);
-    else if (item.evaluation.preferred) preferred.push(item);
-    else compatible.push(item);
-  }
-  const ordered = preferred.length === 0 && compatible.length === 0
-    ? accepted
-    : [...preferred, ...compatible, ...degrading];
+  const rank = (item: typeof accepted[number]): number => item.evaluation.degrades ? 1 : 0;
+  const ordered = [...accepted].sort((left, right) => {
+    const leftLast = latestTarget !== undefined && candidateMatchesExactTarget(left.candidate, latestTarget);
+    const rightLast = latestTarget !== undefined && candidateMatchesExactTarget(right.candidate, latestTarget);
+    if (leftLast !== rightLast) return leftLast ? -1 : 1;
+    const routing = left.candidate.aliasRouting;
+    if (routing !== undefined && !routing.preserveOpaque) {
+      const groupDifference = routing.group - right.candidate.aliasRouting!.group;
+      if (groupDifference !== 0) return groupDifference;
+    }
+    return rank(left) - rank(right);
+  });
   const evaluations = new WeakMap(ordered.map(item => [item.candidate, item.evaluation]));
   return {
     candidates: ordered.map(item => item.candidate),

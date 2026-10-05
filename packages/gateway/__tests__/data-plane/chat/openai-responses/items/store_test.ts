@@ -354,3 +354,22 @@ describe('OpenAIResponsesStatefulStore', () => {
     expect(await store.loadSnapshot('resp_x')).toBeNull();
   });
 });
+
+test('HTTP and WebSocket snapshots retain branch routes even when output has no opaque state', async () => {
+  installRepo();
+  const routeA = { upstreamId: 'up-a', modelId: 'model', rules: { reasoning: { effort: 'low' } } };
+  const routeB = { upstreamId: 'up-b', modelId: 'model' };
+  const http = createOpenAIResponsesHttpStore(testOpenAIResponsesStatePolicy(), Date.now(), true);
+  await http.commitSnapshot('resp_branch_a', 'append', [], routeA);
+  await http.commitSnapshot('resp_branch_b', 'append', [], routeB);
+  const reader = createOpenAIResponsesHttpStore(testOpenAIResponsesStatePolicy(), Date.now(), true);
+  expect((await reader.loadSnapshot('resp_branch_a'))?.route).toEqual(routeA);
+  expect(reader.previousRoute).toEqual(routeA);
+  expect((await reader.loadSnapshot('resp_branch_b'))?.route).toEqual(routeB);
+  const websocket = createOpenAIResponsesWsSession();
+  const writer = websocket.createStore(testOpenAIResponsesStatePolicy(), Date.now(), false);
+  await writer.commitSnapshot('resp_local', 'append', [], routeB);
+  const localReader = websocket.createStore(testOpenAIResponsesStatePolicy(), Date.now(), false);
+  expect((await localReader.loadSnapshot('resp_local'))?.route).toEqual(routeB);
+  expect(localReader.previousRoute).toEqual(routeB);
+});

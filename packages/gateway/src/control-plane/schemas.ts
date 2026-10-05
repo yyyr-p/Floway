@@ -674,6 +674,7 @@ const aliasBaseShape = {
   name: z.string().min(1),
   kind: z.enum(MODEL_KINDS),
   selection: z.enum(['random', 'first-available']),
+  fallback_policy: z.enum(['configured', 'preserve-opaque']).optional(),
   display_name: z.string().min(1).nullable(),
   visible_in_models_list: z.boolean(),
   targets: z.array(aliasTargetSchema).min(1),

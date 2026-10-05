@@ -24,6 +24,7 @@ export const analyzeAnthropicMessagesAffinity = async (
     }
   }
 
+  const latest = locations.map(location => location.decoded).findLast(blob => blob.kind === 'owned');
   return defineAffinityRequest([], candidate => {
     const projections = locations.map(location => ({ location, projection: projectOptionalAffinityBlob(location.decoded, candidate) }));
     return {
@@ -39,6 +40,8 @@ export const analyzeAnthropicMessagesAffinity = async (
           const replacements = new Map<number, AnthropicMessagesAssistantContentBlock | null>();
           for (const { location, projection } of messageProjections) {
             const block = message.content[location.blockIndex];
+            const unsignedThinking = block.type === 'thinking'
+              ? (({ signature: _signature, ...rest }) => rest)(block) : undefined;
             if (location.kind === 'thinking') {
               if (block.type !== 'thinking') throw new Error('Anthropic Messages affinity thinking location no longer points at a thinking block');
               // Anthropic requires an assistant thinking block to retain the
@@ -48,7 +51,9 @@ export const analyzeAnthropicMessagesAffinity = async (
               // https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking#preserving-thinking-blocks
               replacements.set(
                 location.blockIndex,
-                projection.kind === 'preserve' ? { ...block, signature: projection.value } : null,
+                projection.kind === 'preserve' ? { ...block, signature: projection.value }
+                  : location.decoded.kind === 'owned' && location.decoded.value === undefined
+                    ? unsignedThinking! : null,
               );
             } else {
               replacements.set(
@@ -69,5 +74,5 @@ export const analyzeAnthropicMessagesAffinity = async (
         return candidatePayload;
       },
     };
-  });
+  }, latest?.kind === 'owned' ? latest.affinity : undefined);
 };

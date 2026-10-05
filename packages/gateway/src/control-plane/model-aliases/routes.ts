@@ -52,7 +52,7 @@ export const updateAlias = async (c: CtxWithJson<typeof updateAliasBody>) => {
   const existing = await repo.modelAliases.getById(id);
   if (!existing) return c.json({ error: 'Alias not found' }, 404);
 
-  const next = wireToRecord(body, {
+  const next = wireToRecord({ ...body, fallback_policy: body.fallback_policy ?? existing.fallbackPolicy ?? 'configured' }, {
     id: existing.id,
     // Preserve the original sortOrder unless the client explicitly overrides
     // it; createdAt belongs to the row's first-seen instant and never moves.

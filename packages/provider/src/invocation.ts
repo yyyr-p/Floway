@@ -31,6 +31,11 @@ export interface ModelCandidate {
   readonly model: InternalModel;
   readonly fetcher: Fetcher;
   readonly rules?: AliasRules;
+  readonly aliasRouting?: {
+    readonly id: string;
+    readonly group: number;
+    readonly preserveOpaque: boolean;
+  };
 }
 
 // Pull the emitting upstream's `ProviderModel` off the candidate. Dispatch

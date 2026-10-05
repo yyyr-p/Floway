@@ -57,6 +57,7 @@ export function AliasDialog({ aliases, mode, models, onOpenChange, open, onSaved
     displayName: z.string(),
     kind: z.enum(MODEL_KINDS),
     selection: z.enum(['first-available', 'random']),
+    fallbackPolicy: z.enum(['configured', 'preserve-opaque']),
     visible: z.boolean(),
     targets: z.array(z.object({ target_model_id: z.string(), rules: z.any().refine(value => value !== undefined) })).min(1),
     manualMetadata: z.boolean(),
@@ -133,6 +134,7 @@ export function AliasDialog({ aliases, mode, models, onOpenChange, open, onSaved
       <Controller control={control} name="kind" render={({ field }) => <Field label={t('dashboard.modelAliases.form.kind')}><Dropdown disabled={saving} selectedOptions={[field.value]} value={t(`dashboard.modelAliases.kind.${field.value}`)} onOptionSelect={(_, data) => data.optionValue !== undefined && changeKind(data.optionValue as ModelKind)}>{MODEL_KINDS.map(modelKind => <Option key={modelKind} value={modelKind}>{t(`dashboard.modelAliases.kind.${modelKind}`)}</Option>)}</Dropdown></Field>} />
       <Field label={t('dashboard.modelAliases.form.selection')}><ChoiceGroup ariaLabel={t('dashboard.modelAliases.form.selection')} value={values.selection} onChange={value => setValue('selection', value as AliasFormValues['selection'])} items={[{ value: 'first-available', label: t('dashboard.modelAliases.selection.first') }, { value: 'random', label: t('dashboard.modelAliases.selection.random') }]} /></Field>
     </div>
+    {kind === 'chat' && <Field label={t('dashboard.modelAliases.form.fallbackPolicy')} hint={t('dashboard.modelAliases.fallback.hint')}><ChoiceGroup ariaLabel={t('dashboard.modelAliases.form.fallbackPolicy')} value={values.fallbackPolicy} onChange={value => setValue('fallbackPolicy', value as AliasFormValues['fallbackPolicy'])} items={[{ value: 'configured', label: t('dashboard.modelAliases.fallback.configured') }, { value: 'preserve-opaque', label: t('dashboard.modelAliases.fallback.opaque') }]} /></Field>}
     <section {...reorder.listProps('grid gap-2')} role="group" aria-labelledby="alias-targets-heading">
       <SectionHeader
         description={t('dashboard.modelAliases.target.description')}

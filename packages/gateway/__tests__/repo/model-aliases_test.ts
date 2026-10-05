@@ -22,6 +22,7 @@ const aliasFixture = (overrides: Partial<ModelAliasRecord> = {}): ModelAliasReco
   name: 'gpt-fast',
   kind: 'chat',
   selection: 'first-available',
+  fallbackPolicy: 'configured',
   displayName: null,
   visibleInModelsList: true,
   targets: [

@@ -22,8 +22,11 @@ export const wrapOpenAIResponsesStatefulOutput = (
   ctx: ChatGatewayCtx,
 ): AsyncIterable<ProtocolFrame<OpenAIResponsesStreamEvent>> => {
   const withAffinity = wrapOpenAIResponsesAffinityEgress(frames, affinityEgressOptions(ctx));
+  const { opaqueBlobCompatibilityIdentity: _compatibility, ...route } = ctx.affinity.selectedTarget();
   return wrapOpenAIResponsesClientOutput(withAffinity, {
     store: ctx.store,
+    route,
+    onSuccess: () => ctx.affinity.commitSuccess(),
     responseId: createOpenAIResponsesResponseId(),
   });
 };

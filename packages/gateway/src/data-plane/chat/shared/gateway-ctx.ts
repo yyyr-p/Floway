@@ -27,9 +27,15 @@ export const createChatGatewayCtxFromHono = (
   storeFactory: (apiKey: ApiKey, requestStartedAt: number) => OpenAIResponsesStatefulStore,
 ): ChatGatewayCtx => {
   const base = createGatewayCtxFromHono(c, opts);
+  const apiKey = apiKeyFromContext(c);
+  // Read identity before provider allowlists filter headers.
+  // https://github.com/Wei-Shaw/sub2api/blob/4a5665da5b2c6b83c4597844ea6e573746c821b1/backend/internal/service/gateway_service.go#L421-L444
+  // https://github.com/openai/codex/blob/a16863f8704831d13e041ed7dba2c4a57a2a940b/codex-rs/core/src/responses_metadata.rs#L184-L189
+  const sessionId = ['x-claude-code-session-id', 'session-id', 'session_id']
+    .map(name => c.req.header(name)?.trim()).find(value => value !== undefined && value.length > 0);
   return {
     ...base,
-    affinity: new AffinityRequestContext(apiKeyFromContext(c).serverSecret),
+    affinity: new AffinityRequestContext(apiKey.serverSecret, { apiKeyId: apiKey.id, id: sessionId }),
     store: storeFactory(apiKeyFromContext(c), base.requestStartedAt),
   };
 };

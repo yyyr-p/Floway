@@ -222,12 +222,12 @@ export const enumerateModelCandidates = async ({
   const aggregatedFailed = new Set<string>();
   let sawAny = false;
   const flat: ModelCandidate[] = [];
-  for (const target of orderAliasTargets(alias)) {
+  for (const [group, target] of orderAliasTargets(alias).entries()) {
     const result = resolveRealCandidates(target.target_model_id, kind, providers, resolutionContext);
     for (const name of result.failedUpstreams) aggregatedFailed.add(name);
     if (result.sawModel) sawAny = true;
     for (const candidate of result.candidates) {
-      flat.push({ ...candidate, rules: target.rules });
+      flat.push({ ...candidate, rules: target.rules, aliasRouting: { id: alias.id, group, preserveOpaque: alias.fallbackPolicy === 'preserve-opaque' } });
     }
   }
   const deduped = uniqWith(flat, (candidate, existing) =>

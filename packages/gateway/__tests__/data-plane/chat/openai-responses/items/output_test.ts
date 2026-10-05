@@ -137,7 +137,7 @@ test('client output replaces history when a compaction_summary item closes', asy
   })) emitted.push(frame);
 
   expect(emitted).toContainEqual(eventFrame({ type: 'response.output_item.done', output_index: 0, item }));
-  expect(commitSnapshot).toHaveBeenCalledWith('resp_public', 'replace', ['cmp_alias']);
+  expect(commitSnapshot).toHaveBeenCalledWith('resp_public', 'replace', ['cmp_alias'], undefined);
   expect((await repo.openaiResponsesSnapshots.lookup('key-a', 'resp_public', 0))?.itemIds).toEqual(['cmp_alias']);
 });
 

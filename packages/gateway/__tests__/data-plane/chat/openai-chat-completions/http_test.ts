@@ -224,7 +224,7 @@ test('client-carried opaque state restores the exact preferred candidate on the 
   assertEquals(observedBodies[1].messages?.[1].reasoning_opaque, 'opaque-a');
 });
 
-test('synthetic affinity keeps first-available candidate order when no reasoning blob would be lost', async () => {
+test('synthetic affinity prefers the last successful route without natural reasoning', async () => {
   installRepo();
   const observedB: Array<{ messages?: Array<{ reasoning_opaque?: string }> }> = [];
   const result = (): ProviderStreamResult<OpenAIChatCompletionsStreamEvent> => ({
@@ -266,9 +266,9 @@ test('synthetic affinity keeps first-available candidate order when no reasoning
   });
 
   assertEquals(second.status, 200);
-  assertEquals(callA.mock.calls.length, 1);
-  assertEquals(callB.mock.calls.length, 1);
-  assertEquals(observedB[0].messages?.[1].reasoning_opaque, undefined);
+  assertEquals(callA.mock.calls.length, 2);
+  assertEquals(callB.mock.calls.length, 0);
+
 });
 
 test('POST /v1/chat/completions omits the usage-only chunk unless stream_options.include_usage is set', async () => {
@@ -464,4 +464,39 @@ test('POST /v1/chat/completions leaves TTFT absent on a failure before output', 
   assertEquals(dumpStubs.stored.length, 1);
   const meta = dumpStubs.stored[0]!.record.meta;
   assertEquals(meta.ttftMs, null);
+});
+
+test('client session headers keep the successful failover route after quota reset without echoed reasoning', async () => {
+  const repo = installRepo();
+  let exhausted = false;
+  const attempts: string[] = [];
+  const result = (): ProviderStreamResult<OpenAIChatCompletionsStreamEvent> => ({
+    ok: true, events: makeProtocolFrames(makeOpenAIChatCompletionsEvents()), modelKey: 'k', headers: new Headers(),
+  });
+  const callA = async (): Promise<ProviderStreamResult<OpenAIChatCompletionsStreamEvent>> => {
+    attempts.push('A');
+    return exhausted ? { ok: false, response: new Response('quota exhausted', { status: 429 }), modelKey: 'k' } : result();
+  };
+  const callB = async (): Promise<ProviderStreamResult<OpenAIChatCompletionsStreamEvent>> => {
+    attempts.push('B');
+    return result();
+  };
+  const a = { ...makeCandidate({ upstream: 'up-a', callOpenAIChatCompletions: callA }), aliasRouting: { id: 'stable-alias', group: 0, preserveOpaque: false } };
+  const b = { ...makeCandidate({ upstream: 'up-b', callOpenAIChatCompletions: callB }), aliasRouting: { id: 'stable-alias', group: 1, preserveOpaque: false } };
+  const request = async (stream: boolean) => {
+    queueCandidates([a, b]);
+    const response = await makeApp().request('/v1/chat/completions', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'x-claude-code-session-id': 'actual-client-session' },
+      body: JSON.stringify({ model: 'test-model', stream, messages: [{ role: 'user', content: 'continue' }] }),
+    });
+    assertEquals(response.status, 200);
+    await response.text();
+  };
+  await request(false);
+  exhausted = true;
+  await request(true);
+  exhausted = false;
+  await request(false);
+  assertEquals(attempts, ['A', 'A', 'B', 'B']);
+  assertEquals(await repo.conversationRoutes.lookup(API_KEY_ID, 'actual-client-session', 'alias:stable-alias'), { upstreamId: 'up-b', modelId: 'test-model' });
 });

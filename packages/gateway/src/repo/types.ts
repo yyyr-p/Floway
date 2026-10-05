@@ -1,6 +1,6 @@
 import type { WebSearchConfig, WebSearchProviderName } from '../shared/web-search-providers.ts';
 import type { AgentSetupRepository } from '@floway-dev/agent-setup';
-import type { AliasSelection, AliasTarget, AnnouncedMetadata, BillingMetric, DecimalString, ModelKind, PricingSelector } from '@floway-dev/protocols/common';
+import type { AliasFallbackPolicy, AliasSelection, AliasTarget, AnnouncedMetadata, BillingMetric, DecimalString, ModelKind, PricingSelector } from '@floway-dev/protocols/common';
 import type { PerformanceTelemetryContext, UpstreamModelsCache, UpstreamRecord } from '@floway-dev/provider';
 
 // Provider config, flag overrides, and catalog transport advance this version;
@@ -446,6 +446,7 @@ export interface ModelAliasRecord {
   name: string;
   kind: ModelKind;
   selection: AliasSelection;
+  fallbackPolicy?: AliasFallbackPolicy;
   // null = derive at render time from targets + rules.
   displayName: string | null;
   // Listing-only visibility: filtered by `synthesizeListedAliases` before
@@ -511,10 +512,22 @@ export interface OpenAIResponsesItemsRepo {
   deleteAll(): Promise<void>;
 }
 
+export interface ConversationRoute {
+  upstreamId: string;
+  modelId: string;
+  rules?: AliasTarget['rules'];
+}
+
+export interface ConversationRoutesRepo {
+  lookup(apiKeyId: string, sessionId: string, scope: string): Promise<ConversationRoute | null>;
+  bind(apiKeyId: string, sessionId: string, scope: string, route: ConversationRoute): Promise<void>;
+}
+
 export interface StoredOpenAIResponsesSnapshot {
   id: string;
   apiKeyId: string;
   itemIds: string[];
+  route?: ConversationRoute;
   refreshedAt: number;
 }
 
@@ -573,6 +586,7 @@ export interface Repo {
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
   modelAliases: ModelAliasesRepo;
+  conversationRoutes: ConversationRoutesRepo;
   openaiResponsesItems: OpenAIResponsesItemsRepo;
   openaiResponsesSnapshots: OpenAIResponsesSnapshotsRepo;
   spilledFiles: SpilledFilesRepo;

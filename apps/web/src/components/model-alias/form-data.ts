@@ -2,6 +2,7 @@ import type { InferRequestType } from 'hono/client';
 
 import type { api } from '../../api/client';
 import type {
+  AliasFallbackPolicy,
   AliasSelection,
   AliasTarget,
   AnnouncedMetadata,
@@ -16,6 +17,7 @@ export interface AliasFormValues {
   displayName: string;
   kind: ModelKind;
   selection: AliasSelection;
+  fallbackPolicy: AliasFallbackPolicy;
   visible: boolean;
   targets: AliasTarget[];
   manualMetadata: boolean;
@@ -43,12 +45,13 @@ export const aliasDefaults = (alias: ModelAlias | null): AliasFormValues => {
     displayName: alias.display_name ?? '',
     kind: alias.kind,
     selection: alias.selection,
+    fallbackPolicy: alias.fallback_policy ?? 'configured',
     visible: alias.visible_in_models_list,
     targets: structuredClone(alias.targets),
     manualMetadata: alias.announced_metadata !== null,
     announcedMetadata: structuredClone(alias.announced_metadata ?? {}),
   } : {
-    name: '', displayName: '', kind: 'chat', selection: 'first-available', visible: true,
+    name: '', displayName: '', kind: 'chat', selection: 'first-available', fallbackPolicy: 'configured', visible: true,
     targets: [blankTarget()], manualMetadata: false, announcedMetadata: {},
   };
 };
@@ -66,6 +69,7 @@ export const aliasBody = (values: AliasFormValues): AliasWriteBody => {
   };
   return {
     name: values.name.trim(), kind: values.kind, selection: values.selection,
+    fallback_policy: values.kind === 'chat' ? values.fallbackPolicy : 'configured',
     display_name: values.displayName.trim() || null,
     visible_in_models_list: values.visible,
     targets: values.targets.map(target => ({

@@ -95,3 +95,24 @@ test('a synthetic carrier issued for a turn without thinking decodes on the next
   expect(projectionA.materialize().messages[0].content).toEqual([{ type: 'text', text: 'answer' }]);
   expect(projectionB.materialize().messages[0].content).toEqual([{ type: 'text', text: 'answer' }]);
 });
+
+test('unsigned readable thinking survives a separate routing carrier and legacy originless signatures', async () => {
+  const route = candidate('upstream-b');
+  const content = await assistantContent(wrapAnthropicMessagesAffinityEgress(frames([
+    eventFrame({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
+    eventFrame({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'visible' } }),
+    eventFrame({ type: 'content_block_stop', index: 0 }),
+    eventFrame({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: 'answer' } }),
+    eventFrame({ type: 'content_block_stop', index: 1 }),
+    eventFrame({ type: 'message_delta', delta: { stop_reason: 'end_turn' } }),
+    eventFrame({ type: 'message_stop' }),
+  ]), { codec, affinity: targetFor(route) }));
+  expect(content).toMatchObject([{ type: 'thinking', thinking: 'visible' }, { type: 'redacted_thinking' }, { type: 'text', text: 'answer' }]);
+  const legacy = await codec.wrap(undefined, targetFor(route), 'anthropic-messages.thinking.signature');
+  for (const blocks of [content, [{ type: 'thinking' as const, thinking: 'visible', signature: legacy }, { type: 'text' as const, text: 'answer' }]]) {
+    const analysis = await analyzeAnthropicMessagesAffinity({ model: 'model', max_tokens: 100, messages: [{ role: 'assistant', content: blocks }] }, codec);
+    expect(acceptedAffinityEvaluation(analysis, route).materialize().messages[0].content).toEqual([
+      { type: 'thinking', thinking: 'visible' }, { type: 'text', text: 'answer' },
+    ]);
+  }
+});

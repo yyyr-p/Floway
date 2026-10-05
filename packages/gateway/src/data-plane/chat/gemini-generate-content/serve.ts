@@ -3,7 +3,6 @@ import { geminiGenerateContentAttempt, geminiGenerateContentCountTokensTarget, g
 import { renderGeminiGenerateContentFailure } from './errors.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
-import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
@@ -39,7 +38,7 @@ export const geminiGenerateContentServe = {
     });
     const affinity = await analyzeGeminiGenerateContentAffinity(payload, ctx.affinity.codec);
     const viable = enumerated.filter(c => geminiGenerateContentGenerateTarget.canServe(c.model.endpoints));
-    const selection = selectAffinityCandidates(viable, affinity);
+    const selection = await ctx.affinity.candidates(model, viable, affinity);
     if ('kind' in selection) return renderGeminiGenerateContentFailure(selection, 'generate');
     if (selection.candidates.length === 0) return renderGeminiGenerateContentFailure(noViableCandidateFailure(sawModel, model, failedUpstreams), 'generate');
 
@@ -69,7 +68,7 @@ export const geminiGenerateContentServe = {
     });
     const affinity = await analyzeGeminiGenerateContentAffinity(payload, ctx.affinity.codec);
     const viable = enumerated.filter(c => geminiGenerateContentCountTokensTarget.canServe(c.model.endpoints));
-    const selection = selectAffinityCandidates(viable, affinity);
+    const selection = await ctx.affinity.candidates(model, viable, affinity);
     if ('kind' in selection) return renderGeminiGenerateContentFailure(selection, 'countTokens');
     if (selection.candidates.length === 0) return renderGeminiGenerateContentFailure(noViableCandidateFailure(sawModel, model, failedUpstreams), 'countTokens');
 

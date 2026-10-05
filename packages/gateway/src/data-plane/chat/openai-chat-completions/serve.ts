@@ -3,7 +3,6 @@ import { openaiChatCompletionsAttempt, openaiChatCompletionsTarget } from './att
 import { renderOpenAIChatCompletionsFailure } from './errors.ts';
 import { enumerateModelCandidates } from '../../providers/resolution.ts';
 import { iterateCandidates } from '../../shared/iterate-candidates.ts';
-import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
@@ -28,7 +27,7 @@ export const openaiChatCompletionsServe = {
     });
     const affinity = await analyzeOpenAIChatCompletionsAffinity(payload, ctx.affinity.codec);
     const viable = enumerated.filter(c => openaiChatCompletionsTarget.canServe(c.model.endpoints));
-    const selection = selectAffinityCandidates(viable, affinity);
+    const selection = await ctx.affinity.candidates(payload.model, viable, affinity);
     if ('kind' in selection) return renderOpenAIChatCompletionsFailure(selection);
     if (selection.candidates.length === 0) return renderOpenAIChatCompletionsFailure(noViableCandidateFailure(sawModel, payload.model, failedUpstreams));
 

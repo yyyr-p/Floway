@@ -131,7 +131,7 @@ describe('Anthropic Messages affinity egress', () => {
     ]);
   });
 
-  test('adds an originless signature to a first thinking block without a natural signature', async () => {
+  test('adds a separate routing block after unsigned thinking', async () => {
     const output: ProtocolFrame<AnthropicMessagesStreamEvent>[] = [];
     for await (const frame of wrapAnthropicMessagesAffinityEgress(frames([
       eventFrame({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
@@ -141,11 +141,12 @@ describe('Anthropic Messages affinity egress', () => {
       eventFrame({ type: 'message_stop' }),
     ]), { codec: immediateCodec, affinity })) output.push(frame);
 
-    expect(output.slice(0, 4)).toEqual([
+    expect(output.slice(0, 5)).toEqual([
       eventFrame({ type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '' } }),
       eventFrame({ type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'visible' } }),
-      eventFrame({ type: 'content_block_delta', index: 0, delta: { type: 'signature_delta', signature: 'wrapped:synthetic' } }),
       eventFrame({ type: 'content_block_stop', index: 0 }),
+      eventFrame({ type: 'content_block_start', index: 1, content_block: { type: 'redacted_thinking', data: 'wrapped:synthetic' } }),
+      eventFrame({ type: 'content_block_stop', index: 1 }),
     ]);
   });
 

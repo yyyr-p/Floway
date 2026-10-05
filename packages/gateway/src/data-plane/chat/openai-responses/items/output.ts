@@ -1,6 +1,6 @@
 import { hashOpenAIResponsesItem, openaiResponsesItemId } from './identity.ts';
 import type { OpenAIResponsesStatefulStore } from './store.ts';
-import type { StoredOpenAIResponsesItem } from '../../../../repo/types.ts';
+import type { ConversationRoute, StoredOpenAIResponsesItem } from '../../../../repo/types.ts';
 import { doneFrame, eventFrame, type ProtocolFrame } from '@floway-dev/protocols/common';
 import { isOpenAIResponsesCompactionItem, openaiResponsesResultToEvents, type OpenAIResponsesCompactionResult, type OpenAIResponsesOutputItem, type OpenAIResponsesResult, type OpenAIResponsesStreamEvent } from '@floway-dev/protocols/openai-responses';
 
@@ -19,6 +19,8 @@ export const wrapOpenAIResponsesClientOutput = async function* (
   args: {
     readonly store: OpenAIResponsesStatefulStore;
     readonly responseId: string;
+    readonly route?: ConversationRoute;
+    readonly onSuccess?: () => Promise<void>;
   },
 ): AsyncGenerator<ProtocolFrame<OpenAIResponsesStreamEvent>> {
   const { store, responseId } = args;
@@ -87,8 +89,9 @@ export const wrapOpenAIResponsesClientOutput = async function* (
         const orderedOutputIds = [...finalizedOutputIds]
           .sort(([left], [right]) => left - right)
           .map(([, id]) => id);
-        await store.commitSnapshot(responseId, sawCompactionItem ? 'replace' : 'append', orderedOutputIds);
+        await store.commitSnapshot(responseId, sawCompactionItem ? 'replace' : 'append', orderedOutputIds, args.route);
       }
+      await args.onSuccess?.();
       yield eventFrame({ ...event, response: clientEnvelope(event.response) });
       return;
     }

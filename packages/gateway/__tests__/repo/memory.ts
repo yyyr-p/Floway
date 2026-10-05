@@ -17,6 +17,8 @@ import { normalizeProxyFallbackList } from '../../src/repo/proxy-fallback-list.t
 import { SEED_ADMIN_USER_ID } from '../../src/repo/seed-admin.ts';
 import { generateSessionToken } from '../../src/repo/session-tokens.ts';
 import type {
+  ConversationRoute,
+  ConversationRoutesRepo,
   ApiKey,
   ApiKeyRepo,
   ApiKeyUpdate,
@@ -1493,6 +1495,7 @@ export class InMemoryRepo implements Repo {
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
   modelAliases: ModelAliasesRepo;
+  conversationRoutes: ConversationRoutesRepo;
   openaiResponsesItems: OpenAIResponsesItemsRepo;
   openaiResponsesSnapshots: OpenAIResponsesSnapshotsRepo;
   spilledFiles: SpilledFilesRepo;
@@ -1514,6 +1517,14 @@ export class InMemoryRepo implements Repo {
     this.proxies = new MemoryProxyRepo(this.upstreams);
     this.proxyBackoffs = new MemoryProxyBackoffRepo();
     this.modelAliases = new MemoryModelAliasesRepo();
+    const routes = new Map<string, ConversationRoute>();
+    this.conversationRoutes = {
+      lookup: (key, session, scope) => Promise.resolve(structuredClone(routes.get(JSON.stringify([key, session, scope])) ?? null)),
+      bind: (key, session, scope, route) => {
+        routes.set(JSON.stringify([key, session, scope]), structuredClone(route));
+        return Promise.resolve();
+      },
+    };
     this.openaiResponsesItems = new MemoryOpenAIResponsesItemsRepo(this.apiKeys, this.expirationSweeps);
     this.openaiResponsesSnapshots = new MemoryOpenAIResponsesSnapshotsRepo(this.apiKeys, this.expirationSweeps);
     this.spilledFiles = new MemorySpilledFilesRepo();

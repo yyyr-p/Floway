@@ -27,6 +27,8 @@ import type { ChatModelInfo, PublicModelLimits } from './models.ts';
 // wrong kind is model-unsupported, a 400.
 export type AliasSelection = 'random' | 'first-available';
 
+export type AliasFallbackPolicy = 'configured' | 'preserve-opaque';
+
 // Discrete reasoning-effort presets understood across upstreams. The literal
 // union surfaces the canonical presets to editor autocomplete while the
 // `(string & {})` arm keeps the type open — the gateway forwards rule values
@@ -125,6 +127,7 @@ export interface ModelAlias {
   name: string;
   kind: ModelKind;
   selection: AliasSelection;
+  fallback_policy?: AliasFallbackPolicy;
   display_name: string | null;
   visible_in_models_list: boolean;
   targets: AliasTarget[];
