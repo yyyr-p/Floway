@@ -1,5 +1,6 @@
 import type { Context, Next } from 'hono';
 
+import { holdConcurrencyResponseStream } from './concurrency-response-stream.ts';
 import { concurrencyLimitResponse, isDataPlaneRequest } from './concurrency-response.ts';
 import { getEnvOptional } from '@floway-dev/platform';
 
@@ -17,48 +18,6 @@ export const parseHardConcurrentRequestLimit = (value: string): number | null =>
     throw new Error(`${LIMIT_ENV} must be a positive safe integer or 0.`);
   }
   return limit;
-};
-
-const holdUntilBodySettles = (response: Response, release: () => void): Response => {
-  const body = response.body;
-  if (body === null || response.status === 101) {
-    release();
-    return response;
-  }
-
-  const reader = body.getReader();
-  const wrapped = new ReadableStream<Uint8Array>({
-    async pull(controller) {
-      try {
-        const result = await reader.read();
-        if (result.done) {
-          controller.close();
-          release();
-          return;
-        }
-        controller.enqueue(result.value);
-      } catch (error) {
-        try {
-          controller.error(error);
-        } finally {
-          release();
-        }
-      }
-    },
-    async cancel(reason) {
-      try {
-        await reader.cancel(reason);
-      } finally {
-        release();
-      }
-    },
-  });
-
-  return new Response(wrapped, {
-    status: response.status,
-    statusText: response.statusText,
-    headers: new Headers(response.headers),
-  });
 };
 
 export const createHardConcurrencyLimitMiddleware = (
@@ -87,7 +46,7 @@ export const createHardConcurrencyLimitMiddleware = (
 
     try {
       await next();
-      c.res = holdUntilBodySettles(c.res, release);
+      c.res = holdConcurrencyResponseStream(c.res, release);
     } catch (error) {
       release();
       throw error;
