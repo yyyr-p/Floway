@@ -232,10 +232,6 @@ export const getModelsFromProviders = (
   providers: readonly GatewayProvider[],
   scheduleRefresh: ModelsRefreshScheduler,
 ): { models: InternalModel[]; upstreamsByPublicId: Map<string, Provider[]>; failedUpstreams: readonly string[] } => {
-  if (providers.length === 0) {
-    throw new Error('No upstream provider configured — connect GitHub Copilot or add a Custom/Azure upstream in the dashboard');
-  }
-
   const { models, upstreamsByPublicId, failedUpstreams } = collectProviderModels(providers, scheduleRefresh);
 
   // TODO: surface `failedUpstreams` on each listing endpoint's wire response

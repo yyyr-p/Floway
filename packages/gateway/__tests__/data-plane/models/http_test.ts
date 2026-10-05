@@ -582,21 +582,29 @@ test('public model list endpoints hide malformed upstream response bodies', asyn
   );
 });
 
-test('/v1/models surfaces the actionable "no upstream configured" hint when no provider is configured', async () => {
+test('model discovery returns empty catalogs when no provider is configured', async () => {
   const { repo, apiKey } = await setupAppTest();
   await repo.upstreams.deleteAll();
   clearInProcessCopilotTokenCache();
 
-  const response = await requestAppWithWarmModels('/v1/models', {
-    headers: { 'x-api-key': apiKey.key },
-  });
-
-  assertEquals(response.status, 502);
-  assertEquals(await response.json(), {
-    error: {
-      message: 'No upstream provider configured — connect GitHub Copilot or add a Custom/Azure upstream in the dashboard',
-      type: 'api_error',
-    },
+  const cases = [
+    { path: '/v1/models', body: { object: 'list', has_more: false, first_id: null, last_id: null, data: [] } },
+    { path: '/models', body: { object: 'list', has_more: false, first_id: null, last_id: null, data: [] } },
+    { path: '/api/models', body: { object: 'list', has_more: false, first_id: null, last_id: null, data: [] } },
+    { path: '/v1beta/models', body: { models: [] } },
+    { path: '/models', userAgent: 'codex_cli_rs/987.654.321', body: { models: [] } },
+    { path: '/models', userAgent: 'claude-code/2.1.206', body: { data: [], first_id: null, has_more: false, last_id: null } },
+  ];
+  await withMockedFetch(request => {
+    if (new URL(request.url).hostname === 'raw.githubusercontent.com') return new Response(null, { status: 404 });
+    throw new Error(`Unexpected fetch ${request.url}`);
+  }, async () => {
+    for (const { path, userAgent, body } of cases) {
+      const headers = { 'x-api-key': apiKey.key, ...(userAgent === undefined ? {} : { 'user-agent': userAgent }) };
+      const response = await requestAppWithWarmModels(path, { headers });
+      assertEquals(response.status, 200);
+      assertEquals(await response.json(), body);
+    }
   });
 });
 

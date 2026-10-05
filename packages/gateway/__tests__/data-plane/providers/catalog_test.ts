@@ -30,6 +30,13 @@ const testScheduler = (promise: Promise<unknown>): void => {
 };
 const scheduleRefresh = createModelsRefreshScheduler('TEST', testScheduler);
 
+test('empty provider collections produce an empty model catalog', () => {
+  const result = getModelsFromProviders([], scheduleRefresh);
+  expect(result.models).toEqual([]);
+  expect(result.upstreamsByPublicId.size).toBe(0);
+  expect(result.failedUpstreams).toEqual([]);
+});
+
 test('compareModelIds pushes ids containing "/" to the tail', () => {
   assertEquals(sortedIds(['accounts/msft/x', 'gpt-4o', 'accounts/msft/y', 'claude-opus-4-7']), [
     'claude-opus-4-7',
