@@ -85,6 +85,7 @@ export const prepareOpenAIResponsesServePlan = async (args: {
   const prepared = await expandPreviousResponseId(payload, store);
   const { candidates, sawModel, failedUpstreams } = await enumerateModelCandidates({
     upstreamIds: ctx.upstreamIds,
+    upstreamModelAccess: ctx.upstreamModelAccess,
     model: prepared.model,
     kind: 'chat',
     scheduler: ctx.backgroundScheduler,

@@ -2,7 +2,7 @@ import { sleep } from '../../../../../shared/sleep.ts';
 import { enumerateModelCandidates } from '../../../../providers/resolution.ts';
 import { stampUpstreamCallStart } from '../../../../shared/attempt-timing.ts';
 import { appendFailedUpstreams } from '../../../../shared/failed-upstreams.ts';
-import type { AttemptState } from '../../../../shared/gateway-ctx.ts';
+import type { AttemptState, GatewayCtx } from '../../../../shared/gateway-ctx.ts';
 import { recordPerformance, type PerformanceTelemetryContext } from '../../../../shared/telemetry/performance.ts';
 import { recordTokenUsage, tokenUsageFromOpenAIImagesBody } from '../../../../shared/telemetry/usage.ts';
 import { createExternalImageFetcher, type ExternalImageFetchResult } from '../../../shared/external-image-loader.ts';
@@ -903,6 +903,7 @@ interface ShimState {
   config: MaterializedImageGenerationConfig;
   apiKeyId: string;
   upstreamIds: readonly string[] | null;
+  upstreamModelAccess: GatewayCtx['upstreamModelAccess'];
   backgroundScheduler: BackgroundScheduler;
   runtimeLocation: string;
   downstreamAbortSignal: AbortSignal | undefined;
@@ -994,6 +995,7 @@ const resolveImageCandidate = async (
   try {
     resolution = await enumerateModelCandidates({
       upstreamIds: state.upstreamIds,
+      upstreamModelAccess: state.upstreamModelAccess,
       model: state.config.model,
       kind: 'image',
       scheduler: state.backgroundScheduler,
@@ -1483,6 +1485,7 @@ export const imageGenerationServerTool: ServerToolRegistration = async (invocati
     config: materializedConfig,
     apiKeyId: gatewayCtx.apiKeyId,
     upstreamIds: gatewayCtx.upstreamIds,
+    upstreamModelAccess: gatewayCtx.upstreamModelAccess,
     backgroundScheduler: gatewayCtx.backgroundScheduler,
     runtimeLocation: gatewayCtx.runtimeLocation,
     downstreamAbortSignal: gatewayCtx.abortSignal,

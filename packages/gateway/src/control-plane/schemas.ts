@@ -252,11 +252,26 @@ const upstreamIdsValueSchema = z.array(z.string().min(1))
   .refine(arr => new Set(arr).size === arr.length, { message: 'upstreamIds contains duplicates' })
   .nullable();
 
+const upstreamModelAccessRuleSchema = z.object({
+  upstreamId: z.string().min(1),
+  mode: z.enum(['inherit', 'allow', 'deny']),
+  modelIds: z.array(z.string().min(1).max(1024))
+    .refine(ids => new Set(ids).size === ids.length, { message: 'modelIds contains duplicates' }),
+}).superRefine((rule, ctx) => {
+  if (rule.mode === 'inherit' && rule.modelIds.length > 0) {
+    ctx.addIssue({ code: 'custom', message: 'inherit rules must not include modelIds', path: ['modelIds'] });
+  }
+});
+
+const upstreamModelAccessValueSchema = z.array(upstreamModelAccessRuleSchema)
+  .refine(rules => new Set(rules.map(rule => rule.upstreamId)).size === rules.length, { message: 'upstreamModelAccess contains duplicate upstreams' });
+
 export const createUserBody = z.object({
   username: usernameSchema,
   password: passwordSchema,
   isAdmin: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
+  upstreamModelAccess: upstreamModelAccessValueSchema.optional(),
 });
 
 export const updateUserBody = z.object({
@@ -264,6 +279,7 @@ export const updateUserBody = z.object({
   password: passwordSchema.optional(),
   isAdmin: z.boolean().optional(),
   upstreamIds: upstreamIdsValueSchema.optional(),
+  upstreamModelAccess: upstreamModelAccessValueSchema.optional(),
 });
 
 export const changeOwnPasswordBody = z.object({
@@ -299,6 +315,7 @@ const keySourceShape = {
 export const createKeyBody = z.object({
   name: z.string().min(1),
   upstream_ids: upstreamIdsValueSchema.optional(),
+  upstream_model_access: upstreamModelAccessValueSchema.optional(),
   dump_retention_seconds: dumpRetentionSecondsSchema.optional(),
   responses_retention_seconds: openaiResponsesRetentionSecondsSchema.optional(),
   ...keySourceShape,
@@ -309,6 +326,7 @@ export const rotateKeyBody = z.object(keySourceShape);
 export const updateKeyBody = z.object({
   name: z.string().min(1).optional(),
   upstream_ids: upstreamIdsValueSchema.optional(),
+  upstream_model_access: upstreamModelAccessValueSchema.optional(),
   dump_retention_seconds: dumpRetentionSecondsSchema.optional(),
   responses_retention_seconds: openaiResponsesRetentionSecondsSchema.optional(),
 });
@@ -741,7 +759,7 @@ export const updateAliasBody = aliasBodyCore.superRefine(aliasBodyRulesRefinemen
 // --- data transfer ---
 
 export const importBody = z.object({
-  version: z.literal(20, { error: 'version must be 20 — older export formats are not supported; re-export from the current deployment' }),
+  version: z.union([z.literal(20), z.literal(21)], { error: 'version must be 20 or 21 — older export formats are not supported; re-export from the current deployment' }),
   mode: z.enum(['merge', 'replace'], { error: "mode must be 'merge' or 'replace'" }),
   data: z.unknown().optional(),
 });

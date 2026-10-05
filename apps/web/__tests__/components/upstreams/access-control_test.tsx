@@ -11,9 +11,13 @@ const available: UpstreamOption[] = [
   { id: 'up_a', name: 'Alpha', kind: 'custom', enabled: true, hue: 210, cachedModelCount: 1 },
 ];
 
-const Control = ({ error, initialIds, initialOverride = true }: { error?: string | null; initialIds: string[]; initialOverride?: boolean }) => {
-  const [value, setValue] = useState({ override: initialOverride, ids: initialIds });
-  return <UpstreamAccessControl available={available} disabled={false} error={error} ids={value.ids} models={[]} onChange={setValue} override={value.override} />;
+const Control = ({ error = null, initialIds, initialOverride = true }: { error?: string | null; initialIds: string[]; initialOverride?: boolean }) => {
+  const [value, setValue] = useState<{
+    override: boolean;
+    ids: string[];
+    modelAccess: { upstreamId: string; mode: 'inherit' | 'allow' | 'deny'; modelIds: string[] }[];
+  }>({ override: initialOverride, ids: initialIds, modelAccess: [] });
+  return <UpstreamAccessControl available={available} disabled={false} error={error} ids={value.ids} modelAccess={value.modelAccess} models={[]} onChange={setValue} override={value.override} />;
 };
 
 const click = async (element: HTMLElement) => {

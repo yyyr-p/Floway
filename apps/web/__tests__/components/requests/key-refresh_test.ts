@@ -10,6 +10,7 @@ const key = (id: string): ApiKey => ({
   created_at: '',
   last_used_at: null,
   upstream_ids: null,
+  upstream_model_access: [],
   dump_retention_seconds: 3600,
   responses_retention_seconds: 0,
 });
