@@ -9,7 +9,7 @@ import { EditorSection } from './section';
 import type { ProxyRecord, UpstreamRecord } from '../../api/types';
 import { fluentComponents } from '../../fluent';
 import { useTranslation } from '../../i18n/translation';
-import { Dropdown, Input } from '../ui/fluent-form-controls';
+import { Dropdown, Input, Textarea } from '../ui/fluent-form-controls';
 import { MultiselectCombobox, valuesAsOptions } from '../ui/multiselect-combobox';
 import { PANEL_INSET_CLASS } from '../ui/panel';
 import { ReorderHandle, useReorderList } from '../ui/reorder-list';
@@ -99,6 +99,29 @@ export function UpstreamConfigSidebar({
           description={t('dashboard.upstreamEditor.prefixDescription')}
         >
           <ModelPrefixEditor />
+        </EditorSection>
+        <EditorSection
+          error={errors.modelMetadataDefaults?.message ? t(errors.modelMetadataDefaults.message) : undefined}
+          title={t('dashboard.upstreamEditor.sections.metadataDefaults')}
+          description={t('dashboard.upstreamEditor.metadataDefaultsDescription')}
+        >
+          <Controller control={control} name="modelMetadataDefaults" render={({ field }) => (
+            <Field
+              label={t('dashboard.upstreamEditor.fields.metadataDefaults')}
+              validationMessage={errors.modelMetadataDefaults?.message ? t(errors.modelMetadataDefaults.message) : undefined}
+              validationState={errors.modelMetadataDefaults ? 'error' : undefined}
+            >
+              <Textarea
+                aria-label={t('dashboard.upstreamEditor.fields.metadataDefaults')}
+                name={field.name}
+                onBlur={field.onBlur}
+                onChange={(_, data) => field.onChange(data.value)}
+                ref={field.ref}
+                rows={8}
+                value={field.value}
+              />
+            </Field>
+          )} />
         </EditorSection>
         <EditorSection title={t('dashboard.upstreamEditor.sections.disabledModels')} description={t('dashboard.upstreamEditor.disabledModelsHint')}>
           <DisabledModelsCombobox catalogAvailable={catalogAvailable} discovered={discovered} />

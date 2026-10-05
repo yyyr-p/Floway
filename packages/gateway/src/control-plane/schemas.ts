@@ -21,7 +21,7 @@ import { normalizeDisabledPublicModelIds } from '../repo/disabled-public-models.
 import { CUSTOM_API_KEY_MAX_LENGTH, KEY_SOURCES } from '../shared/api-key-tokens.ts';
 import { RETENTION_MAX_SECONDS, SECONDS_PER_DAY } from '../shared/retention.ts';
 import { kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
-import { type FlagOverrides, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
+import { type FlagOverrides, modelMetadataDefaultsField, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
 
 // --- shared atoms ---
 
@@ -42,6 +42,15 @@ const flagOverridesSchema = z.unknown().transform((value, ctx): FlagOverrides =>
 // There is no id allowlist to enforce — any string is a legal public model id —
 // so this only trims and de-dupes rather than rejecting unknown ids.
 const disabledPublicModelIdsSchema = z.array(z.string()).transform(normalizeDisabledPublicModelIds);
+
+const modelMetadataDefaultsSchema = z.unknown().transform((value, ctx) => {
+  try {
+    return modelMetadataDefaultsField(value, 'model_metadata_defaults') ?? {};
+  } catch (error) {
+    ctx.issues.push({ code: 'custom', message: error instanceof Error ? error.message : String(error), input: value });
+    return z.NEVER;
+  }
+});
 
 // The structured endpoint capability map, shared by per-model config and the
 // custom upstream-level fallback. A present key declares the endpoint is served.
@@ -117,8 +126,8 @@ const budgetTokensSchema = z.object({
 const reasoningSchema = z.object({
   effort: effortSchema.optional(),
   budget_tokens: budgetTokensSchema.optional(),
-  adaptive: z.literal(true).optional(),
-  mandatory: z.literal(true).optional(),
+  adaptive: z.boolean().optional(),
+  mandatory: z.boolean().optional(),
 }).refine(
   r => r.effort !== undefined || r.budget_tokens !== undefined || r.adaptive !== undefined || r.mandatory !== undefined,
   { message: 'reasoning must have at least one of effort, budget_tokens, adaptive, mandatory' },
@@ -126,9 +135,7 @@ const reasoningSchema = z.object({
 
 const chatSchema = z.object({
   modalities: modalitiesSchema.optional(),
-  // A real boolean, unlike reasoning.adaptive / reasoning.mandatory: false is
-  // the upstream stating it rejects detail 'original', not the absence of a
-  // statement.
+  // False is an explicit upstream capability answer, not an absent value.
   image_detail_original: z.boolean().optional(),
   reasoning: reasoningSchema.optional(),
 });
@@ -354,6 +361,7 @@ const upstreamBaseFields = {
   disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
   model_prefix: modelPrefixSchema.optional(),
+  model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   hue: upstreamHueSchema,
 };
 
@@ -393,6 +401,7 @@ export const updateUpstreamBody = z.object({
   disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
   proxy_fallback_list: proxyFallbackListSchema.optional(),
   model_prefix: modelPrefixSchema.optional(),
+  model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   hue: upstreamHueSchema.optional(),
   // Patches only carry field diffs, not per-kind shape validation — the
   // handler dispatches on the existing row's kind and enforces the shape
@@ -531,6 +540,7 @@ export const previewModelsBody = z.object({
     flag_overrides: flagOverridesSchema.optional(),
     disabled_public_model_ids: disabledPublicModelIdsSchema.optional(),
     model_prefix: modelPrefixSchema.optional(),
+    model_metadata_defaults: modelMetadataDefaultsSchema.optional(),
   }),
 });
 // --- ollama ---

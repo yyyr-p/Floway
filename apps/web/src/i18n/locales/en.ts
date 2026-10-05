@@ -530,6 +530,8 @@ const en = {
             'Leave an entry blank to use its default /v1 path.',
         disabledModelsHint:
             'Disabled models stay hidden from the catalog and routing while their metadata remains editable.',
+        metadataDefaultsDescription:
+            'Applies to this upstream’s catalog models. Missing fields are unknown and receive these defaults; existing values, including false, 0, and text-only modalities, remain authoritative. Use {} to clear. Supported fields: limits.max_context_window_tokens, max_prompt_tokens, max_output_tokens; chat.modalities.input/output, image_detail_original, reasoning.effort, budget_tokens, adaptive, and mandatory.',
         disabledModelsPlaceholder: 'Search models…',
         disabledModelsSelected_one: '{{count, number}} model disabled',
         disabledModelsSelected_other: '{{count, number}} models disabled',
@@ -554,6 +556,7 @@ const en = {
           apiPaths: 'API paths',
           prefix: 'Model name prefix',
           disabledModels: 'Disabled models',
+          metadataDefaults: 'Model metadata defaults',
         },
         hue: {
           description: 'Choose how this upstream is distinguished across the console.',
@@ -569,6 +572,7 @@ const en = {
           catalogPath: 'Catalog path',
           defaultEndpoints: 'Default LLM endpoints',
           pathOverrides: 'Path overrides',
+          metadataDefaults: 'JSON metadata defaults',
         },
         auth: { none: 'None' },
         headers: {
@@ -1019,6 +1023,7 @@ const en = {
           name: 'Upstream name is required.',
           prefix: 'At least one model prefix form must remain addressable.',
           models: 'One or more models have an invalid configuration.',
+          metadataDefaults: 'Enter a valid metadata defaults object. Empty modality and effort lists are not allowed.',
           copilot: 'Complete GitHub device authorization before saving.',
           credential: 'Import a credential before saving.',
         },
