@@ -96,8 +96,8 @@ const toClaudeCodeCatalog = (response: PublicModelsResponse) => {
 };
 
 export const serveModels = async (c: Context): Promise<Response> => {
+  const userAgent = c.req.header('user-agent');
   try {
-    const userAgent = c.req.header('user-agent');
     const runtimeLocation = getRuntimeLocation(c.req.raw);
     const upstreamIds = effectiveUpstreamIdsFromContext(c);
     const scheduleRefresh = createModelsRefreshScheduler(runtimeLocation, backgroundSchedulerFromContext(c));
@@ -120,6 +120,14 @@ export const serveModels = async (c: Context): Promise<Response> => {
       ? toClaudeCodeCatalog(publicCatalog)
       : publicCatalog);
   } catch (e) {
+    if (
+      !isCodexUserAgent(userAgent)
+      && !isClaudeCodeUserAgent(userAgent)
+      && e instanceof Error
+      && e.message.startsWith('No upstream provider configured')
+    ) {
+      return Response.json({ object: 'list', has_more: false, first_id: null, last_id: null, data: [] });
+    }
     const message = e instanceof Error ? e.message : String(e);
     return Response.json({ error: { message, type: 'api_error' } }, { status: 502 });
   }
