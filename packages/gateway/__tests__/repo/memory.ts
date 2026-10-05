@@ -48,6 +48,7 @@ import type {
   OpenAIResponsesItemsRepo,
   OpenAIResponsesSnapshotsRepo,
   ScheduledMaintenanceRepo,
+  SettingsRepo,
   SpilledFilesRepo,
   WebSearchConfigRepo,
   WebSearchUsageRecord,
@@ -731,6 +732,27 @@ class MemoryWebSearchConfigRepo implements WebSearchConfigRepo {
   save(config: WebSearchConfig): Promise<void> {
     this.config = structuredClone(config);
     return Promise.resolve();
+  }
+}
+
+class MemorySettingsRepo implements SettingsRepo {
+  private byKey = new Map<string, unknown>();
+
+  get(key: string): Promise<unknown | null> {
+    return Promise.resolve(this.byKey.has(key) ? structuredClone(this.byKey.get(key)) : null);
+  }
+
+  set(key: string, value: unknown): Promise<void> {
+    this.byKey.set(key, structuredClone(value));
+    return Promise.resolve();
+  }
+
+  delete(key: string): Promise<boolean> {
+    return Promise.resolve(this.byKey.delete(key));
+  }
+
+  list(): Promise<{ key: string; value: unknown }[]> {
+    return Promise.resolve([...this.byKey.keys()].sort().map(key => ({ key, value: structuredClone(this.byKey.get(key)) })));
   }
 }
 
@@ -1489,6 +1511,7 @@ export class InMemoryRepo implements Repo {
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
+  settings: SettingsRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
@@ -1510,6 +1533,7 @@ export class InMemoryRepo implements Repo {
     this.webSearchUsage = new MemoryWebSearchUsageRepo();
     this.performance = new MemoryPerformanceRepo(this.apiKeys);
     this.webSearchConfig = new MemoryWebSearchConfigRepo();
+    this.settings = new MemorySettingsRepo();
     this.upstreams = new MemoryUpstreamRepo();
     this.proxies = new MemoryProxyRepo(this.upstreams);
     this.proxyBackoffs = new MemoryProxyBackoffRepo();

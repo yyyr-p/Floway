@@ -344,6 +344,21 @@ export interface WebSearchConfigRepo {
   save(config: WebSearchConfig): Promise<void>;
 }
 
+// Operator-owned server-wide settings, keyed by a stable setting name and
+// persisted as one JSON document per key. Value shape and validation belong
+// to the control-plane schemas that own each key; the repo stores and returns
+// the parsed JSON value untouched, so a caller reading with a newer schema
+// gets the raw stored document to validate rather than a silently coerced
+// one. `null` means the key was never written.
+export interface SettingsRepo {
+  get(key: string): Promise<unknown | null>;
+  // Upsert one key's JSON document. The value must be JSON-serializable
+  // as-is (the repo does not canonicalize or sort keys).
+  set(key: string, value: unknown): Promise<void>;
+  delete(key: string): Promise<boolean>;
+  list(): Promise<{ key: string; value: unknown }[]>;
+}
+
 export interface UpstreamRepo {
   list(): Promise<StoredUpstreamRecord[]>;
   getById(id: string): Promise<StoredUpstreamRecord | null>;
@@ -569,6 +584,7 @@ export interface Repo {
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
+  settings: SettingsRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;

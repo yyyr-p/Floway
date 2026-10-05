@@ -409,3 +409,19 @@ test('SQL upstream repo saveState skips the write when the mutator changes nothi
 // comparison required for the CAS predicate). The createSqliteTestDb helper
 // applies every migration so SqlRepo runs end-to-end against the same SQL
 // the production platforms execute.
+
+test('SQL settings repo round-trips a JSON document per key', async () => {
+  const repo = new SqlRepo(await createSqliteTestDb()).settings;
+  assertEquals(await repo.get('never-written'), null);
+  const document = { enabled: true, nested: { mode: 'reject' }, list: [1, 2, 3] };
+  await repo.set('cyber-intercept', document);
+  assertEquals(await repo.get('cyber-intercept'), document);
+  // Overwrite upserts in place and refreshes the value.
+  await repo.set('cyber-intercept', { enabled: false });
+  assertEquals(await repo.get('cyber-intercept'), { enabled: false });
+  assertEquals(await repo.list(), [{ key: 'cyber-intercept', value: { enabled: false } }]);
+  assertEquals(await repo.delete('cyber-intercept'), true);
+  assertEquals(await repo.get('cyber-intercept'), null);
+  assertEquals(await repo.delete('cyber-intercept'), false);
+  assertEquals(await repo.list(), []);
+});

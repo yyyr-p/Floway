@@ -40,6 +40,7 @@ import type {
   OpenAIResponsesItemsRepo,
   OpenAIResponsesSnapshotsRepo,
   ScheduledMaintenanceRepo,
+  SettingsRepo,
   SpilledFilesRepo,
   StoredUpstreamRecord,
   WebSearchConfigRepo,
@@ -869,6 +870,45 @@ class SqlWebSearchConfigRepo implements WebSearchConfigRepo {
   }
 }
 
+class SqlSettingsRepo implements SettingsRepo {
+  constructor(private db: SqlDatabase) {}
+
+  async get(key: string): Promise<unknown | null> {
+    const row = await this.db
+      .prepare('SELECT value_json FROM settings WHERE key = ?')
+      .bind(key)
+      .first<{ value_json: string }>();
+    if (!row) return null;
+    return JSON.parse(row.value_json) as unknown;
+  }
+
+  async set(key: string, value: unknown): Promise<void> {
+    const valueJson = JSON.stringify(value);
+    await this.db
+      .prepare(
+        `INSERT INTO settings (key, value_json, updated_at)
+         VALUES (?, ?, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+         ON CONFLICT (key) DO UPDATE SET
+           value_json = excluded.value_json,
+           updated_at = excluded.updated_at`,
+      )
+      .bind(key, valueJson)
+      .run();
+  }
+
+  async delete(key: string): Promise<boolean> {
+    const result = await this.db.prepare('DELETE FROM settings WHERE key = ?').bind(key).run();
+    return (result.meta.changes ?? 0) > 0;
+  }
+
+  async list(): Promise<{ key: string; value: unknown }[]> {
+    const rows = await this.db
+      .prepare('SELECT key, value_json FROM settings ORDER BY key')
+      .all<{ key: string; value_json: string }>();
+    return rows.results.map(row => ({ key: row.key, value: JSON.parse(row.value_json) as unknown }));
+  }
+}
+
 // Losing once is ordinary on a row this contended, losing four times in a row
 // is not — and the attempts run back-to-back with no delay, so they observe
 // much the same contention rather than independent draws. The bound is a
@@ -1691,6 +1731,7 @@ export class SqlRepo implements Repo {
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
+  settings: SettingsRepo;
   upstreams: UpstreamRepo;
   proxies: ProxyRepo;
   proxyBackoffs: ProxyBackoffRepo;
@@ -1710,6 +1751,7 @@ export class SqlRepo implements Repo {
     this.webSearchUsage = new SqlWebSearchUsageRepo(db);
     this.performance = new SqlPerformanceRepo(db);
     this.webSearchConfig = new SqlWebSearchConfigRepo(db);
+    this.settings = new SqlSettingsRepo(db);
     this.upstreams = new SqlUpstreamRepo(db);
     this.proxies = new SqlProxyRepo(db);
     this.proxyBackoffs = new SqlProxyBackoffRepo(db);
