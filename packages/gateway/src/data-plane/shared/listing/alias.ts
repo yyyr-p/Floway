@@ -35,6 +35,7 @@
 // at the `mergeAliasesIntoModels` step.
 
 import type { AddressableIdEntry } from './addressable.ts';
+import { expandAliasTargets } from '../../../model-aliases/graph.ts';
 import type { ModelAliasRecord } from '../../../repo/types.ts';
 import { unionEndpoints } from '../../providers/endpoint-union.ts';
 import { composeAliasDisplayName } from '@floway-dev/protocols/common';
@@ -221,12 +222,13 @@ const buildAliasedFrom = (
   alias: ModelAliasRecord,
   addressableModelIds: readonly AddressableIdEntry[],
   narrowTargets: boolean,
+  terminalTargets: readonly AliasTarget[],
 ): InternalAliasedFrom => {
   if (!narrowTargets) {
     return { selection: alias.selection, targets: alias.targets };
   }
   const addressableSet = new Set(addressableModelIds.map(entry => entry.id));
-  const targets = alias.targets.filter(t => addressableSet.has(t.target_model_id));
+  const targets = terminalTargets.filter(t => addressableSet.has(t.target_model_id));
   return { selection: alias.selection, targets };
 };
 
@@ -276,12 +278,15 @@ const synthesizeOne = (
   gatewayAddressableModelIds: readonly AddressableIdEntry[],
   callerAddressableModelIds: readonly AddressableIdEntry[],
   narrowTargets: boolean,
+  aliasesByName: ReadonlyMap<string, ModelAliasRecord>,
 ): InternalModel | null => {
+  const terminalTargets: AliasTarget[] = expandAliasTargets(alias, aliasesByName, record => record.targets)
+    .map(target => ({ target_model_id: target.targetModelId, rules: target.rules }));
   // Gateway-wide kind-matched targets — the basis for stable metadata.
   // A target reachable only through a prefix-addressable alternate still
   // counts.
   const gatewayById = new Map(gatewayAddressableModelIds.map(entry => [entry.id, entry.model] as const));
-  const gatewayAvailable = alias.targets
+  const gatewayAvailable = terminalTargets
     .map(target => ({ target, real: gatewayById.get(target.target_model_id) }))
     .filter((entry): entry is { target: AliasTarget; real: InternalModel } => entry.real !== undefined && entry.real.kind === alias.kind);
   if (gatewayAvailable.length === 0) return null;
@@ -327,7 +332,7 @@ const synthesizeOne = (
     kind: alias.kind,
     endpoints,
     opaqueBlobCompatibilityScope: commonOpaqueBlobCompatibilityScope(gatewayAvailable.map(({ real }) => real)),
-    aliasedFrom: buildAliasedFrom(alias, callerAddressableModelIds, narrowTargets),
+    aliasedFrom: buildAliasedFrom(alias, callerAddressableModelIds, narrowTargets, terminalTargets),
     ...(chat !== undefined ? { chat } : {}),
     ...(singleTargetPricing !== undefined ? { pricing: singleTargetPricing } : {}),
   };
@@ -337,16 +342,18 @@ const synthesizeOne = (
 const sortAliases = (aliases: readonly ModelAliasRecord[]): ModelAliasRecord[] =>
   [...aliases].sort((a, b) => (a.sortOrder - b.sortOrder) || a.name.localeCompare(b.name));
 
-export const synthesizeListedAliases = (input: ListedAliasInputs): InternalModel[] =>
-  sortAliases(input.aliases)
+export const synthesizeListedAliases = (input: ListedAliasInputs): InternalModel[] => {
+  const aliasesByName = new Map(input.aliases.map(alias => [alias.name, alias]));
+  return sortAliases(input.aliases)
     // `visibleInModelsList` is a LISTING flag only — the request-time
     // resolver in `providers/resolution.ts` does not consult it, so a hidden
     // alias stays reachable at dispatch. This lets an operator ship a
     // gateway id (e.g. a legacy client hardcodes it) without cluttering
     // the public catalog.
     .filter(alias => alias.enabled && alias.visibleInModelsList)
-    .map(alias => synthesizeOne(alias, input.gatewayAddressableModelIds, input.callerAddressableModelIds, input.narrowTargets))
+    .map(alias => synthesizeOne(alias, input.gatewayAddressableModelIds, input.callerAddressableModelIds, input.narrowTargets, aliasesByName))
     .filter((entry): entry is InternalModel => entry !== null);
+};
 
 // Compose real-model rows with visible alias rows into a single `InternalModel[]`.
 // Shared merge point across the alias-aware listing endpoints (OpenAI
