@@ -1,4 +1,4 @@
-import type { CustomPathOverrideKey, CustomUpstreamConfig } from './config.ts';
+import { customManagementUrl, type CustomPathOverrideKey, type CustomUpstreamConfig } from './config.ts';
 import { type FetchInit, type UpstreamFetchOptions, joinBaseAndPath } from '@floway-dev/provider';
 
 // https://docs.anthropic.com/en/api/versioning
@@ -26,9 +26,9 @@ const replace = (lines: [string, string][], name: string, value: string): void =
   lines.push(...kept, [name, value]);
 };
 
-const customFetchInternal = async (
+const customFetchUrlInternal = async (
   config: CustomUpstreamConfig,
-  path: string,
+  url: string,
   init: FetchInit,
   options: UpstreamFetchOptions,
 ): Promise<Response> => {
@@ -53,8 +53,34 @@ const customFetchInternal = async (
     headers.length = 0;
     headers.push(...kept, ...options.extraHeaders.map(([name, value]): [string, string] => [name, value]));
   }
-  return await options.wrapUpstreamCall(() => options.fetcher(joinBaseAndPath(config.baseUrl, path), { ...init, headers }));
+  return await options.wrapUpstreamCall(() => options.fetcher(url, { ...init, headers }));
 };
+
+const customFetchInternal = async (
+  config: CustomUpstreamConfig,
+  path: string,
+  init: FetchInit,
+  options: UpstreamFetchOptions,
+): Promise<Response> => {
+  return await customFetchUrlInternal(
+    config,
+    joinBaseAndPath(config.baseUrl, path),
+    init,
+    options,
+  );
+};
+
+export const customFetchManagement = (
+  config: CustomUpstreamConfig,
+  path: string,
+  init: FetchInit,
+  options: UpstreamFetchOptions,
+): Promise<Response> => customFetchUrlInternal(
+  config,
+  customManagementUrl(config, path),
+  { ...init, redirect: 'manual' },
+  options,
+);
 
 export const customFetchRerank = (config: CustomUpstreamConfig, path: string, init: FetchInit, options: UpstreamFetchOptions): Promise<Response> =>
   customFetchInternal(config, path, init, options);

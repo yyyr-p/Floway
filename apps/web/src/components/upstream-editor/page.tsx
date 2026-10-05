@@ -107,6 +107,16 @@ export function UpstreamEditorPage({ data }: { data: UpstreamEditorLoaderData })
     if (record.kind === 'custom') {
       const config = values.config as Extract<UpstreamRecord, { kind: 'custom' }>['config'];
       refineCustomIngressHeaderRules(config.ingressHeadersRules, ctx);
+      const customDraft = values.config as unknown as Record<string, unknown>;
+      for (const field of ['usageProbeJson', 'actionsJson']) {
+        const json = customDraft[field];
+        if (typeof json !== 'string' || json.trim() === '') continue;
+        try {
+          JSON.parse(json);
+        } catch {
+          ctx.addIssue({ code: 'custom', message: 'dashboard.upstreamEditor.management.invalidJson', path: ['config', field] });
+        }
+      }
     }
     // An upstream that already exists keeps the credential it was created
     // with, and the editor never sends it back.
