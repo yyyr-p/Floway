@@ -2,9 +2,9 @@ import { PlugConnectedRegular } from '@fluentui/react-icons';
 import { useCallback, useState } from 'react';
 import { Controller, useFormContext, useFormState, useWatch } from 'react-hook-form';
 
-import { EditorSection } from './section';
 import type { UpstreamEditorValues } from './data';
 import { previewRecord } from './data';
+import { EditorSection } from './section';
 import { api, callApi } from '../../api/client';
 import type { CustomUsageRefresh, UpstreamRecord, UpstreamRecordEnvelope } from '../../api/types';
 import { fluentComponents } from '../../fluent';
