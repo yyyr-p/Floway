@@ -20,7 +20,7 @@ import { z } from 'zod';
 import { normalizeDisabledPublicModelIds } from '../repo/disabled-public-models.ts';
 import { CUSTOM_API_KEY_MAX_LENGTH, KEY_SOURCES } from '../shared/api-key-tokens.ts';
 import { RETENTION_MAX_SECONDS, SECONDS_PER_DAY } from '../shared/retention.ts';
-import { kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
+import { BILLING_METRICS, kindForEndpoints, MODEL_KINDS, parseNonNegativeDecimalString, RERANK_PROTOCOLS, tokenUsageUnattributedUserId } from '@floway-dev/protocols/common';
 import { type FlagOverrides, modelMetadataDefaultsField, MODEL_PREFIX_MAX_LENGTH, MODEL_PREFIX_REGEX, normalizeUpstreamLogoUrl, parseFlagOverridesWire, UPSTREAM_HUE_DEGREES } from '@floway-dev/provider';
 
 // --- shared atoms ---
@@ -85,6 +85,23 @@ const priceSchema = z.string().transform((value, ctx) => {
     return z.NEVER;
   }
 });
+
+export const usagePricingBackfillPlanBody = z.object({
+  upstream: z.string().min(1),
+  model: z.string().min(1),
+  modelKey: z.string().min(1),
+  startHour: z.string().min(1),
+  endHour: z.string().min(1),
+  timezone: z.string().min(1),
+  mode: z.enum(['fill', 'overwrite']),
+  metrics: z.array(z.enum(BILLING_METRICS)).min(1),
+});
+
+export const usagePricingBackfillApplyBody = z.object({
+  plan: z.unknown(),
+  confirmationPlanId: z.string().min(1),
+});
+
 const pricingMetricShape = {
   input_tokens: priceSchema.optional(),
   output_tokens: priceSchema.optional(),

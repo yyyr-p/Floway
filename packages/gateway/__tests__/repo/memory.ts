@@ -79,15 +79,36 @@ import type {
   UsageOverviewRecord,
   UsageOverviewResult,
   UsageRepo,
+  UsagePricingBackfillRepo,
   User,
   UsersRepo,
 } from '../../src/repo/types.ts';
+import { encodeUpstreamModelsCache } from '../../src/repo/upstream-codecs.ts';
 import { serializeStoredConfig, serializeStoredState } from '../../src/repo/upstream-json.ts';
 import { usageMetricRows } from '../../src/repo/usage-metrics.ts';
 import { bucketForTtftMs, bucketForTpotUs } from '../../src/shared/performance-histogram.ts';
 import { assertWebSearchProviderName, type WebSearchConfig } from '../../src/shared/web-search-providers.ts';
 import { AgentSetupTokenCollisionError } from '@floway-dev/agent-setup';
-import { addDecimalStrings, canonicalPricingSelectorKey, canonicalizePricingSelector, multiplyDecimalStrings, parseNonNegativeDecimalString, tokenUsageUnattributedUserId, usageUpstreamDimensionValue, type BillingMetric, type DecimalString, type PricingSelector } from '@floway-dev/protocols/common';
+import {
+  actualStateHistogram,
+  canonicalJson,
+  createPlan,
+  finalStateHistogram,
+  inputError,
+  normalizeIntent,
+  parsePlan,
+  remainingNullSummary,
+  resolveUsagePricing,
+  safetyError,
+  verificationError,
+  type BackfillIntent,
+  type BackfillPlan,
+  type DatabaseIdentity,
+  type InspectionResult,
+  type PriceState,
+  type StoredUpstream,
+} from '@floway-dev/gateway/usage-pricing-backfill';
+import { addDecimalStrings, canonicalPricingSelectorKey, canonicalizePricingSelector, multiplyDecimalStrings, parseNonNegativeDecimalString, parsePricingSelectorKey, tokenUsageUnattributedUserId, usageUpstreamDimensionValue, type BillingMetric, type DecimalString, type PricingSelector } from '@floway-dev/protocols/common';
 import { UpstreamGoneError, type UpstreamRecord } from '@floway-dev/provider';
 
 const SEED_ADMIN_USER: User = {
@@ -904,6 +925,169 @@ class MemoryUsageLimitsRepo implements UsageLimitsRepo {
     this.limits.clear();
     this.reservations.clear();
     return Promise.resolve();
+  }
+}
+
+class MemoryUsagePricingBackfillRepo implements UsagePricingBackfillRepo {
+  readonly databaseIdentity: DatabaseIdentity = { kind: 'runtime', target: 'memory-test', stable: true };
+
+  constructor(private readonly usage: UsageRepo, private readonly upstreams: UpstreamRepo) {}
+
+  async inspect(): Promise<InspectionResult> {
+    const [upstreams, records] = await Promise.all([this.upstreams.list(), this.usage.listAll()]);
+    const slices = new Map<string, InspectionResult['nullPriceSlices'][number]>();
+    for (const record of records) {
+      for (const metric of record.metrics) {
+        if (metric.unitPrice !== null) continue;
+        const pricingSelector = canonicalPricingSelectorKey(record.pricingSelector);
+        parsePricingSelectorKey(pricingSelector);
+        const key = [record.upstream ?? '', record.model, record.modelKey, pricingSelector, metric.metric].join('\0');
+        const current = slices.get(key);
+        if (current) {
+          current.rows++;
+          current.firstHour = current.firstHour < record.hour ? current.firstHour : record.hour;
+          current.lastHour = current.lastHour > record.hour ? current.lastHour : record.hour;
+        } else {
+          slices.set(key, {
+            upstream: record.upstream,
+            model: record.model,
+            modelKey: record.modelKey,
+            pricingSelector,
+            metric: metric.metric,
+            rows: 1,
+            firstHour: record.hour,
+            lastHour: record.hour,
+          });
+        }
+      }
+    }
+    return {
+      schemaVersion: 1,
+      kind: 'usage-pricing-inspection',
+      database: this.databaseIdentity,
+      enabledUpstreams: upstreams.filter(upstream => upstream.enabled).map(upstream => ({
+        id: upstream.id,
+        provider: upstream.kind,
+        name: upstream.name,
+      })),
+      nullPriceSlices: [...slices.values()].sort((left, right) =>
+        (left.upstream ?? '').localeCompare(right.upstream ?? '') || left.model.localeCompare(right.model)
+        || left.modelKey.localeCompare(right.modelKey) || left.pricingSelector.localeCompare(right.pricingSelector)
+        || left.metric.localeCompare(right.metric)),
+    };
+  }
+
+  async plan(rawIntent: BackfillIntent): Promise<BackfillPlan> {
+    return await this.build(rawIntent, new Date().toISOString());
+  }
+
+  async apply(rawPlan: BackfillPlan): Promise<Awaited<ReturnType<UsagePricingBackfillRepo['apply']>>> {
+    const plan = await parsePlan(JSON.stringify(rawPlan));
+    if (canonicalJson(plan.database) !== canonicalJson(this.databaseIdentity)) {
+      throw safetyError('database-mismatch', 'The opened database does not match the plan target');
+    }
+    const rebuilt = await this.build(plan.intent, plan.createdAt);
+    if (rebuilt.planId !== plan.planId) throw safetyError('stale-plan', 'Database rows or pricing changed after the plan was created');
+    if (plan.blockers.length > 0) throw safetyError('blocked-plan', 'Plan contains safety blockers');
+
+    let rowsUpdated = 0;
+    if (plan.operations.length > 0) {
+      const operations = new Map(plan.operations.map(operation => [`${operation.pricingSelector}\0${operation.metric}`, operation]));
+      const intent = normalizeIntent(plan.intent);
+      const records = await this.usage.listAll();
+      for (const record of records) {
+        if (record.model !== intent.model || (record.upstream ?? '') !== intent.upstream || record.modelKey !== intent.modelKey
+          || record.hour < intent.startHour || record.hour >= intent.endHour) continue;
+        const selector = canonicalPricingSelectorKey(record.pricingSelector);
+        let changed = false;
+        const metrics = record.metrics.map(metric => {
+          const operation = operations.get(`${selector}\0${metric.metric}`);
+          if (operation === undefined || (intent.mode === 'fill' ? metric.unitPrice !== null : metric.unitPrice === operation.proposedUnitPrice)) {
+            return metric;
+          }
+          changed = true;
+          rowsUpdated++;
+          return { ...metric, unitPrice: operation.proposedUnitPrice };
+        });
+        if (changed) await this.usage.set({ ...record, metrics });
+      }
+    }
+
+    const states = await this.states(plan.intent);
+    if (canonicalJson(actualStateHistogram(states)) !== canonicalJson(finalStateHistogram(plan))) {
+      throw verificationError('post-write-state', 'Post-write usage price state does not match the planned result');
+    }
+    const operations = plan.operations.map(operation => {
+      const matching = states.filter(state => state.pricingSelector === operation.pricingSelector && state.metric === operation.metric);
+      const remainingNullRows = matching.filter(state => state.unitPrice === null).reduce((sum, state) => sum + state.rows, 0);
+      const wrongPriceRows = plan.intent.mode === 'overwrite'
+        ? matching.filter(state => state.unitPrice !== operation.proposedUnitPrice).reduce((sum, state) => sum + state.rows, 0)
+        : 0;
+      if (remainingNullRows > 0 || wrongPriceRows > 0) {
+        throw verificationError('post-write-verification', `Post-write verification failed for ${operation.pricingSelector}/${operation.metric}`);
+      }
+      return { ...operation, remainingNullRows };
+    });
+    return {
+      schemaVersion: 1,
+      kind: 'usage-pricing-backfill-result',
+      planId: plan.planId,
+      database: this.databaseIdentity,
+      rowsUpdated,
+      operations,
+      summary: remainingNullSummary(states),
+    };
+  }
+
+  private async build(rawIntent: BackfillIntent, createdAt: string): Promise<BackfillPlan> {
+    const intent = normalizeIntent(rawIntent);
+    const upstreamRecord = await this.upstreams.getById(intent.upstream);
+    if (upstreamRecord === null) throw inputError('upstream-not-found', `No upstream has id ${intent.upstream}`);
+    const upstream: StoredUpstream = {
+      id: upstreamRecord.id,
+      provider: upstreamRecord.kind,
+      configJson: serializeStoredConfig(upstreamRecord.config),
+      modelsCacheJson: upstreamRecord.modelsCache === null ? null : encodeUpstreamModelsCache(upstreamRecord.modelsCache),
+    };
+    const states = await this.states(intent);
+    const records = await this.usage.listAll();
+    const pricedSiblingExists = records.some(record => record.upstream === intent.upstream && record.modelKey === intent.modelKey
+      && record.metrics.some(metric => metric.unitPrice !== null));
+    const resolution = resolveUsagePricing(upstream, { model: intent.model, modelKey: intent.modelKey });
+    return await createPlan(this.databaseIdentity, intent, upstream, states, pricedSiblingExists, resolution, createdAt);
+  }
+
+  private async states(rawIntent: BackfillIntent): Promise<PriceState[]> {
+    const intent = normalizeIntent(rawIntent);
+    const selectedMetrics = new Set(intent.metrics);
+    const grouped = new Map<string, PriceState>();
+    for (const record of await this.usage.listAll()) {
+      if (record.model !== intent.model || (record.upstream ?? '') !== intent.upstream || record.modelKey !== intent.modelKey
+        || record.hour < intent.startHour || record.hour >= intent.endHour) continue;
+      const pricingSelector = canonicalPricingSelectorKey(record.pricingSelector);
+      for (const metric of record.metrics) {
+        if (!selectedMetrics.has(metric.metric)) continue;
+        const key = `${pricingSelector}\0${metric.metric}\0${metric.unitPrice ?? '\0'}`;
+        const current = grouped.get(key);
+        if (current) {
+          current.rows++;
+          current.representativeQuantity = current.representativeQuantity < metric.quantity
+            ? current.representativeQuantity : metric.quantity;
+        } else {
+          grouped.set(key, {
+            pricingSelector,
+            metric: metric.metric,
+            unitPrice: metric.unitPrice,
+            rows: 1,
+            representativeQuantity: metric.quantity,
+          });
+        }
+      }
+    }
+    return [...grouped.values()].toSorted((left, right) =>
+      left.pricingSelector.localeCompare(right.pricingSelector) || left.metric.localeCompare(right.metric)
+      || (left.unitPrice === null ? right.unitPrice === null ? 0 : -1
+        : right.unitPrice === null ? 1 : left.unitPrice.localeCompare(right.unitPrice)));
   }
 }
 
@@ -1886,6 +2070,7 @@ export class InMemoryRepo implements Repo {
   oauth2Config: OAuth2ConfigRepo;
   usage: UsageRepo;
   usageLimits: UsageLimitsRepo;
+  usagePricingBackfill: UsagePricingBackfillRepo;
   webSearchUsage: WebSearchUsageRepo;
   performance: PerformanceRepo;
   webSearchConfig: WebSearchConfigRepo;
@@ -1914,6 +2099,7 @@ export class InMemoryRepo implements Repo {
     this.performance = new MemoryPerformanceRepo(this.apiKeys);
     this.webSearchConfig = new MemoryWebSearchConfigRepo();
     this.upstreams = new MemoryUpstreamRepo();
+    this.usagePricingBackfill = new MemoryUsagePricingBackfillRepo(this.usage, this.upstreams);
     this.proxies = new MemoryProxyRepo(this.upstreams);
     this.proxyBackoffs = new MemoryProxyBackoffRepo();
     this.modelAliases = new MemoryModelAliasesRepo();

@@ -78,6 +78,7 @@ export const navGroups: NavGroup[] = [
       { to: '/dashboard/admin/oauth2', labelKey: 'dashboard.nav.oauth2', icon: PersonKey20Color },
       { to: '/dashboard/admin/usage-limits', labelKey: 'dashboard.nav.usageLimits', icon: CoinMultiple20Color },
       { to: '/dashboard/admin/backup-restore', labelKey: 'dashboard.nav.backupRestore', icon: Database20Color },
+      { to: '/dashboard/admin/usage-pricing', labelKey: 'dashboard.nav.usagePricing', icon: DataPie20Color },
     ],
   },
 ];
