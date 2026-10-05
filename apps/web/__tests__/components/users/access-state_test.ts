@@ -9,6 +9,7 @@ const user = (id: number, upstreamIds: string[] | null): ControlPlaneUser => ({
   isAdmin: false,
   canViewGlobalUsage: false,
   upstreamIds,
+  upstreamModelAccess: [],
   createdAt: '2026-08-19T00:00:00.000Z',
 });
 

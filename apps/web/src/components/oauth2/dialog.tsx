@@ -214,12 +214,14 @@ export function OAuth2ProviderDialog({ models, onOpenChange, onSaved, open, prov
       disabled={saving}
       error={message('registrationUpstreamIds') ?? null}
       ids={values.registrationUpstreamIds}
+      modelAccess={[]}
       models={models}
       onChange={next => {
         setValue('registrationUpstreamOverride', next.override, { shouldValidate: true });
         setValue('registrationUpstreamIds', next.ids, { shouldValidate: true });
       }}
       override={values.registrationUpstreamOverride}
+      showModelRules={false}
       title={t('dashboard.oauth2.form.registrationUpstreams')}
     />
 
