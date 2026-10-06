@@ -63,8 +63,8 @@ const closeOpenBlocks = (state: GeminiGenerateContentToAnthropicMessagesStreamSt
   state.openBlocks.clear();
 };
 
-// The opening message_start is synthesized on the first content-bearing event —
-// Gemini generateContent has no stream-opening frame to mirror. The message id
+// The opening message_start leads every content-bearing event — Gemini
+// generateContent has no stream-opening frame to mirror. The message id
 // prefers the upstream `responseId` (carried on result chunks) and falls back to
 // a synthetic one; the model is the request model threaded through the trip
 // context, because the wire only names the model on the terminal chunk
@@ -193,6 +193,7 @@ const handleErrorEvent = (
   state: GeminiGenerateContentToAnthropicMessagesStreamState,
 ): AnthropicMessagesStreamEvent[] => {
   const events: AnthropicMessagesStreamEvent[] = [];
+  ensureMessageStart(state, events);
   closeOpenBlocks(state, events);
   events.push({ type: 'error', error: { type: 'api_error', message: event.error.message } });
   return events;
@@ -206,6 +207,10 @@ const translateGeminiGenerateContentEventToAnthropicMessagesEvents = (
 
   const events: AnthropicMessagesStreamEvent[] = [];
   if (state.messageId === '' && event.responseId !== undefined) state.messageId = event.responseId;
+  // The opening frame leads everything: Anthropic Messages clients expect
+  // message_start before any content delta, so it is emitted on the first
+  // non-error event rather than deferred to the terminal.
+  ensureMessageStart(state, events);
 
   for (const candidate of event.candidates ?? []) {
     for (const part of candidate.content.parts) partEvents(part, state, events);

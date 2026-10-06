@@ -225,6 +225,7 @@ export const buildTargetRequest = async (source: OpenAIResponsesRequestPayload):
       request.contents!.push({ role: 'user', parts: await userContentParts(item.content) });
       continue;
     case 'function_call': {
+      toolNamesById[item.call_id] = item.name;
       pendingAssistant ??= [];
       pendingAssistant.push(functionCallPart(item));
       continue;
@@ -235,6 +236,7 @@ export const buildTargetRequest = async (source: OpenAIResponsesRequestPayload):
       request.contents!.push(await toolOutputParts(item.output, item.call_id, toolNamesById));
       continue;
     case 'custom_tool_call': {
+      toolNamesById[item.call_id] = item.name;
       pendingAssistant ??= [];
       pendingAssistant.push(customToolCallPart(item));
       continue;
