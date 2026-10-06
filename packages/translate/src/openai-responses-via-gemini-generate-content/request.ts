@@ -1,12 +1,11 @@
 import { klona } from 'klona/json';
 
 import { canonicalizeOpenAIResponsesPayload } from '../canonicalize-openai-responses-payload.ts';
+import { restrictAllowedTools } from '../shared/openai-responses-via/allowed-tools.ts';
 import { buildCustomToolInputSchema } from '../shared/openai-responses-via/custom-tool-wrap.ts';
 import { flattenNamespaceTools, type NamespaceToolNames } from '../shared/openai-responses-via/namespace-tools.ts';
-import { restrictAllowedTools } from '../shared/openai-responses-via/allowed-tools.ts';
 import { parseToolArgumentsObject } from '../shared/via-anthropic-messages/tool-arguments.ts';
 import { TranslatorInputError } from '../translator-input-error.ts';
-import type { OpenAIResponsesRequestPayload } from '@floway-dev/protocols/openai-responses';
 import type {
   GeminiGenerateContentContent,
   GeminiGenerateContentFunctionDeclaration,
@@ -14,6 +13,7 @@ import type {
   GeminiGenerateContentThinkingConfig,
 } from '@floway-dev/protocols/gemini-generate-content';
 import type {
+  OpenAIResponsesRequestPayload,
   OpenAIResponsesInputContent,
   OpenAIResponsesInputImage,
   OpenAIResponsesInputMessage,
@@ -134,11 +134,11 @@ const parseToolResponseOutput = (output: string): unknown => {
   }
 };
 
-const functionCallPart = (item: { call_id: string; name: string; arguments: string }, toolNamesById: ToolCallNamesById): GeminiGenerateContentContent['parts'][number] => ({
+const functionCallPart = (item: { call_id: string; name: string; arguments: string }): GeminiGenerateContentContent['parts'][number] => ({
   functionCall: { id: item.call_id, name: item.name, args: parseToolArgumentsObject(item.arguments) },
 });
 
-const customToolCallPart = (item: { call_id: string; name: string; input: string }, toolNamesById: ToolCallNamesById): GeminiGenerateContentContent['parts'][number] => ({
+const customToolCallPart = (item: { call_id: string; name: string; input: string }): GeminiGenerateContentContent['parts'][number] => ({
   // Project the freeform invocation into the wrapped function-tool shape so
   // the translated target sees a coherent tool-call history — matching the
   // other responses-source translators.
@@ -226,7 +226,7 @@ export const buildTargetRequest = async (source: OpenAIResponsesRequestPayload):
       continue;
     case 'function_call': {
       pendingAssistant ??= [];
-      pendingAssistant.push(functionCallPart(item, toolNamesById));
+      pendingAssistant.push(functionCallPart(item));
       continue;
     }
     case 'function_call_output':
@@ -236,7 +236,7 @@ export const buildTargetRequest = async (source: OpenAIResponsesRequestPayload):
       continue;
     case 'custom_tool_call': {
       pendingAssistant ??= [];
-      pendingAssistant.push(customToolCallPart(item, toolNamesById));
+      pendingAssistant.push(customToolCallPart(item));
       continue;
     }
     case 'reasoning': {

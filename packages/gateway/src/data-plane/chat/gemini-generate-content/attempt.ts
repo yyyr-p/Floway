@@ -3,6 +3,7 @@ import { geminiGenerateContentCountTokensInterceptors, geminiGenerateContentInte
 import { stripUnsupportedPartFieldsFromPayload } from './interceptors/strip-unsupported-part-fields.ts';
 import { stripUnsupportedToolsFromPayload } from './interceptors/strip-unsupported-tools.ts';
 import { createGeminiGenerateContentBillableUsageReader } from './usage.ts';
+import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { anthropicMessagesAttempt } from '../anthropic-messages/attempt.ts';
 import { openaiChatCompletionsAttempt } from '../openai-chat-completions/attempt.ts';
 import { openaiResponsesAttempt } from '../openai-responses/attempt.ts';
@@ -11,11 +12,10 @@ import { providerStreamResultToExecuteResult } from '../shared/provider-stream-r
 import { plainResultFromResponse } from '../shared/respond.ts';
 import { chatTargetPicker } from '../shared/target-picker.ts';
 import { captureFromDump, traverseTranslation } from '../shared/translate-traverse.ts';
-import { buildUpstreamCallOptions } from '../../shared/upstream-call-options.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { GeminiGenerateContentPayload, GeminiGenerateContentStreamEvent } from '@floway-dev/protocols/gemini-generate-content';
-import { type ModelCandidate, plainResult, type ExecuteResult, type GeminiGenerateContentInvocation, type PlainResult, providerModelOf, type ProviderCallResult } from '@floway-dev/provider';
+import { type ModelCandidate, plainResult, type ExecuteResult, type GeminiGenerateContentInvocation, type PlainResult, providerModelOf } from '@floway-dev/provider';
 import { translateGeminiGenerateContentViaOpenAIChatCompletions, translateGeminiGenerateContentViaAnthropicMessages, translateGeminiGenerateContentViaOpenAIResponses } from '@floway-dev/translate';
 
 // `/v1beta/models/{id}:generateContent` prefers a native Gemini generateContent

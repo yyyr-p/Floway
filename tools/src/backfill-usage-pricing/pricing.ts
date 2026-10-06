@@ -2,9 +2,11 @@ import { ToolError } from './errors.ts';
 import { MODEL_CATALOG_REVISION } from '@floway-dev/gateway';
 import { canonicalPricingSelectorKey, type ModelPricing, type PriceVector, validateModelPricing } from '@floway-dev/protocols/common';
 import { assertUpstreamProviderKind, isRecord, modelsField, pricingField, type UpstreamModelConfig, type UpstreamProviderKind } from '@floway-dev/provider';
+import { pricingForAntigravityModelId } from '@floway-dev/provider-antigravity';
 import { pricingForClaudeCodeModelKey } from '@floway-dev/provider-claude-code';
 import { pricingForCodexModelKey } from '@floway-dev/provider-codex';
 import { pricingForCopilotPublicModelId } from '@floway-dev/provider-copilot';
+import { pricingForGeminiModelKey } from '@floway-dev/provider-gemini';
 import { pricingForOllamaModelKey } from '@floway-dev/provider-ollama';
 
 const CATALOG_HARD_TTL_MS = 24 * 60 * 60 * 1000;
@@ -107,6 +109,10 @@ export const resolveUsagePricing = (
     return staticResolution(pricingForCodexModelKey(identity.modelKey), 'provider:codex');
   case 'claude-code':
     return staticResolution(pricingForClaudeCodeModelKey(identity.modelKey), 'provider:claude-code');
+  case 'gemini':
+    return staticResolution(pricingForGeminiModelKey(identity.modelKey), 'provider:gemini');
+  case 'antigravity':
+    return staticResolution(pricingForAntigravityModelId(identity.modelKey), 'provider:antigravity');
   default:
     provider satisfies never;
     throw new Error(`Unhandled provider: ${provider as string}`);

@@ -7,13 +7,15 @@
     ".": { "import": "./src/index.ts", "types": "./src/index.ts" }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
     "@floway-dev/protocols": "workspace:*",
     "@floway-dev/provider": "workspace:*"
   },
   "devDependencies": {
-    "@floway-dev/test-utils": "workspace:*"
+    "@floway-dev/test-utils": "workspace:*",
+    "vitest": "4.1.10"
   }
 }

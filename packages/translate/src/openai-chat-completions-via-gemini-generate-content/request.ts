@@ -36,7 +36,7 @@ const functionCallPart = (toolCall: { id: string; function: { name: string; argu
   if (toolCall.function.arguments) {
     try {
       args = JSON.parse(toolCall.function.arguments) as Record<string, unknown>;
-    } catch (error) {
+    } catch {
       throw new TranslatorInputError(`tool_calls function arguments for '${toolCall.id}' were not valid JSON.`, { param: 'tools' });
     }
   }

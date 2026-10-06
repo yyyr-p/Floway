@@ -1,11 +1,10 @@
-import * as openaiResponses from '../shared/openai-responses-via/openai-responses-event-builder.ts';
 import { unwrapCustomToolInput } from '../shared/openai-responses-via/custom-tool-wrap.ts';
-import { isOpenAIResponsesTerminalEvent } from '@floway-dev/protocols/openai-responses';
-import type { OpenAIResponsesOutputItem, OpenAIResponsesResult, OpenAIResponsesStreamEvent } from '@floway-dev/protocols/openai-responses';
-import { createRandomOpenAIResponsesItemId } from '@floway-dev/protocols/openai-responses';
+import * as openaiResponses from '../shared/openai-responses-via/openai-responses-event-builder.ts';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import { eventFrame } from '@floway-dev/protocols/common';
 import { GEMINI_GENERATE_CONTENT_MISSING_TERMINAL_MESSAGE, isGeminiGenerateContentErrorEvent, isGeminiGenerateContentTerminalEvent, type GeminiGenerateContentCandidate, type GeminiGenerateContentPart, type GeminiGenerateContentStreamEvent, type GeminiGenerateContentUsageMetadata } from '@floway-dev/protocols/gemini-generate-content';
+import type { OpenAIResponsesOutputItem, OpenAIResponsesResult, OpenAIResponsesStreamEvent } from '@floway-dev/protocols/openai-responses';
+import { isOpenAIResponsesTerminalEvent, createRandomOpenAIResponsesItemId } from '@floway-dev/protocols/openai-responses';
 
 // promptTokenCount already contains the cached share, and Responses
 // input_tokens uses the same inclusive semantics while cached_tokens is the

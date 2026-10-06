@@ -1,5 +1,5 @@
-import { billableUsageFromGeminiGenerateContentUsageMetadata, type GeminiGenerateContentStreamEvent, type GeminiGenerateContentUsageMetadata } from '@floway-dev/protocols/gemini-generate-content';
 import type { BillableUsage } from '@floway-dev/protocols/common';
+import { billableUsageFromGeminiGenerateContentUsageMetadata, type GeminiGenerateContentStreamEvent, type GeminiGenerateContentUsageMetadata } from '@floway-dev/protocols/gemini-generate-content';
 
 // Gemini generateContent reports `usageMetadata` cumulatively on the chunks
 // that carry it, so the terminal chunk's figure is the whole-message usage and

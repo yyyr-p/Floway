@@ -90,7 +90,7 @@ const translateAssistantMessage = (
       parts.push({ text: block.thinking, thought: true });
       break;
     case 'redacted_thinking':
-      if (pendingSignature === undefined) pendingSignature = block.data;
+      pendingSignature ??= block.data;
       break;
     case 'text':
       parts.push(signed({ text: block.text }));

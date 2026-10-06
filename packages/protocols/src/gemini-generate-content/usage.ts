@@ -1,5 +1,5 @@
-import type { BillableUsage } from '../common/index.ts';
 import type { GeminiGenerateContentUsageMetadata } from './index.ts';
+import type { BillableUsage } from '../common/index.ts';
 
 // Gemini generateContent's `promptTokenCount` is an inclusive total that
 // already contains the cached share, and `cachedContentTokenCount` is the

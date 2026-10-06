@@ -14,11 +14,12 @@
     "@floway-dev/gateway": "workspace:*",
     "@floway-dev/protocols": "workspace:*",
     "@floway-dev/provider": "workspace:*",
+    "@floway-dev/provider-antigravity": "workspace:*",
     "@floway-dev/provider-claude-code": "workspace:*",
     "@floway-dev/provider-codex": "workspace:*",
     "@floway-dev/provider-copilot": "workspace:*",
-    "@floway-dev/provider-ollama": "workspace:*",
     "@floway-dev/provider-gemini": "workspace:*",
+    "@floway-dev/provider-ollama": "workspace:*",
     "jsonc-parser": "^3.3.1",
     "tsx": "^4"
   },
