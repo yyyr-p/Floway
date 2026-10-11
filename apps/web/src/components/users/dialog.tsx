@@ -159,8 +159,25 @@ export function UserDialog(props: UserDialogProps) {
     }
   };
 
+  const nestedDialogs = <>
+    {discardConfirmation}
+    {unlinkDialog.invocation && <ConfirmDialog
+      open={unlinkDialog.isOpen}
+      actionLabel={t('dashboard.oauth2.accounts.unlink')}
+      busy={unlinkingProvider !== null}
+      message={t('dashboard.oauth2.accounts.unlinkMessage', {
+        provider: unlinkDialog.invocation.value.provider_display_name,
+        login: unlinkDialog.invocation.value.provider_login,
+      })}
+      onConfirm={() => void unlinkOAuth2(unlinkDialog.invocation!.value)}
+      onOpenChange={open => { if (!open && unlinkingProvider === null) unlinkDialog.close(); }}
+      title={t('dashboard.oauth2.accounts.unlinkTitle')}
+    />}
+  </>;
+
   return (
-    <>{discardConfirmation}<DialogShell
+    <DialogShell
+      nestedDialogs={nestedDialogs}
       width="editor"
       open={props.open}
       actions={
@@ -260,18 +277,6 @@ export function UserDialog(props: UserDialogProps) {
       )}
       {error && <OutcomeMessageBar onDismiss={() => setError(null)}>{error}</OutcomeMessageBar>}
     </DialogShell>
-    {unlinkDialog.invocation && <ConfirmDialog
-      open={unlinkDialog.isOpen}
-      actionLabel={t('dashboard.oauth2.accounts.unlink')}
-      busy={unlinkingProvider !== null}
-      message={t('dashboard.oauth2.accounts.unlinkMessage', {
-        provider: unlinkDialog.invocation.value.provider_display_name,
-        login: unlinkDialog.invocation.value.provider_login,
-      })}
-      onConfirm={() => void unlinkOAuth2(unlinkDialog.invocation!.value)}
-      onOpenChange={open => { if (!open && unlinkingProvider === null) unlinkDialog.close(); }}
-      title={t('dashboard.oauth2.accounts.unlinkTitle')}
-    />}</>
   );
 }
 
