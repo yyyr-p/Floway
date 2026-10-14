@@ -78,7 +78,7 @@ export const renderShellPrefix = (input: RenderPrefixInput): string => {
   // configuration: their installers fetch the model list and convert it, so
   // the API key and its label are the only values they need.
   const lines = assignments.map(([name, value]) => `${name}=${shellLiteral(value)}`);
-  return `set +x\n${lines.join('\n')}\n`;
+  return `set +x\n${lines.join('\n')}\n${agent === 'codex' ? 'export -n SETUP_CODEX_AUTH_JSON 2>/dev/null || true\n' : ''}`;
 };
 
 // --- PowerShell ---

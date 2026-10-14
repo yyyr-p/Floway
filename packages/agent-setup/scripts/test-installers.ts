@@ -211,7 +211,7 @@ const NL = String.fromCharCode(10);
 const REC = process.env.FAKE_CODEX_RECORD || '';
 const rec = (o) => { if (REC) fs.appendFileSync(REC, JSON.stringify(o) + NL); };
 const SENTINEL = process.env.FAKE_CODEX_SENTINEL || '';
-if (process.env.SETUP_API_KEY !== undefined || process.env.SetupApiKey !== undefined) {
+if (process.env.SETUP_API_KEY !== undefined || process.env.SetupApiKey !== undefined || process.env.SETUP_CODEX_AUTH_JSON !== undefined) {
   process.stderr.write('fake codex inherited the setup API key environment variable' + NL);
   process.exit(91);
 }
@@ -730,6 +730,7 @@ const runShellInstaller = (options: RunOptions): Promise<RunResult> => {
     FAKE_NPM_RECORD: join(workspace.root, 'npm-record.txt'),
     ...codexEnv(options),
   };
+  if (agent === 'codex') env.SETUP_CODEX_AUTH_JSON = 'inherited-value';
   if (options.configDir) env.CLAUDE_CONFIG_DIR = options.configDir;
   if (options.fakeClaudeVersion) env.FAKE_CLAUDE_VERSION = options.fakeClaudeVersion;
   if (options.withInstallHook !== false) env.AGENT_SETUP_TEST_INSTALL_CLAUDE_SCRIPT = FAKE_INSTALLER_SCRIPT;
