@@ -179,7 +179,7 @@ export const buildAgentClaudeSnippet = (
 // https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L382-L384
 // https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L901-L905
 // https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L1393-L1439
-// The auth command reads the token file the credential snippet writes, so the
+// In provider mode the auth command reads the credential snippet's token, so the
 // two halves of the Codex setup are one platform's pair: a shell that can read
 // it, and a shell that wrote it.
 export const buildAgentCodexSnippet = (origin: string, config: AgentSetupConfiguration['codex'], platform: 'unix' | 'windows') => [

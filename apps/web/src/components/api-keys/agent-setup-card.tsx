@@ -176,8 +176,8 @@ function AgentConfigSnippets({ agent, apiKey, clipboard, configuration, onPlatfo
     </div>;
   }
   if (agent === 'codex') {
-    // Both snippets are one platform's pair -- the config's auth command reads the
-    // file the credential snippet writes -- so one choice drives them and each
+    // In provider mode the config's auth command reads the credential file;
+    // both modes share one platform choice, so each
     // block carries the picker, whichever the reader reaches first.
     const config = buildAgentCodexSnippet(origin, configuration.codex, platform);
     const credential = configuration.codex.authMode === 'chatgpt-spoof'

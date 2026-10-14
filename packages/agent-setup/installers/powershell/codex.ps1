@@ -48,7 +48,7 @@ function Install-SetupCodex {
   }
 }
 
-# Back up the config and provider token before any mutation, recording the
+# Back up the config and selected credential before any mutation, recording the
 # absence of each so rollback can distinguish "restore" from "remove".
 function Backup-SetupCodexFiles {
   $script:CodexConfigExisted = $false
@@ -268,7 +268,7 @@ function Write-SetupCodexVersion {
   Write-SetupInfo "Codex version: $($version.Output.Trim())"
 }
 
-# Install, then configure Codex as one transactional config/token write. A
+# Install, then configure Codex as one transactional config/credential write. A
 # freshly installed CLI is never uninstalled when configuration fails.
 function Set-SetupAgent {
   Write-SetupAgentNotice 'Installing' 'Codex'

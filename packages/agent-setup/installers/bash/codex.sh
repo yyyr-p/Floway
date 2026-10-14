@@ -53,9 +53,9 @@ codex_ensure_installed() {
   [ "$DISCOVERED_COUNT" -ge 1 ]
 }
 
-# Back up the config and provider token before any mutation, recording the
+# Back up the config and selected credential before any mutation, recording the
 # absence of each so rollback can distinguish "restore" from "remove". The
-# token backup must be owner-only before the transaction can continue.
+# credential backup must be owner-only before the transaction can continue.
 codex_backup_files() {
   CODEX_CONFIG_EXISTED=0
   CODEX_TOKEN_EXISTED=0
@@ -356,7 +356,7 @@ codex_write_version() {
   fi
 }
 
-# Install, then configure Codex as one transactional config/token write. A
+# Install, then configure Codex as one transactional config/credential write. A
 # freshly installed CLI is never uninstalled when configuration fails.
 configure_agent() {
   out_agent_notice 'Installing' 'Codex'
