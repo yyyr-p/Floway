@@ -560,7 +560,7 @@ const en = {
           codexAuthMode: 'Codex login mode',
           codexProviderMode: 'Separate Floway credentials (default)',
           codexSpoofMode: 'Spoof ChatGPT login',
-          codexProviderHint: 'Uses a separate Floway token and preserves your Codex login. When switching from spoof mode, restore your auth.json backup or sign in again. For manual configuration, replace the whole Floway provider section and remove chatgpt_base_url and cli_auth_credentials_store from the root.',
+          codexProviderHint: 'Uses a separate Floway token and preserves your Codex login. When switching from spoof mode, restore your auth.json backup or sign in again. For manual configuration, replace the whole Floway provider section and remove chatgpt_base_url from the root.',
           codexSpoofWarning: 'This mode overwrites your existing Codex login. If you have no existing Codex login, you can ignore this warning.',
           codexSpoofHint: 'Both setup methods back up auth.json first. A local ChatGPT identity may make features such as Fast visible; actual availability depends on the client and upstream. This does not provide a real subscription. Restart Codex after setup; if the login expires, run setup again.',
           codexSettings: 'Codex configuration',

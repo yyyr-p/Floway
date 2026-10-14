@@ -840,7 +840,7 @@ interface CodexEdit { keyPath: string; mergeStrategy: string; value: unknown }
 // app-server recorded it. A map from keyPath to value makes leaf assertions
 // direct; `mergeStrategy` is asserted separately when it matters.
 const codexBatchEdits = (workspace: Workspace): CodexEdit[] => {
-  const entry = readCodexRecord(workspace).find(r => r.marker === 'batch-respond');
+  const entry = readCodexRecord(workspace).findLast(r => r.marker === 'batch-respond');
   return (entry?.edits as CodexEdit[] | undefined) ?? [];
 };
 const codexEditMap = (workspace: Workspace): Map<string, unknown> =>
@@ -1733,11 +1733,12 @@ const assertCodexBaseEdits = (t: Assert, ws: Workspace, baseUrl: string): void =
   t.equal(edits.get('model_providers.floway.wire_api'), 'responses', 'provider wire_api is responses');
   t.equal(edits.get('model_providers.floway.supports_websockets'), true, 'provider advertises websocket support');
   t.equal(JSON.stringify(edits.get('model_providers.floway.http_headers')), JSON.stringify({ 'x-openai-actor-authorization': '1' }), 'provider carries the actor-authorization marker');
+  t.ok(!edits.has('cli_auth_credentials_store'), 'provider mode preserves the native credential-store preference');
   t.equal(edits.get('features.apps'), false, 'features.apps disabled');
   t.equal(edits.get('features.standalone_web_search'), true, 'client-owned web search enabled');
   t.ok(edits.has('model'), 'the model leaf is always part of the batch');
   t.ok(edits.has('model_reasoning_effort'), 'the effort leaf is always part of the batch');
-  t.equal(edits.size, 15, 'the batch contains only the provider, feature-warning, feature, model, and effort leaves managed by Floway');
+  t.equal(edits.size, 14, 'the batch contains only the provider, feature-warning, feature, model, and effort leaves managed by Floway');
 };
 
 const assertStagedToken = (t: Assert, ws: Workspace, codexHome?: string): void => {
@@ -2453,6 +2454,7 @@ for (const platform of ['bash', 'powershell'] as const) {
     t.equal(provider.code, 0, 'switching back to provider mode succeeds');
     t.equal(readFileSync(codexAuthPath(ws), 'utf8'), auth, 'provider mode does not overwrite account credentials');
     t.equal(codexEditMap(ws).get('model_providers.floway.requires_openai_auth'), false, 'provider stops using account credentials');
+    t.ok(!codexEditMap(ws).has('cli_auth_credentials_store'), 'switching modes does not reset the native credential-store preference');
     t.equal(codexEditMap(ws).get('chatgpt_base_url'), null, 'spoof endpoint override is removed');
     t.equal(readCodexToken(ws), SENTINEL_KEY, 'separate provider token is restored');
   });

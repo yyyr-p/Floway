@@ -193,7 +193,6 @@ function Write-SetupCodexConfig {
     @{ keyPath = 'model_provider'; mergeStrategy = 'replace'; value = 'floway' },
     @{ keyPath = 'suppress_unstable_features_warning'; mergeStrategy = 'replace'; value = $true },
     @{ keyPath = 'chatgpt_base_url'; mergeStrategy = 'replace'; value = $(if ($spoof) { $codexBase } else { $null }) },
-    @{ keyPath = 'cli_auth_credentials_store'; mergeStrategy = 'replace'; value = $(if ($spoof) { 'file' } else { $null }) },
     @{ keyPath = 'model_providers.floway.requires_openai_auth'; mergeStrategy = 'replace'; value = $spoof },
     @{ keyPath = 'model_providers.floway.name'; mergeStrategy = 'replace'; value = 'Floway' },
     @{ keyPath = 'model_providers.floway.base_url'; mergeStrategy = 'replace'; value = $codexBase },
@@ -206,6 +205,7 @@ function Write-SetupCodexConfig {
     @{ keyPath = 'model'; mergeStrategy = 'replace'; value = $SetupCodexModel },
     @{ keyPath = 'model_reasoning_effort'; mergeStrategy = 'replace'; value = $SetupCodexReasoningEffort }
   )
+  if ($spoof) { $edits += @{ keyPath = 'cli_auth_credentials_store'; mergeStrategy = 'replace'; value = 'file' } }
   $timeoutSeconds = Get-SetupTimeoutSeconds 60
   $result = Invoke-SetupCodexAppServerBatchWrite -Exe $Exe -Edits $edits -TimeoutSeconds $timeoutSeconds
   $status = [string]$result.status

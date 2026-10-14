@@ -257,7 +257,7 @@ codex_write_config() {
       {keyPath:"model_provider",mergeStrategy:"replace",value:"floway"},
       {keyPath:"suppress_unstable_features_warning",mergeStrategy:"replace",value:true},
       {keyPath:"chatgpt_base_url",mergeStrategy:"replace",value:(if $mode == "chatgpt-spoof" then $base else null end)},
-      {keyPath:"cli_auth_credentials_store",mergeStrategy:"replace",value:(if $mode == "chatgpt-spoof" then "file" else null end)},
+      (if $mode == "chatgpt-spoof" then {keyPath:"cli_auth_credentials_store",mergeStrategy:"replace",value:"file"} else empty end),
       {keyPath:"model_providers.floway.requires_openai_auth",mergeStrategy:"replace",value:($mode == "chatgpt-spoof")},
       {keyPath:"model_providers.floway.name",mergeStrategy:"replace",value:"Floway"},
       {keyPath:"model_providers.floway.base_url",mergeStrategy:"replace",value:$base},

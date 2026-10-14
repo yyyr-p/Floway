@@ -541,7 +541,7 @@ const zhHansCN = {
           codexAuthMode: 'Codex 登录模式',
           codexProviderMode: '独立 Floway 凭据（默认）',
           codexSpoofMode: '伪装 ChatGPT 登录',
-          codexProviderHint: '使用独立的 Floway 凭据，保留 Codex 登录。从伪装模式切回时，请恢复 auth.json 备份或重新登录。手动配置时，请替换整个 Floway provider 段，并删除根级的 chatgpt_base_url 和 cli_auth_credentials_store。',
+          codexProviderHint: '使用独立的 Floway 凭据，保留 Codex 登录。从伪装模式切回时，请恢复 auth.json 备份或重新登录。手动配置时，请替换整个 Floway provider 段，并删除根级的 chatgpt_base_url。',
           codexSpoofWarning: '此模式会覆盖原有的 Codex 登录。如果没有已有 Codex 登录，可以忽略这个警告。',
           codexSpoofHint: '两种配置方式都会先备份 auth.json。本地的 ChatGPT 身份可能使 Fast 等功能可见，实际可用性取决于客户端与上游。这不会提供真实订阅。配置完成后请重启 Codex；若登录过期，请重新运行配置。',
           codexSettings: 'Codex 配置',
