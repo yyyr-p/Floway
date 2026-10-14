@@ -567,7 +567,7 @@ const claudeConfig = (overrides: Partial<AgentSetupConfiguration['claudeCode']> 
     model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
     defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false, ...overrides,
   },
-  codex: { model: null, reasoningEffort: null },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null },
 });
 
 const codexConfig = (overrides: Partial<AgentSetupConfiguration['codex']> = {}): InstallerTestConfiguration => ({
@@ -577,7 +577,7 @@ const codexConfig = (overrides: Partial<AgentSetupConfiguration['codex']> = {}):
     model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
     defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false,
   },
-  codex: { model: null, reasoningEffort: null, ...overrides },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null, ...overrides },
 });
 
 const harnessConfig = (agent: 'omp' | 'vscode' | 'zed' | 'opencode'): InstallerTestConfiguration => ({
@@ -587,7 +587,7 @@ const harnessConfig = (agent: 'omp' | 'vscode' | 'zed' | 'opencode'): InstallerT
     model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
     defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false,
   },
-  codex: { model: null, reasoningEffort: null },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null },
 });
 
 const bothConfig = (
@@ -600,7 +600,7 @@ const bothConfig = (
     model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
     defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false, ...claude,
   },
-  codex: { model: null, reasoningEffort: null, ...codex },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null, ...codex },
 });
 
 interface RunOptions {
@@ -845,7 +845,7 @@ const codexBatchEdits = (workspace: Workspace): CodexEdit[] => {
 };
 const codexEditMap = (workspace: Workspace): Map<string, unknown> =>
   new Map(codexBatchEdits(workspace).map(e => [e.keyPath, e.value]));
-const codexBackupFiles = (dir: string, base: 'config.toml' | 'floway-token'): string[] =>
+const codexBackupFiles = (dir: string, base: 'config.toml' | 'floway-token' | 'auth.json'): string[] =>
   existsSync(dir) ? readdirSync(dir).filter(name => name.startsWith(`${base}.floway-backup.`)) : [];
 const readCodexToken = (workspace: Workspace, codexHome?: string): string =>
   readFileSync(codexTokenPath(workspace, codexHome), 'utf8');
@@ -1737,7 +1737,7 @@ const assertCodexBaseEdits = (t: Assert, ws: Workspace, baseUrl: string): void =
   t.equal(edits.get('features.standalone_web_search'), true, 'client-owned web search enabled');
   t.ok(edits.has('model'), 'the model leaf is always part of the batch');
   t.ok(edits.has('model_reasoning_effort'), 'the effort leaf is always part of the batch');
-  t.equal(edits.size, 12, 'the batch contains only the provider, feature-warning, feature, model, and effort leaves managed by Floway');
+  t.equal(edits.size, 15, 'the batch contains only the provider, feature-warning, feature, model, and effort leaves managed by Floway');
 };
 
 const assertStagedToken = (t: Assert, ws: Workspace, codexHome?: string): void => {
@@ -2224,7 +2224,7 @@ test('codex', 'PowerShell: Windows provider-token replacement and rollback prese
   const tokenBody = SETUP_POWERSHELL_CODEX.slice(tokenFnStart, tokenFnEnd);
   const createStage = tokenBody.indexOf('[System.IO.File]::Create($stage).Dispose()');
   const protectStage = tokenBody.indexOf('Protect-SetupFile $stage', createStage);
-  const writeSecret = tokenBody.indexOf('[System.IO.File]::WriteAllText($stage, $SetupApiKey', protectStage);
+  const writeSecret = tokenBody.indexOf('[System.IO.File]::WriteAllText($stage, $credential', protectStage);
   const protectTarget = tokenBody.indexOf('Protect-SetupFile $script:CodexTokenPath', writeSecret);
   const replaceTarget = tokenBody.indexOf('[System.IO.File]::Replace($stage, $script:CodexTokenPath, [System.Management.Automation.Language.NullString]::Value)', protectTarget);
   t.ok(tokenFnStart >= 0, 'Write-SetupCodexToken marker exists');
@@ -2414,6 +2414,63 @@ test('codex', 'PowerShell: a Codex script never configures Claude when Codex fai
   t.excludes(run.combined, 'Claude Code', 'the Codex script does not mention the unselected agent');
   t.ok(!existsSync(settingsPathFor(ws)), 'the Codex script never writes Claude settings');
 });
+
+// Both language-native installers exercise the same login transaction.
+for (const platform of ['bash', 'powershell'] as const) {
+  test('codex', `${platform}: spoof mode backs up the original login, routes through Floway, and keeps every login backup`, async t => {
+    if (platform === 'powershell' && !hostPwsh) skip('PowerShell is not installed');
+    const ws = makeWorkspace();
+    placeFakeCodex(ws.binDir);
+    const home = codexHomeFor(ws);
+    mkdirSync(home, { recursive: true });
+    const original = '{"tokens":{"access_token":"original-login"}}';
+    writeFileSync(codexAuthPath(ws), original);
+    const runInstaller = platform === 'bash' ? runShellInstaller : runPowerShellInstaller;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const run = await runInstaller({ workspace: ws, configuration: codexConfig({ authMode: 'chatgpt-spoof' }), baseUrl: modelServer.url });
+      t.equal(run.code, 0, `spoof setup succeeds: ${run.combined}`);
+      t.includes(run.combined, 'overwrites your existing Codex login', 'overwrite warning is visible');
+      t.includes(run.combined, 'If you have no existing Codex login', 'warning explains the no-login case');
+      t.includes(run.combined, 'Original Codex login backed up at', 'backup path is displayed');
+      const auth = JSON.parse(readFileSync(codexAuthPath(ws), 'utf8'));
+      t.equal(auth.auth_mode, 'chatgpt', 'client sees a ChatGPT login');
+      t.equal(auth.tokens.access_token, SENTINEL_KEY, 'gateway authentication remains the Floway API key');
+      t.ok(Date.now() - Date.parse(auth.last_refresh) < 60_000, 'freshness is stamped at execution');
+      t.equal(statSync(codexAuthPath(ws)).mode & 0o777, 0o600, 'login is owner-only on the Unix host');
+      const edits = codexEditMap(ws);
+      t.equal(edits.get('model_providers.floway.auth'), null, 'incompatible command auth is removed');
+      t.equal(edits.get('model_providers.floway.requires_openai_auth'), true, 'provider reads ChatGPT credentials');
+      t.equal(edits.get('chatgpt_base_url'), `${modelServer.url}/azure-api.codex`, 'account endpoints point at Floway');
+      t.equal(edits.get('cli_auth_credentials_store'), 'file', 'client reads the configured auth.json');
+      t.excludes(run.combined, SENTINEL_KEY, 'no secret is printed');
+    }
+    const backups = codexBackupFiles(home, 'auth.json');
+    t.equal(backups.length, 2, 'reconfiguration never prunes the original login backup');
+    t.ok(backups.some(path => readFileSync(join(home, path), 'utf8') === original), 'original login remains recoverable');
+    for (const path of backups) t.equal(statSync(join(home, path)).mode & 0o777, 0o600, 'each login backup is protected');
+    const auth = readFileSync(codexAuthPath(ws), 'utf8');
+    const provider = await runInstaller({ workspace: ws, configuration: codexConfig(), baseUrl: modelServer.url });
+    t.equal(provider.code, 0, 'switching back to provider mode succeeds');
+    t.equal(readFileSync(codexAuthPath(ws), 'utf8'), auth, 'provider mode does not overwrite account credentials');
+    t.equal(codexEditMap(ws).get('model_providers.floway.requires_openai_auth'), false, 'provider stops using account credentials');
+    t.equal(codexEditMap(ws).get('chatgpt_base_url'), null, 'spoof endpoint override is removed');
+    t.equal(readCodexToken(ws), SENTINEL_KEY, 'separate provider token is restored');
+  });
+  test('codex', `${platform}: failed spoof configuration restores the prior login or removes a newly created one`, async t => {
+    if (platform === 'powershell' && !hostPwsh) skip('PowerShell is not installed');
+    for (const original of [null, '{"tokens":{"access_token":"original-login"}}']) {
+      const ws = makeWorkspace();
+      placeFakeCodex(ws.binDir);
+      mkdirSync(codexHomeFor(ws), { recursive: true });
+      if (original) writeFileSync(codexAuthPath(ws), original);
+      const runInstaller = platform === 'bash' ? runShellInstaller : runPowerShellInstaller;
+      const run = await runInstaller({ workspace: ws, configuration: codexConfig({ authMode: 'chatgpt-spoof' }), baseUrl: modelServer.url, fakeCodexAppServerMode: 'error' });
+      t.ok(run.code !== 0, 'configuration error fails setup');
+      if (original) t.equal(readFileSync(codexAuthPath(ws), 'utf8'), original, 'prior account restored byte-for-byte');
+      else t.ok(!existsSync(codexAuthPath(ws)), 'failed setup removes the login it created');
+    }
+  });
+}
 
 // --- Codex real-binary smoke test -------------------------------------------
 

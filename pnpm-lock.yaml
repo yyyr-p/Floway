@@ -139,6 +139,9 @@ importers:
 
   apps/web:
     dependencies:
+      '@floway-dev/agent-setup':
+        specifier: workspace:*
+        version: link:../../packages/agent-setup
       '@floway-dev/protocols':
         specifier: workspace:*
         version: link:../../packages/protocols

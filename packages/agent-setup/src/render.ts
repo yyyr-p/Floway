@@ -6,6 +6,7 @@
 // gateway never renders its own public origin: the dashboard injects it into
 // the executing shell, and the fixed installer body reads it from there.
 
+import { buildCodexSpoofAuth } from './codex-auth.ts';
 import type { AgentSetupConfiguration } from './configuration.ts';
 import type { ScriptAgent } from './script-assets.ts';
 
@@ -67,6 +68,8 @@ export const renderShellPrefix = (input: RenderPrefixInput): string => {
     );
   } else if (agent === 'codex') {
     assignments.push(
+      ['SETUP_CODEX_AUTH_MODE', configuration.codex.authMode],
+      ['SETUP_CODEX_AUTH_JSON', configuration.codex.authMode === 'chatgpt-spoof' ? JSON.stringify(buildCodexSpoofAuth(apiKey, null)) : ''],
       ['SETUP_CODEX_MODEL', shellOptional(configuration.codex.model)],
       ['SETUP_CODEX_REASONING_EFFORT', shellOptional(configuration.codex.reasoningEffort)],
     );
@@ -116,6 +119,8 @@ export const renderPowerShellPrefix = (input: RenderPrefixInput): string => {
     );
   } else if (agent === 'codex') {
     assignments.push(
+      ['$SetupCodexAuthMode', powerShellLiteral(configuration.codex.authMode)],
+      ['$SetupCodexAuthJson', powerShellLiteral(configuration.codex.authMode === 'chatgpt-spoof' ? JSON.stringify(buildCodexSpoofAuth(apiKey, null)) : '')],
       ['$SetupCodexModel', powerShellOptional(configuration.codex.model)],
       ['$SetupCodexReasoningEffort', powerShellOptional(configuration.codex.reasoningEffort)],
     );

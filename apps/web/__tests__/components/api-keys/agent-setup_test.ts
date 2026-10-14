@@ -4,14 +4,14 @@ import { buildAgentClaudeSnippet, buildAgentCodexSnippet } from '../../../src/co
 
 describe('Agent Setup snippets', () => {
   it('renders selected Codex model and reasoning effort', () => {
-    const snippet = buildAgentCodexSnippet('https://floway.example', { model: 'gpt-5.6', reasoningEffort: 'xhigh' }, 'unix');
+    const snippet = buildAgentCodexSnippet('https://floway.example', { authMode: 'provider', model: 'gpt-5.6', reasoningEffort: 'xhigh' }, 'unix');
     expect(snippet).toContain('model = "gpt-5.6"');
     expect(snippet).toContain('model_reasoning_effort = "xhigh"');
     expect(snippet).toContain('base_url = "https://floway.example/azure-api.codex"');
   });
 
   it('gives each platform its own auth command and no trace of the other', () => {
-    const config = { model: null, reasoningEffort: null };
+    const config = { authMode: 'provider' as const, model: null, reasoningEffort: null };
     const unix = buildAgentCodexSnippet('https://floway.example', config, 'unix');
     const windows = buildAgentCodexSnippet('https://floway.example', config, 'windows');
     expect(unix).toContain('command = "sh"');

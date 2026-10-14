@@ -33,7 +33,7 @@ test('migration 0061 adds optional Claude settings without replacing existing ch
         effortLevel: null,
         modelDiscovery: true,
       },
-      codex: { model: null, reasoningEffort: null },
+      codex: { authMode: 'provider', model: null, reasoningEffort: null },
     };
     db.run(
       `INSERT INTO agent_setup
@@ -90,7 +90,7 @@ test('migration 0068 adds the Claude fable override without replacing existing c
         optOutAiAttribution: false,
         modelDiscovery: true,
       },
-      codex: { model: null, reasoningEffort: null },
+      codex: { authMode: 'provider', model: null, reasoningEffort: null },
     };
     db.run(
       `INSERT INTO agent_setup
@@ -142,7 +142,7 @@ test('migration 0080 adds the Claude opt-out toggles without replacing existing 
         optOutAiAttribution: false,
         modelDiscovery: true,
       },
-      codex: { model: null, reasoningEffort: null },
+      codex: { authMode: 'provider', model: null, reasoningEffort: null },
     };
     db.run(
       `INSERT INTO agent_setup

@@ -67,8 +67,9 @@ function Backup-SetupCodexFiles {
     $script:CodexTokenExisted = $true
     $script:CodexTokenBackup = "$($script:CodexTokenPath).floway-backup.$stamp.$PID"
     try {
-      Copy-Item -LiteralPath $script:CodexTokenPath -Destination $script:CodexTokenBackup
+      [System.IO.File]::Create($script:CodexTokenBackup).Dispose()
       Protect-SetupFile $script:CodexTokenBackup
+      [System.IO.File]::WriteAllBytes($script:CodexTokenBackup, [System.IO.File]::ReadAllBytes($script:CodexTokenPath))
     } catch {
       if (Test-Path -LiteralPath $script:CodexTokenBackup) {
         Remove-Item -LiteralPath $script:CodexTokenBackup -Force
@@ -86,6 +87,12 @@ function Restore-SetupCodexFiles {
 
 function Complete-SetupCodexFiles {
   Remove-SetupOlderBackups -Path $script:CodexConfigPath -Keep $script:CodexConfigBackup
+  if ($SetupCodexAuthMode -eq 'chatgpt-spoof') {
+    if ($script:CodexTokenBackup) {
+      Write-SetupInfo "Original Codex login backed up at $script:CodexTokenBackup. Restore that file to auth.json to recover your login."
+    }
+    return
+  }
   Remove-SetupOlderBackups -Path $script:CodexTokenPath -Keep $script:CodexTokenBackup
   if ($script:CodexTokenBackup -and (Test-Path -LiteralPath $script:CodexTokenBackup)) {
     Remove-Item -LiteralPath $script:CodexTokenBackup -Force -ErrorAction Stop
@@ -150,6 +157,9 @@ function Invoke-SetupCodexAppServerBatchWrite {
   return $result
 }
 
+# ChatGPT spoof mode reads auth.json explicitly, without command auth.
+# https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/model-provider-info/src/lib.rs#L132-L137
+# https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/model-provider-info/src/lib.rs#L219-L243
 # Build the base-config edit batch and write it through the app-server. Model
 # and effort are opaque, forwarded verbatim, and cleared with JSON null ($null)
 # when unset. A batch status of `ok` or `okOverridden` confirms the intended
@@ -177,9 +187,14 @@ function Write-SetupCodexConfig {
   # paired with the top-level warning suppression instead of warning every run.
   # https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L901-L905
   # https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L1393-L1439
+  $spoof = $SetupCodexAuthMode -eq 'chatgpt-spoof'
+  if ($spoof) { $auth = $null }
   $edits = @(
     @{ keyPath = 'model_provider'; mergeStrategy = 'replace'; value = 'floway' },
     @{ keyPath = 'suppress_unstable_features_warning'; mergeStrategy = 'replace'; value = $true },
+    @{ keyPath = 'chatgpt_base_url'; mergeStrategy = 'replace'; value = $(if ($spoof) { $codexBase } else { $null }) },
+    @{ keyPath = 'cli_auth_credentials_store'; mergeStrategy = 'replace'; value = $(if ($spoof) { 'file' } else { $null }) },
+    @{ keyPath = 'model_providers.floway.requires_openai_auth'; mergeStrategy = 'replace'; value = $spoof },
     @{ keyPath = 'model_providers.floway.name'; mergeStrategy = 'replace'; value = 'Floway' },
     @{ keyPath = 'model_providers.floway.base_url'; mergeStrategy = 'replace'; value = $codexBase },
     @{ keyPath = 'model_providers.floway.auth'; mergeStrategy = 'replace'; value = $auth },
@@ -211,16 +226,21 @@ function Write-SetupCodexConfig {
   return $filePath
 }
 
-# Store the selected API key as a provider-scoped command-auth token. The private
-# stage is validated byte-for-byte, then atomically replaced. auth.json is an
-# account-owned Codex file and is never read or changed here.
+# Stage either a provider token or the opted-in ChatGPT identity. Both files
+# contain secrets and are atomically replaced from an owner-only stage.
 function Write-SetupCodexToken {
+  $credential = $SetupApiKey
+  if ($SetupCodexAuthMode -eq 'chatgpt-spoof') {
+    $document = $SetupCodexAuthJson | ConvertFrom-Json
+    $document.last_refresh = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+    $credential = $document | ConvertTo-Json -Depth 10 -Compress
+  }
   $stage = "$($script:CodexTokenPath).floway-stage.$PID"
   try {
     [System.IO.File]::Create($stage).Dispose()
     Protect-SetupFile $stage
-    [System.IO.File]::WriteAllText($stage, $SetupApiKey, (New-Object System.Text.UTF8Encoding($false)))
-    if ([System.IO.File]::ReadAllText($stage) -cne $SetupApiKey) {
+    [System.IO.File]::WriteAllText($stage, $credential, (New-Object System.Text.UTF8Encoding($false)))
+    if ([System.IO.File]::ReadAllText($stage) -cne $credential) {
       Stop-Setup "staged Codex provider token failed validation."
     }
     $runningOnWindows = Test-SetupIsWindows
@@ -272,7 +292,14 @@ function Set-SetupAgent {
   Write-SetupAgentNotice 'Configuring' 'Codex'
   $script:CodexHomeDir = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME '.codex' }
   $script:CodexConfigPath = Join-Path $script:CodexHomeDir 'config.toml'
-  $script:CodexTokenPath = Join-Path $script:CodexHomeDir 'floway-token'
+  switch ($SetupCodexAuthMode) {
+    'provider' { $script:CodexTokenPath = Join-Path $script:CodexHomeDir 'floway-token' }
+    'chatgpt-spoof' {
+      $script:CodexTokenPath = Join-Path $script:CodexHomeDir 'auth.json'
+      Write-SetupWarn 'This mode overwrites your existing Codex login. If you have no existing Codex login, you can ignore this warning.'
+    }
+    default { Stop-Setup 'invalid Codex authentication mode.' }
+  }
   if (-not (Test-Path -LiteralPath $script:CodexHomeDir)) {
     New-Item -ItemType Directory -Path $script:CodexHomeDir -Force | Out-Null
   }

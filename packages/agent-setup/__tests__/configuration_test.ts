@@ -22,7 +22,7 @@ const fullConfiguration: AgentSetupConfiguration = {
     modelDiscovery: true,
   },
   codex: {
-    model: 'gpt-5.6-terra',
+    authMode: 'provider', model: 'gpt-5.6-terra',
     reasoningEffort: 'xhigh',
   },
 };
@@ -39,7 +39,7 @@ describe('agentSetupConfigurationSchema', () => {
         model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
         defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false,
       },
-      codex: { model: null, reasoningEffort: 'vendor-tier' },
+      codex: { authMode: 'provider', model: null, reasoningEffort: 'vendor-tier' },
     }).success).toBe(true);
   });
 
@@ -105,6 +105,17 @@ describe('agentSetupConfigurationSchema', () => {
   });
 });
 
+describe('Codex authentication mode', () => {
+  test('normalizes stored configurations from before the mode selector', () => {
+    const legacy = { ...fullConfiguration, codex: { model: null, reasoningEffort: null } };
+    expect(agentSetupConfigurationSchema.parse(legacy).codex.authMode).toBe('provider');
+  });
+  test('accepts the explicit spoof mode and rejects unknown modes', () => {
+    expect(agentSetupConfigurationSchema.parse({ ...fullConfiguration, codex: { ...fullConfiguration.codex, authMode: 'chatgpt-spoof' } }).codex.authMode).toBe('chatgpt-spoof');
+    expect(agentSetupConfigurationSchema.safeParse({ ...fullConfiguration, codex: { ...fullConfiguration.codex, authMode: 'bad' } }).success).toBe(false);
+  });
+});
+
 describe('defaultAgentSetupConfiguration', () => {
   test('sets the given key, enables both agents, nulls overrides, enables discovery', () => {
     expect(defaultAgentSetupConfiguration('key-a')).toEqual({
@@ -113,7 +124,7 @@ describe('defaultAgentSetupConfiguration', () => {
         model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
         defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: true,
       },
-      codex: { model: null, reasoningEffort: null },
+      codex: { authMode: 'provider', model: null, reasoningEffort: null },
     });
   });
 

@@ -1,6 +1,7 @@
 import type { InferResponseType } from 'hono/client';
 
 import type { api } from '../../api/client';
+import { buildCodexSpoofAuth } from '@floway-dev/agent-setup/codex-auth';
 
 export type AgentSetupLease = Extract<InferResponseType<typeof api.api.setup.$put>, { status: 'ok' }>;
 export type AgentSetupConfiguration = AgentSetupLease['configuration'];
@@ -28,7 +29,7 @@ export const blankAgentSetupDraft = (): AgentSetupConfiguration => ({
     disableAgentView: false,
     modelDiscovery: true,
   },
-  codex: { model: null, reasoningEffort: null },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null },
 });
 
 export const cloneAgentSetupConfiguration = (
@@ -80,6 +81,66 @@ export const codexWindowsCredentialSnippet = (apiKey: string) => {
   ].join('\n');
 };
 
+// The credential command stamps freshness when run, rather than when copied.
+export const codexSpoofCredentialSnippet = (apiKey: string, platform: AgentSetupPlatform): string => {
+  const auth = JSON.stringify(buildCodexSpoofAuth(apiKey, null));
+  if (platform === 'windows') return [
+    '$ErrorActionPreference = "Stop"',
+    '$codexHome = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" }',
+    'New-Item -ItemType Directory -Force -Path $codexHome | Out-Null',
+    '$path = Join-Path $codexHome "auth.json"',
+    'function Protect-FlowayLogin([string]$file) {',
+    '  if ($env:OS -ne "Windows_NT") {',
+    '    & chmod 600 $file',
+    '    if ($LASTEXITCODE -ne 0) { throw "Could not protect $file" }',
+    '    return',
+    '  }',
+    '  $acl = New-Object Security.AccessControl.FileSecurity',
+    '  $user = [Security.Principal.WindowsIdentity]::GetCurrent().User',
+    '  $acl.SetAccessRuleProtection($true, $false)',
+    '  $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($user, "FullControl", "Allow")))',
+    '  if ($PSVersionTable.PSVersion.Major -lt 6) { [IO.File]::SetAccessControl($file, $acl) }',
+    '  else { [IO.FileSystemAclExtensions]::SetAccessControl([IO.FileInfo]::new($file), $acl) }',
+    '}',
+    'if (Test-Path -LiteralPath $path) {',
+    '  $backup = "$path.floway-backup.$([DateTime]::UtcNow.Ticks).$PID"',
+    '  [IO.File]::Create($backup).Dispose()',
+    '  Protect-FlowayLogin $backup',
+    '  [IO.File]::WriteAllBytes($backup, [IO.File]::ReadAllBytes($path))',
+    '  Write-Host "Original Codex login backed up at $backup"',
+    '}',
+    `$auth = '${auth.replaceAll("'", "''")}' | ConvertFrom-Json`,
+    '$auth.last_refresh = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ssZ")',
+    '$stage = "$path.floway-stage.$PID"',
+    'try {',
+    '  [IO.File]::Create($stage).Dispose()',
+    '  Protect-FlowayLogin $stage',
+    '  [IO.File]::WriteAllText($stage, ($auth | ConvertTo-Json -Depth 10 -Compress), (New-Object Text.UTF8Encoding($false)))',
+    '  Move-Item -LiteralPath $stage -Destination $path -Force',
+    '} finally { if (Test-Path -LiteralPath $stage) { Remove-Item -LiteralPath $stage -Force } }',
+  ].join('\n');
+  return [
+    '(',
+    'set -eu',
+    'umask 077',
+    'codex_home="${CODEX_HOME:-$HOME/.codex}"',
+    'mkdir -p "$codex_home"',
+    'path="$codex_home/auth.json"',
+    'if [ -e "$path" ]; then',
+    '  backup=$(mktemp "$path.floway-backup.XXXXXX")',
+    '  chmod 600 "$backup"',
+    '  cat "$path" > "$backup"',
+    '  printf "Original Codex login backed up at %s\\n" "$backup"',
+    'fi',
+    'stage="$path.floway-stage.$$"',
+    `trap 'rm -f "$stage"' EXIT`,
+    `printf '%s' '${auth.replaceAll("'", `'"'"'`)}' | sed 's/"last_refresh":null/"last_refresh":"'"$(date -u +%Y-%m-%dT%H:%M:%SZ)"'"/' > "$stage"`,
+    'chmod 600 "$stage"',
+    'mv "$stage" "$path"',
+    ')',
+  ].join('\n');
+};
+
 // Empty strings suppress commit/PR attribution; false suppresses session links.
 // https://code.claude.com/docs/en/settings#attribution-settings
 const claudeAttributionOptOut = { commit: '', pr: '', sessionUrl: false } as const;
@@ -125,14 +186,19 @@ export const buildAgentCodexSnippet = (origin: string, config: AgentSetupConfigu
   ...(config.model ? [`model = ${JSON.stringify(config.model)}`] : []),
   ...(config.reasoningEffort ? [`model_reasoning_effort = ${JSON.stringify(config.reasoningEffort)}`] : []),
   'model_provider = "floway"',
+  ...(config.authMode === 'chatgpt-spoof' ? [
+    `chatgpt_base_url = ${JSON.stringify(`${origin}/azure-api.codex`)}`,
+    'cli_auth_credentials_store = "file"',
+  ] : []),
   'suppress_unstable_features_warning = true',
   '',
   '[model_providers.floway]',
   'name = "Floway"',
   `base_url = ${JSON.stringify(`${origin}/azure-api.codex`)}`,
-  platform === 'windows'
+  ...(config.authMode === 'chatgpt-spoof' ? ['requires_openai_auth = true'] : [platform === 'windows'
     ? 'auth = { command = "powershell", args = ["-NoProfile", "-Command", "$h = if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME \'.codex\' }; [IO.File]::ReadAllText((Join-Path $h \'floway-token\'))"] }'
     : 'auth = { command = "sh", args = ["-c", "cat \\"${CODEX_HOME:-$HOME/.codex}/floway-token\\""] }',
+  'requires_openai_auth = false']),
   'wire_api = "responses"',
   'supports_websockets = true',
   'http_headers = { "x-openai-actor-authorization" = "1" }',

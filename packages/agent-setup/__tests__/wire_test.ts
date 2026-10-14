@@ -19,7 +19,7 @@ const fullConfiguration: AgentSetupConfiguration = {
     modelDiscovery: true,
   },
   codex: {
-    model: 'gpt-5.6-terra',
+    authMode: 'provider', model: 'gpt-5.6-terra',
     reasoningEffort: 'xhigh',
   },
 };

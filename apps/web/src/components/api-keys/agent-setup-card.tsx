@@ -4,6 +4,7 @@ import type { ReactElement } from 'react';
 import {
   buildAgentClaudeSnippet,
   buildAgentCodexSnippet,
+  codexSpoofCredentialSnippet,
   codexUnixCredentialSnippet,
   codexWindowsCredentialSnippet,
   detectAgentSetupPlatform,
@@ -105,7 +106,7 @@ export function AgentSetupCard({ clipboard, initialApiKeyId, initialError, initi
           : setup.error && <OutcomeMessageBar onDismiss={setup.dismissError}>{setup.error}</OutcomeMessageBar>}
 
         {isConfigurableAgent(agent) && <section className={SECTION_STACK_CLASS}>
-          <SectionHeader level={3} title={t('dashboard.apiKeys.agentSetup.modelSelection')} />
+          <SectionHeader level={3} title={t(agent === 'codex' ? 'dashboard.apiKeys.agentSetup.codexSettings' : 'dashboard.apiKeys.agentSetup.modelSelection')} />
           <AgentConfigurationFields agent={agent} configuration={setup.draft} models={models} onChange={setup.updateDraft} />
         </section>}
 
@@ -179,7 +180,9 @@ function AgentConfigSnippets({ agent, apiKey, clipboard, configuration, onPlatfo
     // file the credential snippet writes -- so one choice drives them and each
     // block carries the picker, whichever the reader reaches first.
     const config = buildAgentCodexSnippet(origin, configuration.codex, platform);
-    const credential = platform === 'windows' ? codexWindowsCredentialSnippet(apiKey) : codexUnixCredentialSnippet(apiKey);
+    const credential = configuration.codex.authMode === 'chatgpt-spoof'
+      ? codexSpoofCredentialSnippet(apiKey, platform)
+      : platform === 'windows' ? codexWindowsCredentialSnippet(apiKey) : codexUnixCredentialSnippet(apiKey);
     const configTag = platform === 'windows' ? 'agent-snippet-codex-windows' : 'agent-snippet-codex-unix';
     const credentialTag = `${configTag}-token`;
     const tabs = <PlatformTabs onChange={onPlatformChange} platform={platform} />;
@@ -188,7 +191,7 @@ function AgentConfigSnippets({ agent, apiKey, clipboard, configuration, onPlatfo
         <Trans components={{ path: <code className="font-mono mono-size-xs" /> }} i18nKey={platform === 'windows' ? 'dashboard.apiKeys.configuration.codexConfigHintWindows' : 'dashboard.apiKeys.configuration.codexConfigHint'} />
       </Text>
       <CodeBlock code={config} copyOutcome={clipboard.outcomeFor(configTag)} header={tabs} language="toml" onCopy={() => clipboard.copy(config, configTag)} />
-      <Text size={200} className="text-fui-fg2">{t('dashboard.apiKeys.configuration.codexAuthHint')}</Text>
+      <Text size={200} className="text-fui-fg2">{t(configuration.codex.authMode === 'chatgpt-spoof' ? 'dashboard.apiKeys.configuration.codexSpoofAuthHint' : 'dashboard.apiKeys.configuration.codexAuthHint')}</Text>
       <CodeBlock code={credential} copyOutcome={clipboard.outcomeFor(credentialTag)} header={tabs} language={platform === 'windows' ? 'powershell' : 'bash'} onCopy={() => clipboard.copy(credential, credentialTag)} />
     </div>;
   }
@@ -304,13 +307,33 @@ function AgentConfigurationFields({ agent, configuration, models, onChange }: {
     </section>
   </div>;
 
-  return <div className={FIELD_GRID_CLASS}>
-    <ModelSelect label={t('dashboard.apiKeys.agentSetup.defaultModel')} models={models} family="codex" picker="default" value={configuration.codex.model} onChange={model => patchCodex({ model })} />
-    <Field label={t('dashboard.apiKeys.agentSetup.reasoningEffort')}>
-      <Combobox freeform value={configuration.codex.reasoningEffort ?? ''} onChange={event => patchCodex({ reasoningEffort: event.target.value === '' ? null : event.target.value })} onOptionSelect={(_, data) => patchCodex({ reasoningEffort: data.optionText === '' || data.optionText === undefined ? null : data.optionText })}>
-        {effortOptions.map(effort => <Option key={effort}>{effort}</Option>)}
-      </Combobox>
+  return <div className="grid gap-4">
+    <Field label={t('dashboard.apiKeys.agentSetup.codexAuthMode')}>
+      <Dropdown
+        selectedOptions={[configuration.codex.authMode]}
+        value={t(configuration.codex.authMode === 'chatgpt-spoof' ? 'dashboard.apiKeys.agentSetup.codexSpoofMode' : 'dashboard.apiKeys.agentSetup.codexProviderMode')}
+        onOptionSelect={(_, data) => {
+          if (data.optionValue === 'provider' || data.optionValue === 'chatgpt-spoof') patchCodex({ authMode: data.optionValue });
+        }}
+      >
+        <Option value="provider">{t('dashboard.apiKeys.agentSetup.codexProviderMode')}</Option>
+        <Option value="chatgpt-spoof">{t('dashboard.apiKeys.agentSetup.codexSpoofMode')}</Option>
+      </Dropdown>
     </Field>
+    {configuration.codex.authMode === 'chatgpt-spoof'
+      ? <div className="grid gap-2">
+          <OutcomeMessageBar intent="warning">{t('dashboard.apiKeys.agentSetup.codexSpoofWarning')}</OutcomeMessageBar>
+          <Text size={200} className="text-fui-fg2">{t('dashboard.apiKeys.agentSetup.codexSpoofHint')}</Text>
+        </div>
+      : <Text size={200} className="text-fui-fg2">{t('dashboard.apiKeys.agentSetup.codexProviderHint')}</Text>}
+    <div className={FIELD_GRID_CLASS}>
+      <ModelSelect label={t('dashboard.apiKeys.agentSetup.defaultModel')} models={models} family="codex" picker="default" value={configuration.codex.model} onChange={model => patchCodex({ model })} />
+      <Field label={t('dashboard.apiKeys.agentSetup.reasoningEffort')}>
+        <Combobox freeform value={configuration.codex.reasoningEffort ?? ''} onChange={event => patchCodex({ reasoningEffort: event.target.value === '' ? null : event.target.value })} onOptionSelect={(_, data) => patchCodex({ reasoningEffort: data.optionText === '' || data.optionText === undefined ? null : data.optionText })}>
+          {effortOptions.map(effort => <Option key={effort}>{effort}</Option>)}
+        </Combobox>
+      </Field>
+    </div>
   </div>;
 }
 

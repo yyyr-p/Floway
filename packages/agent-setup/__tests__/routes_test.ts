@@ -142,7 +142,7 @@ interface LeaseResponse {
   configuration: {
     apiKeyId: string;
     claudeCode: { modelDiscovery: boolean; model: string | null; effortLevel: string | null; cleanupPeriodDays: number | null; optOutAiAttribution: boolean; disableAutoMemory: boolean; disableAgentView: boolean };
-    codex: { model: string | null; reasoningEffort: string | null };
+    codex: { authMode: 'provider' | 'chatgpt-spoof'; model: string | null; reasoningEffort: string | null };
   };
   configurationRevision: number;
   expiresAt: number;
@@ -161,7 +161,7 @@ interface LeaseResponse {
 const FULL_CONFIG_JSON = (apiKeyId: string): string => JSON.stringify({
   apiKeyId,
   claudeCode: { model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null, defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: true },
-  codex: { model: null, reasoningEffort: null },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null },
 });
 
 const putJson = (body: object): RequestInit => ({
@@ -576,4 +576,22 @@ test('a public serve failure is sealed to an opaque 500 that leaks neither token
   expect(joined).not.toContain(injectedSecret);
   expect(joined).not.toContain(lease.token);
   expect(joined).not.toContain('forced failure');
+});
+
+test('Codex mode survives saving, restoring a lease, and rendering both setup scripts', async () => {
+  const h = harness();
+  const body = await create(h);
+  const configuration = { ...body.configuration, codex: { ...body.configuration.codex, authMode: 'chatgpt-spoof' } };
+  const saved = await h.request('/api/setup', putJson({ token: body.token, configuration, expectedRevision: body.configurationRevision }));
+  expect(saved.status).toBe(200);
+  const restored = await create(h);
+  expect(restored.configuration.codex.authMode).toBe('chatgpt-spoof');
+  const shell = await (await h.request(restored.scripts.codex.sh)).text();
+  const powershell = await (await h.request(restored.scripts.codex.ps1)).text();
+  expect(shell).toContain("SETUP_CODEX_AUTH_MODE='chatgpt-spoof'");
+  expect(powershell).toContain("$SetupCodexAuthMode = 'chatgpt-spoof'");
+  for (const script of [shell, powershell]) {
+    expect(script).toContain('"auth_mode":"chatgpt"');
+    expect(script).toContain(`"access_token":"${RAW_KEY}"`);
+  }
 });

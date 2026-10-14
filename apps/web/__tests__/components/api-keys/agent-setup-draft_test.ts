@@ -14,7 +14,7 @@ describe('pre-lease Agent Setup edits', () => {
     expect(applyLocalAgentSetupChanges(server, local, baseline)).toMatchObject({
       apiKeyId: 'key-1',
       claudeCode: { model: 'server-default', defaultOpusModel: 'claude-opus-custom' },
-      codex: { model: 'server-codex' },
+      codex: { authMode: 'provider', model: 'server-codex' },
     });
   });
 });

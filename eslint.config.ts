@@ -302,8 +302,8 @@ const config: Linter.Config[] = [
         selector: 'ImportDeclaration[importKind!="type"][source.value=/^@floway-dev\\u002Fgateway($|\\u002F)/]',
         message: 'apps/web may only type-import from @floway-dev/gateway. The SPA bundle must not pull gateway runtime code.',
       }, {
-        selector: 'ImportDeclaration[importKind!="type"][source.value=/^@floway-dev\\u002Fagent-setup($|\\u002F)/]',
-        message: 'apps/web must not runtime-import @floway-dev/agent-setup. It carries the gateway-side route factories and persistence contract; the dashboard derives its configuration type from the RPC client.',
+        selector: 'ImportDeclaration[importKind!="type"][source.value=/^@floway-dev\\u002Fagent-setup($|\\u002F(?!codex-auth$))/]',
+        message: 'apps/web may only runtime-import the browser-safe @floway-dev/agent-setup/codex-auth export. The root carries the gateway-side route factories and persistence contract; the dashboard derives its configuration type from the RPC client.',
       }, {
         // Griffel injects its sheet after the utility sheet, and `Text`'s root
         // states white-space, overflow and text-overflow while `Link`'s states

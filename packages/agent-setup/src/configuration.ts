@@ -47,6 +47,7 @@ export const agentSetupConfigurationSchema = z.object({
     modelDiscovery: z.boolean(),
   }).strict(),
   codex: z.object({
+    authMode: z.enum(['provider', 'chatgpt-spoof']).default('provider'),
     model: opaqueOptionalString,
     reasoningEffort: opaqueOptionalString,
   }).strict(),
@@ -72,6 +73,7 @@ export const defaultAgentSetupConfiguration = (apiKeyId: string): AgentSetupConf
     modelDiscovery: true,
   },
   codex: {
+    authMode: 'provider',
     model: null,
     reasoningEffort: null,
   },

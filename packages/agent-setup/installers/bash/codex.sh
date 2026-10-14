@@ -73,7 +73,7 @@ codex_backup_files() {
   if [ -e "$CODEX_TOKEN_PATH" ]; then
     CODEX_TOKEN_EXISTED=1
     CODEX_TOKEN_BACKUP="$CODEX_TOKEN_PATH.floway-backup.$_cbf_stamp"
-    if ! cp "$CODEX_TOKEN_PATH" "$CODEX_TOKEN_BACKUP"; then
+    if ! (umask 077 && : > "$CODEX_TOKEN_BACKUP") || ! cp "$CODEX_TOKEN_PATH" "$CODEX_TOKEN_BACKUP"; then
       out_error "could not back up $CODEX_TOKEN_PATH"
       return 1
     fi
@@ -100,6 +100,12 @@ codex_rollback() {
 
 codex_commit_files() {
   _prune_managed_backups "$CODEX_CONFIG_PATH" "$CODEX_CONFIG_BACKUP" || return 1
+  if [ "$SETUP_CODEX_AUTH_MODE" = chatgpt-spoof ]; then
+    if [ -n "$CODEX_TOKEN_BACKUP" ]; then
+      out_info "Original Codex login backed up at $CODEX_TOKEN_BACKUP. Restore that file to auth.json to recover your login."
+    fi
+    return 0
+  fi
   _prune_managed_backups "$CODEX_TOKEN_PATH" "$CODEX_TOKEN_BACKUP" || return 1
   if [ -n "$CODEX_TOKEN_BACKUP" ] && ! rm -f "$CODEX_TOKEN_BACKUP"; then
     out_error "could not remove provider-token backup $CODEX_TOKEN_BACKUP"
@@ -225,6 +231,9 @@ codex_app_server_batch_write() {
   printf '%s' "$_cas_result"
 }
 
+# ChatGPT spoof mode reads auth.json explicitly, without command auth.
+# https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/model-provider-info/src/lib.rs#L132-L137
+# https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/model-provider-info/src/lib.rs#L219-L243
 # Build the base-config edit batch and write it through the app-server. Model
 # and effort are opaque, forwarded verbatim, and cleared with JSON null when
 # unset. A batch status of `ok` or `okOverridden` confirms the intended base
@@ -240,15 +249,19 @@ codex_write_config() {
   # https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L901-L905
   # https://github.com/openai/codex/blob/24e9b849fad8f506971dfa0313dbdea8abd90112/codex-rs/features/src/lib.rs#L1393-L1439
   _cwc_edits=$("$JQ" -cn \
+    --arg mode "$SETUP_CODEX_AUTH_MODE" \
     --arg base "$_cwc_base" \
     --arg model "$SETUP_CODEX_MODEL" \
     --arg effort "$SETUP_CODEX_REASONING_EFFORT" '
     [
       {keyPath:"model_provider",mergeStrategy:"replace",value:"floway"},
       {keyPath:"suppress_unstable_features_warning",mergeStrategy:"replace",value:true},
+      {keyPath:"chatgpt_base_url",mergeStrategy:"replace",value:(if $mode == "chatgpt-spoof" then $base else null end)},
+      {keyPath:"cli_auth_credentials_store",mergeStrategy:"replace",value:(if $mode == "chatgpt-spoof" then "file" else null end)},
+      {keyPath:"model_providers.floway.requires_openai_auth",mergeStrategy:"replace",value:($mode == "chatgpt-spoof")},
       {keyPath:"model_providers.floway.name",mergeStrategy:"replace",value:"Floway"},
       {keyPath:"model_providers.floway.base_url",mergeStrategy:"replace",value:$base},
-      {keyPath:"model_providers.floway.auth",mergeStrategy:"replace",value:{command:"sh",args:["-c","cat \"${CODEX_HOME:-$HOME/.codex}/floway-token\""]}},
+      {keyPath:"model_providers.floway.auth",mergeStrategy:"replace",value:(if $mode == "chatgpt-spoof" then null else {command:"sh",args:["-c","cat \"${CODEX_HOME:-$HOME/.codex}/floway-token\""]} end)},
       {keyPath:"model_providers.floway.wire_api",mergeStrategy:"replace",value:"responses"},
       {keyPath:"model_providers.floway.supports_websockets",mergeStrategy:"replace",value:true},
       {keyPath:"model_providers.floway.http_headers",mergeStrategy:"replace",value:{"x-openai-actor-authorization":"1"}},
@@ -294,21 +307,24 @@ codex_write_config() {
   fi
 }
 
-# Store the selected API key as a provider-scoped command-auth token. The private
-# stage is validated byte-for-byte, then atomically renamed. auth.json is an
-# account-owned Codex file and is never read or changed here.
+# Stage either a provider token or the opted-in ChatGPT identity. Both files
+# contain secrets and are atomically replaced from an owner-only stage.
 codex_stage_token() {
+  _cst_value=$SETUP_API_KEY
+  if [ "$SETUP_CODEX_AUTH_MODE" = chatgpt-spoof ]; then
+    _cst_value=$(printf '%s' "$SETUP_CODEX_AUTH_JSON" | "$JQ" -c '.last_refresh = (now | todate)') || return 1
+  fi
   _cst_stage="$CODEX_TOKEN_PATH.floway-stage.$$"
   if ! (umask 077 && : > "$_cst_stage"); then
     out_error 'could not create the Codex provider-token stage.'
     return 1
   fi
-  if ! printf '%s' "$SETUP_API_KEY" > "$_cst_stage"; then
+  if ! printf '%s' "$_cst_value" > "$_cst_stage"; then
     out_error 'could not write the Codex provider-token stage.'
     rm -f "$_cst_stage"
     return 1
   fi
-  if ! cmp -s "$_cst_stage" <(printf '%s' "$SETUP_API_KEY"); then
+  if ! cmp -s "$_cst_stage" <(printf '%s' "$_cst_value"); then
     out_error 'staged Codex provider token failed validation.'
     rm -f "$_cst_stage"
     return 1
@@ -359,7 +375,14 @@ configure_agent() {
   fi
   CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
   CODEX_CONFIG_PATH="$CODEX_HOME_DIR/config.toml"
-  CODEX_TOKEN_PATH="$CODEX_HOME_DIR/floway-token"
+  case "$SETUP_CODEX_AUTH_MODE" in
+    provider) CODEX_TOKEN_PATH="$CODEX_HOME_DIR/floway-token" ;;
+    chatgpt-spoof)
+      CODEX_TOKEN_PATH="$CODEX_HOME_DIR/auth.json"
+      out_warn 'This mode overwrites your existing Codex login. If you have no existing Codex login, you can ignore this warning.'
+      ;;
+    *) out_error 'invalid Codex authentication mode.'; return 1 ;;
+  esac
   if ! mkdir -p "$CODEX_HOME_DIR"; then
     out_error "could not create $CODEX_HOME_DIR"
     return 1

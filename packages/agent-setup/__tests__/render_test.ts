@@ -19,7 +19,7 @@ const fullConfiguration: AgentSetupConfiguration = {
     modelDiscovery: true,
   },
   codex: {
-    model: 'gpt-5.6-terra',
+    authMode: 'provider', model: 'gpt-5.6-terra',
     reasoningEffort: 'xhigh',
   },
 };
@@ -83,7 +83,7 @@ describe('renderShellPrefix', () => {
           model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
           defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false,
         },
-        codex: { model: null, reasoningEffort: null },
+        codex: { authMode: 'provider', model: null, reasoningEffort: null },
       },
     });
     expect(prefix).toContain("SETUP_CLAUDE_MODEL_DISCOVERY=''");
@@ -131,6 +131,8 @@ describe('renderPowerShellPrefix', () => {
       'Set-PSDebug -Off',
       "$SetupApiKey = 'sk-raw-key'",
       "$SetupApiKeyName = 'Primary key'",
+      "$SetupCodexAuthMode = 'provider'",
+      "$SetupCodexAuthJson = ''",
       "$SetupCodexModel = 'gpt-5.6-terra'",
       "$SetupCodexReasoningEffort = 'xhigh'",
       '',
@@ -168,7 +170,7 @@ describe('renderPowerShellPrefix', () => {
           model: null, defaultFableModel: null, defaultOpusModel: null, defaultSonnetModel: null,
           defaultHaikuModel: null, effortLevel: null, cleanupPeriodDays: null, optOutAiAttribution: false, disableAutoMemory: false, disableAgentView: false, modelDiscovery: false,
         },
-        codex: { model: null, reasoningEffort: null },
+        codex: { authMode: 'provider', model: null, reasoningEffort: null },
       },
     });
     expect(prefix).toContain('$SetupClaudeModelDiscovery = $false');

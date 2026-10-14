@@ -110,7 +110,7 @@ describe('Agent Setup lease lifecycle', () => {
   });
 
   it('carries an edit made before a key was selected into the configuration it saves', async () => {
-    const saves: { configuration: { codex: { model: string | null } } }[] = [];
+    const saves: { configuration: { codex: { authMode: 'provider'; model: string | null } } }[] = [];
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'PUT') saves.push(JSON.parse(String(init.body)) as (typeof saves)[number]);
       return Response.json(lease());
@@ -130,7 +130,7 @@ describe('Agent Setup lease lifecycle', () => {
   });
 
   it('leaves a saved edit behind when the next key answers with its own configuration', async () => {
-    const saves: { configuration: { codex: { model: string | null } } }[] = [];
+    const saves: { configuration: { codex: { authMode: 'provider'; model: string | null } } }[] = [];
     vi.stubGlobal('fetch', vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       if (init?.method === 'PUT') saves.push(JSON.parse(String(init.body)) as (typeof saves)[number]);
       return Response.json(lease());

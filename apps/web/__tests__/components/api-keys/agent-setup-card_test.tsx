@@ -1,4 +1,4 @@
-import { act, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -22,7 +22,7 @@ const configuration = (apiKeyId: string): AgentSetupConfiguration => ({
     disableAgentView: true,
     modelDiscovery: false,
   },
-  codex: { model: null, reasoningEffort: null },
+  codex: { authMode: 'provider', model: null, reasoningEffort: null },
 });
 
 const lease = (apiKeyId: string): AgentSetupLease => ({
@@ -83,6 +83,21 @@ const shownSettings = () => ({
 // configuration and nothing else. There is no second draft for the card to fall
 // back to while a lease is being acquired for another key.
 describe('Agent Setup card fields', () => {
+  it('shares the Codex mode and login warning between automatic and manual configuration', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>(() => {})));
+    renderInApp(<Host />);
+    fireEvent.click(screen.getByRole('tab', { name: 'Codex' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Codex login mode' }));
+    fireEvent.click(await screen.findByRole('option', { name: 'Spoof ChatGPT login' }));
+    expect(screen.getByText(/This mode overwrites your existing Codex login/).textContent).toContain('If you have no existing Codex login, you can ignore this warning.');
+    fireEvent.click(screen.getByRole('tab', { name: 'Config snippet' }));
+    expect(screen.getByRole('combobox', { name: 'Codex login mode' }).textContent).toContain('Spoof ChatGPT login');
+    expect(document.body.textContent).toContain('requires_openai_auth = true');
+    expect(document.body.textContent).toContain('auth.json');
+    expect(document.body.textContent).not.toContain('command = "sh"');
+    vi.unstubAllGlobals();
+  });
+
   it('draws every setting from the lease the session holds', () => {
     renderInApp(<Host />);
     expect(shownSettings()).toEqual({ effort: 'high', modelDiscovery: false, attributionOptOut: true, autoMemoryOptOut: true, agentViewOptOut: true });

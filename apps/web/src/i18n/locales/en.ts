@@ -549,6 +549,7 @@ const en = {
           claudeHint: 'Merge the env block into <path>~/.claude/settings.json</path> or <path>.claude/settings.json</path>.',
           codexConfigHint: 'Merge into <path>~/.codex/config.toml</path>.',
           codexConfigHintWindows: 'Merge into <path>%USERPROFILE%\\.codex\\config.toml</path>.',
+          codexSpoofAuthHint: 'Run this command to back up and replace auth.json with the Floway login identity. To recover your original login, restore the printed backup to auth.json or sign in again. Restart Codex after applying both snippets.',
           codexAuthHint: 'Store the Floway provider token beside that config, leaving the official account login alone.',
           ompHint: 'The installer writes the model list to <path>~/.omp/agent/models.yml</path>.',
           vscodeHint: 'The installer prints the JSON to paste into <path>Chat: Open Language Models (JSON)</path>.',
@@ -556,6 +557,13 @@ const en = {
           opencodeHint: 'The installer merges the provider into <path>~/.config/opencode/opencode.json</path>.',
         },
         agentSetup: {
+          codexAuthMode: 'Codex login mode',
+          codexProviderMode: 'Separate Floway credentials (default)',
+          codexSpoofMode: 'Spoof ChatGPT login',
+          codexProviderHint: 'Uses a separate Floway token and preserves your Codex login. When switching from spoof mode, restore your auth.json backup or sign in again. For manual configuration, replace the whole Floway provider section and remove chatgpt_base_url and cli_auth_credentials_store from the root.',
+          codexSpoofWarning: 'This mode overwrites your existing Codex login. If you have no existing Codex login, you can ignore this warning.',
+          codexSpoofHint: 'Both setup methods back up auth.json first. A local ChatGPT identity may make features such as Fast visible; actual availability depends on the client and upstream. This does not provide a real subscription. Restart Codex after setup; if the login expires, run setup again.',
+          codexSettings: 'Codex configuration',
           agent: 'Agent', accessMethod: 'Connection method', setupTab: 'Setup script', snippetsTab: 'Config snippet', platform: 'Platform', commandPending: 'Preparing setup command…', modelSelection: 'Model selection', miscSettings: 'Miscellaneous settings', selectKey: 'Select an API key above to prepare a setup command.', noKey: 'Create an API key to use Agent Setup.', expired: 'This setup link has expired. Retry to create a fresh link.', timedOut: 'The gateway did not answer in time.', retry: 'Retry', expires: 'The setup link stays alive while this page is visible and expires after you leave.', defaultModel: 'Default model', fableModel: 'Fable model', opusModel: 'Opus model', sonnetModel: 'Sonnet model', haikuModel: 'Haiku model', reasoningEffort: 'Reasoning effort', modelDefault: 'Default', noModelMatches: 'No matching models', modelDiscovery: 'Gateway model discovery', modelDiscoveryHint: 'Let Claude Code discover available models from this Floway gateway.', cleanupRetention: 'Cleanup retention', cleanupRetentionHint: 'Set how long Claude Code retains local session data before cleanup.', cleanupDays: '{{count, number}} days', optOutAiAttribution: 'Opt out of Claude Code AI attribution', optOutAiAttributionHint: 'Remove Claude Code attribution ("Co-Authored-By") from commits and pull requests, and hide session links.', disableAutoMemory: 'Disable auto memory', disableAutoMemoryHint: 'Stop Claude Code from reading or writing its auto memory directory.',           disableAgentView: 'Disable agent view', disableAgentViewHint: 'Turn off background agents and agent view, including `claude agents`, `--bg`, and `/background`.', harnessHint: 'Run the setup script above; it fetches the model list from this gateway and writes or prints the settings for you.',
         },
         rotate: {
