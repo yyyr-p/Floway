@@ -2,6 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
 import { isPlural, leafKeys, pluralBase } from './keys';
@@ -35,7 +36,7 @@ const sourceFiles = (dir: string): string[] =>
 // and stays out of scope; the resources suite still guarantees both locales
 // agree on whatever exists.
 const NAMESPACES = Object.keys(en.translation);
-const LITERAL_KEY = new RegExp(`['"\`]((?:${NAMESPACES.join('|')})\\.[a-zA-Z][a-zA-Z0-9_.]*)['"\`]`, 'g');
+const LITERAL_KEY = new RegExp(`^((?:${NAMESPACES.join('|')})\\.[a-zA-Z][a-zA-Z0-9_.]*)$`);
 
 // The reverse direction needs a wider net than `t(...)`. A key reaches the
 // call site through whatever the source does with it -- held in a const, in a
@@ -51,24 +52,30 @@ const LITERAL_KEY = new RegExp(`['"\`]((?:${NAMESPACES.join('|')})\\.[a-zA-Z][a-
 // direction for a test whose failure means "delete this". A key it wrongly
 // clears stays in the file; a key it wrongly accuses would fail a build over a
 // string that is genuinely in use.
-const ANY_STRING = /['"`]([a-zA-Z][a-zA-Z0-9_.]*)['"`]/g;
+const ANY_STRING = /^([a-zA-Z][a-zA-Z0-9_.]*)$/;
 
 // A template key is recognised by its own shape -- rooted in a namespace, like
 // `LITERAL_KEY` -- rather than by sitting at a `t(` or `i18nKey=`. The call
 // site is free to build the key first and hand it over later, which is how
 // `dashboard.proxy.validation.timeout.${error}`, assigned to a field of a
 // validation result, came to be accused of orphaning both strings under it.
-const TEMPLATE_KEY_PREFIX = new RegExp(`\`((?:${NAMESPACES.join('|')})\\.(?:[a-zA-Z0-9_.]*\\.)?)\\$\\{`, 'g');
+const TEMPLATE_KEY_PREFIX = new RegExp(`^((?:${NAMESPACES.join('|')})\\.[a-zA-Z0-9_.]*)$`);
 
-// Both scans are evidence about call sites, so both must read code only. A
-// comment is prose: the letter `d` quoted in a sentence is not a use of
-// `dashboard.*`. Tokenizing the file rather than regexing it is also what keeps
-// a quote inside a comment, or a delimiter inside a string, from being read as
-// the other kind of thing.
-const STRING_OR_COMMENT = /\/\/[^\n]*|\/\*[\s\S]*?\*\/|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"|`(?:[^`\\]|\\.)*`/g;
-
-const withoutComments = (source: string) =>
-  source.replace(STRING_OR_COMMENT, token => (token.startsWith('//') || token.startsWith('/*') ? ' ' : token));
+// Parse actual source literals: quotes embedded in a shell command are content,
+// not a second TypeScript literal. Template expressions still visit their keys.
+const sourceLiterals = (source: string) => {
+  const literals: { text: string; template: boolean }[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) {
+      literals.push({ text: node.text, template: false });
+    } else if (ts.isTemplateExpression(node)) {
+      literals.push({ text: node.head.text, template: true });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(ts.createSourceFile('source.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX));
+  return literals;
+};
 
 // A literal clears a longer key only when the literal is itself shaped like a
 // key -- rooted in a namespace, carrying a separator. Without that test any
@@ -79,6 +86,15 @@ const withoutComments = (source: string) =>
 const KEY_STEM = new RegExp(`^(?:${NAMESPACES.join('|')})\\.`);
 
 describe('translation key usage', () => {
+  it('distinguishes embedded shell quotes from translation literals and visits template expressions', () => {
+    const source = "const command = 'Join-Path $h \"auth.json\"'; const key = t('auth.login'); const view = <Trans i18nKey=\"auth.signup\" />; const templated = `dashboard.${t('auth.logout')}`; // t('auth.comment')";
+    const literals = sourceLiterals(source);
+    expect(literals.map(({ text }) => LITERAL_KEY.exec(text)?.[1]).filter(Boolean)).toEqual(['auth.login', 'auth.signup', 'auth.logout']);
+    const head = literals.find(({ template }) => template)?.text;
+    expect(head).toBe('dashboard.');
+    expect(TEMPLATE_KEY_PREFIX.exec(head!)?.[1]).toBe('dashboard.');
+  });
+
   const defined = new Set(leafKeys(en.translation));
   const pluralBases = new Set([...defined].filter(isPlural).map(pluralBase));
   const resolves = (key: string) => defined.has(key) || pluralBases.has(key);
@@ -86,8 +102,10 @@ describe('translation key usage', () => {
   it('has a string behind every literal key the dashboard asks for', () => {
     const unresolved: string[] = [];
     for (const file of sourceFiles(SOURCE_ROOT)) {
-      const source = withoutComments(readFileSync(file, 'utf8'));
-      for (const [, key] of source.matchAll(LITERAL_KEY)) {
+      const literals = sourceLiterals(readFileSync(file, 'utf8'));
+      for (const { text } of literals) {
+        const key = LITERAL_KEY.exec(text)?.[1];
+        if (key === undefined) continue;
         // A literal that names no leaf but prefixes one is a stem the call site
         // completes -- `t(`${prefix}Disable`)` passes the stem and appends.
         if (resolves(key) || [...defined].some(leaf => leaf.startsWith(`${key}.`) || leaf.startsWith(key))) continue;
@@ -103,9 +121,13 @@ describe('translation key usage', () => {
     const used = new Set<string>();
     const templatePrefixes = new Set<string>();
     for (const file of sourceFiles(SOURCE_ROOT)) {
-      const source = withoutComments(readFileSync(file, 'utf8'));
-      for (const [, key] of source.matchAll(ANY_STRING)) used.add(key);
-      for (const [, prefix] of source.matchAll(TEMPLATE_KEY_PREFIX)) templatePrefixes.add(prefix);
+      const literals = sourceLiterals(readFileSync(file, 'utf8'));
+      for (const { text, template } of literals) {
+        const key = ANY_STRING.exec(text)?.[1];
+        if (key !== undefined) used.add(key);
+        const prefix = template ? TEMPLATE_KEY_PREFIX.exec(text)?.[1] : undefined;
+        if (prefix !== undefined) templatePrefixes.add(prefix);
+      }
     }
     const orphaned = [...defined].filter(key => {
       if (used.has(key) || used.has(pluralBase(key))) return false;
