@@ -27,6 +27,7 @@ const loaderData = {
     responses_retention_seconds: 0,
   }],
   models: [model, secondModel],
+  targetModels: [model, secondModel],
   error: null,
 };
 
