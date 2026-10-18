@@ -2417,7 +2417,6 @@ test('codex', 'PowerShell: a Codex script never configures Claude when Codex fai
   t.ok(!existsSync(settingsPathFor(ws)), 'the Codex script never writes Claude settings');
 });
 
-// Both language-native installers exercise the same login transaction.
 for (const platform of ['bash', 'powershell'] as const) {
   test('codex', `${platform}: spoof mode backs up the original login, routes through Floway, and keeps every login backup`, async t => {
     if (platform === 'powershell' && !hostPwsh) skip('PowerShell is not installed');
