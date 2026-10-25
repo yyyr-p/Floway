@@ -1,5 +1,5 @@
 import { act, screen, within } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { CodexAccountCard } from '../../../src/components/upstream-editor/codex-account-card';
 import type { CodexRecord } from '../../../src/components/upstreams/codex-account';
@@ -7,6 +7,7 @@ import { UpstreamSignals } from '../../../src/components/upstreams/signals';
 import { upstreamRecord } from '../../api/upstream-fixture';
 import { stubLocalStorage } from '../../local-storage-stub';
 import { renderInApp } from '../../render';
+import { primeDefaultSession } from '../../test-session';
 
 stubLocalStorage();
 
@@ -30,6 +31,8 @@ const cases = [
 ];
 
 afterEach(() => vi.useRealTimers());
+
+beforeEach(() => { primeDefaultSession(); });
 
 describe('Codex projected quota on list and card', () => {
   it.each(cases)('expires the known timer without new traffic: $name', async ({ primary, secondary, until, ...scenario }) => {
@@ -67,23 +70,25 @@ describe('Codex projected quota on list and card', () => {
     expect(list.queryByText('Rate limited')).toBeNull();
     expect(card.queryByText(/^Rate-limited until/)).toBeNull();
     expect(card.getByText('Heavy usage (100%)')).toBeTruthy();
-    expect(list.getAllByText('100%').length).toBeGreaterThan(0);
-    expect(card.queryByText('0%')).toBeNull();
+    expect(list.getAllByText('0%').length).toBeGreaterThan(0);
+    expect(card.getAllByText('0% remaining').length).toBeGreaterThan(0);
     expect(projected.codex_quota.premium).toEqual(quota);
 
     const fresh = { ...projected, codex_quota: { premium: { ...quota, primary_used_percent: 12, secondary_used_percent: 35, ratelimited_until: undefined } } };
     view.rerender(<><div data-testid="list"><UpstreamSignals record={fresh} /></div><div data-testid="card"><CodexAccountCard record={fresh} /></div></>);
     expect(card.getByText('Active')).toBeTruthy();
-    expect(list.getByText('12%')).toBeTruthy();
-    expect(list.queryByText('100%')).toBeNull();
+    expect(list.getByText('88%')).toBeTruthy();
+    expect(card.getByText('88% remaining')).toBeTruthy();
+    expect(list.queryByText('0%')).toBeNull();
   });
 
-  it('does not invent a timed restriction or zero usage when no exhausted reset is known', () => {
+  it('keeps an exhausted quota without inventing a timed restriction when its reset is unknown', () => {
     const projected = { ...record, codex_quota: { premium: { observed_at: observed, primary_used_percent: 100 } } };
     renderInApp(<><UpstreamSignals record={projected} /><CodexAccountCard record={projected} /></>);
     expect(screen.queryByText('Rate limited')).toBeNull();
     expect(screen.queryByText(/^Rate-limited until/)).toBeNull();
     expect(screen.getByText('Heavy usage (100%)')).toBeTruthy();
-    expect(screen.queryByText('0%')).toBeNull();
+    expect(screen.getByText('0%')).toBeTruthy();
+    expect(screen.getByText('0% remaining')).toBeTruthy();
   });
 });

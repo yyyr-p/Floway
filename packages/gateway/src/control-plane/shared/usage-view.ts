@@ -1,5 +1,4 @@
 import { type AuthedContext, userFromContext } from '../../middleware/auth.ts';
-import { canViewGlobalUsage } from '../../repo/user-permissions.ts';
 
 // The two shapes the usage endpoints answer in.
 type UsageView = 'all-by-user' | 'self-by-key';
@@ -18,13 +17,6 @@ export const resolveUsageView = (
 
   if (view === 'self-by-key') return { view: 'self-by-key', scopeUserId: user.id };
 
-  // Cross-user usage exposes other users' request volume and spend.
-  if (!canViewGlobalUsage(user)) {
-    return {
-      error: 'forbidden',
-      message: 'Viewing usage across users requires global usage permission',
-    };
-  }
   if (rawKeyId !== undefined && rawKeyId !== '') {
     return {
       error: 'bad_request',

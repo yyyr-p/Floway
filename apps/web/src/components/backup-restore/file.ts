@@ -16,14 +16,19 @@ const backupFileSchema = z.object({
     oauth2Accounts: z.array(z.unknown()),
     oauth2Settings: z.unknown(),
     oauth2Providers: z.array(z.unknown()),
+    userPreferences: z.array(z.unknown()),
+    groups: z.array(z.unknown()),
+    accessRecords: z.array(z.unknown()),
     apiKeys: z.array(z.unknown()),
     upstreams: z.array(z.unknown()),
     proxies: z.array(z.unknown()),
     usage: z.array(z.unknown()),
     searchUsage: z.array(z.unknown()),
+    upstreamMetrics: z.array(z.unknown()),
     performance: z.array(z.unknown()).optional(),
     performanceIncluded: z.boolean(),
     searchConfig: z.unknown(),
+    siteSettings: z.object({ siteName: z.string().nullable() }).strict(),
   }).strict().superRefine((data, ctx) => {
     if (data.performanceIncluded !== (data.performance !== undefined)) {
       ctx.addIssue({

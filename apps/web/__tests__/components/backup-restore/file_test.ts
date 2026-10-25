@@ -7,13 +7,18 @@ const data = {
   oauth2Accounts: [],
   oauth2Settings: { publicBaseUrl: '', updatedAt: '2026-08-19T00:00:00.000Z' },
   oauth2Providers: [],
+  userPreferences: [],
+  groups: [],
+  accessRecords: [],
   apiKeys: [],
   upstreams: [],
   proxies: [],
   usage: [],
   searchUsage: [],
+  upstreamMetrics: [],
   performanceIncluded: false,
   searchConfig: null,
+  siteSettings: { siteName: null },
 };
 
 const backup = (overrides: Record<string, unknown> = {}) => JSON.stringify({
@@ -35,6 +40,10 @@ describe('backup file validation', () => {
   it('rejects unknown fields instead of stripping them', () => {
     expect(parseBackupFile(backup({ typo: true })).ok).toBe(false);
     expect(parseBackupFile(backup({ data: { ...data, typo: [] } })).ok).toBe(false);
+  });
+
+  it('requires the preferences collection this version exports', () => {
+    expect(parseBackupFile(backup({ data: { ...data, userPreferences: undefined } })).ok).toBe(false);
   });
 
   it('keeps performance presence synchronized with its flag', () => {

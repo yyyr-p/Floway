@@ -1,5 +1,5 @@
 import type { OpenAIResponsesInterceptor } from './types.ts';
-import type { OpenAIResponsesInputItem } from '@floway-dev/protocols/openai-responses';
+import type { CanonicalOpenAIResponsesInputItem } from '@floway-dev/protocols/openai-responses';
 
 // An input reasoning item's id is only the name an upstream filed its signed
 // `encrypted_content` under. A reasoning item that arrives with an id but no
@@ -33,14 +33,14 @@ export const withOpenAIResponsesReasoningIdStripped: OpenAIResponsesInterceptor 
     ...ctx.payload,
     input: ctx.payload.input.map(item => {
       if (!isIdBearingBloblessReasoning(item)) return item;
-      const { id: _id, ...rest } = item as OpenAIResponsesInputItem & { id?: string };
-      return rest as OpenAIResponsesInputItem;
+      const { id: _id, ...rest } = item as CanonicalOpenAIResponsesInputItem & { id?: string };
+      return rest as CanonicalOpenAIResponsesInputItem;
     }),
   };
   return run();
 };
 
-const isIdBearingBloblessReasoning = (item: OpenAIResponsesInputItem): boolean =>
+const isIdBearingBloblessReasoning = (item: CanonicalOpenAIResponsesInputItem): boolean =>
   item.type === 'reasoning'
   && item.id !== undefined
   && item.id !== null

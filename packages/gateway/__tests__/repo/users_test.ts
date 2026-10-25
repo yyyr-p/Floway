@@ -10,8 +10,6 @@ const sampleUser = (over: Partial<User> = {}): User => ({
   username: 'alice',
   passwordHash: 'pbkdf2-sha256$600000$YQ==$YQ==',
   isAdmin: false,
-  canViewGlobalUsage: false,
-  upstreamIds: null,
   createdAt: '2026-06-07T00:00:00.000Z',
   deletedAt: null,
   ...over,
@@ -76,40 +74,10 @@ describe.each(backends)('UsersRepo (%s)', (_label, makeRepo) => {
     expect((await repo.users.getById(2))?.isAdmin).toBe(true);
   });
 
-  test('upstreamIds round-trip unrestricted, selected, and empty whitelist forms', async () => {
-    const repo = await makeRepo();
-    await repo.users.save(sampleUser({ id: 2, username: 'a', upstreamIds: null }));
-    await repo.users.save(sampleUser({ id: 3, username: 'b', upstreamIds: ['up_one', 'up_two'] }));
-    await repo.users.save(sampleUser({ id: 4, username: 'c', upstreamIds: [] }));
-    expect((await repo.users.getById(2))?.upstreamIds).toBeNull();
-    expect((await repo.users.getById(3))?.upstreamIds).toEqual(['up_one', 'up_two']);
-    expect((await repo.users.getById(4))?.upstreamIds).toEqual([]);
-  });
-
-  test('setUpstreamIds updates only the selected users upstream scope', async () => {
-    const repo = await makeRepo();
-    await repo.users.save(sampleUser({ id: 2, username: 'a', upstreamIds: null }));
-    await repo.users.save(sampleUser({ id: 3, username: 'b', upstreamIds: ['up_one'] }));
-    await repo.users.setUpstreamIds([{ id: 2, upstreamIds: [] }]);
-    expect((await repo.users.getById(2))?.upstreamIds).toEqual([]);
-    expect((await repo.users.getById(3))?.upstreamIds).toEqual(['up_one']);
-  });
-
   test('findByUsername does not return soft-deleted rows', async () => {
     const repo = await makeRepo();
     await repo.users.save(sampleUser({ id: 2, username: 'alice' }));
     await repo.users.softDelete(2);
     expect(await repo.users.findByUsername('alice')).toBeNull();
-  });
-});
-
-describe.each(backends)('global usage permission (%s)', (_label, makeRepo) => {
-  test('persists grants through create, save, and revocation independently of administrator status', async () => {
-    const repo = await makeRepo();
-    const user = await repo.users.createNewUser(sampleUser({ canViewGlobalUsage: true }));
-    expect(await repo.users.getById(user.id)).toMatchObject({ isAdmin: false, canViewGlobalUsage: true });
-    await repo.users.save({ ...user, canViewGlobalUsage: false });
-    expect(await repo.users.getById(user.id)).toMatchObject({ isAdmin: false, canViewGlobalUsage: false });
-    expect(await repo.users.getById(1)).toMatchObject({ isAdmin: true, canViewGlobalUsage: false });
   });
 });

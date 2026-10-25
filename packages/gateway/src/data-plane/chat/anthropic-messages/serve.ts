@@ -7,9 +7,10 @@ import { iterateCandidates } from '../../shared/iterate-candidates.ts';
 import { selectAffinityCandidates } from '../shared/affinity/index.ts';
 import { noViableCandidateFailure } from '../shared/errors.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
-import { parseAnthropicBetaHeader, type AnthropicMessagesPayload, type AnthropicMessagesStreamEvent } from '@floway-dev/protocols/anthropic-messages';
+import { serializeAnthropicMessagesStream, shouldSerializeStreamItems } from '../shared/stream-compatibility/index.ts';
+import { parseAnthropicBetaHeader, type AnthropicMessagesPayload, type AnthropicMessagesStreamEventEx } from '@floway-dev/protocols/anthropic-messages';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
-import type { ExecuteResult, PlainResult } from '@floway-dev/provider';
+import { providerModelOf, type ExecuteResult, type PlainResult } from '@floway-dev/provider';
 
 export interface AnthropicMessagesServeGenerateArgs {
   readonly payload: AnthropicMessagesPayload;
@@ -24,11 +25,13 @@ export interface AnthropicMessagesServeCountTokensArgs {
 }
 
 export const anthropicMessagesServe = {
-  generate: async (args: AnthropicMessagesServeGenerateArgs): Promise<ExecuteResult<ProtocolFrame<AnthropicMessagesStreamEvent>>> => {
+  generate: async (args: AnthropicMessagesServeGenerateArgs): Promise<ExecuteResult<ProtocolFrame<AnthropicMessagesStreamEventEx>>> => {
     const { payload, ctx, headers } = args;
     const anthropicBeta = parseAnthropicBetaHeader(headers.get('anthropic-beta'));
     const { candidates: enumerated, sawModel, failedUpstreams } = await enumerateModelCandidates({
+      subject: ctx.user,
       upstreamIds: ctx.upstreamIds,
+      randomizeUpstreams: ctx.randomizeUpstreams,
       model: decodeClaudeCodeModelId(payload.model, headers.get('user-agent') ?? undefined),
       kind: 'chat',
       scheduler: ctx.backgroundScheduler,
@@ -53,17 +56,21 @@ export const anthropicMessagesServe = {
       'chat',
       async candidate => {
         const result = await anthropicMessagesAttempt.generate({ payload: selection.payloadFor(candidate), ctx, candidate, headers, anthropicBeta });
-        if (result.type === 'events') ctx.affinity.select(candidate);
-        return result;
+        if (result.type !== 'events') return result;
+        ctx.affinity.select(candidate);
+        const enabled = shouldSerializeStreamItems(providerModelOf(candidate).enabledFlags, 'anthropicMessages', headers.get('user-agent'));
+        return { ...result, events: serializeAnthropicMessagesStream(result.events, enabled) };
       },
     );
   },
 
-  countTokens: async (args: AnthropicMessagesServeCountTokensArgs): Promise<ExecuteResult<ProtocolFrame<AnthropicMessagesStreamEvent>> | PlainResult> => {
+  countTokens: async (args: AnthropicMessagesServeCountTokensArgs): Promise<ExecuteResult<ProtocolFrame<AnthropicMessagesStreamEventEx>> | PlainResult> => {
     const { payload, ctx, headers } = args;
     const anthropicBeta = parseAnthropicBetaHeader(headers.get('anthropic-beta'));
     const { candidates: enumerated, sawModel, failedUpstreams } = await enumerateModelCandidates({
+      subject: ctx.user,
       upstreamIds: ctx.upstreamIds,
+      randomizeUpstreams: ctx.randomizeUpstreams,
       model: decodeClaudeCodeModelId(payload.model, headers.get('user-agent') ?? undefined),
       kind: 'chat',
       scheduler: ctx.backgroundScheduler,

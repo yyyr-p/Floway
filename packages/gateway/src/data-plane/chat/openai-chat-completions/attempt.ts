@@ -8,13 +8,14 @@ import { applyRulesToUpstreamOpenAIChatCompletions } from '../shared/alias-rules
 import { createExternalImageLoader } from '../shared/external-image-loader.ts';
 import type { ChatGatewayCtx } from '../shared/gateway-ctx.ts';
 import { providerStreamResultToExecuteResult } from '../shared/provider-stream-result.ts';
+import { SidecarDomain } from '../shared/sidecar-codec.ts';
 import { chatTargetPicker } from '../shared/target-picker.ts';
 import { captureFromDump, traverseTranslation } from '../shared/translate-traverse.ts';
 import { runInterceptors } from '@floway-dev/interceptor';
 import type { ProtocolFrame } from '@floway-dev/protocols/common';
 import type { OpenAIChatCompletionsPayload, OpenAIChatCompletionsStreamEvent } from '@floway-dev/protocols/openai-chat-completions';
 import { type ModelCandidate, type ExecuteResult, providerModelOf } from '@floway-dev/provider';
-import { translateOpenAIChatCompletionsViaAnthropicMessages, translateOpenAIChatCompletionsViaOpenAIResponses } from '@floway-dev/translate';
+import { routeOpenAIChatCompletions } from '@floway-dev/translate/openai-chat-completions';
 
 // `/v1/chat/completions` generate prefers a native OpenAI Chat Completions target,
 // then the translated Anthropic Messages path, then the translated OpenAI Responses path.
@@ -54,8 +55,9 @@ export const openaiChatCompletionsAttempt = {
       if (targetApi === 'anthropicMessages') {
         return await traverseTranslation(
           invocation.payload,
-          p => translateOpenAIChatCompletionsViaAnthropicMessages(p, {
+          p => routeOpenAIChatCompletions(p).viaAnthropicMessages({
             model: candidate.model.id,
+            sidecarCodec: ctx.sidecarCodecFactory.codecFor(SidecarDomain.TranslatedAssistantTurn),
             fallbackMaxOutputTokens: candidate.model.limits.max_output_tokens,
             loadRemoteImage: createExternalImageLoader(ctx.abortSignal),
           }),
@@ -68,7 +70,7 @@ export const openaiChatCompletionsAttempt = {
       if (targetApi === 'openaiResponses') {
         return await traverseTranslation(
           invocation.payload,
-          p => translateOpenAIChatCompletionsViaOpenAIResponses(p, { model: candidate.model.id }),
+          p => routeOpenAIChatCompletions(p).viaOpenAIResponses({ model: candidate.model.id, sidecarCodec: ctx.sidecarCodecFactory.codecFor(SidecarDomain.TranslatedAssistantTurn) }),
           translated => openaiResponsesAttempt.generate({
             payload: translated, ctx, candidate, headers: invocation.headers,
           }),

@@ -4,12 +4,12 @@ import { evaluateOAuth2Access, renderOAuth2AccessDeniedMessage } from './oauth2-
 import { getOAuth2Config, oauth2BindingFrontendRedirect, oauth2FrontendRedirect, oauth2ProviderById, type OAuth2Config, type OAuth2ProviderConfig } from './oauth2-config.ts';
 import { exchangeOAuth2Code, fetchOAuth2Identity, newOAuth2Secret, OAuth2ProtocolError, oauth2AuthorizationUrl } from './oauth2-protocol.ts';
 import type { oauth2RegisterBody, oauth2ResultBody } from './oauth2-schemas.ts';
+import { sessionCapabilities } from './routes.ts';
 import { type AuthedContext, sessionIdFromContext, userFromContext } from '../../middleware/auth.ts';
 import type { CtxWithJson } from '../../middleware/zod-validator.ts';
 import { getRepo } from '../../repo/index.ts';
 import { generateApiKeyToken } from '../../shared/api-key-tokens.ts';
 import { generateServerSecret } from '../../shared/server-secret.ts';
-import { loadKnownUpstreamIds } from '../shared/upstream-ids.ts';
 import { userToSessionWire } from '../users/wire.ts';
 import { sha256Hex, timingSafeEqual } from '@floway-dev/platform';
 
@@ -228,10 +228,14 @@ export const resolveOAuth2Result = async (c: CtxWithJson<typeof oauth2ResultBody
   if (!session) return c.json({ error: 'OAuth2 login result is invalid or expired' }, 400);
   const user = await repo.users.getById(session.userId);
   if (!user) throw new Error(`OAuth2 login completed for missing user ${session.userId}`);
+  const [capabilities, preferences] = await Promise.all([
+    sessionCapabilities(user),
+    repo.userPreferences.get(user.id),
+  ]);
   return c.json({
     status: 'authenticated' as const,
     token: session.id,
-    user: userToSessionWire(user, await loadKnownUpstreamIds()),
+    user: userToSessionWire(user, capabilities, preferences),
   });
 };
 
@@ -239,7 +243,8 @@ export const registerOAuth2User = async (c: CtxWithJson<typeof oauth2RegisterBod
   preventOAuth2Caching(c);
   const body = c.req.valid('json');
   const createdAt = new Date().toISOString();
-  const result = await getRepo().oauth2.register({
+  const repo = getRepo();
+  const result = await repo.oauth2.register({
     tokenHash: await secretHash(body.registrationToken),
     username: body.username,
     createdAt,
@@ -251,6 +256,7 @@ export const registerOAuth2User = async (c: CtxWithJson<typeof oauth2RegisterBod
       serverSecret: generateServerSecret(),
       createdAt,
       upstreamIds: null,
+      randomizeUpstreams: false,
       deletedAt: null,
       dumpRetentionSeconds: null,
       openaiResponsesRetentionSeconds: 0,
@@ -263,8 +269,12 @@ export const registerOAuth2User = async (c: CtxWithJson<typeof oauth2RegisterBod
   if (result.status === 'account-taken') {
     return c.json({ error: 'This OAuth2 account is already registered. Sign in again.', code: 'oauth2_account_registered' as const }, 409);
   }
+  const [capabilities, preferences] = await Promise.all([
+    sessionCapabilities(result.user),
+    repo.userPreferences.get(result.user.id),
+  ]);
   return c.json({
     token: result.session.id,
-    user: userToSessionWire(result.user, await loadKnownUpstreamIds()),
+    user: userToSessionWire(result.user, capabilities, preferences),
   }, 201);
 };

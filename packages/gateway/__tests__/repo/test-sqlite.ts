@@ -157,24 +157,24 @@ class SqlJsPreparedStatement implements SqlPreparedStatement {
     return Promise.resolve(row);
   }
 
-  all<T = Record<string, unknown>>(): Promise<SqlResult<T>> {
+  execute<T = Record<string, unknown>>(): SqlResult<T> {
     const [result] = this.db.exec(this.query, this.bound as unknown[]);
-    if (!result) return Promise.resolve({ results: [], success: true, meta: {} });
-    const results = result.values.map(values => Object.fromEntries(result.columns.map((column, index) => [column, values[index]])) as T);
-    return Promise.resolve({ results, success: true, meta: {} });
+    const results = result ? result.values.map(values => Object.fromEntries(result.columns.map((column, index) => [column, values[index]])) as T) : [];
+    const [changesResult] = this.db.exec('SELECT changes() AS changes');
+    return { results, success: true, meta: { changes: Number(changesResult.values[0][0]) } };
   }
 
-  runSync(): SqlResult {
+  all<T = Record<string, unknown>>(): Promise<SqlResult<T>> {
+    return Promise.resolve(this.execute<T>());
+  }
+
+  run(): Promise<SqlResult> {
     // sql.js's `run()` does not surface `changes`. Read it back via
     // `SELECT changes()` so the CAS path in saveState gets an accurate count.
     this.db.run(this.query, this.bound as unknown[]);
     const [changesResult] = this.db.exec('SELECT changes() AS changes');
     const changes = Number(changesResult.values[0][0]);
-    return { results: [], success: true, meta: { changes } };
-  }
-
-  run(): Promise<SqlResult> {
-    return Promise.resolve(this.runSync());
+    return Promise.resolve({ results: [], success: true, meta: { changes } });
   }
 }
 
@@ -185,20 +185,18 @@ class SqlJsSqlDatabase implements SqlDatabase {
     return new SqlJsPreparedStatement(this.db, query);
   }
 
-  batch(statements: SqlPreparedStatement[]): Promise<SqlResult[]> {
+  async batch(statements: SqlPreparedStatement[]): Promise<SqlResult[]> {
     this.db.run('BEGIN');
     try {
       const results = statements.map(statement => {
-        if (!(statement instanceof SqlJsPreparedStatement)) {
-          throw new Error('SqlJsSqlDatabase.batch received a statement from a different database adapter');
-        }
-        return statement.runSync();
+        if (!(statement instanceof SqlJsPreparedStatement)) throw new Error('batch requires statements from this SQLite adapter');
+        return statement.execute();
       });
       this.db.run('COMMIT');
-      return Promise.resolve(results);
-    } catch (cause) {
-      try { this.db.run('ROLLBACK'); } catch { /* transaction already rolled back */ }
-      throw cause;
+      return results;
+    } catch (error) {
+      this.db.run('ROLLBACK');
+      throw error;
     }
   }
 

@@ -3,8 +3,7 @@ import { expect, test } from 'vitest';
 import { initDumpBroker, initDumpStore } from '../../../src/dump/registry.ts';
 import { hashPassword } from '../../../src/shared/passwords.ts';
 import { installDumpStubs } from '../../dump/test-fixtures.ts';
-import { saveUpstreamForTest } from '../../repo/upstreams.ts';
-import { buildCustomUpstreamRecord, requestApp, setupAppTest } from '../../test-utils/app.ts';
+import { requestApp, setupAppTest } from '../../test-utils/app.ts';
 import { assertEquals, assertExists } from '@floway-dev/test-utils';
 
 const adminPost = (sessionId: string, body: unknown) => requestApp('/api/users', {
@@ -13,11 +12,6 @@ const adminPost = (sessionId: string, body: unknown) => requestApp('/api/users',
   body: JSON.stringify(body),
 });
 const adminPatch = (sessionId: string, id: number, body: unknown) => requestApp(`/api/users/${id}`, {
-  method: 'PATCH',
-  headers: { 'content-type': 'application/json', 'x-floway-session': sessionId },
-  body: JSON.stringify(body),
-});
-const adminBulkUpstreamPatch = (sessionId: string, body: unknown) => requestApp('/api/users/upstream-access', {
   method: 'PATCH',
   headers: { 'content-type': 'application/json', 'x-floway-session': sessionId },
   body: JSON.stringify(body),
@@ -46,50 +40,17 @@ test('POST /api/users creates the user and provisions a Default key', async () =
   assertEquals(stored.length, 1);
   assertEquals(stored[0].name, 'Default');
   assertEquals(/^[0-9a-f]{64}$/.test(stored[0].serverSecret), true);
+  const records = await repo.accessRecords.listByPrincipal({ kind: 'user', id: body.user.id });
+  expect(records.map(record => ({ scope: record.scope, values: record.values }))).toEqual([
+    { scope: { kind: 'upstreams' }, values: { 'Model.Use': true } },
+  ]);
 });
 
-test('POST /api/users preserves an empty upstream restriction with an inheriting Default key', async () => {
-  const { adminSession, repo } = await setupAppTest();
-  const response = await adminPost(adminSession, { username: 'alice', password: 'hunter22', upstreamIds: [] });
-
-  assertEquals(response.status, 201);
-  const body = (await response.json()) as { user: { id: number; upstreamIds: string[] | null } };
-  assertEquals(body.user.upstreamIds, []);
-  assertEquals((await repo.users.getById(body.user.id))?.upstreamIds, []);
-  const [defaultKey] = await repo.apiKeys.listByUserId(body.user.id);
-  assertEquals(defaultKey.upstreamIds, null);
-});
-
-test('PATCH /api/users/:id saves an empty upstream restriction and can disable it', async () => {
-  const { adminSession, repo, apiKey } = await setupAppTest();
-  const response = await adminPatch(adminSession, apiKey.userId, { upstreamIds: [] });
-
-  assertEquals(response.status, 200);
-  assertEquals((await response.json()).upstreamIds, []);
-  assertEquals((await repo.users.getById(apiKey.userId))?.upstreamIds, []);
-
-  const unrestricted = await adminPatch(adminSession, apiKey.userId, { upstreamIds: null });
-  assertEquals(unrestricted.status, 200);
-  assertEquals((await unrestricted.json()).upstreamIds, null);
-  assertEquals((await repo.users.getById(apiKey.userId))?.upstreamIds, null);
-});
-
-test('POST /api/users rejects duplicate username + unknown upstream id', async () => {
+test('POST /api/users rejects duplicate username', async () => {
   const { adminSession } = await setupAppTest();
   await adminPost(adminSession, { username: 'alice', password: 'pw' });
   const dup = await adminPost(adminSession, { username: 'alice', password: 'pw' });
   assertEquals(dup.status, 400);
-  const unknown = await adminPost(adminSession, { username: 'bob', password: 'pw', upstreamIds: ['up_ghost'] });
-  assertEquals(unknown.status, 400);
-});
-
-test('POST /api/users accepts an empty upstream whitelist', async () => {
-  const { adminSession, repo } = await setupAppTest();
-  const response = await adminPost(adminSession, { username: 'no-upstreams', password: 'pw', upstreamIds: [] });
-  assertEquals(response.status, 201);
-  const body = (await response.json()) as { user: { id: number; upstreamIds: string[] } };
-  assertEquals(body.user.upstreamIds, []);
-  assertEquals((await repo.users.getById(body.user.id))?.upstreamIds, []);
 });
 
 test('POST /api/users rejects a username that differs only in case', async () => {
@@ -127,8 +88,6 @@ test('admin password reset on another user revokes that user\'s sessions', async
     username: 'bob',
     passwordHash: await hashPassword('old-pw'),
     isAdmin: false,
-    canViewGlobalUsage: false,
-    upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
   });
@@ -146,8 +105,6 @@ test('PATCH /api/users/:id can demote a non-self admin', async () => {
     username: 'bob',
     passwordHash: await hashPassword('pw'),
     isAdmin: true,
-    canViewGlobalUsage: false,
-    upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
   });
@@ -156,73 +113,6 @@ test('PATCH /api/users/:id can demote a non-self admin', async () => {
   assertEquals(response.status, 200);
   const bob = await repo.users.getById(3);
   expect(bob?.isAdmin).toBe(false);
-});
-
-test('PATCH /api/users/upstream-access changes only named upstream membership for selected users', async () => {
-  const { adminSession, repo } = await setupAppTest();
-  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_a', name: 'A', sortOrder: 0 }));
-  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_b', name: 'B', sortOrder: 1 }));
-  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_c', name: 'C', sortOrder: 2 }));
-  const admin = await repo.users.getById(1);
-  assertExists(admin);
-  await repo.users.save({ ...admin, upstreamIds: ['up_c', 'up_b'] });
-  await repo.users.save({
-    ...admin,
-    id: 3,
-    username: 'limited',
-    isAdmin: false,
-    canViewGlobalUsage: false,
-    upstreamIds: ['up_a'],
-  });
-  await repo.users.save({
-    ...admin,
-    id: 4,
-    username: 'untouched',
-    isAdmin: false,
-    canViewGlobalUsage: false,
-    upstreamIds: ['up_b'],
-  });
-
-  const response = await adminBulkUpstreamPatch(adminSession, {
-    userIds: [1, 3],
-    changes: [
-      { upstreamId: 'up_b', allowed: false },
-      { upstreamId: 'up_c', allowed: true },
-    ],
-  });
-  assertEquals(response.status, 200);
-  assertEquals((await repo.users.getById(1))?.upstreamIds, ['up_c']);
-  assertEquals((await repo.users.getById(3))?.upstreamIds, ['up_a', 'up_c']);
-  assertEquals((await repo.users.getById(4))?.upstreamIds, ['up_b']);
-});
-
-test('PATCH /api/users/upstream-access supports an empty whitelist and validates its targets', async () => {
-  const { adminSession, apiKey, repo } = await setupAppTest();
-  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_only', name: 'Only' }));
-
-  const response = await adminBulkUpstreamPatch(adminSession, {
-    userIds: [1],
-    changes: [
-      { upstreamId: 'up_copilot', allowed: false },
-      { upstreamId: 'up_only', allowed: false },
-    ],
-  });
-  assertEquals(response.status, 200);
-  assertEquals((await repo.users.getById(1))?.upstreamIds, []);
-
-  assertEquals((await adminBulkUpstreamPatch(adminSession, {
-    userIds: [999],
-    changes: [{ upstreamId: 'up_only', allowed: true }],
-  })).status, 404);
-  assertEquals((await adminBulkUpstreamPatch(adminSession, {
-    userIds: [1],
-    changes: [{ upstreamId: 'up_missing', allowed: true }],
-  })).status, 400);
-  assertEquals((await requestApp('/api/users/upstream-access', {
-    method: 'PATCH',
-    headers: { 'content-type': 'application/json', 'x-api-key': apiKey.key },
-    body: JSON.stringify({ userIds: [1], changes: [{ upstreamId: 'up_only', allowed: true }] }),
-  })).status, 403);
 });
 
 test('DELETE /api/users/:id cascades to api_keys (soft) + sessions', async () => {
@@ -237,6 +127,7 @@ test('DELETE /api/users/:id cascades to api_keys (soft) + sessions', async () =>
 
   expect(await repo.users.getById(user.id)).toBeNull();
   expect(await repo.apiKeys.getById(defaultKey.id)).toBeNull();
+  assertEquals(await repo.accessRecords.listByPrincipal({ kind: 'user', id: user.id }), []);
   assertEquals((await repo.sessions.deleteByUserId(user.id)), 0);
 });
 
@@ -264,8 +155,6 @@ test('PATCH /api/users/me/password requires session and a correct current passwo
     username: 'alice',
     passwordHash: await hashPassword('old-pw'),
     isAdmin: false,
-    canViewGlobalUsage: false,
-    upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
   });
@@ -312,8 +201,6 @@ test('OAuth2 account management preserves a login method for self-service and ad
     username: 'oauth-only',
     passwordHash: null,
     isAdmin: false,
-    canViewGlobalUsage: false,
-    upstreamIds: null,
     createdAt: '2026-01-01T00:00:00.000Z',
     deletedAt: null,
   });
@@ -379,45 +266,50 @@ test('OAuth2 account management preserves a login method for self-service and ad
   assertEquals(await adminRemoved.json(), { accounts: [] });
 });
 
-test('GET /api/users and /auth/me drop a cap entry whose upstream was deleted', async () => {
-  const { adminSession, repo } = await setupAppTest();
-  await saveUpstreamForTest(repo.upstreams, buildCustomUpstreamRecord({ id: 'up_x', name: 'X' }));
-  const admin = await repo.users.getById(1);
-  assertExists(admin);
-  await repo.users.save({ ...admin, upstreamIds: ['up_gone', 'up_x'] });
-
-  const list = await requestApp('/api/users', { headers: { 'x-floway-session': adminSession } });
-  assertEquals(list.status, 200);
-  const users = (await list.json()) as Array<{ id: number; upstreamIds: string[] | null }>;
-  assertEquals(users.find(user => user.id === 1)?.upstreamIds, ['up_x']);
-
-  const me = await requestApp('/auth/me', { headers: { 'x-floway-session': adminSession } });
-  assertEquals(me.status, 200);
-  assertEquals(((await me.json()) as { user: { upstreamIds: string[] } }).user.upstreamIds, ['up_x']);
+const patchPreferences = (sessionId: string, body: unknown) => requestApp('/api/users/me/preferences', {
+  method: 'PATCH',
+  headers: { 'content-type': 'application/json', 'x-floway-session': sessionId },
+  body: JSON.stringify(body),
 });
 
-test('only administrators can grant global usage and session descriptions reflect the stored grant', async () => {
-  const { adminSession, apiKey } = await setupAppTest();
-  const created = await adminPost(adminSession, { username: 'usage-reader', password: 'pw', canViewGlobalUsage: true });
-  assertEquals(created.status, 201);
-  assertEquals((await created.json()).user.canViewGlobalUsage, true);
-  const ordinary = await adminPost(adminSession, { username: 'ordinary', password: 'pw' });
-  assertEquals((await ordinary.json()).user.canViewGlobalUsage, false);
-  const session = await requestApp('/auth/login', {
-    method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ username: 'usage-reader', password: 'pw' }),
+test('PATCH /api/users/me/preferences saves the signed-in account preferences and returns them with /auth/me', async () => {
+  const { adminSession, repo } = await setupAppTest({
+    userPreferences: { quotaDisplay: 'remaining', language: null },
   });
-  const login = await session.json();
-  assertEquals(login.user.canViewGlobalUsage, true);
-  const headers = { 'x-floway-session': login.token };
-  const denied = await requestApp(`/api/users/${apiKey.userId}`, {
-    method: 'PATCH', headers: { ...headers, 'content-type': 'application/json' },
-    body: JSON.stringify({ canViewGlobalUsage: true }),
+
+  const response = await patchPreferences(adminSession, { quotaDisplay: 'used', language: 'zh-Hans' });
+  assertEquals(response.status, 200);
+  expect(await response.json()).toEqual({ preferences: { quotaDisplay: 'used', language: 'zh-Hans' } });
+  expect(await repo.userPreferences.get(1)).toEqual({ quotaDisplay: 'used', language: 'zh-Hans' });
+
+  const me = await requestApp('/auth/me', { headers: { 'x-floway-session': adminSession } });
+  const body = (await me.json()) as { user: { preferences: { quotaDisplay: string; language: string | null } } };
+  expect(body.user.preferences).toEqual({ quotaDisplay: 'used', language: 'zh-Hans' });
+});
+
+test('PATCH /api/users/me/preferences merges a partial update and clears language with null', async () => {
+  const { adminSession, repo } = await setupAppTest();
+
+  await patchPreferences(adminSession, { language: 'zh-Hans' });
+  expect(await repo.userPreferences.get(1)).toEqual({ quotaDisplay: 'remaining', language: 'zh-Hans' });
+
+  const cleared = await patchPreferences(adminSession, { language: null });
+  assertEquals(cleared.status, 200);
+  expect(await repo.userPreferences.get(1)).toEqual({ quotaDisplay: 'remaining', language: null });
+});
+
+test('PATCH /api/users/me/preferences rejects an unknown direction and an empty body', async () => {
+  const { adminSession } = await setupAppTest();
+  assertEquals((await patchPreferences(adminSession, { quotaDisplay: 'left' })).status, 400);
+  assertEquals((await patchPreferences(adminSession, {})).status, 400);
+});
+
+test('PATCH /api/users/me/preferences refuses a request authenticated by API key only', async () => {
+  const { apiKey } = await setupAppTest();
+  const response = await requestApp('/api/users/me/preferences', {
+    method: 'PATCH',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey.key },
+    body: JSON.stringify({ quotaDisplay: 'used' }),
   });
-  assertEquals(denied.status, 403);
-  assertEquals((await adminPatch(adminSession, login.user.id, { canViewGlobalUsage: false })).status, 200);
-  const me = await requestApp('/auth/me', { headers });
-  assertEquals((await me.json()).user.canViewGlobalUsage, false);
-  const query = '?start=2026-04-30T00&end=2026-05-01T00&view=all-by-user';
-  assertEquals((await requestApp(`/api/token-usage${query}`, { headers })).status, 403);
+  assertEquals(response.status, 401);
 });

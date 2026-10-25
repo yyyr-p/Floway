@@ -114,7 +114,8 @@ for (const [kind, makeRepo] of repoFactories) {
         key: `sk-oauth2-${suffix}`,
         serverSecret: 'ab'.repeat(32),
         createdAt: '2026-08-19T00:00:00.000Z',
-        upstreamIds: null,
+        upstreamIds: ['up-registration'],
+        randomizeUpstreams: false,
         deletedAt: null,
         dumpRetentionSeconds: null,
         openaiResponsesRetentionSeconds: 0,
@@ -127,8 +128,18 @@ for (const [kind, makeRepo] of repoFactories) {
     if (created[0]?.status !== 'created') throw new Error('expected exactly one created registration');
     assertEquals(created[0].user.passwordHash, null);
     assertEquals(created[0].user.isAdmin, false);
-    assertEquals(created[0].user.canViewGlobalUsage, false);
-    assertEquals(created[0].user.upstreamIds, ['up-registration']);
+    assertEquals(
+      (await repo.accessRecords.listByPrincipal({ kind: 'user', id: created[0].user.id })).map(r => ({
+        principal: r.principal,
+        scope: r.scope,
+        values: r.values,
+      })),
+      [{
+        principal: { kind: 'user', id: created[0].user.id },
+        scope: { kind: 'upstream', upstreamId: 'up-registration' },
+        values: { 'Model.Use': true },
+      }],
+    );
     assertEquals((await repo.apiKeys.listByUserId(created[0].user.id)).map(key => key.id), [`key-oauth2-${created[0].user.username.slice(-3)}`]);
     assertEquals((await repo.oauth2.listAccounts()).map(account => account.providerUserId), ['provider-user-1']);
     assertEquals(await repo.oauth2.getHandoff('registration-hash', now), null);
@@ -165,8 +176,6 @@ for (const [kind, makeRepo] of repoFactories) {
       username: 'oauth-user',
       passwordHash: null,
       isAdmin: false,
-      canViewGlobalUsage: false,
-      upstreamIds: null,
       createdAt: '2026-08-19T00:00:00.000Z',
       deletedAt: null,
     });

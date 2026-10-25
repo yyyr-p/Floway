@@ -7,6 +7,7 @@ import type { CodexRecord } from '../../../src/components/upstreams/codex-accoun
 import { upstreamRecord } from '../../api/upstream-fixture';
 import { stubLocalStorage } from '../../local-storage-stub';
 import { renderInApp } from '../../render';
+import { primeDefaultSession } from '../../test-session';
 
 stubLocalStorage();
 
@@ -29,6 +30,8 @@ const record = upstreamRecord('up_codex', {
 let consumeBodies: Array<{ idempotency_key: string }>;
 let consumeAttempts: number;
 let failFirstConsume: boolean;
+
+beforeEach(() => { primeDefaultSession(); });
 
 beforeEach(() => {
   consumeAttempts = 0;
@@ -131,7 +134,10 @@ describe('Codex reset cards', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
     fireEvent.click(await screen.findByRole('button', { name: 'Use' }));
     dialog = await screen.findByRole('dialog');
-    fireEvent.click(await within(dialog).findByRole('button', { name: 'Use reset card' }));
+    // The focus trap can mark a freshly reopened surface aria-hidden for a
+    // while after the previous one closed; the redemption key is under test
+    // here, not the surface's accessibility state.
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Use reset card', hidden: true }));
     await waitFor(() => expect(consumeBodies).toHaveLength(2));
     expect(consumeBodies[0].idempotency_key).toBe(consumeBodies[1].idempotency_key);
   });

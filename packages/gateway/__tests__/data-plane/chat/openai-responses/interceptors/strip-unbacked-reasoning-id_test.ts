@@ -4,7 +4,7 @@ import { withOpenAIResponsesReasoningIdStripped } from '../../../../../src/data-
 import type { OpenAIResponsesInvocation } from '../../../../../src/data-plane/chat/openai-responses/interceptors/types.ts';
 import { mockChatGatewayCtx } from '../../../../test-utils/gateway-ctx.ts';
 import { doneFrame } from '@floway-dev/protocols/common';
-import type { OpenAIResponsesInputItem } from '@floway-dev/protocols/openai-responses';
+import type { CanonicalOpenAIResponsesInputItem } from '@floway-dev/protocols/openai-responses';
 import { eventResult, type FlagId } from '@floway-dev/provider';
 import { assertEquals, stubModelCandidate, testTelemetryModelIdentity } from '@floway-dev/test-utils';
 
@@ -12,7 +12,7 @@ const gatewayCtx = mockChatGatewayCtx();
 const okEvents = () => Promise.resolve(eventResult((async function* () { yield doneFrame(); })(), testTelemetryModelIdentity));
 
 const strip = async (
-  input: OpenAIResponsesInputItem[],
+  input: CanonicalOpenAIResponsesInputItem[],
   { targetApi = 'openaiResponses' }: { targetApi?: OpenAIResponsesInvocation['targetApi'] } = {},
 ): Promise<{ before: OpenAIResponsesInvocation['payload']; seen: OpenAIResponsesInvocation['payload'] }> => {
   const invocation: OpenAIResponsesInvocation = {
@@ -37,7 +37,7 @@ test('strips ids from blob-less reasoning items on an OpenAI Responses target', 
     id: 'rs_542e678b3a6a71ba5ff94079e81fa6e1',
     summary: [{ type: 'summary_text' as const, text: 'We need continue. Need inspect agents status.' }],
   };
-  const context: OpenAIResponsesInputItem = { type: 'message', role: 'user', content: 'next turn' };
+  const context: CanonicalOpenAIResponsesInputItem = { type: 'message', role: 'user', content: 'next turn' };
 
   const { before, seen } = await strip([unbacked, context]);
   assertEquals(seen.input, [
@@ -63,7 +63,7 @@ test('keeps the id on a reasoning item whose encrypted_content follows it', asyn
 });
 
 test('leaves the payload untouched on translated targets and when no id is present', async () => {
-  const context: OpenAIResponsesInputItem = { type: 'message', role: 'user', content: 'next turn' };
+  const context: CanonicalOpenAIResponsesInputItem = { type: 'message', role: 'user', content: 'next turn' };
   const idLess = {
     type: 'reasoning' as const,
     summary: [{ type: 'summary_text' as const, text: 'synthesized trace' }],

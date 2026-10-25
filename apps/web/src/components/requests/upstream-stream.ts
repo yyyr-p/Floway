@@ -1,8 +1,8 @@
 import type { CollectedStream } from './stream-render';
 import { decodeWebBase64 } from '../../lib/base-encoding';
 import { errorMessage } from '../../lib/error-message';
-import type { DumpBody, DumpStreamEvent } from '@floway-dev/gateway/dump-types';
-import { isEventStreamMediaType, parseSSEStream, type SseFrame } from '@floway-dev/protocols/common';
+import type { DumpBody, DumpStreamEvent } from '@floway-dev/gateway/browser';
+import { isEventStreamMediaType, parseSSEStream, type SseFrame } from '@floway-dev/protocols/browser';
 
 // Parsed upstream SSE for one exchange: the events (for the "Events" tab),
 // the collected result (for "Collected"), and any parse error (surfaced as a

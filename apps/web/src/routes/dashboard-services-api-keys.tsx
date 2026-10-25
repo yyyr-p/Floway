@@ -2,7 +2,6 @@ import { useCallback, useState } from 'react';
 
 import { useTranslation } from '../i18n/translation';
 import type { Route } from './+types/dashboard-services-api-keys';
-import { useDashboardOutletContext } from './dashboard';
 import { requireDashboardSession } from './guards';
 import { api, callApi } from '../api/client';
 import { mapResult, mergeResults } from '../api/partial-results';
@@ -12,7 +11,7 @@ import { AgentSetupCard } from '../components/api-keys/agent-setup-card';
 import { KeyDialog } from '../components/api-keys/editor';
 import { RotateKeyDialog } from '../components/api-keys/rotate-dialog';
 import { KeysTable } from '../components/api-keys/table';
-import { effectiveUpstreamCap, reachableModels } from '../components/models/reachability';
+import { reachableModels } from '../components/models/reachability';
 import { ConfirmDialog } from '../components/ui/confirm-dialog';
 import { DashboardPageHeader } from '../components/ui/dashboard-page-header';
 import { EmptyStateLine } from '../components/ui/empty-state';
@@ -48,7 +47,7 @@ const loadPageData = async (
 ): Promise<ApiKeysPageData> => {
   const [keysRes, upstreamsRes, modelsRes, targetModelsRes] = await Promise.all([
     callApi(() => api.api.keys.$get(undefined, { init: { signal } })),
-    callApi(() => api.api['upstream-options'].$get(undefined, { init: { signal } })),
+    callApi(() => api.api['upstream-options'].$get({ query: { view: 'key' } }, { init: { signal } })),
     callApi(() => api.api.models.$get({ query: { include_unlisted: 'true' } }, { init: { signal } })),
     callApi(() => api.api.models.$get({ query: { aliases: 'false', include_unlisted: 'true' } }, { init: { signal } })),
   ]);
@@ -75,7 +74,6 @@ export async function clientLoader(): Promise<LoaderData> {
 
 export default function DashboardServicesApiKeys({ loaderData }: Route.ComponentProps) {
   const { t } = useTranslation();
-  const { user } = useDashboardOutletContext();
   const [data, setData] = useState<ApiKeysPageData>(loaderData);
   const [selectedKeyId, setSelectedKeyId] = useState(loaderData.selectedKeyId);
   const [pageError, setPageError] = useState(loaderData.error);
@@ -94,7 +92,7 @@ export default function DashboardServicesApiKeys({ loaderData }: Route.Component
 
   const selectedKey = data.keys?.find(key => key.id === selectedKeyId) ?? null;
   const agentSetupModels = selectedKey && data.models && data.targetModels
-    ? reachableModels(data.models, effectiveUpstreamCap(selectedKey.upstream_ids, user.upstreamIds), undefined, data.targetModels)
+    ? reachableModels(data.models, selectedKey.upstream_ids, undefined, data.targetModels)
     : [];
 
   // Written where the picking happens rather than mirrored off rendered state:
@@ -193,7 +191,6 @@ export default function DashboardServicesApiKeys({ loaderData }: Route.Component
           onOpenChange={open => { if (!open) editorDialog.close(); }}
           onSaved={async key => { await refresh(); selectKey(key.id); }}
           upstreams={upstreams}
-          userUpstreamIds={user.upstreamIds}
         />}
         {editorDialog.invocation?.value.kind === 'edit' && <KeyDialog
           open={editorDialog.isOpen}
@@ -204,7 +201,6 @@ export default function DashboardServicesApiKeys({ loaderData }: Route.Component
           onOpenChange={open => { if (!open) editorDialog.close(); }}
           onSaved={refresh}
           upstreams={upstreams}
-          userUpstreamIds={user.upstreamIds}
         />}
         {rotateDialog.invocation && <RotateKeyDialog
           open={rotateDialog.isOpen}

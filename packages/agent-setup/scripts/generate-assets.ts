@@ -2,14 +2,9 @@
 // constants in `src/script-assets.generated.ts`. The ordered manifest here also
 // prejoins each platform's common body, so runtime code and the installer
 // harness execute the same artifact.
-//
-// Run `pnpm --filter @floway-dev/agent-setup run generate-assets` to rewrite
-// the generated module; pass `--check` to fail when checked-in output drifts.
 import { readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-import { typescriptString } from './typescript-string.ts';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, '..');
@@ -32,7 +27,6 @@ interface PlatformSources {
 // the installer bodies can download and run them; they are embedded here the
 // same way the shell fragments are.
 const converterSources = [
-  { name: 'SETUP_PYTHON_OMP', file: 'installers/python/floway-to-omp.py' },
   { name: 'SETUP_PYTHON_VSCODE', file: 'installers/python/floway-to-vscode.py' },
   { name: 'SETUP_PYTHON_ZED', file: 'installers/python/floway-to-zed.py' },
   { name: 'SETUP_PYTHON_OPENCODE', file: 'installers/python/floway-to-opencode.py' },
@@ -57,6 +51,7 @@ const scriptSources = {
       { name: 'SETUP_BASH_CLAUDE', file: 'installers/bash/claude.sh' },
       { name: 'SETUP_BASH_CODEX', file: 'installers/bash/codex.sh' },
       { name: 'SETUP_BASH_OMP', file: 'installers/bash/omp.sh' },
+      { name: 'SETUP_BASH_PI', file: 'installers/bash/pi.sh' },
       { name: 'SETUP_BASH_VSCODE', file: 'installers/bash/vscode.sh' },
       { name: 'SETUP_BASH_ZED', file: 'installers/bash/zed.sh' },
       { name: 'SETUP_BASH_OPENCODE', file: 'installers/bash/opencode.sh' },
@@ -69,17 +64,17 @@ const scriptSources = {
       { name: 'SETUP_POWERSHELL_COMMON_JSON_DOCUMENT', file: 'installers/powershell/common/json-document.ps1', append: '\n' },
       { name: 'SETUP_POWERSHELL_COMMON_MAIN', file: 'installers/powershell/common/main.ps1', end: '# --- run' },
       { name: 'SETUP_POWERSHELL_COMMON_MANAGED_FILE', file: 'installers/powershell/common/managed-file.ps1', end: '# Rollback retains' },
-      { name: 'SETUP_POWERSHELL_COMMON_PROCESS', file: 'installers/powershell/common/process.ps1', end: '# Run a fixed package-manager' },
+      { name: 'SETUP_POWERSHELL_COMMON_PROCESS', file: 'installers/powershell/common/process.ps1', end: '# Inherit stdout/stderr' },
       { name: 'SETUP_POWERSHELL_COMMON_PLATFORM', file: 'installers/powershell/common/platform.ps1', start: 'function Get-SetupPlatform', append: '\n' },
       {
         name: 'SETUP_POWERSHELL_COMMON_PROCESS',
         file: 'installers/powershell/common/process.ps1',
-        start: '# Run a fixed package-manager',
-        end: '# Run a child process with captured output',
+        start: '# Inherit stdout/stderr',
+        end: '# Captured commands are noninteractive',
       },
       { name: 'SETUP_POWERSHELL_COMMON_CLI', file: 'installers/powershell/common/cli.ps1', append: '\n' },
       { name: 'SETUP_POWERSHELL_COMMON_MANAGED_FILE', file: 'installers/powershell/common/managed-file.ps1', start: '# Rollback retains', append: '\n' },
-      { name: 'SETUP_POWERSHELL_COMMON_PROCESS', file: 'installers/powershell/common/process.ps1', start: '# Run a child process with captured output' },
+      { name: 'SETUP_POWERSHELL_COMMON_PROCESS', file: 'installers/powershell/common/process.ps1', start: '# Captured commands are noninteractive', append: '\n' },
       { name: 'SETUP_POWERSHELL_COMMON_HARNESS', file: 'installers/powershell/common/harness.ps1', append: '\n' },
       { name: 'SETUP_POWERSHELL_COMMON_MAIN', file: 'installers/powershell/common/main.ps1', start: '# --- run' },
     ],
@@ -87,6 +82,7 @@ const scriptSources = {
       { name: 'SETUP_POWERSHELL_CLAUDE', file: 'installers/powershell/claude.ps1' },
       { name: 'SETUP_POWERSHELL_CODEX', file: 'installers/powershell/codex.ps1' },
       { name: 'SETUP_POWERSHELL_OMP', file: 'installers/powershell/omp.ps1' },
+      { name: 'SETUP_POWERSHELL_PI', file: 'installers/powershell/pi.ps1' },
       { name: 'SETUP_POWERSHELL_VSCODE', file: 'installers/powershell/vscode.ps1' },
       { name: 'SETUP_POWERSHELL_ZED', file: 'installers/powershell/zed.ps1' },
       { name: 'SETUP_POWERSHELL_OPENCODE', file: 'installers/powershell/opencode.ps1' },
@@ -94,7 +90,19 @@ const scriptSources = {
   },
 } as const satisfies Record<string, PlatformSources>;
 
-const allSections = Object.values(scriptSources).flatMap(({ common, agents }) => [...common, ...agents]);
+// These assets are materialized by installers or served as extensions; they are
+// not executed as part of a platform's common body.
+const extraSections: readonly SourceSection[] = [
+  { name: 'SETUP_NODE_JSONC_EDIT', file: 'installers/node/jsonc-edit.mjs' },
+  { name: 'SETUP_NODE_PI_INSTALLATION', file: 'installers/node/pi-installation.mjs' },
+  { name: 'SETUP_NODE_OMP_EXTENSION', file: 'installers/node/omp-extension.js' },
+  { name: 'SETUP_NODE_PI_EXTENSION', file: 'installers/node/pi-extension.js' },
+];
+
+const allSections = [
+  ...Object.values(scriptSources).flatMap(({ common, agents }) => [...common, ...agents]),
+  ...extraSections,
+];
 const sourceFiles = new Map<string, string>();
 for (const { name, file } of allSections) {
   const existing = sourceFiles.get(name);
@@ -126,6 +134,9 @@ const renderSection = (section: SourceSection): string => {
   return source.slice(start, end) + (section.append ?? '');
 };
 
+const typescriptString = (value: string): string =>
+  `'${JSON.stringify(value).slice(1, -1).replaceAll("'", "\\'")}'`;
+
 const sourceConstants = [...sourceFiles].map(([name]) => {
   const source = sourceByName.get(name);
   if (source === undefined) throw new Error(`source not loaded for ${name}`);
@@ -156,7 +167,12 @@ ${sourceFragments}
 ] as const;
 `;
 
-if (process.argv.includes('--check')) {
+const arguments_ = process.argv.slice(2);
+if (arguments_.length > 1 || (arguments_.length === 1 && arguments_[0] !== '--check')) {
+  throw new Error(`generate-assets accepts only --check, received ${JSON.stringify(arguments_)}`);
+}
+
+if (arguments_[0] === '--check') {
   const actual = await readFile(GENERATED_PATH, 'utf8').catch((error: NodeJS.ErrnoException) => {
     // A missing generated file is drift the check should report; any other read
     // failure (permissions, I/O) is a real fault and must propagate.

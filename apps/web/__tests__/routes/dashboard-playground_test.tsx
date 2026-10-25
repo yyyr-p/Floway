@@ -10,6 +10,7 @@ const model = {
   id: 'listed-model',
   display_name: 'Listed model',
   kind: 'chat',
+  endpoints: { openaiChatCompletions: true, openaiResponses: true },
   limits: {},
   upstreams: [{ id: 'upstream-1', name: 'Test upstream' }],
 } as ControlPlaneModel;
@@ -23,10 +24,12 @@ const loaderData = {
     created_at: '2026-01-01T00:00:00.000Z',
     last_used_at: null,
     upstream_ids: null,
+    randomize_upstreams: false,
     dump_retention_seconds: null,
     responses_retention_seconds: 0,
   }],
   models: [model, secondModel],
+  targetModels: [model, secondModel],
   error: null,
 };
 

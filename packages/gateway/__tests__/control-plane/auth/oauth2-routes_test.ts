@@ -128,9 +128,20 @@ test('custom OAuth2 provider supports self-service registration and later login'
   assertEquals(registration.user.username, 'alice');
   assertEquals(registration.user.isAdmin, false);
   expect(registration.token).toMatch(/^[0-9a-f]{64}$/);
-  assertEquals((await repo.users.getById(registration.user.id))?.upstreamIds, ['up_copilot']);
+  assertEquals(
+    (await repo.accessRecords.listByPrincipal({ kind: 'user', id: registration.user.id })).map(r => ({
+      principal: r.principal,
+      scope: r.scope,
+      values: r.values,
+    })),
+    [{
+      principal: { kind: 'user', id: registration.user.id },
+      scope: { kind: 'upstream', upstreamId: 'up_copilot' },
+      values: { 'Model.Use': true },
+    }],
+  );
   assertEquals((await repo.apiKeys.listByUserId(registration.user.id)).length, 1);
-  assertEquals((await repo.apiKeys.listByUserId(registration.user.id))[0]?.upstreamIds, null);
+  assertEquals((await repo.apiKeys.listByUserId(registration.user.id))[0]?.upstreamIds, ['up_copilot']);
   assertEquals((await repo.oauth2.listAccounts())[0]?.providerUserId, '42');
 
   const reused = await requestApp('/auth/oauth2/register', {

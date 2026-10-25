@@ -6,7 +6,6 @@ import { z } from 'zod';
 
 import { listOAuth2Providers, registerOAuth2User, resolveOAuth2Result, type OAuth2ProvidersResponse, type OAuth2ResultResponse } from '../api/auth';
 import { fluentComponents } from '../fluent';
-import { LanguageSelector } from './language-selector';
 import { FlowayLogo } from './logo';
 import { Trans, useTranslation } from '../i18n/translation';
 import { useAuthStore } from '../stores/auth-store';
@@ -203,9 +202,6 @@ export function LoginForm() {
     <Panel className="relative w-[min(440px,100%)]">
       <header className="flex items-center">
         <FlowayLogo />
-        <div className="ml-auto flex items-center gap-2">
-          <LanguageSelector />
-        </div>
       </header>
 
       {pendingRegistration ? (

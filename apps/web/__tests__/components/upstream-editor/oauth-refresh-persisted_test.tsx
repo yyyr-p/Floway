@@ -1,10 +1,11 @@
 import { screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { ProviderConfigHarness } from './provider-config-harness';
 import { i18n } from '../../../src/i18n';
 import { upstreamRecord } from '../../api/upstream-fixture';
 import { renderInApp } from '../../render';
+import { primeDefaultSession } from '../../test-session';
 
 const imported = {
   config: { accounts: [{ email: 'operator@example.com', chatgptAccountId: null, chatgptUserId: null, planType: 'free' }] },
@@ -41,6 +42,7 @@ const importedClaudeCode = {
 const refreshLabel = () => i18n.t('dashboard.upstreamEditor.oauth.refresh');
 
 describe('OAuth credential actions gating', () => {
+  beforeEach(() => primeDefaultSession());
   it('hides refresh on a create-state Codex upstream and leaves reimport as the only credential action', () => {
     renderInApp(<ProviderConfigHarness record={upstreamRecord('', { kind: 'codex', ...imported })} />);
 

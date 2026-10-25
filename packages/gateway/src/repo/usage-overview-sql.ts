@@ -58,7 +58,7 @@ const overviewHoursSql = (scoped: boolean) => `/* usage-overview-hours */
 
 const overviewSql = (scoped: boolean) => `/* usage-overview */
 WITH
-settings(actor_user_id, can_view_global_usage, unattributed_user_id, no_upstream_value, upstream_prefix) AS (
+settings(actor_user_id, is_admin, unattributed_user_id, no_upstream_value, upstream_prefix) AS (
   VALUES (?, ?, ?, ?, ?)
 ),
 model_filter(value) AS MATERIALIZED (
@@ -71,6 +71,12 @@ user_filter(value) AS MATERIALIZED (
   SELECT CAST(value AS INTEGER) FROM json_each(?)
 ),
 key_filter(value) AS MATERIALIZED (
+  SELECT CAST(value AS TEXT) FROM json_each(?)
+),
+visible_user(value) AS MATERIALIZED (
+  SELECT CAST(value AS INTEGER) FROM json_each(?)
+),
+visible_upstream(value) AS MATERIALIZED (
   SELECT CAST(value AS TEXT) FROM json_each(?)
 ),
 bucket_map(hour, bucket) AS MATERIALIZED (
@@ -118,9 +124,17 @@ scoped AS MATERIALIZED (
   CROSS JOIN settings
   LEFT JOIN api_keys ON api_keys.id = facts.key_id
 ),
-filtered AS MATERIALIZED (
+authorized AS MATERIALIZED (
   SELECT *
   FROM scoped
+  CROSS JOIN settings
+  WHERE settings.is_admin = 1
+    OR user_id IN (SELECT value FROM visible_user)
+    OR upstream IN (SELECT value FROM visible_upstream)
+),
+filtered AS MATERIALIZED (
+  SELECT *
+  FROM authorized
   WHERE
     (NOT EXISTS (SELECT 1 FROM model_filter) OR model IN (SELECT value FROM model_filter))
     AND (NOT EXISTS (SELECT 1 FROM upstream_filter) OR upstream_value IN (SELECT value FROM upstream_filter))
@@ -130,12 +144,12 @@ filtered AS MATERIALIZED (
 -- workerd caps compound SELECTs at five terms, so this extensible axis catalog
 -- is a VALUES table rather than a UNION ALL chain.
 -- https://github.com/cloudflare/workerd/blob/243fd41f8944c2446c46e415373b107ecb9bc789/src/workerd/util/sqlite.c%2B%2B#L1380-L1385
-axes(axis, grouping, bucketed, owned_only, global_only) AS (
+axes(axis, grouping, bucketed, owned_only, admin_only) AS (
   VALUES
     ('series', ?, 1, 0, 0),
     ('none', 'none', 0, 0, 0),
     ('keyId', 'keyId', 0, 1, 0),
-    ('userId', 'userId', 0, 0, 1),
+    ('userId', 'userId', 0, 0, 0),
     ('model', 'model', 0, 0, 0),
     ('upstream', 'upstream', 0, 0, 0)
 ),
@@ -156,27 +170,26 @@ projected AS MATERIALIZED (
   CROSS JOIN settings
   JOIN bucket_map ON bucket_map.hour = filtered.hour
   WHERE (axes.owned_only = 0 OR filtered.owned = 1)
-    AND (axes.global_only = 0 OR settings.can_view_global_usage = 1)
+    AND (axes.admin_only = 0 OR settings.is_admin = 1)
 ),
 facet_rows AS (
   SELECT 'facet' AS row_kind, NULL AS axis, NULL AS bucket, NULL AS group_value,
     'keyId' AS dimension, key_id AS facet_value, NULL AS requests_text,
     NULL AS metric, NULL AS quantity, NULL AS unit_price, NULL AS occurrences_text, NULL AS metric_order
-  FROM scoped
+  FROM authorized
   WHERE owned = 1
   GROUP BY key_id
   UNION ALL
   SELECT 'facet', NULL, NULL, NULL, 'userId', CAST(user_id AS TEXT), NULL, NULL, NULL, NULL, NULL, NULL
-  FROM scoped CROSS JOIN settings
-  WHERE settings.can_view_global_usage = 1
+  FROM authorized
   GROUP BY user_id
   UNION ALL
   SELECT 'facet', NULL, NULL, NULL, 'model', model, NULL, NULL, NULL, NULL, NULL, NULL
-  FROM scoped
+  FROM authorized
   GROUP BY model
   UNION ALL
   SELECT 'facet', NULL, NULL, NULL, 'upstream', upstream_value, NULL, NULL, NULL, NULL, NULL, NULL
-  FROM scoped
+  FROM authorized
   GROUP BY upstream_value
 ),
 request_rows AS (
@@ -220,7 +233,7 @@ metric_rows AS (
 ),
 validation_terms AS MATERIALIZED (
   SELECT metric, quantity, unit_price
-  FROM scoped
+  FROM authorized
   WHERE fact_kind = 'metric'
   GROUP BY metric, quantity, unit_price
 ),
@@ -399,7 +412,7 @@ export const querySqlUsageOverview = async (
   db: SqlDatabase,
   opts: UsageOverviewQueryOptions,
 ): Promise<UsageOverviewResult> => {
-  const scoped = !opts.canViewGlobalUsage || opts.groupBy === 'keyId';
+  const scoped = opts.groupBy === 'keyId';
   const range = rangeBinds(opts, scoped);
   const { results: hours } = await db.prepare(overviewHoursSql(scoped))
     .bind(...range, ...range)
@@ -408,7 +421,7 @@ export const querySqlUsageOverview = async (
   while (true) {
     const binds: SqlBindValue[] = [
       opts.actorUserId,
-      opts.canViewGlobalUsage ? 1 : 0,
+      opts.isAdmin ? 1 : 0,
       tokenUsageUnattributedUserId,
       usageWithoutUpstreamDimensionValue,
       usageUpstreamDimensionPrefix,
@@ -416,6 +429,8 @@ export const querySqlUsageOverview = async (
       JSON.stringify(opts.filters.upstreams),
       JSON.stringify(opts.filters.userIds),
       JSON.stringify(opts.filters.keyIds),
+      JSON.stringify(opts.visibleUserIds),
+      JSON.stringify(opts.visibleUpstreams),
       JSON.stringify(buckets),
       ...range,
       ...range,

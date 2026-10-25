@@ -39,7 +39,7 @@ const loadPageData = async (
   const [settings, providers, upstreams, models] = await Promise.all([
     callApi(() => api.api.oauth2.settings.$get(undefined, { init: { signal } })),
     callApi(() => api.api.oauth2.providers.$get(undefined, { init: { signal } })),
-    callApi(() => api.api['upstream-options'].$get(undefined, { init: { signal } })),
+    callApi(() => api.api['upstream-options'].$get({ query: {} }, { init: { signal } })),
     callApi(() => api.api.models.$get({ query: { aliases: 'false', include_unlisted: 'true' } }, { init: { signal } })),
   ]);
   const merged = mergeResults(current, {
